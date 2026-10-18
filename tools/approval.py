@@ -664,6 +664,18 @@ def _sudo_stdin_block_result(description: str) -> dict:
 # Dangerous command patterns
 # =========================================================================
 
+# Where a sudo invocation can start: the start of the command, after a
+# separator or subshell opener, after a wrapper (env, exec, nohup, xargs ...),
+# or at the start of a `sh -c` / `bash -c` script.
+_SUDO_CMDPOS = (
+    r'(?:^|[;&|\n`]|\$\('
+    r'|\b(?:exec|nohup|setsid|time|nice|xargs|command|builtin)\s+'
+    r'|\benv(?:\s+\w+=\S*)*\s+'
+    r'|\b(?:ba|z|da|k)?sh\s+(?:-\w+\s+)*-c\s+[\'"]?'
+    r')\s*(?:\w+=\S*\s+)*'  # optional VAR=value prefixes
+)
+SUDO_PATTERN_DESCRIPTION = "sudo (run a command as root)"
+
 DANGEROUS_PATTERNS = [
     (r'\brm\s+(-[^\s]*\s+)*/', "delete in root path"),
     (r'\brm\s+-[^\s]*r', "recursive delete"),
@@ -875,6 +887,16 @@ DANGEROUS_PATTERNS = [
     # into a single -X token. Catches the same threat class.
     (r'\bsudo\b[^;|&\n]*?\s+-[a-z]*[sa][a-z]*\b',
      "sudo with combined-flag privilege escalation"),
+    # Every other sudo at a command position. On a server the hermes user
+    # has NOPASSWD rules, so `sudo -n <helper>` (or `sudo su -` where the
+    # rule allows it) runs as root with no TTY and no password. The agent's
+    # terminal always asks first. To trust it, add this description (the
+    # "always" choice does that) or a command glob such as
+    # `sudo -n /usr/local/sbin/hermes-vpn-helper *` to command_allowlist.
+    # Hermes's own code calls sudo with subprocess (hermes_cli/vpn.py), not
+    # through this gate, so `hermes vpn ...` typed in the terminal is not
+    # flagged.
+    (_SUDO_CMDPOS + r'(?:\S*/)?sudo\b', SUDO_PATTERN_DESCRIPTION),
 ]
 
 
@@ -1509,13 +1531,24 @@ def detect_dangerous_command(command: str) -> tuple:
     Returns:
         (is_dangerous, pattern_key, description) or (False, None, None)
     """
+    found = None
+    under_sudo = False
     for command_variant in _command_detection_variants(command):
         command_lower = command_variant.lower()
         for pattern_re, description in DANGEROUS_PATTERNS_COMPILED:
-            if pattern_re.search(command_lower):
-                pattern_key = description
-                return (True, pattern_key, description)
-    return (False, None, None)
+            if description == SUDO_PATTERN_DESCRIPTION:
+                if not under_sudo and pattern_re.search(command_lower):
+                    under_sudo = True
+            elif found is None and pattern_re.search(command_lower):
+                found = description
+        if found is not None and under_sudo:
+            break
+    if not under_sudo or (found and found.startswith("sudo ")):
+        return (True, found, found) if found else (False, None, None)
+    # Anything run under sudo is approved under the sudo key, so an
+    # allowlisted "recursive delete" does not also let `sudo rm -r` through.
+    description = f"{found} (with sudo)" if found else SUDO_PATTERN_DESCRIPTION
+    return (True, SUDO_PATTERN_DESCRIPTION, description)
 
 
 # =========================================================================

@@ -1688,6 +1688,25 @@ class WhatsAppCloudAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
             if len(parts) != 3:
                 return False
             _, approval_id, choice = parts
+            tapper_id = str(raw_message.get("from") or "").strip()
+            pending_key = self._exec_approval_state.get(approval_id)
+            if pending_key:
+                try:
+                    from tools.approval import can_resolve_gateway_approval
+                except ImportError:
+                    can_resolve_gateway_approval = None
+                if can_resolve_gateway_approval is not None and not can_resolve_gateway_approval(
+                    pending_key, tapper_id
+                ):
+                    logger.warning(
+                        "[whatsapp_cloud] approval tap by %s on someone else's command - ignoring",
+                        tapper_id,
+                    )
+                    try:
+                        await self.send(tapper_id, "⛔ Only the person who asked for this command (or an owner/admin, with /approve) can answer it.")
+                    except Exception:
+                        logger.exception("[whatsapp_cloud] approval refusal send failed")
+                    return True
             session_key = self._exec_approval_state.pop(approval_id, None)
             if not session_key:
                 logger.info(
@@ -1706,7 +1725,7 @@ class WhatsAppCloudAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
                     "[whatsapp_cloud] approval resolver unavailable"
                 )
                 return False
-            count = resolve_gateway_approval(session_key, choice)
+            count = resolve_gateway_approval(session_key, choice, approver_id=tapper_id)
             if not count:
                 logger.info(
                     "[whatsapp_cloud] approval resolver reported no waiter "

@@ -15,10 +15,28 @@ import { NextResponse } from "next/server";
 
 import { apiClientForRequest, getPrincipal } from "@/lib/auth/principal";
 import { uploadMaxBytes, uploadTooLargeDetail } from "@/lib/chat/upload-limit";
+import { MULTIPART_SLACK_BYTES, uploadSpaceRefusal } from "@/lib/chat/upload-space";
 import { mediaBucket } from "@/lib/env";
 import { storageAvailable, uploadChatMedia } from "@/lib/supabase/storage";
 
 /** SHA-256 of the bytes — the registry's identity for a file. */
+/**
+ * The multipart body is a little larger than the file, so this only refuses a
+ * request that is over the optional cap or bigger than the free disk space.
+ */
+async function refuseByContentLength(request: Request): Promise<NextResponse | null> {
+  const length = Number(request.headers.get("content-length") ?? "0");
+  if (!Number.isFinite(length) || length <= 0) return null;
+  const maxBytes = uploadMaxBytes();
+  if (length > maxBytes + MULTIPART_SLACK_BYTES) {
+    return NextResponse.json(
+      { error: "too_large", detail: uploadTooLargeDetail(maxBytes) },
+      { status: 413 },
+    );
+  }
+  return uploadSpaceRefusal(length - MULTIPART_SLACK_BYTES);
+}
+
 async function digest(bytes: ArrayBuffer): Promise<string> {
   const hash = await crypto.subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(hash))
@@ -37,6 +55,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       { status: 501 },
     );
   }
+
+  // Refuse before reading the body: formData() buffers the whole upload.
+  const earlyRefusal = await refuseByContentLength(request);
+  if (earlyRefusal) return earlyRefusal;
 
   let form: FormData;
   try {
@@ -59,6 +81,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       { status: 413 },
     );
   }
+  const noSpace = await uploadSpaceRefusal(file.size);
+  if (noSpace) return noSpace;
 
   try {
     const bytes = await file.arrayBuffer();

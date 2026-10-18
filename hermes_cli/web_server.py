@@ -15331,6 +15331,26 @@ async def capacity_headroom_endpoint(request: Request):
         )
 
 
+@app.get("/api/capacity/upload-storage")
+async def capacity_upload_storage_endpoint(request: Request):
+    """Free space on the disk holding uploads (the Supabase storage volume).
+
+    Cheap on purpose: agent-home asks before each upload so it can refuse a
+    file that clearly cannot fit, and the status strip uses ``low`` to warn
+    owners/admins. Uploads themselves stay unlimited.
+    """
+    from hermes_cli.capacity import collect_upload_storage
+
+    await _comms_resolve_principal(request)
+    try:
+        from hermes_cli.config import load_config
+
+        config = load_config()
+    except Exception:
+        config = {}
+    return collect_upload_storage(config).as_dict()
+
+
 # ---------------------------------------------------------------------------
 # Profile suggestions (FG-30)
 # ---------------------------------------------------------------------------

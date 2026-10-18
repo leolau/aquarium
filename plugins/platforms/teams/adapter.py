@@ -1059,7 +1059,20 @@ class TeamsAdapter(BasePlatformAdapter):
                 ),
             )
 
-        resolve_gateway_approval(session_key, choice)
+        from tools.approval import can_resolve_gateway_approval
+
+        from_account = ctx.activity.from_
+        clicker_id = str(
+            getattr(from_account, "aad_object_id", None) or getattr(from_account, "id", "") or ""
+        )
+        if not can_resolve_gateway_approval(session_key, clicker_id):
+            logger.warning("[teams] Approval click by %s on someone else's command - ignoring", clicker_id)
+            return InvokeResponse(
+                status=200,
+                body=AdaptiveCardActionMessageResponse(value="⛔ Only the person who asked for this command (or an owner/admin, with /approve) can answer it."),
+            )
+
+        resolve_gateway_approval(session_key, choice, approver_id=clicker_id)
 
         label_map = {
             "once": "✅ Allowed (once)",

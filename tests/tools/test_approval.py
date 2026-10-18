@@ -1014,6 +1014,37 @@ class TestPatternKeyUniqueness:
             assert is_approved("legacy-find", key_delete) is True
 
 
+class TestTrustSudoViaAllowlist:
+    """The owner trusts sudo through command_allowlist, like other patterns."""
+
+    def test_allowlisted_description_approves_every_plain_sudo(self):
+        _, key, _ = detect_dangerous_command("sudo -n bash /x.sh")
+        with mock_patch.object(approval_module, "_permanent_approved", set()):
+            load_permanent({approval_module.SUDO_PATTERN_DESCRIPTION})
+            assert is_approved("trust-sudo", key) is True
+            _, stdin_key, _ = detect_dangerous_command("echo pw | sudo -S id")
+            assert is_approved("trust-sudo", stdin_key) is False
+
+    def test_allowlisted_pattern_does_not_cover_it_under_sudo(self):
+        _, plain_key, _ = detect_dangerous_command("rm -rf /tmp/x")
+        _, sudo_key, desc = detect_dangerous_command("sudo rm -rf /tmp/x")
+        assert sudo_key == approval_module.SUDO_PATTERN_DESCRIPTION
+        assert "delete" in desc
+        with mock_patch.object(approval_module, "_permanent_approved", set()):
+            load_permanent({plain_key})
+            assert is_approved("trust-rm", plain_key) is True
+            assert is_approved("trust-rm", sudo_key) is False
+
+    def test_allowlisted_command_glob_approves_only_that_helper(self):
+        trust = "sudo -n /usr/local/sbin/hermes-vpn-helper *"
+        with mock_patch.object(approval_module, "_permanent_approved", set()):
+            load_permanent({trust})
+            assert approval_module._command_matches_permanent_allowlist(
+                "sudo -n /usr/local/sbin/hermes-vpn-helper status office"
+            )
+            assert not approval_module._command_matches_permanent_allowlist("sudo su -")
+
+
 class TestFullCommandAlwaysShown:
     """The full command is always shown in the approval prompt (no truncation).
 
@@ -1774,28 +1805,47 @@ class TestDetectSudoStdin:
 
     # Negative cases (must NOT match)
 
-    def test_plain_sudo_safe(self):
-        is_dangerous, _, _ = detect_dangerous_command("sudo whoami")
+    # Every other sudo also asks: on a server the hermes user has NOPASSWD
+    # rules, so `sudo -n <helper>` or `sudo su -` needs no TTY or password.
+
+    def test_plain_sudo_needs_approval(self):
+        for command in (
+            "sudo whoami",
+            "sudo -i",
+            "sudo su -",
+            "sudo -u root -i",
+            "sudo --set-home id",
+            "sudo --shell id",
+            "sudo -n bash /opt/data/hermes-agent/deploy/wa-bridge-add.sh rt 1",
+            "sudo -n /usr/local/sbin/hermes-vpn-helper status office",
+            "ls && sudo id",
+            "env A=1 sudo id",
+            "SUDO_ASKPASS=x sudo id",
+            "nohup sudo id &",
+            "time sudo id",
+            "/usr/bin/sudo id",
+            "$(sudo id)",
+            "(sudo id)",
+        ):
+            is_dangerous, key, desc = detect_dangerous_command(command)
+            assert is_dangerous is True, command
+            assert desc, command
+
+    def test_plain_sudo_has_its_own_approval_key(self):
+        _, key, desc = detect_dangerous_command("sudo whoami")
+        assert key == desc == approval_module.SUDO_PATTERN_DESCRIPTION
+
+    def test_hermes_vpn_command_not_flagged(self):
+        # `hermes vpn` calls `sudo -n hermes-vpn-helper` itself with
+        # subprocess (hermes_cli/vpn.py), so the command the agent types
+        # has no sudo in it.
+        is_dangerous, _, _ = detect_dangerous_command("hermes vpn connect office")
         assert is_dangerous is False
 
-    def test_sudo_interactive_shell_safe(self):
-        is_dangerous, _, _ = detect_dangerous_command("sudo -i")
-        assert is_dangerous is False
-
-    def test_sudo_with_user_no_stdin_flag_safe(self):
-        is_dangerous, _, _ = detect_dangerous_command("sudo -u root -i")
-        assert is_dangerous is False
-
-    def test_sudo_set_home_not_confused_with_stdin_abbreviation(self):
-        # `--set-home` shares no prefix with `--stdin` beyond "--s", so
-        # the broadened `--st[a-z]*` pattern must not catch it.
-        is_dangerous, _, _ = detect_dangerous_command("sudo --set-home id")
-        assert is_dangerous is False
-
-    def test_sudo_shell_flag_not_confused_with_stdin_abbreviation(self):
-        # `--shell` shares "--s" but not "--st" with `--stdin`.
-        is_dangerous, _, _ = detect_dangerous_command("sudo --shell id")
-        assert is_dangerous is False
+    def test_sudo_in_quoted_text_not_flagged(self):
+        for command in ("echo 'use sudo carefully'", "git commit -m 'sudo fix'"):
+            is_dangerous, _, _ = detect_dangerous_command(command)
+            assert is_dangerous is False, command
 
     def test_man_sudo_safe(self):
         is_dangerous, _, _ = detect_dangerous_command("man sudo")

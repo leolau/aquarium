@@ -23,6 +23,7 @@ import { NextResponse } from "next/server";
 
 import { apiClientForRequest, getPrincipal } from "@/lib/auth/principal";
 import { uploadMaxBytes, uploadTooLargeDetail } from "@/lib/chat/upload-limit";
+import { uploadSpaceRefusal } from "@/lib/chat/upload-space";
 import { mediaBucket } from "@/lib/env";
 import {
   slug,
@@ -198,6 +199,10 @@ async function handleChunkedImport(
       { status: 413 },
     );
   }
+  if (offset === 0) {
+    const noSpace = await uploadSpaceRefusal(total);
+    if (noSpace) return noSpace;
+  }
 
   await sweepSpool();
   const spool = spoolPathFor(principal, importId);
@@ -326,6 +331,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       { status: 413 },
     );
   }
+  const noSpace = await uploadSpaceRefusal(contentLength);
+  if (noSpace) return noSpace;
 
   const t0 = Date.now();
   try {

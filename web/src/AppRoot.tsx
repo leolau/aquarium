@@ -2,6 +2,7 @@
 
 import { BrowserRouter } from "react-router-dom";
 import App from "@/App";
+import { AdminRoleProvider } from "@/contexts/AdminRoleProvider";
 import { SystemActionsProvider } from "@/contexts/SystemActions";
 import { I18nProvider } from "@/i18n";
 import { exposePluginSDK } from "@/plugins";
@@ -17,9 +18,11 @@ export default function AppRoot() {
     <BrowserRouter basename={HERMES_BASE_PATH || undefined}>
       <I18nProvider>
         <ThemeProvider>
-          <SystemActionsProvider>
-            <App />
-          </SystemActionsProvider>
+          <AdminRoleProvider>
+            <SystemActionsProvider>
+              <App />
+            </SystemActionsProvider>
+          </AdminRoleProvider>
         </ThemeProvider>
       </I18nProvider>
     </BrowserRouter>

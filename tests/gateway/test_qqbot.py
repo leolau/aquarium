@@ -1572,7 +1572,7 @@ class TestDefaultInteractionDispatch:
 
         resolve_calls = []
 
-        def fake_resolve(session_key, choice, resolve_all=False):
+        def fake_resolve(session_key, choice, resolve_all=False, **_kw):
             resolve_calls.append((session_key, choice, resolve_all))
             return 1
 
@@ -1600,7 +1600,7 @@ class TestDefaultInteractionDispatch:
         adapter = self._make_adapter()
         resolve_calls = []
 
-        def fake_resolve(session_key, choice, resolve_all=False):
+        def fake_resolve(session_key, choice, resolve_all=False, **_kw):
             resolve_calls.append((session_key, choice, resolve_all))
             return 1
 
@@ -1624,7 +1624,7 @@ class TestDefaultInteractionDispatch:
         adapter = self._make_adapter()
         resolve_calls = []
 
-        def fake_resolve(session_key, choice, resolve_all=False):
+        def fake_resolve(session_key, choice, resolve_all=False, **_kw):
             resolve_calls.append((session_key, choice, resolve_all))
             return 1
 
@@ -1649,7 +1649,7 @@ class TestDefaultInteractionDispatch:
         adapter = self._make_adapter()
         resolve_calls = []
 
-        def fake_resolve(session_key, choice, resolve_all=False):
+        def fake_resolve(session_key, choice, resolve_all=False, **_kw):
             resolve_calls.append((session_key, choice, resolve_all))
             return 1
 
@@ -2239,3 +2239,34 @@ class TestReadEventsClosedWsGuard:
         adapter._ws = None
         with pytest.raises(RuntimeError):
             asyncio.run(adapter._read_events())
+
+
+class TestApprovalClickBoundToRequester:
+    """F22: a keyboard click only answers the clicker's own command (real queue)."""
+
+    @pytest.mark.asyncio
+    async def test_click_only_resolves_clickers_own_command(self):
+        from gateway.platforms.qqbot.adapter import QQAdapter
+        from gateway.platforms.qqbot.keyboards import parse_interaction_event
+        from tools import approval as mod
+
+        key = "agent:main:qqbot:c2c:u-42"
+        entry = mod._ApprovalEntry({"command": "rm -rf /tmp/x"}, requester_id="u-other")
+        mod._gateway_queues[key] = [entry]
+        try:
+            adapter = QQAdapter(_make_config(app_id="a", client_secret="b"))
+
+            def click():
+                return parse_interaction_event({
+                    "id": "i", "chat_type": 2, "user_openid": "u-42",
+                    "data": {"resolved": {"button_data": f"approve:{key}:allow-once"}},
+                })
+
+            await adapter._default_interaction_dispatch(click())
+            assert not entry.event.is_set()
+
+            entry.requester_id = "u-42"
+            await adapter._default_interaction_dispatch(click())
+            assert entry.event.is_set() and entry.result == "once"
+        finally:
+            mod._gateway_queues.pop(key, None)

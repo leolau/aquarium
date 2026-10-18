@@ -30,6 +30,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@nous-research/ui/ui/c
 import { Badge } from "@nous-research/ui/ui/components/badge";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useModalBehavior } from "@/hooks/useModalBehavior";
+import { useIsAdmin } from "@/contexts/useAdminRole";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { useI18n } from "@/i18n";
 import { PluginSlot } from "@/plugins";
@@ -374,6 +375,7 @@ function ModelCard({
   onAssigned(): void;
   showTokens: boolean;
 }) {
+  const isAdmin = useIsAdmin();
   const { t } = useI18n();
   const provider = entry.provider || modelVendor(entry.model);
   const totalTokens = entry.input_tokens + entry.output_tokens;
@@ -455,13 +457,15 @@ function ModelCard({
                 </div>
               )
             )}
-            <UseAsMenu
-              provider={provider}
-              model={entry.model}
-              isMain={isMain}
-              mainAuxTask={mainAuxTask}
-              onAssigned={onAssigned}
-            />
+            {isAdmin && (
+              <UseAsMenu
+                provider={provider}
+                model={entry.model}
+                isMain={isMain}
+                mainAuxTask={mainAuxTask}
+                onAssigned={onAssigned}
+              />
+            )}
           </div>
         </div>
       </CardHeader>
@@ -875,6 +879,7 @@ function ModelSettingsPanel({
   refreshKey: number;
   onSaved(): void;
 }) {
+  const isAdmin = useIsAdmin();
   const [auxModalOpen, setAuxModalOpen] = useState(false);
   const [moaModalOpen, setMoaModalOpen] = useState(false);
   const [moa, setMoa] = useState<MoaConfigResponse | null>(null);
@@ -947,13 +952,15 @@ function ModelSettingsPanel({
               {mainModel || "(unset)"}
             </div>
           </div>
-          <Button
-            size="sm"
-            onClick={() => setPicker({ kind: "main" })}
-            className="shrink-0 self-start text-xs uppercase sm:self-center"
-          >
-            Change
-          </Button>
+          {isAdmin && (
+            <Button
+              size="sm"
+              onClick={() => setPicker({ kind: "main" })}
+              className="shrink-0 self-start text-xs uppercase sm:self-center"
+            >
+              Change
+            </Button>
+          )}
         </div>
 
         {/* Auxiliary tasks summary + open modal */}
@@ -971,14 +978,16 @@ function ModelSettingsPanel({
                 : `${AUX_TASKS.length} tasks · all auto`}
             </div>
           </div>
-          <Button
-            size="sm"
-            outlined
-            onClick={() => setAuxModalOpen(true)}
-            className="shrink-0 self-start text-xs uppercase sm:self-center"
-          >
-            Configure
-          </Button>
+          {isAdmin && (
+            <Button
+              size="sm"
+              outlined
+              onClick={() => setAuxModalOpen(true)}
+              className="shrink-0 self-start text-xs uppercase sm:self-center"
+            >
+              Configure
+            </Button>
+          )}
         </div>
 
         <div className="flex min-w-0 flex-col gap-2 bg-muted/20 border border-border/50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
@@ -995,15 +1004,17 @@ function ModelSettingsPanel({
                 : "not loaded"}
             </div>
           </div>
-          <Button
-            size="sm"
-            outlined
-            onClick={() => setMoaModalOpen(true)}
-            disabled={!moa}
-            className="shrink-0 self-start text-xs uppercase sm:self-center"
-          >
-            Configure
-          </Button>
+          {isAdmin && (
+            <Button
+              size="sm"
+              outlined
+              onClick={() => setMoaModalOpen(true)}
+              disabled={!moa}
+              className="shrink-0 self-start text-xs uppercase sm:self-center"
+            >
+              Configure
+            </Button>
+          )}
         </div>
 
         {picker && (

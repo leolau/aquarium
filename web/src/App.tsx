@@ -75,6 +75,13 @@ import { useProfileScope } from "@/contexts/useProfileScope";
 import { ProfileSwitcher } from "@/components/ProfileSwitcher";
 import { ProfileScopeBanner } from "@/components/ProfileScopeBanner";
 import { useSystemActions } from "@/contexts/useSystemActions";
+import { useAdminRole } from "@/contexts/useAdminRole";
+import { AdminOnly, AdminOnlyPage } from "@/components/AdminOnly";
+import {
+  isAdminOnlyPage,
+  visibleNavItems,
+  visiblePluginManifests,
+} from "@/lib/admin-role";
 import type { SystemAction } from "@/contexts/system-actions-context";
 import ConfigPage from "@/screens/ConfigPage";
 import DocsPage from "@/screens/DocsPage";
@@ -343,7 +350,17 @@ function buildRoutes(
         element: <PluginPage name={om.name} />,
       });
     } else {
-      routes.push({ key: `builtin:${path}`, path, element: <Component /> });
+      routes.push({
+        key: `builtin:${path}`,
+        path,
+        element: isAdminOnlyPage(path) ? (
+          <AdminOnlyPage>
+            <Component />
+          </AdminOnlyPage>
+        ) : (
+          <Component />
+        ),
+      });
     }
   }
 
@@ -377,7 +394,12 @@ const SIDEBAR_COLLAPSED_KEY = "hermes-sidebar-collapsed";
 export default function App() {
   const { t } = useI18n();
   const { pathname } = useLocation();
-  const { manifests, loading: pluginsLoading } = usePlugins();
+  const { manifests: allManifests, loading: pluginsLoading } = usePlugins();
+  const adminRole = useAdminRole();
+  const manifests = useMemo(
+    () => visiblePluginManifests(allManifests, adminRole),
+    [allManifests, adminRole],
+  );
   const { theme } = useTheme();
   const [mobileOpen, setMobileOpen] = useState(false);
   const closeMobile = useCallback(() => setMobileOpen(false), []);
@@ -442,8 +464,8 @@ export default function App() {
   // plugin-load window (typically <50ms, worst case 2s safety timeout)
   // is the cheaper trade-off.
   const chatOverriddenByPlugin = useMemo(
-    () => manifests.some((m) => m.tab.override === "/chat"),
-    [manifests],
+    () => allManifests.some((m) => m.tab.override === "/chat"),
+    [allManifests],
   );
 
   const builtinRoutes = useMemo(
@@ -458,10 +480,11 @@ export default function App() {
     const base = embeddedChat
       ? [CHAT_NAV_ITEM, ...BUILTIN_NAV_REST]
       : BUILTIN_NAV_REST;
-    return showTokenAnalytics
-      ? base
-      : base.filter((n) => n.path !== "/analytics");
-  }, [embeddedChat, showTokenAnalytics]);
+    return visibleNavItems(
+      showTokenAnalytics ? base : base.filter((n) => n.path !== "/analytics"),
+      adminRole,
+    );
+  }, [embeddedChat, showTokenAnalytics, adminRole]);
 
   const sidebarNav = useMemo(
     () => partitionSidebarNav(builtinNav, manifests),
@@ -689,12 +712,14 @@ export default function App() {
               )}
             </nav>
 
-            <SidebarSystemActions
-              collapsed={isDesktopCollapsed}
-              onNavigate={closeMobile}
-              status={sidebarStatus}
-              tooltipWarmRef={tooltipWarmRef}
-            />
+            <AdminOnly>
+              <SidebarSystemActions
+                collapsed={isDesktopCollapsed}
+                onNavigate={closeMobile}
+                status={sidebarStatus}
+                tooltipWarmRef={tooltipWarmRef}
+              />
+            </AdminOnly>
 
             <div
               className={cn(
@@ -780,6 +805,7 @@ export default function App() {
 
                 {embeddedChat &&
                   !chatOverriddenByPlugin &&
+                  adminRole === "admin" &&
                   (pluginsLoading ? (
                     isChatRoute ? (
                       <div

@@ -60,6 +60,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Input } from "@nous-research/ui/ui/components/input";
 import { useI18n } from "@/i18n";
+import { useIsAdmin } from "@/contexts/useAdminRole";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { PluginSlot } from "@/plugins";
 
@@ -126,6 +127,7 @@ function toolsetIcon(
 /* ------------------------------------------------------------------ */
 
 export default function SkillsPage() {
+  const isAdmin = useIsAdmin();
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [toolsets, setToolsets] = useState<ToolsetInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -524,6 +526,8 @@ export default function SkillsPage() {
                         .replace("{count}", String(activeSkills.length))
                         .replace("{s}", activeSkills.length !== 1 ? "s" : "")}
                     </Badge>
+                    {isAdmin && (
+                    <>
                     <Button
                       size="sm"
                       outlined
@@ -540,6 +544,8 @@ export default function SkillsPage() {
                     >
                       New skill
                     </Button>
+                    </>
+                    )}
                   </div>
                 </div>
               </CardHeader>
@@ -631,6 +637,7 @@ export default function SkillsPage() {
                                     : t.skills.disabledForCli}
                                 </span>
                               )}
+                              {isAdmin && (
                               <div className="mt-3">
                                 <Button
                                   size="sm"
@@ -641,6 +648,7 @@ export default function SkillsPage() {
                                   Configure
                                 </Button>
                               </div>
+                              )}
                             </div>
                           </div>
                         </CardContent>
@@ -740,13 +748,14 @@ function SkillRow({
   onEdit,
   noDescriptionLabel,
 }: SkillRowProps) {
+  const isAdmin = useIsAdmin();
   return (
     <div className="group flex items-start gap-3 px-3 py-2.5 transition-colors hover:bg-muted/40">
       <div className="pt-0.5 shrink-0">
         <Switch
           checked={skill.enabled}
           onCheckedChange={onToggle}
-          disabled={toggling}
+          disabled={toggling || !isAdmin}
         />
       </div>
       <div className="flex-1 min-w-0">
@@ -763,6 +772,7 @@ function SkillRow({
           {skill.description || noDescriptionLabel}
         </p>
       </div>
+      {isAdmin && (
       <Button
         ghost
         size="icon"
@@ -773,6 +783,7 @@ function SkillRow({
       >
         <Pencil />
       </Button>
+      )}
     </div>
   );
 }
@@ -863,6 +874,7 @@ function HubBrowser({
   /** Optional profile scoping installs + installed-state badges. */
   profile?: string;
 }) {
+  const isAdmin = useIsAdmin();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SkillHubResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -1025,6 +1037,7 @@ function HubBrowser({
             >
               Search
             </Button>
+            {isAdmin && (
             <Button
               size="sm"
               outlined
@@ -1033,6 +1046,7 @@ function HubBrowser({
             >
               Update all
             </Button>
+            )}
           </div>
 
           {/* Connected hubs strip — proves the tab is wired up. */}
@@ -1263,6 +1277,7 @@ function HubResultCard({
   onOpen: () => void;
   onInstall: () => void;
 }) {
+  const isAdmin = useIsAdmin();
   const trust = trustVisual(result.trust_level);
   return (
     <Card className="rounded-none transition-colors hover:bg-muted/30">
@@ -1319,7 +1334,7 @@ function HubResultCard({
             <Button size="sm" ghost disabled prefix={<CheckCircle2 className="h-3.5 w-3.5" />}>
               Installed
             </Button>
-          ) : (
+          ) : isAdmin ? (
             <Button
               size="sm"
               onClick={onInstall}
@@ -1327,7 +1342,7 @@ function HubResultCard({
             >
               Install
             </Button>
-          )}
+          ) : null}
         </div>
       </CardContent>
     </Card>
@@ -1348,6 +1363,7 @@ function SkillDetailDialog({
   onInstall: () => void;
   showToast: (msg: string, kind: "success" | "error") => void;
 }) {
+  const isAdmin = useIsAdmin();
   const [tab, setTab] = useState<"readme" | "scan">("readme");
   const [preview, setPreview] = useState<SkillHubPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(true);
@@ -1456,7 +1472,7 @@ function SkillDetailDialog({
               <Button size="sm" ghost disabled prefix={<CheckCircle2 className="h-3.5 w-3.5" />}>
                 Installed
               </Button>
-            ) : (
+            ) : isAdmin ? (
               <Button
                 size="sm"
                 onClick={onInstall}
@@ -1464,7 +1480,7 @@ function SkillDetailDialog({
               >
                 Install
               </Button>
-            )}
+            ) : null}
           </div>
         </div>
 

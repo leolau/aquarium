@@ -23,10 +23,13 @@ const uploadChatMedia = vi.fn(
   }),
 );
 const registerFile = vi.fn(async () => ({ ok: true }));
+const uploadStorage = vi.fn<() => Promise<{ free_bytes: number | null }>>(
+  async () => ({ free_bytes: null }),
+);
 
 vi.mock("@/lib/auth/principal", () => ({
   getPrincipal: () => getPrincipal(),
-  apiClientForRequest: async () => ({ registerFile }),
+  apiClientForRequest: async () => ({ registerFile, uploadStorage }),
 }));
 vi.mock("@/lib/env", () => ({ mediaBucket: () => "hermes-media" }));
 vi.mock("@/lib/supabase/storage", () => ({
@@ -66,6 +69,40 @@ describe("POST /api/chat/upload", () => {
     getPrincipal.mockResolvedValue(null);
     const res = await post(new File([new Uint8Array(8)], "a.txt"));
     expect(res.status).toBe(401);
+  });
+
+  it("refuses a file bigger than the free upload disk space, in plain words", async () => {
+    uploadStorage.mockResolvedValue({ free_bytes: 1024 });
+    const res = await post(new File([new Uint8Array(4096)], "big.bin"));
+    expect(res.status).toBe(507);
+    const body = (await res.json()) as { error: string; detail: string };
+    expect(body.error).toBe("insufficient_storage");
+    expect(body.detail).toMatch(/Not enough storage space on the server/);
+    expect(uploadChatMedia).not.toHaveBeenCalled();
+  });
+
+  it("refuses from Content-Length before reading the body", async () => {
+    uploadStorage.mockResolvedValue({ free_bytes: 1024 });
+    const formData = vi.fn();
+    const req = {
+      headers: new Headers({ "content-length": String(10 * 1024 * 1024) }),
+      formData,
+    } as unknown as Request;
+    const res = (await POST(req)) as unknown as Response;
+    expect(res.status).toBe(507);
+    expect(formData).not.toHaveBeenCalled();
+  });
+
+  it("uploads when free space fits the file", async () => {
+    uploadStorage.mockResolvedValue({ free_bytes: 10 * 1024 * 1024 });
+    const res = await post(new File([new Uint8Array(4096)], "ok.bin"));
+    expect(res.status).toBe(200);
+  });
+
+  it("uploads when free space cannot be read (never blocks a working box)", async () => {
+    uploadStorage.mockRejectedValue(new Error("backend down"));
+    const res = await post(new File([new Uint8Array(4096)], "ok.bin"));
+    expect(res.status).toBe(200);
   });
 
   it("accepts a file above the old 10 MB cap", async () => {
