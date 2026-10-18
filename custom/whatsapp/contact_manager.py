@@ -3,8 +3,9 @@
 Contact Auto-Management Module for Hermes Agent
 
 Automatically creates new contacts, correlates handles across channels,
-auto-merges high-confidence matches, and sends Telegram confirmations
-for medium-confidence merge suggestions.
+auto-merges high-confidence matches (exact unique name), and sends Telegram
+confirmations for medium-confidence merge suggestions (fuzzy names, same
+domain, or a known phone/email quoted in the message body).
 """
 
 import json
@@ -293,22 +294,25 @@ def process_new_handle(db, handle_type, handle_value, display_name, source, mess
                     best_confidence = 'medium'
                     best_reason = f'Fuzzy name match: "{display_name}" ~ "{candidate["display_name"]}" ({sim:.0%})'
 
-        # Signal 2: Cross-reference in message content
-        if message_text:
+        # Signal 2: Cross-reference in message content. The body is written
+        # by the (unknown) sender, so a known phone/email in it is only a
+        # hint: suggest the merge for the owner to confirm, never auto-merge.
+        if message_text and best_confidence != 'high':
+            flat_text = message_text.replace(' ', '').replace('-', '')
             for ch in candidate_handles:
+                reason = None
                 if ch['handle_type'] == 'phone':
                     phone_digits = ch['handle_value'].lstrip('+').replace('-', '').replace(' ', '')
-                    if len(phone_digits) >= 8 and phone_digits in message_text.replace(' ', '').replace('-', ''):
-                        best_match = candidate
-                        best_confidence = 'high'
-                        best_reason = f'Phone {ch["handle_value"]} found in message content'
-                        break
+                    if len(phone_digits) >= 8 and phone_digits in flat_text:
+                        reason = f'Phone {ch["handle_value"]} found in message content'
                 elif ch['handle_type'] == 'email':
                     if ch['handle_value'] in message_text:
-                        best_match = candidate
-                        best_confidence = 'high'
-                        best_reason = f'Email {ch["handle_value"]} found in message content'
-                        break
+                        reason = f'Email {ch["handle_value"]} found in message content'
+                if reason:
+                    best_match = candidate
+                    best_confidence = 'medium'
+                    best_reason = reason
+                    break
 
         # Signal 3: Same domain + similar name (email only)
         if handle_type == 'email' and '@' in handle_value:
