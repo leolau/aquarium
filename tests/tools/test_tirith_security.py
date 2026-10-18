@@ -545,6 +545,11 @@ class TestExplicitPathNoAutoDownload:
 # ---------------------------------------------------------------------------
 
 class TestCosignVerification:
+    @pytest.fixture(autouse=True)
+    def _accept_pinned_digest(self):
+        with patch("tools.tirith_security._verify_pinned_digest", return_value=True):
+            yield
+
     @patch("tools.tirith_security.subprocess.run")
     @patch("tools.tirith_security.shutil.which", return_value="/usr/bin/cosign")
     def test_cosign_pass(self, mock_which, mock_run):
@@ -722,6 +727,11 @@ class TestCosignVerification:
 
 
 class TestInstallArchiveMemberValidation:
+    @pytest.fixture(autouse=True)
+    def _accept_pinned_digest(self):
+        with patch("tools.tirith_security._verify_pinned_digest", return_value=True):
+            yield
+
     def _write_archive(self, tmp_path, member: tarfile.TarInfo, data: bytes | None = None):
         archive = tmp_path / "tirith-aarch64-apple-darwin.tar.gz"
         checksums = tmp_path / "checksums.txt"
@@ -1492,3 +1502,115 @@ class TestMkdtempOSErrorNoSpace:
             result = _resolve_tirith_path("tirith")
             assert _tirith_mod._resolved_path is _INSTALL_FAILED
             mock_mark.assert_called_once_with("no_space")
+
+
+# ---------------------------------------------------------------------------
+# F25 — pinned release + embedded digest, no token on downloads
+# ---------------------------------------------------------------------------
+
+
+class TestPinnedRelease:
+    def _archive(self, tmp_path, payload=b"#!/bin/sh\nexit 0\n"):
+        archive = tmp_path / "src.tar.gz"
+        member = tarfile.TarInfo("tirith")
+        member.mode = 0o755
+        member.size = len(payload)
+        with tarfile.open(archive, "w:gz") as tar:
+            tar.addfile(member, io.BytesIO(payload))
+        return archive
+
+    def _run_install(self, tmp_path, monkeypatch, archive, target="x86_64-unknown-linux-gnu"):
+        """Real _install_tirith with only the network replaced. checksums.txt
+        always matches the served archive, like a compromised release would."""
+        import hashlib
+
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        urls = []
+
+        def _download(url, dest, timeout=10):
+            del timeout
+            urls.append(url)
+            if url.endswith(".tar.gz"):
+                with open(dest, "wb") as f:
+                    f.write(archive.read_bytes())
+            elif url.endswith("checksums.txt"):
+                with open(dest, "w", encoding="utf-8") as f:
+                    f.write(f"{digest}  tirith-{target}.tar.gz\n")
+            else:
+                raise OSError("no cosign artifacts")
+
+        hermes_home = tmp_path / "hermes-home"
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+        with patch("tools.tirith_security._detect_target", return_value=target), \
+             patch("tools.tirith_security.shutil.which", return_value=None), \
+             patch("tools.tirith_security._download_file", side_effect=_download):
+            path, reason = _tirith_mod._install_tirith(log_failures=False)
+        return path, reason, urls, hermes_home, digest
+
+    def test_downloads_pinned_tag_not_latest(self, tmp_path, monkeypatch):
+        archive = self._archive(tmp_path)
+        _, _, urls, _, _ = self._run_install(tmp_path, monkeypatch, archive)
+        assert urls
+        for url in urls:
+            assert "/releases/latest/" not in url
+            assert f"/releases/download/{_tirith_mod._TIRITH_VERSION}/" in url
+
+    def test_rejects_archive_not_matching_pinned_digest(self, tmp_path, monkeypatch):
+        """A release whose own checksums.txt agrees is still refused."""
+        archive = self._archive(tmp_path, b"#!/bin/sh\necho pwned\n")
+        path, reason, _, hermes_home, _ = self._run_install(tmp_path, monkeypatch, archive)
+        assert path is None
+        assert reason == "checksum_failed"
+        assert not os.path.lexists(hermes_home / "bin" / "tirith")
+
+    def test_installs_archive_matching_pinned_digest(self, tmp_path, monkeypatch):
+        archive = self._archive(tmp_path)
+        import hashlib
+
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        with patch.dict(_tirith_mod._TIRITH_SHA256, {"x86_64-unknown-linux-gnu": digest}):
+            path, reason, _, hermes_home, _ = self._run_install(tmp_path, monkeypatch, archive)
+        assert reason == ""
+        assert path == str(hermes_home / "bin" / "tirith")
+
+    def test_target_without_pinned_digest_is_not_downloaded(self, tmp_path, monkeypatch):
+        archive = self._archive(tmp_path)
+        path, reason, urls, _, _ = self._run_install(
+            tmp_path, monkeypatch, archive, target="aarch64-unknown-linux-musl")
+        assert path is None
+        assert reason == "unsupported_platform"
+        assert urls == []
+
+    def test_every_supported_target_has_a_digest(self):
+        for target in ("x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu",
+                       "x86_64-apple-darwin", "aarch64-apple-darwin"):
+            digest = _tirith_mod._TIRITH_SHA256[target]
+            assert len(digest) == 64 and int(digest, 16) >= 0
+
+    def test_cosign_identity_pinned_to_exact_tag(self):
+        import re
+
+        rx = re.compile(_tirith_mod._COSIGN_IDENTITY_REGEXP)
+        base = "https://github.com/sheeki03/tirith/.github/workflows/release.yml@refs/tags/"
+        assert rx.match(base + _tirith_mod._TIRITH_VERSION)
+        assert not rx.match(base + "v9.9.9")
+        assert not rx.match(base + _tirith_mod._TIRITH_VERSION + "-evil")
+
+    def test_download_never_sends_github_token(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_secret")
+        seen = {}
+
+        class _Resp(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def _urlopen(req, timeout=10):
+            seen["headers"] = dict(req.header_items())
+            return _Resp(b"data")
+
+        with patch("tools.tirith_security.urllib.request.urlopen", side_effect=_urlopen):
+            _tirith_mod._download_file("https://example.invalid/x", str(tmp_path / "x"))
+        assert not any(k.lower() == "authorization" for k in seen["headers"])
