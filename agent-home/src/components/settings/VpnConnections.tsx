@@ -2,11 +2,13 @@
 
 /**
  * Settings → In&Out → Private networks (VPN): Fortinet SSL-VPN logins that
- * let Hermes reach an office network over a split tunnel and read a Windows
- * share read-only. Entries live in the unified credential store
+ * let Hermes reach an office network over a split tunnel. A VPN here is only
+ * the connection; the shares it reads are network folders (Files → Bridge),
+ * and only their file servers are routed through it. Entries live in the unified credential store
  * (kind `fortinet-vpn`, provider `fortinet`); tunnel state and actions come
  * from Hermes `/api/vpn`. Agents connect themselves with `hermes vpn up`.
  */
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
@@ -21,60 +23,19 @@ import type {
 const PROVIDER = "fortinet";
 const KIND = "fortinet-vpn";
 const SECRET_FIELDS = ["password", "share_password"] as const;
+/** Fields of the old one-share-per-VPN setup. Hermes keeps them on legacy
+ *  entries until migrated; the form never sends them. */
+const LEGACY_FIELDS = [
+  "routes",
+  "share_path",
+  "share_username",
+  "share_password",
+  "share_domain",
+] as const;
 const POLL_FAST_MS = 5_000;
 const POLL_SLOW_MS = 30_000;
 
-const IPV4_CIDR_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?:\/(\d{1,2}))?$/;
 const HOST_RE = /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$/;
-const SHARE_RE = /^(\\\\|\/\/)[^\\/\s]+[\\/][^\\/]+/;
-
-/**
- * Parse the "Addresses to reach through the VPN" box (comma / newline
- * separated). A bare address means that one host (/32). Rejects anything
- * that would route everything (/0) or has host bits set, since the tunnel
- * must stay split.
- */
-export function parseRoutes(text: string): { routes: string[]; error: string | null } {
-  const items = text
-    .split(/[\s,;]+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (items.length === 0) {
-    return { routes: [], error: "Add at least one address range, e.g. 10.20.0.0/16." };
-  }
-  const routes: string[] = [];
-  for (const item of items) {
-    const m = IPV4_CIDR_RE.exec(item);
-    if (!m) {
-      return { routes: [], error: `"${item}" is not an IPv4 range like 10.20.0.0/16.` };
-    }
-    const octets = m.slice(1, 5).map(Number);
-    const prefix = m[5] === undefined ? 32 : Number(m[5]);
-    if (octets.some((o) => o > 255) || prefix > 32) {
-      return { routes: [], error: `"${item}" is not a valid IPv4 range.` };
-    }
-    if (prefix === 0) {
-      return {
-        routes: [],
-        error: `"${item}" would send all traffic through the VPN — list only the office ranges.`,
-      };
-    }
-    const addr =
-      ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
-    const mask = prefix === 32 ? 0xffffffff : (~(0xffffffff >>> prefix)) >>> 0;
-    const network = (addr & mask) >>> 0;
-    if (network !== addr) {
-      const n = [24, 16, 8, 0].map((s) => (network >>> s) & 255).join(".");
-      return {
-        routes: [],
-        error: `"${item}" has host bits set — did you mean ${n}/${prefix}?`,
-      };
-    }
-    const cidr = `${octets.join(".")}/${prefix}`;
-    if (!routes.includes(cidr)) routes.push(cidr);
-  }
-  return { routes, error: null };
-}
 
 /** Normalise a fingerprint to 64 lowercase hex chars (strips colons). */
 export function normalizeFingerprint(sha: string): string {
@@ -139,10 +100,6 @@ interface FormValues {
   username: string;
   password: string;
   realm: string;
-  routes: string;
-  share_path: string;
-  share_username: string;
-  share_password: string;
   visibility: "private" | "shared";
 }
 
@@ -153,10 +110,6 @@ const EMPTY_FORM: FormValues = {
   username: "",
   password: "",
   realm: "",
-  routes: "",
-  share_path: "",
-  share_username: "",
-  share_password: "",
   visibility: "private",
 };
 
@@ -176,20 +129,14 @@ export function formError(values: FormValues, mode: "add" | "edit"): string | nu
   }
   if (!values.username.trim()) return "Enter the VPN username.";
   if (mode === "add" && !values.password) return "Enter the VPN password.";
-  const routes = parseRoutes(values.routes);
-  if (routes.error) return routes.error;
-  const share = values.share_path.trim();
-  if (share && !SHARE_RE.test(share)) {
-    return "Files location must be a Windows share like \\\\fileserver01\\Shared.";
-  }
   return null;
 }
 
 /**
  * The PUT payload. Starts from the stored (secret-free) payload so fields
- * the form doesn't show (trusted_cert, auto_connect, idle_minutes,
- * share_domain) survive an Edit; a blank secret is left out so Hermes keeps
- * the stored one.
+ * the form doesn't show (trusted_cert, auto_connect, idle_minutes) survive
+ * an Edit; a blank password is left out so Hermes keeps the stored one.
+ * Legacy route/share fields are never sent — Hermes keeps them on the entry.
  */
 export function buildPayload(
   values: FormValues,
@@ -197,22 +144,14 @@ export function buildPayload(
 ): FortinetVpnPayload {
   const payload: Record<string, unknown> = { ...base };
   for (const f of SECRET_FIELDS) delete payload[f];
+  for (const f of LEGACY_FIELDS) delete payload[f];
   payload.host = values.host.trim();
   payload.port = Number(values.port.trim() || "443");
   payload.username = values.username.trim();
-  payload.routes = parseRoutes(values.routes).routes;
-  const optional: Array<[keyof FormValues, string]> = [
-    ["realm", "realm"],
-    ["share_path", "share_path"],
-    ["share_username", "share_username"],
-  ];
-  for (const [field, key] of optional) {
-    const v = values[field].trim();
-    if (v) payload[key] = v;
-    else delete payload[key];
-  }
+  const realm = values.realm.trim();
+  if (realm) payload.realm = realm;
+  else delete payload.realm;
   if (values.password) payload.password = values.password;
-  if (values.share_password) payload.share_password = values.share_password;
   if (payload.auto_connect === undefined) payload.auto_connect = true;
   if (payload.idle_minutes === undefined) payload.idle_minutes = 30;
   return payload as unknown as FortinetVpnPayload;
@@ -389,10 +328,6 @@ export function VpnConnections() {
         username: str("username"),
         password: "",
         realm: str("realm"),
-        routes: (Array.isArray(stored.routes) ? (stored.routes as string[]) : vpn.routes).join(", "),
-        share_path: str("share_path"),
-        share_username: str("share_username"),
-        share_password: "",
         visibility: vpn.visibility.startsWith("private") ? "private" : "shared",
       },
     });
@@ -441,6 +376,7 @@ export function VpnConnections() {
     async (vpn: VpnView, on: boolean) => {
       replaceVpn({ ...vpn, auto_connect: on });
       const stored = await loadStoredPayload(vpn.name);
+      if (stored) for (const f of LEGACY_FIELDS) delete stored[f];
       const res = stored
         ? await fetch(credentialUrl(vpn.name), {
             method: "PUT",
@@ -477,8 +413,9 @@ export function VpnConnections() {
       <h2 className="text-sm font-semibold">Private networks (VPN)</h2>
       <p className="mb-3 text-xs text-[var(--color-muted)]">
         Connect Hermes to an office network so it can read files there. Only
-        traffic to the addresses you list goes through the VPN; everything
-        else (WhatsApp, email, models) stays on the normal internet.
+        traffic to the file servers of your network folders goes through the
+        VPN; everything else (WhatsApp, email, models) stays on the normal
+        internet.
       </p>
 
       {error && <p className="mb-2 text-xs text-red-400">{error}</p>}
@@ -617,50 +554,6 @@ export function VpnConnections() {
             />
           </label>
           <label className={labelCls}>
-            <span>Addresses to reach through the VPN</span>
-            <textarea
-              value={form.values.routes}
-              onChange={(e) => setField("routes", e.target.value)}
-              placeholder="10.20.0.0/16, 192.168.50.0/24"
-              rows={2}
-              className={inputCls}
-            />
-            <span className="block">
-              Office address ranges, separated by commas or new lines.
-            </span>
-          </label>
-          <label className={labelCls}>
-            <span>Files location (Windows share)</span>
-            <input
-              value={form.values.share_path}
-              onChange={(e) => setField("share_path", e.target.value)}
-              placeholder="\\fileserver01\Shared"
-              className={inputCls}
-            />
-          </label>
-          <div className="space-y-1 text-xs text-[var(--color-muted)]">
-            <span>Share login (if different from the VPN login)</span>
-            <div className="flex gap-2">
-              <input
-                aria-label="Share username"
-                value={form.values.share_username}
-                onChange={(e) => setField("share_username", e.target.value)}
-                placeholder="username"
-                autoComplete="off"
-                className={inputCls}
-              />
-              <input
-                aria-label="Share password"
-                type="password"
-                value={form.values.share_password}
-                onChange={(e) => setField("share_password", e.target.value)}
-                placeholder={form.mode === "edit" ? "unchanged" : "password"}
-                autoComplete="new-password"
-                className={inputCls}
-              />
-            </div>
-          </div>
-          <label className={labelCls}>
             <span>Who can use it</span>
             <select
               value={form.values.visibility}
@@ -673,6 +566,15 @@ export function VpnConnections() {
               <option value="shared">shared (everyone on this Hermes)</option>
             </select>
           </label>
+          <p data-vpn-folders-note className="text-xs text-[var(--color-muted)]">
+            Only the VPN connection is set up here. To read files, add a network
+            folder in{" "}
+            <Link href="/files/bridge" className="underline">
+              Files → Bridge
+            </Link>{" "}
+            with its \\server\share path. Only traffic to those file servers goes
+            through the VPN.
+          </p>
           {formProblem && <p className="text-xs text-red-400">{formProblem}</p>}
           <div className="flex gap-2">
             <button
@@ -818,6 +720,10 @@ function VpnCard({
               </code>
             </>
           )}
+          {" · "}
+          <Link href="/files/bridge" data-vpn-move-share className="underline">
+            Move this to Files → Bridge
+          </Link>
         </p>
       )}
 
