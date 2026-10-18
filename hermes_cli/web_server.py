@@ -15669,6 +15669,76 @@ async def toggle_toolset(
     return {"ok": True, "name": name, "platform": plat, "enabled": name in effective}
 
 
+class RoleToolsUpdate(BaseModel):
+    deny_tools: Optional[List[str]] = None
+    reset: bool = False
+    profile: Optional[str] = None
+
+
+async def _require_role_limits_editor(request: "Request") -> None:
+    """403 unless the caller is the owner or an admin.
+
+    A caller with no login (operator token, desktop app) acts as the owner,
+    including on a single-user install with no multi-user datastore.
+    """
+    try:
+        actor = await _comms_resolve_principal(request)
+    except _CommsNotConfigured as exc:
+        if _comms_session_subject(request):
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return
+    if getattr(actor, "role", None) not in ("owner", "admin"):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the owner or an admin can change what each role can use.",
+        )
+
+
+@app.get("/api/access/roles")
+async def get_role_limits(profile: Optional[str] = None):
+    """What each role's agent may use: tool groups allowed/blocked and the file rule.
+
+    Read from ``access.roles`` in config.yaml, falling back to the defaults in
+    ``tools/access_policy.py``.
+    """
+    from tools.access_policy import role_limits
+
+    with _profile_scope(profile):
+        config = load_config()
+    return {"roles": role_limits(config)}
+
+
+@app.put("/api/access/roles/{role}")
+async def update_role_limits(
+    role: str, body: RoleToolsUpdate, request: Request, profile: Optional[str] = None
+):
+    """Set a role's blocked tools (``access.roles.<role>.deny_tools``) or reset them.
+
+    Owner and admin only. The owner row is locked. Changes reach the tool list
+    of the next new chat; running conversations keep theirs.
+    """
+    from tools.access_policy import (
+        reset_role_deny_tools,
+        role_limits,
+        set_role_deny_tools,
+    )
+
+    await _require_role_limits_editor(request)
+    if not body.reset and body.deny_tools is None:
+        raise HTTPException(status_code=400, detail="Send deny_tools or reset.")
+    with _profile_scope(body.profile or profile):
+        config = load_config()
+        try:
+            if body.reset:
+                reset_role_deny_tools(config, role)
+            else:
+                set_role_deny_tools(config, role, body.deny_tools or [])
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        save_config(config)
+    return {"ok": True, "roles": role_limits(config)}
+
+
 @app.get("/api/tools/toolsets/{name}/config")
 async def get_toolset_config(name: str, profile: Optional[str] = None):
     """Return the provider matrix + key status for a toolset's config panel.

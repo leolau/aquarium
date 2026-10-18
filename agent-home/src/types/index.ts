@@ -2416,6 +2416,39 @@ export interface McpServersResponse {
   servers: McpServer[];
 }
 
+/** One tool group (toolset) as seen by one role on Settings → Tools. */
+export interface RoleToolGroup {
+  name: string;
+  label: string;
+  description: string;
+  /** Lets the agent run arbitrary commands (terminal, run code). */
+  risky: boolean;
+  state: "allowed" | "blocked" | "partial";
+  tools: string[];
+  blocked_tools: string[];
+}
+
+/** `GET /api/access/roles` row — what one role's agent may use. */
+export interface RoleLimit {
+  role: Role;
+  label: string;
+  /** The owner row can't be changed. */
+  locked: boolean;
+  /** Blocked tools come from config.yaml rather than the defaults. */
+  customised: boolean;
+  files: "any" | "own_folder";
+  files_customised: boolean;
+  summary: string;
+  blocked_tools: string[];
+  /** Blocked tools that belong to no listed group. */
+  other_blocked_tools: string[];
+  groups: RoleToolGroup[];
+}
+
+export interface RoleLimitsResponse {
+  roles: RoleLimit[];
+}
+
 /** `GET /api/tools/toolsets?platform=…` row — one configurable tool group. */
 export interface Toolset {
   name: string;

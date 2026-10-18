@@ -85,6 +85,7 @@ import type {
   ProjectToolsResolution,
   ProposedAction,
   Role,
+  RoleLimitsResponse,
   SessionCreateResponse,
   CredentialEntry,
   EmailPollerAccount,
@@ -394,6 +395,22 @@ export class HermesApiClient {
     return this.request(`/api/tools/toolsets/${encodeURIComponent(name)}`, {
       method: "PUT",
       json: { enabled, platform },
+    });
+  }
+
+  /** What each role's agent may use (Settings → Tools, "What each role can use"). */
+  async roleLimits(): Promise<RoleLimitsResponse> {
+    return this.request("/api/access/roles");
+  }
+
+  /** Replace a role's blocked tools, or `reset` it to the defaults. Owner/admin only. */
+  async setRoleLimits(
+    role: string,
+    change: { deny_tools: string[] } | { reset: true },
+  ): Promise<{ ok: boolean } & RoleLimitsResponse> {
+    return this.request(`/api/access/roles/${encodeURIComponent(role)}`, {
+      method: "PUT",
+      json: change,
     });
   }
 

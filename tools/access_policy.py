@@ -13,6 +13,10 @@ Overrides live in config.yaml::
         member:
           deny_tools: [terminal, code_execution]   # tool or toolset names
           files: own_folder                         # or "any"
+
+Settings → Tools & Integrations in agent-home reads and edits the same knobs
+through :func:`role_limits` / :func:`set_role_deny_tools`; this module is the
+single source of truth for the defaults.
 """
 
 from __future__ import annotations
@@ -21,7 +25,7 @@ import contextlib
 import contextvars
 import re
 from pathlib import Path
-from typing import Any, Dict, FrozenSet, Iterator, Optional, Tuple
+from typing import Any, Dict, FrozenSet, Iterable, Iterator, List, Optional, Tuple
 
 _COMMAND_TOOLS: Tuple[str, ...] = (
     "terminal",
@@ -42,6 +46,30 @@ DEFAULT_DENIED_TOOLS: Dict[str, Tuple[str, ...]] = {
 
 _FULL_FILE_ROLES = frozenset({"owner", "admin"})
 
+#: Roles whose tool limits can't be changed from the settings page.
+LOCKED_ROLES = frozenset({"owner"})
+
+#: Tool groups that let the agent run arbitrary commands; flagged in the UI.
+RISKY_GROUPS = frozenset({"terminal", "code_execution"})
+
+_ROLE_PLURALS = {"owner": "The owner", "admin": "Admins", "member": "Members", "viewer": "Viewers"}
+
+#: Tools the configurable toolsets don't list but that belong with a group.
+_GROUP_EXTRAS: Dict[str, Tuple[str, ...]] = {
+    "terminal": ("read_terminal", "close_terminal"),
+}
+
+#: Plain-language phrases for the summary sentence ("Members can't ...").
+_SUMMARY_PHRASES: Tuple[Tuple[FrozenSet[str], str], ...] = (
+    (frozenset({"terminal", "process", "read_terminal", "close_terminal"}), "use the terminal"),
+    (frozenset({"execute_code"}), "run code"),
+    (frozenset({"cronjob"}), "schedule jobs"),
+    (frozenset({"skill_manage"}), "change skills"),
+    (frozenset({"write_file", "patch"}), "write or edit files"),
+)
+
+_TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+
 _principal: contextvars.ContextVar[Tuple[Optional[str], Optional[str]]] = (
     contextvars.ContextVar("tool_access_principal", default=(None, None))
 )
@@ -55,11 +83,13 @@ def _role(user_id: Optional[str], role: Optional[str]) -> Optional[str]:
     return normalize_role(role)
 
 
-def _role_config(role: str) -> Dict[str, Any]:
+def _role_config(role: str, config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     try:
-        from hermes_cli.config import load_config_readonly
+        if config is None:
+            from hermes_cli.config import load_config_readonly
 
-        roles = (load_config_readonly().get("access") or {}).get("roles") or {}
+            config = load_config_readonly()
+        roles = (config.get("access") or {}).get("roles") or {}
         cfg = roles.get(role) if isinstance(roles, dict) else None
         return cfg if isinstance(cfg, dict) else {}
     except Exception:
@@ -86,10 +116,23 @@ def denied_tools(user_id: Optional[str], role: Optional[str]) -> FrozenSet[str]:
     r = _role(user_id, role)
     if r is None:
         return frozenset()
-    cfg = _role_config(r)
+    return role_denied_tools(r)
+
+
+def role_denied_tools(role: str, config: Optional[Dict[str, Any]] = None) -> FrozenSet[str]:
+    """Tool names anyone holding *role* may not call (config override or default)."""
+    cfg = _role_config(role, config)
     if "deny_tools" in cfg:
         return _expand(cfg.get("deny_tools"))
-    return _expand(DEFAULT_DENIED_TOOLS.get(r, _COMMAND_TOOLS))
+    return _expand(DEFAULT_DENIED_TOOLS.get(role, _COMMAND_TOOLS))
+
+
+def role_files_rule(role: str, config: Optional[Dict[str, Any]] = None) -> str:
+    """``"any"`` when *role*'s file tools may touch any file, else ``"own_folder"``."""
+    files = _role_config(role, config).get("files")
+    if files == "any" or (files is None and role in _FULL_FILE_ROLES):
+        return "any"
+    return "own_folder"
 
 
 def _folder_name(user_id: str) -> str:
@@ -100,10 +143,7 @@ def _folder_name(user_id: str) -> str:
 def files_root(user_id: Optional[str], role: Optional[str]) -> Optional[Path]:
     """The only folder *user_id*'s file tools may use, or ``None`` for anywhere."""
     r = _role(user_id, role)
-    if r is None:
-        return None
-    files = _role_config(r).get("files")
-    if files == "any" or (files is None and r in _FULL_FILE_ROLES):
+    if r is None or role_files_rule(r) == "any":
         return None
     from hermes_constants import get_hermes_home
 
@@ -146,3 +186,154 @@ def blocked_tool_error(function_name: str) -> str:
         f"'{function_name}' is not available to your role. "
         "Ask the owner or an admin if you need it."
     )
+
+
+# ── Settings page: read and edit the per-role limits ─────────────────────────
+
+
+def _tool_groups() -> List[Tuple[str, str, str, Tuple[str, ...]]]:
+    """``(name, label, description, tools)`` for every configurable toolset."""
+    import toolsets
+    from hermes_cli.tools_config import (
+        _get_effective_configurable_toolsets,
+        gui_toolset_label,
+    )
+
+    groups = []
+    for name, label, desc in _get_effective_configurable_toolsets():
+        try:
+            tools = set(toolsets.resolve_toolset(name))
+        except Exception:
+            tools = set()
+        tools.update(_GROUP_EXTRAS.get(name, ()))
+        if tools:
+            groups.append((name, gui_toolset_label(label), desc, tuple(sorted(tools))))
+    return groups
+
+
+def _summary(role: str, denied: FrozenSet[str], files: str) -> str:
+    who = _ROLE_PLURALS.get(role, role.title())
+    if role == "owner" and not denied:
+        return "The owner can use every tool and any file."
+    cant = [phrase for tools, phrase in _SUMMARY_PHRASES if tools & denied]
+    others = len(denied.difference(*(tools for tools, _ in _SUMMARY_PHRASES)))
+    if others:
+        cant.append(f"use {others} other tool{'s' if others != 1 else ''}")
+    if cant:
+        head = cant[0] if len(cant) == 1 else ", ".join(cant[:-1]) + " or " + cant[-1]
+        tools_part = f"{who} can't {head}."
+    else:
+        tools_part = f"{who} can use every tool."
+    files_part = "can use any file" if files == "any" else "can only use files in their own folder"
+    return f"{tools_part} They {files_part}."
+
+
+def role_limits(config: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """Effective tool and file limits for every role, for the settings page."""
+    from hermes_cli.access import ROLES
+
+    groups = _tool_groups()
+    grouped = {t for *_, tools in groups for t in tools}
+    out = []
+    for role in ROLES:
+        cfg = _role_config(role, config)
+        denied = role_denied_tools(role, config)
+        files = role_files_rule(role, config)
+        role_groups = []
+        for name, label, desc, tools in groups:
+            blocked = [t for t in tools if t in denied]
+            state = "blocked" if len(blocked) == len(tools) else "partial" if blocked else "allowed"
+            role_groups.append({
+                "name": name,
+                "label": label,
+                "description": desc,
+                "risky": name in RISKY_GROUPS,
+                "state": state,
+                "tools": list(tools),
+                "blocked_tools": blocked,
+            })
+        out.append({
+            "role": role,
+            "label": _ROLE_PLURALS.get(role, role.title()),
+            "locked": role in LOCKED_ROLES,
+            "customised": "deny_tools" in cfg,
+            "files": files,
+            "files_customised": "files" in cfg,
+            "summary": _summary(role, denied, files),
+            "blocked_tools": sorted(denied),
+            "other_blocked_tools": sorted(denied - grouped),
+            "groups": role_groups,
+        })
+    return out
+
+
+def _compact(names: Iterable[str]) -> List[str]:
+    """Write whole groups as their toolset name, leftover tools by name."""
+    import toolsets
+
+    remaining = set(names)
+    wanted = set(remaining)
+    out: List[str] = []
+    for name, *_ in _tool_groups():
+        if name not in toolsets.TOOLSETS:
+            continue
+        try:
+            tools = set(toolsets.resolve_toolset(name))
+        except Exception:
+            continue
+        if tools and tools <= wanted and tools & remaining:
+            out.append(name)
+            remaining -= tools
+    return out + sorted(remaining)
+
+
+def _check_editable(role: str) -> None:
+    from hermes_cli.access import ROLES
+
+    if role not in ROLES:
+        raise ValueError(f"Unknown role: {role}")
+    if role in LOCKED_ROLES:
+        raise ValueError("The owner always has every tool.")
+
+
+def set_role_deny_tools(config: Dict[str, Any], role: str, names: Iterable[str]) -> List[str]:
+    """Store *names* as *role*'s blocked tools in *config*; returns what was stored.
+
+    Raises ``ValueError`` for an unknown or locked role or a malformed name.
+    """
+    _check_editable(role)
+    clean = set()
+    for name in names:
+        name = str(name).strip()
+        if not _TOOL_NAME_RE.match(name):
+            raise ValueError(f"Not a tool name: {name!r}")
+        clean.add(name)
+    stored = _compact(_expand(clean))
+    access = config.get("access")
+    if not isinstance(access, dict):
+        access = config["access"] = {}
+    roles = access.get("roles")
+    if not isinstance(roles, dict):
+        roles = access["roles"] = {}
+    entry = roles.get(role)
+    if not isinstance(entry, dict):
+        entry = roles[role] = {}
+    entry["deny_tools"] = stored
+    return stored
+
+
+def reset_role_deny_tools(config: Dict[str, Any], role: str) -> None:
+    """Drop *role*'s blocked-tools override so the defaults apply again."""
+    _check_editable(role)
+    roles = (config.get("access") or {}).get("roles")
+    if not isinstance(roles, dict):
+        return
+    entry = roles.get(role)
+    if isinstance(entry, dict):
+        entry.pop("deny_tools", None)
+        if not entry:
+            roles.pop(role, None)
+    if not roles:
+        config["access"].pop("roles", None)
+        if not config["access"]:
+            config.pop("access", None)

@@ -1,4 +1,5 @@
 import { MobileShell } from "@/components/MobileShell";
+import { RoleLimitsSection } from "@/components/settings/RoleLimitsSection";
 import { ToolsSettings } from "@/components/settings/ToolsSettings";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
 import type { McpServer, Toolset } from "@/types";
@@ -11,7 +12,7 @@ export const dynamic = "force-dynamic";
  * browser-driven OAuth re-auth flow for `auth: oauth` servers (Canva & co).
  */
 export default async function Page() {
-  await requirePrincipal();
+  const principal = await requirePrincipal();
 
   let servers: McpServer[] | null = null;
   let toolsets: Toolset[] | null = null;
@@ -40,6 +41,7 @@ export default async function Page() {
       ) : (
         <ToolsSettings servers={servers ?? []} toolsets={toolsets ?? []} />
       )}
+      <RoleLimitsSection canEdit={principal.role === "owner" || principal.role === "admin"} />
     </MobileShell>
   );
 }
