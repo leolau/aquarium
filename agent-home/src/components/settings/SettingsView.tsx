@@ -52,11 +52,14 @@ export function SettingsView({
   entityGoal = null,
   entityGoalReadOnly = false,
   canManageMembers = true,
+  canManageTools = true,
 }: {
   entityGoal?: EntityGoal | null;
   entityGoalReadOnly?: boolean;
   /** Owner/admin may link and unlink Telegram ids; others see a note. */
   canManageMembers?: boolean;
+  /** Owner/admin may change Tools & Integrations; others may only view. */
+  canManageTools?: boolean;
 } = {}) {
   const [theme, setTheme] = usePersistentState<ThemeId>(
     THEME_STORAGE_KEY,
@@ -132,7 +135,7 @@ export function SettingsView({
           href="/settings/tools"
           className="flex items-center justify-between rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm font-medium"
         >
-          Manage integrations
+          {canManageTools ? "Manage integrations" : "View integrations"}
           <span aria-hidden className="text-[var(--color-muted)]">→</span>
         </Link>
       </section>

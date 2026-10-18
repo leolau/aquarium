@@ -47,6 +47,38 @@ describe("POST /api/tools/mcp/[name]/enabled", () => {
     expect(setMcpServerEnabled).not.toHaveBeenCalled();
   });
 
+  it.each(["member", "viewer"] as const)(
+    "returns 403 for a %s without calling upstream",
+    async (role) => {
+      getPrincipal.mockResolvedValue({
+        user_id: "tom",
+        display: "Tom",
+        role,
+        channels: [],
+        is_owner: false,
+      });
+      const res = await post({ enabled: false });
+      expect(res.status).toBe(403);
+      expect((await res.json()).detail).toBe(
+        "Only the owner or an admin can change tools and integrations.",
+      );
+      expect(setMcpServerEnabled).not.toHaveBeenCalled();
+    },
+  );
+
+  it("lets an admin change the toggle", async () => {
+    getPrincipal.mockResolvedValue({
+      user_id: "ann",
+      display: "Ann",
+      role: "admin",
+      channels: [],
+      is_owner: false,
+    });
+    const res = await post({ enabled: false });
+    expect(res.status).toBe(200);
+    expect(setMcpServerEnabled).toHaveBeenCalledWith("canva", false);
+  });
+
   it("forwards the toggle upstream", async () => {
     const res = await post({ enabled: false });
     expect(res.status).toBe(200);

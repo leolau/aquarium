@@ -91,4 +91,14 @@ describe("SettingsView", () => {
     expect(html).toContain("Loading your tags");
     expect(html).toContain('aria-busy="true"');
   });
+
+  it("labels the Tools & Integrations link by what the person may do", () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ tags: [] })),
+    );
+    expect(renderToStaticMarkup(<SettingsView />)).toContain("Manage integrations");
+    const html = renderToStaticMarkup(<SettingsView canManageTools={false} />);
+    expect(html).toContain("View integrations");
+    expect(html).not.toContain("Manage integrations");
+  });
 });

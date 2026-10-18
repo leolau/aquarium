@@ -6,6 +6,7 @@ import { NextResponse } from "next/server";
 
 import { HermesApiError } from "@/lib/api/client";
 import { apiClientForRequest, getPrincipal } from "@/lib/auth/principal";
+import { canManageTools, TOOLS_MANAGE_DENIED } from "@/lib/auth/roles";
 
 export async function POST(
   request: Request,
@@ -14,6 +15,12 @@ export async function POST(
   const principal = await getPrincipal();
   if (!principal) {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
+  }
+  if (!canManageTools(principal)) {
+    return NextResponse.json(
+      { error: "forbidden", detail: TOOLS_MANAGE_DENIED },
+      { status: 403 },
+    );
   }
   const { name } = await params;
   let body: { enabled?: boolean };

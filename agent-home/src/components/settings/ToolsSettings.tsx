@@ -6,6 +6,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Pill } from "@/components/ui/Pill";
 import { Spinner } from "@/components/ui/Spinner";
 import { useRefresh } from "@/components/ui/useRefresh";
+import { TOOLS_MANAGE_DENIED } from "@/lib/auth/roles";
 import type { McpOAuthFlowState, McpServer, Toolset } from "@/types";
 
 /**
@@ -13,7 +14,8 @@ import type { McpOAuthFlowState, McpServer, Toolset } from "@/types";
  * toolsets for the signed-in profile, with the operational actions: enable/
  * disable, probe ("Test"), remove, and — for `auth: oauth` servers — the
  * headless OAuth re-auth flow (open the authorization URL, paste the final
- * redirect URL back).
+ * redirect URL back). Members and viewers get the same lists read-only
+ * (`canManage={false}`): no action buttons, toolset switches disabled.
  */
 
 type TestResult = { ok: boolean; detail: string } | null;
@@ -245,11 +247,13 @@ function McpServerRow({
   pending,
   onAction,
   testResult,
+  readOnly,
 }: {
   server: McpServer;
   pending: string | null;
   onAction: (action: string) => void;
   testResult: TestResult;
+  readOnly: boolean;
 }) {
   const endpoint =
     server.url ??
@@ -282,6 +286,7 @@ function McpServerRow({
           {testResult.detail}
         </p>
       ) : null}
+      {readOnly ? null : (
       <div className="mt-3 flex flex-wrap gap-2">
         <button
           type="button"
@@ -318,6 +323,7 @@ function McpServerRow({
           Remove
         </button>
       </div>
+      )}
     </li>
   );
 }
@@ -326,10 +332,12 @@ function ToolsetRow({
   toolset,
   pending,
   onToggle,
+  readOnly,
 }: {
   toolset: Toolset;
   pending: boolean;
   onToggle: (enabled: boolean) => void;
+  readOnly: boolean;
 }) {
   return (
     <li
@@ -354,7 +362,8 @@ function ToolsetRow({
       <div className="mt-3">
         <button
           type="button"
-          disabled={pending}
+          disabled={pending || readOnly}
+          title={readOnly ? TOOLS_MANAGE_DENIED : undefined}
           onClick={() => onToggle(!toolset.enabled)}
           className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1.5 text-xs font-medium disabled:opacity-50"
         >
@@ -370,10 +379,14 @@ function ToolsetRow({
 export function ToolsSettings({
   servers,
   toolsets,
+  canManage = true,
 }: {
   servers: McpServer[];
   toolsets: Toolset[];
+  /** Owner/admin may change settings; members and viewers only see them. */
+  canManage?: boolean;
 }) {
+  const readOnly = !canManage;
   const { refresh, refreshing } = useRefresh();
   // The server action completes before the refreshed props land; hold the
   // row's busy state across the refresh so a second tap can't double-fire.
@@ -393,6 +406,7 @@ export function ToolsSettings({
   }
 
   async function mcpAction(name: string, action: string) {
+    if (readOnly) return;
     if (action === "reauth") {
       setOauthFor(rows.find((s) => s.name === name) ?? null);
       return;
@@ -460,7 +474,7 @@ export function ToolsSettings({
   }
 
   async function toggleToolset(name: string, enabled: boolean) {
-    if (tsPending || refreshing) return;
+    if (readOnly || tsPending || refreshing) return;
     setTsPending(name);
     setError(null);
     try {
@@ -479,6 +493,14 @@ export function ToolsSettings({
 
   return (
     <div data-component="ToolsSettings" className="space-y-6">
+      {readOnly ? (
+        <p
+          data-testid="tools-read-only-note"
+          className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-muted)]"
+        >
+          You can see what the agent can use here. {TOOLS_MANAGE_DENIED}
+        </p>
+      ) : null}
       {error ? (
         <p className="rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-400">
           {error}
@@ -504,6 +526,7 @@ export function ToolsSettings({
                 server={server}
                 pending={busyKey(server.name)}
                 testResult={testResults[server.name] ?? null}
+                readOnly={readOnly}
                 onAction={(action) => void mcpAction(server.name, action)}
               />
             ))}
@@ -540,6 +563,7 @@ export function ToolsSettings({
                 key={toolset.name}
                 toolset={toolset}
                 pending={tsPending === toolset.name || refreshing}
+                readOnly={readOnly}
                 onToggle={(enabled) => void toggleToolset(toolset.name, enabled)}
               />
             ))}

@@ -1,6 +1,7 @@
 import { MobileShell } from "@/components/MobileShell";
 import { SettingsView } from "@/components/settings/SettingsView";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
+import { canManageTools } from "@/lib/auth/roles";
 import type { EntityGoal } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -30,6 +31,7 @@ export default async function Page() {
         canManageMembers={
           principal.is_owner || principal.role === "admin"
         }
+        canManageTools={canManageTools(principal)}
       />
     </MobileShell>
   );
