@@ -89,6 +89,7 @@ import json
 import logging
 import math
 import os
+from pathlib import Path
 import re
 import shutil
 import sys
@@ -2081,6 +2082,7 @@ class MCPServerTask:
 
         url = config["url"]
         headers = dict(config.get("headers") or {})
+        _add_app_mcp_token(self.name, config, headers)
         # Some MCP servers require MCP-Protocol-Version on the initial
         # initialize request and reject session-less POSTs otherwise.
         # Seed it as a client-level default, but treat user overrides as
@@ -3395,6 +3397,52 @@ def _forward_principal_setting(name: str, config: dict) -> bool:
     return _parse_boolish(config.get("forward_principal", default), default=default)
 
 
+APP_MCP_TOKEN_FILE = Path(__file__).resolve().parents[1] / "app-mcp" / ".mcp-token"
+
+
+def _app_mcp_token(path: Path = APP_MCP_TOKEN_FILE) -> str:
+    """app-mcp's bearer token, created (0600) on first use.
+
+    app-mcp (``app-mcp/app_mcp/mcp_auth.py``) reads the same file from the same
+    checkout. If it cannot be created (read-only tree) this returns "" and
+    app-mcp stays open, the behaviour before the token existed.
+    """
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return ""
+    import secrets
+
+    token = secrets.token_hex(32)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return _app_mcp_token(path)
+    except OSError as exc:
+        logger.warning("MCP server 'app': cannot create %s (%s)", path, exc)
+        return ""
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(token)
+    return token
+
+
+def _add_app_mcp_token(name: str, config: dict, headers: dict) -> None:
+    """Send app-mcp's bearer token (security review F19) unless one is configured.
+
+    The live ``mcp_servers.app`` entry has no headers, so this keeps it working
+    without a config edit.
+    """
+    if not _is_app_mcp_server(name, config):
+        return
+    if any(key.lower() == "authorization" for key in headers):
+        return
+    token = _app_mcp_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+
 def _is_app_mcp_server(name: str, config: dict) -> bool:
     """Aquarium's own app-mcp (UI + Folder Bridge) server.
 
@@ -3500,7 +3548,7 @@ def _make_tool_handler(
                 server._pending_call_context = contextvars.copy_context()
                 try:
                     principal = kwargs.get("principal_user_id")
-                    if server.forward_principal is True and principal:
+                    if getattr(server, "forward_principal", False) is True and principal:
                         result = await server.session.call_tool(
                             tool_name,
                             arguments=args,

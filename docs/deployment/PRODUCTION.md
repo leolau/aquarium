@@ -341,6 +341,15 @@ propagate into its mount namespace — and never needs sudo. Mobile apps are
 unaffected. Rollback: reinstall the backed-up helper; the old helper ignores
 folder mounts (unmount them first with `hermes-vpn-helper umount <slug>`).
 
+app-mcp MCP endpoint token (F19): nothing to set by hand. The first time the
+gateway/dashboard connects to app-mcp it creates
+`/opt/data/hermes-agent/app-mcp/.mcp-token` (hermes, 0600, git-ignored; the
+deploy's `git checkout -f` leaves it alone) and sends it as a bearer token.
+app-mcp refuses `/mcp` calls without it as soon as the file exists. Check it:
+`curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:9220/mcp`
+prints `401`, and the agent's app tools still work. Undo: `rm` the file (the
+endpoint is open again, as before).
+
 Operate: `systemctl list-units 'hermes-vpn-*'`,
 `cat /run/hermes-vpn/<slug>/openfortivpn.log`,
 `/usr/local/sbin/hermes-vpn-helper status|down <slug>`.

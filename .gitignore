@@ -162,3 +162,4 @@ backup-recipient.env
 
 # Release tarballs from scripts/build-release.sh
 /dist/
+app-mcp/.mcp-token

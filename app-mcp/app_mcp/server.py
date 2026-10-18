@@ -50,6 +50,7 @@ from . import netfolders as nf
 from .guard import looks_destructive, looks_sensitive
 from .help import help_for
 from .hub import Hub, HubError
+from .mcp_auth import TOKEN_FILE, BearerTokenMiddleware, read_token
 from .pages import PAGES
 from .ticket import verify_ticket
 
@@ -620,9 +621,32 @@ async def _main() -> None:
             "app-mcp: APP_MCP_TICKET_SECRET is not set — refusing to start "
             "(the browser bridge would be unauthenticated)."
         )
+    if not read_token():
+        log.warning(
+            "app-mcp: no %s yet — the MCP endpoint accepts any local caller "
+            "until Hermes connects and creates it.",
+            TOKEN_FILE,
+        )
     async with websockets.serve(_ws_handler, "127.0.0.1", WS_PORT):
         log.info("app-mcp: WS hub on 127.0.0.1:%s, MCP on 127.0.0.1:%s/mcp", WS_PORT, MCP_PORT)
-        await mcp.run_streamable_http_async()
+        await _serve_mcp()
+
+
+def mcp_http_app(token_file=TOKEN_FILE):
+    """The streamable-HTTP MCP app behind the bearer-token check (F19)."""
+    return BearerTokenMiddleware(mcp.streamable_http_app(), token_file)
+
+
+async def _serve_mcp() -> None:  # pragma: no cover - runs the real server
+    import uvicorn
+
+    config = uvicorn.Config(
+        mcp_http_app(),
+        host=mcp.settings.host,
+        port=mcp.settings.port,
+        log_level=mcp.settings.log_level.lower(),
+    )
+    await uvicorn.Server(config).serve()
 
 
 def main() -> None:

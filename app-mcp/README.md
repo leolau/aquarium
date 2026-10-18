@@ -110,10 +110,10 @@ are left ungated by default (names/sizes/timestamps only, same sensitivity as
 mcp_servers:
   app:
     url: "http://127.0.0.1:9220/mcp"
-    # Send the chat's user id with every call (MCP `_meta`). app-mcp routes
-    # UI and Folder Bridge commands to THAT user's browser only and refuses
-    # calls without it, so this is required.
-    forward_principal: true
+    # Hermes sends the chat's user id with every call (MCP `_meta`) and the
+    # bearer token from app-mcp/.mcp-token automatically for this entry (named
+    # `app` or pointing at 127.0.0.1:9220/mcp). No headers needed.
+    # forward_principal: false   # would turn the user id off (app-mcp then refuses UI calls)
     # Per-tool-call deadline on the agent side (default 300 s). A large
     # folder import uploads browser → BFF → Storage and can take tens of
     # minutes — the hub-side timeout is a *silence* deadline kept alive by
@@ -127,6 +127,22 @@ approvals:
     - mcp_app_folder_bridge_search_files
     - mcp_app_folder_bridge_import_file_approved
 ```
+
+### MCP endpoint token (security review F19)
+
+`127.0.0.1:9220/mcp` answers only requests with
+`Authorization: Bearer <token>`. Without it, any local process (the
+agent's own terminal included) could call `app_act_destructive` or
+`folder_bridge_read_file` directly and skip the approval prompt. The token is
+the file `app-mcp/.mcp-token` (mode 0600, git-ignored). Hermes creates it the
+first time it connects to the `app` server and sends it on every call.
+app-mcp re-reads it per request, so neither side needs a restart or a
+config edit. Until the file exists the endpoint stays open (the old behaviour,
+logged as a warning at startup). Deleting the file and restarting Hermes
+issues a new token. The agent's terminal environment never carries the app-mcp
+secrets (`APP_MCP_HERMES_TOKEN`, `APP_MCP_TICKET_SECRET`,
+`AGENT_HOME_APP_MCP_SECRET`). It still runs as the same `hermes` user and could
+read the file itself; moving secrets out of that user's reach is F16.
 
 `folder_bridge_import_file` (no suffix) is deliberately left ungated: the
 browser refuses it unless the user toggled "trusted for import" on that folder
