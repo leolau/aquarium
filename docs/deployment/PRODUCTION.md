@@ -164,14 +164,20 @@ for u in hermes-gateway hermes-dashboard; do
   tr '\0' '\n' < /proc/$(systemctl show -p MainPID --value $u)/environ | grep '^HERMES_HOME='
 done
 # 1. tell app-mcp where the token is, 2. restart it
-sudo -u hermes sh -c 'echo HERMES_HOME=/opt/data/hermes-home-staging >> /opt/data/hermes-agent/app-mcp/app-mcp.env'
+F=$(systemctl show -p EnvironmentFiles --value app-mcp | cut -d' ' -f1); echo "$F"
+echo HERMES_HOME=/opt/data/hermes-home-staging >> "$F"   # as root; owner and mode stay as they are
 systemctl restart app-mcp
 # 3. check: 401 = protection on; 400 or 406 = still open (no line, or no token file yet)
 curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:9220/mcp
 ```
 
+`F` is the env file app-mcp actually reads: `/opt/data/hermes-agent/app-mcp/app-mcp.env`
+in the git-checkout layout (still hermes-owned after the F13 root-owned deploy), or
+`/etc/aquarium/app-mcp.env` after `aquarium migrate-layout`. If you add the line
+before migrating, `migrate-layout` copies it along.
+
 Then ask the agent in agent-home "what page am I on?": it must still answer.
-Undo: delete the `HERMES_HOME` line from `app-mcp.env` and `systemctl restart app-mcp`.
+Undo: delete the `HERMES_HOME` line from `$F` and `systemctl restart app-mcp`.
 
 #### Root-owned checkout (security review F13/F15)
 The deploy runs as root, so it only runs code root owns. On its first run
