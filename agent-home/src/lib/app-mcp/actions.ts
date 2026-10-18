@@ -6,15 +6,25 @@
  */
 import { softNavigate } from "@/lib/app-mcp/navigation";
 import { getUiContext, type UiContext } from "@/lib/app-mcp/state";
-import { accessibleName, snapshotElements } from "@/lib/app-mcp/snapshot";
+import {
+  accessibleName,
+  inShellChrome,
+  isHidden,
+  isSensitiveInput,
+  snapshotElements,
+} from "@/lib/app-mcp/snapshot";
 
+/**
+ * app-mcp resolves the target server-side from a fresh snapshot (so its
+ * safety guard judges the element that will really be hit) and sends only
+ * the snapshot id plus the name it checked. The page never re-resolves a
+ * free-form name or CSS selector the agent typed.
+ */
 export interface ElementQuery {
   /** Stable id from a snapshot (`data-appmcp-id`). */
   elementId?: number;
-  /** CSS selector fallback. */
-  selector?: string;
-  /** Accessible-name match (exact, then substring, case-insensitive). */
-  name?: string;
+  /** The accessible name app-mcp checked; a mismatch means the page changed. */
+  expectName?: string;
 }
 
 export type AppMcpCommand =
@@ -42,31 +52,12 @@ function describe(el: Element): string {
   return name ? `${tag} "${name}"` : tag;
 }
 
-/** Resolve a query to an element: id first, then selector, then name match. */
+/** The live element for a snapshot id, or null (gone, hidden or shell chrome). */
 export function resolveElement(query: ElementQuery): Element | null {
-  if (typeof query.elementId === "number") {
-    const el = document.querySelector(`[data-appmcp-id="${query.elementId}"]`);
-    if (el) return el;
-  }
-  if (query.selector) {
-    try {
-      const el = document.querySelector(query.selector);
-      if (el) return el;
-    } catch {
-      // Invalid selector — fall through to name matching.
-    }
-  }
-  if (query.name) {
-    const wanted = query.name.trim().toLowerCase();
-    const snap = snapshotElements(document);
-    const exact =
-      snap.find((e) => e.name.toLowerCase() === wanted) ??
-      snap.find((e) => e.name.toLowerCase().includes(wanted));
-    if (exact) {
-      return document.querySelector(`[data-appmcp-id="${exact.id}"]`);
-    }
-  }
-  return null;
+  if (typeof query.elementId !== "number" || !Number.isInteger(query.elementId)) return null;
+  const el = document.querySelector(`[data-appmcp-id="${query.elementId}"]`);
+  if (!el || isHidden(el) || inShellChrome(el)) return null;
+  return el;
 }
 
 /**
@@ -121,6 +112,9 @@ export function executeCommand(cmd: AppMcpCommand): AppMcpActionResult {
 
   const el = resolveElement(cmd);
   if (!el) return fail(`No element matched ${JSON.stringify(cmd)}`);
+  if (typeof cmd.expectName === "string" && accessibleName(el) !== cmd.expectName) {
+    return fail("The page changed since it was described. Call app_describe_page again.");
+  }
 
   switch (cmd.type) {
     case "click": {
@@ -146,6 +140,7 @@ export function executeCommand(cmd: AppMcpCommand): AppMcpActionResult {
       return done(`Focused ${describe(el)}`);
     }
     case "read": {
+      if (isSensitiveInput(el)) return fail("Refusing to read a password or secret field");
       const value =
         (el as HTMLInputElement).value ||
         el.getAttribute("aria-label") ||
