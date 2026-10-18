@@ -15,7 +15,7 @@ file as work lands — one row per gap, per the plan's §7 breakdown.
 
 ## Investigation record (already done, 2026-09-13)
 
-- Confirmed on the Hetzner production box (`188.245.219.105`) via
+- Confirmed on the Hetzner production box (`<prod-host>`) via
   `hermes projects list/runs/cards --json`:
   - Run `run_91b11d845e73` (project `ai-professsional-builder-course-ppt`,
     run #1) started `2026-09-12 04:46:58 UTC`, still `status: running` as of

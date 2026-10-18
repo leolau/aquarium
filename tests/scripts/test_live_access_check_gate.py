@@ -39,26 +39,35 @@ def _status(report, prefix):
 # -- TEST-install guard ------------------------------------------------------
 
 
+@pytest.fixture
+def fake_production_hosts(monkeypatch):
+    monkeypatch.setattr(lac, "PRODUCTION_HOSTS", frozenset({"home.example.com", "203.0.113.10"}))
+
+
+def test_production_hosts_are_set():
+    assert lac.PRODUCTION_HOSTS
+
+
 @pytest.mark.parametrize(
     "url,addrs,hit",
     [
         ("http://127.0.0.1:9119", {"10.0.0.5", "test-box"}, False),
-        ("https://home.leolau.ai-and-i.io", set(), True),
-        ("http://127.0.0.1:9119", {"188.245.219.105"}, True),
+        ("https://home.example.com", set(), True),
+        ("http://127.0.0.1:9119", {"203.0.113.10"}, True),
     ],
 )
-def test_production_markers(url, addrs, hit):
+def test_production_markers(url, addrs, hit, fake_production_hosts):
     assert bool(lac.production_markers(url, addrs)) is hit
 
 
-def test_refuses_production_before_touching_anything(monkeypatch, tmp_path):
+def test_refuses_production_before_touching_anything(monkeypatch, tmp_path, fake_production_hosts):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    monkeypatch.setattr(lac, "local_addresses", lambda: {"188.245.219.105"})
+    monkeypatch.setattr(lac, "local_addresses", lambda: {"203.0.113.10"})
     monkeypatch.setattr(lac, "build_members", lambda: pytest.fail("must not provision"))
     lines = []
     code = lac.main(["--base-url", "http://127.0.0.1:9119"], out=lines.append)
     assert code == 2
-    assert "REFUSED" in lines[0] and "188.245.219.105" in lines[0]
+    assert "REFUSED" in lines[0] and "203.0.113.10" in lines[0]
 
 
 # -- f. network folders ------------------------------------------------------

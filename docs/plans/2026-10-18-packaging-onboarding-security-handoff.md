@@ -58,13 +58,10 @@ Every PR must keep the existing Hetzner box working (Leo, 2026-10-18) and has an
 10. `HCLOUD_TOKEN` repo secret (separate Hetzner project) for the install test.
 
 ### Existing Hetzner box notes (read-only inventory, 2026-10-18)
-- Deploy entry point is the hand-installed `/opt/data/deploy-hermes.sh` (differs from `deploy/hermes-deploy.sh`); repo changes to the deploy script reach the box only when it is recopied.
-- `hermes-secret-backup.service` is failed; Supabase Docker ports 5432/6543/8000/8443 are published on `0.0.0.0` and UFW is inactive. Not changed (needs Leo's OK).
-- F19 (#563) stays off on the box after deploy until `HERMES_HOME=/opt/data/hermes-home-staging` is added to `/opt/data/hermes-agent/app-mcp/app-mcp.env` and app-mcp is restarted (manual on purpose; check: `curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:9220/mcp` gives 401 when on).
-- Email/WhatsApp MCP servers and the Telegram callback server (7902, 8650, 8651) don't run on the box; health ports 7900/7901/7903 listen on `0.0.0.0`.
+Moved to the private repo leolau/aquarium-ops: [`production/hetzner-box-inventory-2026-10-18.md`](https://github.com/leolau/aquarium-ops/blob/main/production/hetzner-box-inventory-2026-10-18.md).
 
 ### Picking it up
-1. Production rules (unchanged): read `docs/deployment/PRODUCTION.md` first; backup before any deploy; Leo merges PRs and approves production deploys; deploy fixes one at a time; no real WhatsApp messages without Leo's OK.
+1. Production rules (unchanged): read `production/PRODUCTION.md` in leolau/aquarium-ops first; backup before any deploy; Leo merges PRs and approves production deploys; deploy fixes one at a time; no real WhatsApp messages without Leo's OK.
 2. Sub-agents must not create helper sessions and must not merge.
 
 ## Decisions (Leo, 2026-10-18)
@@ -83,7 +80,7 @@ Every PR must keep the existing Hetzner box working (Leo, 2026-10-18) and has an
 | Install | `install-aquarium.sh` (#524): one command on a fresh Ubuntu 24.04 VM installs Supabase, the embedding service, agent-home, dashboard, gateway, app-mcp, Caddy/TLS, ufw, first owner, health checks. Unit-tested helpers (#528). | Never run end to end on a clean VM. Installs from the `develop` branch (no versions, no releases: the repo has 0 releases). Pulls Supabase compose from `master`. Leaves the model API key as a manual `.env` edit. No `update` / `backup` / `restore` / `uninstall`. VPN helper, WhatsApp bridge sudo rules, `linux-modules-extra` are not installed. |
 | Setup in the app | agent-home has an onboarding wizard, Settings → Connected accounts (Google, code-paste OAuth), WhatsApp bridges (QR pairing in the page), VPN, network folders, users/roles. | No single "what's left to set up" checklist. Google needs a Google Cloud OAuth client per install, and nothing explains how to create one. Adding a new WhatsApp bridge relies on a root sudo rule into the checkout (finding F14). |
 | Guides | `docs/deployment/PRODUCTION.md` (operator runbook for our box), upstream Hermes docs under `website/docs` (CLI/TUI, not Aquarium). README still opens as "Hermes Agent". | No Aquarium-specific getting-ready guide for a new owner. |
-| Security | 4 Oct static review: 13 High, 11 Medium and 1 Low (grouped) finding (`docs/reviews/2026-10-04-security-review.md`). Since then: F20 (chat privacy) fixed by #520/#521, F2 partly by #522/#533 (role limits). Live per-role check script (#529) passes 63/63 on prod. | The other High findings look open (e.g. F1: the custom email/WhatsApp MCP and Telegram callback servers still bind `0.0.0.0`; F3: no `nosniff`/CSP in agent-home; F13–F16: the agent user can reach root or read every secret). GitHub Actions workflows exist (tests, lint, osv-scanner, supply-chain-audit) but none run on this repo. **The repo is public**, including `docs/deployment/PRODUCTION.md` with the production IP and layout. |
+| Security | 4 Oct static review: 13 High, 11 Medium and 1 Low (grouped) finding (`security/2026-10-04-security-review.md` in leolau/aquarium-ops). Since then: F20 (chat privacy) fixed by #520/#521, F2 partly by #522/#533 (role limits). Live per-role check script (#529) passes 63/63 on prod. | The other High findings look open (e.g. F1: the custom email/WhatsApp MCP and Telegram callback servers still bind `0.0.0.0`; F3: no `nosniff`/CSP in agent-home; F13–F16: the agent user can reach root or read every secret). GitHub Actions workflows exist (tests, lint, osv-scanner, supply-chain-audit) but none run on this repo. **The repo is public**, and until 2026-10-18 it included the production IP and layout (now moved to leolau/aquarium-ops). |
 
 ## 1. Packaging: "download and install Aquarium"
 

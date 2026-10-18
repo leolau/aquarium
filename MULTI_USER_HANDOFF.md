@@ -9,8 +9,8 @@ production rollout — which is now **complete and verified in production**
 - **Repo:** `leolau/aquarium`
 - **Base branch:** `develop`
 - **Owner deployment (production):** host `hermes-systest`
-  - agent-home: `https://home.leolau.ai-and-i.io` (Next.js, local `127.0.0.1:3100`)
-  - dashboard/operator console: `https://leolau.ai-and-i.io` (Python API `127.0.0.1:9119`)
+  - agent-home: `https://<agent-home-host>` (Next.js, local `127.0.0.1:3100`)
+  - dashboard/operator console: `https://<dashboard-host>` (Python API `127.0.0.1:9119`)
   - self-hosted Supabase stack on-box (GoTrue `supabase-auth`, `supabase-storage`,
     `supabase-rest`, `supabase-kong`, `supabase-db`) — all healthy.
 - **Full original plan:** the PR-by-PR plan, decisions, and risk notes live below
@@ -170,61 +170,7 @@ short-lived signed URLs already fail-close cross-principal reads (proven below).
 
 ## Production rollout — COMPLETED (2026-07-27)
 
-All owner-gated production steps have been executed on `hermes-systest` and the
-full multi-user boundary is verified end-to-end. History (chronological):
-
-1. ✅ **Owner Supabase enrollment:** created the owner GoTrue account for
-   `leolau@snappopapp.com` and aliased its `sub` → `leo_owner`
-   (`hermes owner alias <uuid>`, targets `app_prod`). Owner data untouched
-   (1 principal, 380 interactions preserved throughout).
-2. ✅ **Supabase auth provider** configured server-side (`dashboard.supabase_auth`);
-   JWT secret + service-role key in the env file, not `config.yaml`. Basic-auth
-   login retained as a fallback (no lockout risk).
-3. ✅ **Signup closed** at GoTrue (`GOTRUE_DISABLE_SIGNUP=true`).
-4. ✅ **DB-role switch (step 7):** agent-home's `DATABASE_URL` repointed from
-   `postgres` (BYPASSRLS) → the dedicated **`agent_home_app`** login role
-   (`LOGIN NOSUPERUSER NOBYPASSRLS`, SELECT only on RLS-forced tables).
-   Python/migrations/CLI keep the privileged DSN. NOTE: the naive
-   `GRANT hermes_app TO CURRENT_USER` membership path faults this Supabase
-   build's event trigger — avoided via `grant_membership=False` +
-   `hermes owner read-role` (PR #62).
-5. ✅ **agent-home redeployed** to `develop` (`db68f75`, PR-5 code) and rebuilt;
-   media route + storage.ts present, services healthy.
-6. ✅ **Bucket flipped private** (`agent-home-media`; see PR-5 section above).
-7. ✅ **End-to-end isolation verified** with a **throwaway synthetic member**,
-   then fully removed. Results:
-
-   **DB-level RLS** (connected as `agent_home_app`, principal bound via GUCs,
-   real `app_prod.goals` with marked test rows):
-   | principal | sees | result |
-   |---|---|---|
-   | owner | shared + owner-private + member-private | PASS |
-   | member | shared + own only (NOT owner-private) | PASS |
-   | stranger | shared only | PASS |
-
-   **Storage** (real `GET /api/chat/media`, logged in as the member over HTTPS):
-   - member → own object: **200** (signed URL returns the real bytes) — PASS
-   - member → owner's object: **403** fail-closed — PASS
-   - path-traversal (`../`, embedded `..`): **403** — PASS
-   - member own-prefix missing object: **404** (authorized, absent) — PASS
-   - unauthenticated: **401** — PASS
-
-   **Cleanup:** member deactivated via `hermes member deactivate` (login then
-   blocked, 401), then GoTrue account + principal + seeded rows/objects
-   hard-deleted. End state: owner-only principal, 380 interactions intact, 0
-   residue, bucket still private, all services active. No secrets printed.
-
-**Onboarding a real member is now fully unblocked** (DB + storage isolation
-proven). Use the agent-home Members UI (PR-4) or `hermes member add <email>
---role member` (temp password prompted). The GoTrue admin config the CLI needs
-(`SUPABASE_URL` + service-role key) lives in the agent-home env file
-(`/opt/data/agent-home-app/agent-home/agent-home.env`), **not** in
-`hermes-staging.env` — export both before running the CLI on the box.
-
-Env var names for the service-role key (env-only, never `config.yaml`, never
-browser), in precedence order: `HERMES_DASHBOARD_SUPABASE_SERVICE_ROLE_KEY`,
-`HERMES_SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`,
-`SUPABASE_SERVICE_KEY`.
+The production rollout notes (live host, paths, steps and checks) moved to the private repo leolau/aquarium-ops: [`handoffs/MULTI_USER_HANDOFF.md`](https://github.com/leolau/aquarium-ops/blob/main/handoffs/MULTI_USER_HANDOFF.md).
 
 ---
 

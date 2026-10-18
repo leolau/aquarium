@@ -11,7 +11,7 @@
 ## 1. What this covers
 
 A sequence of fixes and features for the **agent-home** chat UI — the
-mobile-first web chat at `https://home.leolau.ai-and-i.io` that lets a
+mobile-first web chat at `https://<agent-home-host>` that lets a
 principal talk to the shared organizational brain. All work landed as small,
 focused PRs into `develop`, each merged by Leo and then deployed to the live
 box with the four `runbox.sh` scripts (see §6).
@@ -219,7 +219,7 @@ part of this chat line.)
 - Paths: deploy `/opt/data/hermes-agent`; Hermes home
   `/opt/data/hermes-home-staging`; service user `hermes`; agent-home on
   `:3100`; dashboard/API on `:9119`; embeddings on `127.0.0.1:8791`; public URL
-  `https://home.leolau.ai-and-i.io`.
+  `https://<agent-home-host>`.
 - The on-box deploy script is `/opt/data/deploy-hermes.sh <branch>`; it fetches
   `origin/develop`, reinstalls the package, rebuilds `agent-home` **only if
   `agent-home/` changed**, and restarts all units.

@@ -112,7 +112,7 @@ truncated, so `grep`/`head`/`cut -c1-160` on the box.
 | Agent `.env` | `/opt/data/hermes-home-staging/.env` |
 | `config.yaml` | `/opt/data/hermes-home-staging/config.yaml` |
 | API (loopback only — `curl` runs **on the box**) | `http://127.0.0.1:9119/api/registry/projects` |
-| `agent-home` | `http://127.0.0.1:3100`, public `https://home.leolau.ai-and-i.io` |
+| `agent-home` | `http://127.0.0.1:3100`, public `https://<agent-home-host>` |
 | `agent-home` secrets (0600, not in git) | `/opt/data/hermes-agent/agent-home/agent-home.env` |
 | Service user | `hermes` |
 | This suite's scratch dir | `/tmp/uat` (yours to create and delete) |
@@ -266,7 +266,7 @@ chmod 600 /tmp/uat/cookie
 
 Set `principal.role` to the role the scenario needs (`owner` for §B–§H, the
 others for §I) and keep `user_id` consistent with what TA4 returned. Then, in
-your browser, open `https://home.leolau.ai-and-i.io`, set the cookie
+your browser, open `https://<agent-home-host>`, set the cookie
 `agent_home_session` = that value for that host (DevTools → Application →
 Cookies, or a CDP/Playwright `addCookies`), and reload. The public host is the
 same app with the same secret, so the cookie is valid there.

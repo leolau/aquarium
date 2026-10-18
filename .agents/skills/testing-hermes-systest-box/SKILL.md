@@ -1,6 +1,6 @@
 ---
 name: testing-hermes-systest-box
-description: "SUPERSEDED 2026-08-20 — the Alibaba 'systest' box this skill describes is decommissioned. Production moved to a Hetzner box reachable by SSH; see docs/deployment/PRODUCTION.md. Kept only for historical/rollback reference — do NOT use OOS_RunCommand against production."
+description: "SUPERSEDED 2026-08-20 — the Alibaba 'systest' box this skill describes is decommissioned. Production moved to a Hetzner box reachable by SSH; read production/PRODUCTION.md in the private repo leolau/aquarium-ops before any production action. Kept only for historical/rollback reference — do NOT use OOS_RunCommand against production."
 ---
 
 # ⚠️ SUPERSEDED — this box is decommissioned, do not act on it ⚠️
@@ -13,18 +13,14 @@ longer serving any real traffic**. Running commands against it wastes time
 and changes nothing anyone will ever see.
 
 **Before doing anything "live box" related, read
-[`docs/deployment/PRODUCTION.md`](../../../docs/deployment/PRODUCTION.md).**
-Current production is the Hetzner box `hermes` (`188.245.219.105`, Nuremberg),
-reachable directly by SSH:
-
-```bash
-ssh -i ~/.ssh/hetzner_hermes_ed25519 root@188.245.219.105 '<command>'
-```
+[`production/PRODUCTION.md`](https://github.com/leolau/aquarium-ops/blob/main/production/PRODUCTION.md) in the private repo
+`leolau/aquarium-ops`.** Current production is a Hetzner box reached directly
+by SSH; the host and access details are only in that file.
 
 No OOS polling, no base64-decoding invocation results, no ~60s MCP call
 ceiling — it's a normal SSH session. The full service catalog, deploy
 procedure, and health-check commands for the *current* box are in
-`PRODUCTION.md` §4–5.7.
+`PRODUCTION.md` §4–5.7 (leolau/aquarium-ops).
 
 This exact mistake — debugging and redeploying to this decommissioned box
 while believing it was production — happened once already and cost a full
@@ -115,7 +111,7 @@ script's verdict" below for what a glob over both costs.
 As of 2026-08-05, phases A0/A0.5 are deployed (`develop f4bc8af21`):
 
 ```
-public       https://home.leolau.ai-and-i.io → Caddy → 127.0.0.1:3100
+public       https://<agent-home-host> → Caddy → 127.0.0.1:3100
 unit         agent-home.service     User=hermes   (ProtectSystem=strict, ProtectHome=yes)
 WorkingDir   /opt/data/hermes-agent/agent-home     ← the main checkout; one git pull moves everything
 EnvFile      /opt/data/hermes-agent/agent-home/agent-home.env   (0600, git-ignored)

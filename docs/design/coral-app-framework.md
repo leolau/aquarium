@@ -363,7 +363,7 @@ scheduled here.
   service-worker navigations still work (URLs unchanged).
 - **Deploy verification**: `npx tsc --noEmit` in `agent-home/` before push;
   after deploy, `agent-home/.next/BUILD_ID` mtime moved and
-  `https://home.leolau.ai-and-i.io` serves the new bundle (stale-build trap
+  `https://<agent-home-host>` serves the new bundle (stale-build trap
   from the ops docs).
 
 ## 8. Open questions (not blocking Phase 1)
