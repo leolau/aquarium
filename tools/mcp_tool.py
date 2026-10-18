@@ -3500,7 +3500,7 @@ def _make_tool_handler(
                 server._pending_call_context = contextvars.copy_context()
                 try:
                     principal = kwargs.get("principal_user_id")
-                    if server.forward_principal is True and principal:
+                    if getattr(server, "forward_principal", False) is True and principal:
                         result = await server.session.call_tool(
                             tool_name,
                             arguments=args,
