@@ -367,7 +367,10 @@ async def folder_bridge_list_folders() -> dict[str, Any]:
     VPN, read-only, available even when no browser is connected; they are
     mounted on first use). Each has id, label, permission and `trusted`
     (import without asking). Use the ids with the other folder_bridge_*
-    tools."""
+    tools. Browse a network folder one directory at a time with
+    folder_bridge_list_directory, one call after another: never walk a whole
+    share (or run `find`/`ls -R` on its mount) and never list in parallel —
+    it jams the VPN link. Totals of big shares are unknown."""
     network, net_error = await _network_folders()
     browser: dict[str, Any] = {"ok": False, "detail": NOT_CONNECTED_HINT}
     if folder_hub.connected:

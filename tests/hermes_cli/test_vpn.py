@@ -721,3 +721,140 @@ def test_skill_present():
     assert text.startswith("---\nname: fortinet-vpn\n")
     assert 'hermes vpn up "<name>"' in text and "hermes vpn down" in text
     assert stat.S_ISREG(skill.stat().st_mode)
+
+
+# ---------------------------------------------------------------------------
+# Connection-only VPNs (no routes, no share)
+# ---------------------------------------------------------------------------
+
+BARE = {"host": "vpn.example.com", "username": "alice", "password": "s3cret-vpn"}
+
+
+def test_connection_only_payload_validates_and_spec_has_no_routes(file_store):
+    validate_payload("fortinet-vpn", dict(BARE))
+    spec = vpn.helper_spec(put(file_store, OWNER, payload=BARE), "office-files")
+    assert "routes" not in spec and "share_path" not in spec
+    assert spec["username"] == "alice" and spec["idle_minutes"] == 30
+
+
+def test_connection_only_vpn_over_http(client, helper):
+    r = put_http(client, BARE)
+    assert r.status_code == 200, r.text
+    v = client.post("/api/vpn/Office files/connect").json()["vpn"]
+    assert v["status"]["state"] == "connected"
+    assert v["routes"] == [] and v["share_path"] is None
+    assert "routes" not in helper.calls[-1][2]
+
+
+def test_view_routes_are_the_live_tunnel_routes(file_store, helper):
+    put(file_store, OWNER)
+    assert run(vpn.list_views(OWNER))[0]["routes"] == []  # disconnected
+    helper.state["office-files"] = {
+        **helper.up_doc, "routes": ["10.20.0.0/16", "10.99.0.5/32"],
+    }
+    assert run(vpn.list_views(OWNER))[0]["routes"] == ["10.20.0.0/16", "10.99.0.5/32"]
+
+
+def test_cli_line_for_connected_vpn_without_share(file_store, helper, capsys):
+    put(file_store, OWNER, payload=BARE)
+    assert cli("up", "Office files") == 0
+    out = capsys.readouterr().out
+    assert "connected" in out and "folder_bridge_list_folders" in out
+
+
+# ---------------------------------------------------------------------------
+# hermes vpn migrate-shares
+# ---------------------------------------------------------------------------
+
+
+def _folders(store, principal):
+    return {
+        c.name: c
+        for c in run(store.list(principal))
+        if c.kind == "smb-folder" and c.owner_user_id == principal.user_id
+    }
+
+
+def test_migrate_shares_moves_share_into_a_folder(file_store, capsys):
+    put(file_store, ALICE, payload={**PAYLOAD, "share_path": r"\\192.168.0.91\Share-Folder"},
+        visibility="private:alice")
+    put(file_store, BOB, name="Bare", payload=BARE, visibility="shared")
+
+    assert cli("migrate-shares", "--dry-run") == 0
+    out = capsys.readouterr().out
+    assert "would move share //192.168.0.91/Share-Folder to network folder 'Share-Folder'" in out
+    assert "s3cret" not in out
+    assert _folders(file_store, ALICE) == {}
+
+    assert cli("migrate-shares") == 0
+    out = capsys.readouterr().out
+    lines = out.strip().splitlines()
+    assert len(lines) == 2 and "s3cret" not in out
+    assert any(line.startswith("Bare (bob): no file share") for line in lines)
+    folder = _folders(file_store, ALICE)["Share-Folder"]
+    assert folder.owner_user_id == "alice" and folder.visibility == "private:alice"
+    assert folder.payload == {
+        "vpn": "Office files",
+        "share_path": "//192.168.0.91/Share-Folder",
+        "trusted_for_import": False,
+        "share_username": "alice",
+        "share_password": "s3cret-share",
+    }
+    vpn_entry = run(file_store.get(ALICE, "fortinet", "Office files"))
+    assert vpn_entry.visibility == "private:alice"
+    assert vpn_entry.payload == {
+        "host": "vpn.example.com", "username": "alice", "password": "s3cret-vpn",
+    }
+
+    # idempotent: nothing more happens on a re-run
+    assert cli("migrate-shares") == 0
+    again = capsys.readouterr().out
+    assert "no file share on the VPN, nothing to migrate" in again
+    assert list(_folders(file_store, ALICE)) == ["Share-Folder"]
+
+
+def test_migrate_shares_without_share_login_uses_the_vpn_login(file_store):
+    payload = {**BARE, "routes": ["10.20.0.0/16"],
+               "share_path": "//fs01/Shared/Jensen (New)"}
+    put(file_store, ALICE, payload=payload, visibility="private:alice")
+    lines = run(vpn.migrate_shares())
+    assert lines == [
+        "Office files (alice): moved share //fs01/Shared/Jensen (New) "
+        "to network folder 'Jensen (New)'"
+    ]
+    folder = _folders(file_store, ALICE)["Jensen (New)"]
+    assert "share_username" not in folder.payload and "share_password" not in folder.payload
+    assert "routes" not in run(file_store.get(ALICE, "fortinet", "Office files")).payload
+
+
+def test_migrate_shares_dedupes_folder_names(file_store):
+    put(file_store, ALICE, name="Shared", payload=BARE, visibility="private:alice")
+    run(file_store.put(ALICE, provider="fortinet", name="Shared 2", kind="smb-folder",
+                       payload={"vpn": "Shared", "share_path": "//fs02/Other"}))
+    put(file_store, ALICE, payload={**PAYLOAD, "share_domain": "CORP"},
+        visibility="private:alice")
+    lines = run(vpn.migrate_shares())
+    assert any("to network folder 'Shared 3'" in line for line in lines), lines
+    folder = _folders(file_store, ALICE)["Shared 3"]
+    assert folder.payload["share_domain"] == "CORP"
+    assert folder.payload["share_username"] == "alice"
+
+
+def test_migrate_shares_reuses_a_folder_left_by_an_interrupted_run(file_store):
+    put(file_store, ALICE, payload=PAYLOAD, visibility="private:alice")
+    run(file_store.put(ALICE, provider="fortinet", name="Shared", kind="smb-folder",
+                       payload={"vpn": "Office files", "share_path": "//fileserver01/Shared"}))
+    lines = run(vpn.migrate_shares())
+    assert lines == [
+        "Office files (alice): moved share //fileserver01/Shared to network "
+        "folder 'Shared' (already there)"
+    ]
+    assert list(_folders(file_store, ALICE)) == ["Shared"]
+    assert "share_path" not in run(file_store.get(ALICE, "fortinet", "Office files")).payload
+
+
+def test_migrate_shares_registered_in_cli():
+    parser = argparse.ArgumentParser(prog="hermes")
+    vpn_cmd.register_vpn_subparser(parser.add_subparsers(dest="command"))
+    args = parser.parse_args(["vpn", "migrate-shares", "--dry-run"])
+    assert args.vpn_command == "migrate-shares" and args.dry_run is True

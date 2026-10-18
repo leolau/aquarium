@@ -25,7 +25,10 @@ def describe(view: Dict[str, Any], *, with_check: bool = False) -> str:
         if view.get("share_path"):
             line = f"{name}: connected — files at {view['mount_path']} (read-only)"
         else:
-            line = f"{name}: connected (no file share configured)"
+            line = (
+                f"{name}: connected (no file share on the VPN itself; its network "
+                "folders are in folder_bridge_list_folders)"
+            )
     elif state == "needs_cert":
         digest = (status.get("cert") or {}).get("sha256") or ""
         line = (
@@ -50,8 +53,13 @@ def _emit(view: Dict[str, Any], as_json: bool, *, with_check: bool = False) -> N
 async def _dispatch(args: argparse.Namespace) -> int:
     from hermes_cli.credential_store import resolve_owner_principal
 
-    principal = await resolve_owner_principal()
     action = args.vpn_command
+    if action == "migrate-shares":
+        lines = await vpn.migrate_shares(dry_run=bool(args.dry_run))
+        for line in lines:
+            print(line)
+        return 1 if any(": failed," in line for line in lines) else 0
+    principal = await resolve_owner_principal()
     as_json = bool(args.json)
 
     if action == "list" or (action == "status" and not args.name):
@@ -121,4 +129,14 @@ def register_vpn_subparser(subparsers: argparse._SubParsersAction) -> None:
         cmd = sub.add_parser(verb, help=text)
         cmd.add_argument("name", help="VPN name, e.g. \"Office files\"")
         cmd.add_argument("--json", action="store_true", help="JSON output")
+    migrate = sub.add_parser(
+        "migrate-shares",
+        help="Move each VPN's own file share into a network folder (Files → Bridge)",
+        description=(
+            "For every VPN that still has its own file share: create a network "
+            "folder (same owner and visibility) for it, then remove the share, "
+            "share login and routes from the VPN. Safe to re-run."
+        ),
+    )
+    migrate.add_argument("--dry-run", action="store_true", help="Only print what would change")
     parser.set_defaults(func=vpn_command)

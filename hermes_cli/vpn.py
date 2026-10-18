@@ -1,9 +1,13 @@
 """Fortinet SSL-VPN connections for Hermes ("Private networks (VPN)").
 
 A ``fortinet-vpn`` credential (``hermes_cli/credential_store.py``) holds the
-gateway login and optional SMB share. This module turns one into a split
-tunnel plus a read-only mount at ``/opt/data/vpn-files/<slug>`` by driving the
-root helper ``deploy/hermes-vpn-helper`` (installed at
+gateway login: the VPN is only the network connection. File shares are
+``smb-folder`` network folders (``hermes_cli/vpn_folders.py``); the helper
+routes each folder's file server through the tunnel as a ``/32`` when it is
+mounted. Legacy entries may still carry ``routes`` and their own SMB share
+(read-only mount at ``/opt/data/vpn-files/<slug>``) until
+``hermes vpn migrate-shares`` moves the share into a network folder. This
+module drives the root helper ``deploy/hermes-vpn-helper`` (installed at
 ``/usr/local/sbin/hermes-vpn-helper``): directly when running as root (the
 dashboard API), through ``sudo -n`` otherwise (``hermes vpn`` in an agent's
 terminal). The helper validates everything again; nothing here is trusted by
@@ -198,7 +202,8 @@ def helper_spec(cred: Credential, slug: str) -> Dict[str, Any]:
         if payload.get(key) not in (None, ""):
             spec[key] = payload[key]
     spec["port"] = int(payload.get("port") or DEFAULT_PORT)
-    spec["routes"] = list(payload.get("routes") or [])
+    if payload.get("routes"):
+        spec["routes"] = list(payload["routes"])
     idle = payload.get("idle_minutes")
     spec["idle_minutes"] = DEFAULT_IDLE_MINUTES if idle is None else int(idle)
     return spec
@@ -283,7 +288,10 @@ def run_helper(
 def build_view(
     cred: Credential, slug: str, doc: Dict[str, Any], entry: Dict[str, Any]
 ) -> Dict[str, Any]:
-    """The contract's VpnView. Never includes password/share_password."""
+    """The contract's VpnView. Never includes password/share_password.
+
+    ``routes`` are the routes on the tunnel right now (the helper's live
+    state, including network folders' ``/32`` routes), not the payload."""
     payload = cred.payload
     state = doc.get("state") if doc.get("state") in STATES else "error"
     status: Dict[str, Any] = {
@@ -308,7 +316,7 @@ def build_view(
         "host": payload.get("host"),
         "port": int(payload.get("port") or DEFAULT_PORT),
         "realm": payload.get("realm") or None,
-        "routes": list(payload.get("routes") or []),
+        "routes": [r for r in doc.get("routes") or [] if isinstance(r, str)],
         "share_path": payload.get("share_path") or None,
         "mount_path": mount_path(slug),
         "auto_connect": True if auto is None else bool(auto),
@@ -445,3 +453,144 @@ async def forget(cred: Credential) -> None:
     if known:
         await _helper("down", slug_for(cred))
     _drop(cred)
+
+
+# ---------------------------------------------------------------------------
+# Migration: a VPN's own share -> a network folder
+# ---------------------------------------------------------------------------
+
+_LEGACY_SHARE_FIELDS = (
+    "share_path", "share_username", "share_password", "share_domain", "routes",
+)
+
+
+async def _store_owner(store: Any) -> Any:
+    if getattr(store, "backend", "") == "supabase":
+        from hermes_cli.access import PrincipalStore
+
+        return await PrincipalStore(store._store).get_owner()
+    from hermes_cli.access import Principal
+
+    return Principal(user_id="owner", display="owner", role="owner")
+
+
+async def _store_principal(store: Any, user_id: str) -> Any:
+    if getattr(store, "backend", "") == "supabase":
+        from hermes_cli.access import PrincipalStore
+
+        found = await PrincipalStore(store._store).get(user_id)
+        if found is not None:
+            return found
+    from hermes_cli.access import Principal
+
+    role = "owner" if user_id == "owner" else "member"
+    return Principal(user_id=user_id, display=user_id, role=role)
+
+
+def migrated_folder_name(share_path: str, taken: Any) -> str:
+    """Last component of the share path, de-duplicated against ``taken``."""
+    parts = [p for p in share_path.replace("\\", "/").split("/") if p.strip()]
+    base = " ".join((parts[-1] if parts else "").split()) or "Network folder"
+    name, n = base, 2
+    while name in taken:
+        name = f"{base} {n}"
+        n += 1
+    return name
+
+
+def _migrated_folder_payload(vpn_payload: Dict[str, Any], share_path: str) -> Dict[str, Any]:
+    """Folder payload with the VPN's effective share login made explicit
+    (the VPN loses its share_* fields, so a fallback to them would vanish)."""
+    payload: Dict[str, Any] = {
+        "vpn": "", "share_path": share_path, "trusted_for_import": False,
+    }
+    if any(vpn_payload.get(k) for k in ("share_username", "share_password", "share_domain")):
+        payload["share_username"] = vpn_payload.get("share_username") or vpn_payload.get("username")
+        password = vpn_payload.get("share_password") or vpn_payload.get("password")
+        if password:
+            payload["share_password"] = password
+        if vpn_payload.get("share_domain"):
+            payload["share_domain"] = vpn_payload["share_domain"]
+    return payload
+
+
+async def migrate_shares(*, dry_run: bool = False, store: Any = None) -> List[str]:
+    """Move every VPN's own SMB share into an ``smb-folder`` entry (same
+    owner and visibility), then strip share_* and routes from the VPN.
+
+    Idempotent: a migrated VPN has no ``share_path``; a folder already
+    pointing at the same VPN + path is reused rather than duplicated.
+    Returns one line per VPN; never includes a password.
+    """
+    from hermes_cli.vpn_folders import KIND as FOLDER_KIND
+    from hermes_cli.vpn_folders import normalize_share_path
+
+    store = store if store is not None else default_credential_store()
+    owner = await _store_owner(store)
+    if owner is None:
+        return ["No owner is enrolled; nothing to migrate."]
+    entries = await store.list(owner)
+    lines: List[str] = []
+    for cred in list(entries):
+        if cred.kind != KIND or cred.provider != PROVIDER:
+            continue
+        label = f"{cred.name} ({cred.owner_user_id})"
+        raw = cred.payload.get("share_path")
+        if not raw:
+            lines.append(f"{label}: no file share on the VPN, nothing to migrate")
+            continue
+        try:
+            share_path = normalize_share_path(raw)
+        except VpnError as exc:
+            lines.append(f"{label}: skipped, share {raw} is not a valid SMB path ({exc})")
+            continue
+        mine = [
+            e for e in entries
+            if e.provider == PROVIDER and e.owner_user_id == cred.owner_user_id
+        ]
+        existing = next(
+            (
+                e for e in mine
+                if e.kind == FOLDER_KIND
+                and e.payload.get("vpn") == cred.name
+                and e.payload.get("share_path") == share_path
+            ),
+            None,
+        )
+        folder_name = existing.name if existing else migrated_folder_name(
+            share_path, {e.name for e in mine}
+        )
+        verb = "would move" if dry_run else "moved"
+        line = f"{label}: {verb} share {share_path} to network folder '{folder_name}'"
+        if existing:
+            line += " (already there)"
+        if dry_run:
+            lines.append(line)
+            continue
+        principal = await _store_principal(store, cred.owner_user_id)
+        try:
+            if existing is None:
+                payload = _migrated_folder_payload(cred.payload, share_path)
+                payload["vpn"] = cred.name
+                await store.put(
+                    principal, provider=PROVIDER, name=folder_name, kind=FOLDER_KIND,
+                    payload=payload, visibility=cred.visibility,
+                )
+            await store.put(
+                principal, provider=PROVIDER, name=cred.name, kind=KIND,
+                payload={
+                    k: v for k, v in cred.payload.items() if k not in _LEGACY_SHARE_FIELDS
+                },
+                services=list(cred.services), visibility=cred.visibility,
+            )
+        except CredentialError as exc:
+            lines.append(f"{label}: failed, {str(exc)[:200]}")
+            continue
+        if existing is None:
+            created = await store.get(principal, PROVIDER, folder_name)
+            if created is not None:
+                entries.append(created)
+        lines.append(line)
+    if not lines:
+        lines.append("No VPNs are configured; nothing to migrate.")
+    return lines
