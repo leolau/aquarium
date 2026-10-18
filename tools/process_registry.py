@@ -1443,7 +1443,7 @@ class ProcessRegistry:
 
                 signal_group(run_as, session.pid, signal.SIGTERM)
                 time.sleep(0.5)
-                signal_group(run_as, session.pid, signal.SIGKILL)
+                signal_group(run_as, session.pid, signal.SIGKILL)  # windows-footgun: ok — guarded by not _IS_WINDOWS
             if session._pty:
                 # PTY process -- terminate via ptyprocess
                 try:

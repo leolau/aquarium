@@ -1165,7 +1165,7 @@ class LocalEnvironment(BaseEnvironment):
                     return
 
                 if run_as:
-                    signal_group(run_as, pgid, signal.SIGKILL)
+                    signal_group(run_as, pgid, signal.SIGKILL)  # windows-footgun: ok — POSIX branch
                 try:
                     # POSIX-only: _IS_WINDOWS is handled by the outer branch.
                     os.killpg(pgid, signal.SIGKILL)  # windows-footgun: ok — POSIX process-group SIGKILL
