@@ -341,14 +341,16 @@ function ToolsetRow({
         <Pill tone={toolset.enabled ? "success" : "muted"}>
           {toolset.enabled ? "enabled" : "disabled"}
         </Pill>
-        {!toolset.configured ? <Pill tone="warning">missing keys</Pill> : null}
+        {!toolset.configured ? <Pill tone="warning">needs setup</Pill> : null}
       </div>
       <p className="mt-1 text-xs text-[var(--color-muted)]">
         {toolset.description}
       </p>
-      <p className="mt-1 text-xs text-[var(--color-muted)]">
-        {toolset.tools.length} tool(s)
-      </p>
+      {toolset.tools.length > 0 ? (
+        <p className="mt-1 break-words text-xs text-[var(--color-muted)]">
+          Tools: {toolset.tools.join(", ")}
+        </p>
+      ) : null}
       <div className="mt-3">
         <button
           type="button"
@@ -384,6 +386,7 @@ export function ToolsSettings({
 
   const rows = servers;
   const tsets = toolsets;
+  const enabledGroups = tsets.filter((t) => t.enabled);
 
   function busyKey(name: string) {
     return pending[name] ?? (refreshing ? "refresh" : null);
@@ -508,17 +511,27 @@ export function ToolsSettings({
         )}
       </section>
 
-      <section>
-        <h2 className="text-sm font-semibold">CLI toolsets</h2>
-        <p className="mb-3 text-xs text-[var(--color-muted)]">
-          The <code>hermes tools</code> set — tool bundles enabled for the cli
-          platform. &ldquo;missing keys&rdquo; means the toolset needs
-          credentials (set them under Connected accounts or the profile&apos;s
-          env).
+      <section data-component="ChatToolGroups">
+        <h2 className="text-sm font-semibold">Tool groups for Aquarium chats</h2>
+        <p className="mb-2 text-xs text-[var(--color-muted)]">
+          Turn groups of tools on or off for Aquarium chats. Changes apply to
+          new chats; a chat that is already open keeps the tools it started
+          with. &ldquo;needs setup&rdquo; means the group needs an API key or
+          account (add it under Connected accounts).
         </p>
+        {tsets.length > 0 ? (
+          <p
+            data-testid="chat-tool-groups-on"
+            className="mb-3 text-xs text-[var(--color-muted)]"
+          >
+            {enabledGroups.length > 0
+              ? `New chats can use: ${enabledGroups.map((t) => t.label).join(", ")}.`
+              : "No tool groups are on — new chats get no tools from this list."}
+          </p>
+        ) : null}
         {tsets.length === 0 ? (
           <p className="text-sm text-[var(--color-muted)]">
-            No configurable toolsets.
+            No tool groups to configure.
           </p>
         ) : (
           <ul className="flex flex-col gap-3">

@@ -6,8 +6,8 @@ import type { McpServer, Toolset } from "@/types";
 export const dynamic = "force-dynamic";
 
 /**
- * Settings → Tools & Integrations: the MCP servers and `hermes tools`
- * toolsets the agent actually runs — enable/disable, probe, remove, and the
+ * Settings → Tools & Integrations: the MCP servers and the tool groups
+ * Aquarium chats run with — enable/disable, probe, remove, and the
  * browser-driven OAuth re-auth flow for `auth: oauth` servers (Canva & co).
  */
 export default async function Page() {

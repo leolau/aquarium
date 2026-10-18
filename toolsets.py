@@ -401,8 +401,10 @@ TOOLSETS = {
         "tools": [
             # Web
             "web_search", "web_extract",
-            # Terminal + process management
-            "terminal", "process",
+            # Terminal + process management. read_terminal/close_terminal are
+            # desktop-only (check_fn) but register under the ``terminal``
+            # toolset, so they must be listed for that group to resolve here.
+            "terminal", "process", "read_terminal", "close_terminal",
             # File manipulation
             "read_file", "write_file", "patch", "search_files",
             # Vision + image generation

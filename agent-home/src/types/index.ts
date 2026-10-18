@@ -2416,7 +2416,7 @@ export interface McpServersResponse {
   servers: McpServer[];
 }
 
-/** `GET /api/tools/toolsets` row — the `hermes tools` CLI set. */
+/** `GET /api/tools/toolsets?platform=…` row — one configurable tool group. */
 export interface Toolset {
   name: string;
   label: string;

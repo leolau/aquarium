@@ -168,6 +168,13 @@ export interface HermesApiClientOptions {
 
 /** Rows per `GET /api/sessions` page when reading a whole conversation list. */
 export const SESSION_PAGE_SIZE = 200;
+
+/**
+ * The `platform_toolsets` key Aquarium chats are built with
+ * (`gateway.session_chat.build_session_agent`, `platform="api_server"`).
+ * The OpenAI-compatible API (`gateway/platforms/api_server.py`) shares it.
+ */
+export const CHAT_TOOLSET_PLATFORM = "api_server";
 /** Upper bound on pages `allSessions` reads (10,000 conversations). */
 const SESSION_PAGE_MAX_PAGES = 50;
 
@@ -369,18 +376,24 @@ export class HermesApiClient {
     });
   }
 
-  /** The `hermes tools` set — configurable toolsets with enable state. */
-  async toolsets(): Promise<Toolset[]> {
-    return this.request("/api/tools/toolsets");
+  /**
+   * Configurable tool groups with their enable state for `platform` —
+   * by default the one Aquarium chats are built with.
+   */
+  async toolsets(platform: string = CHAT_TOOLSET_PLATFORM): Promise<Toolset[]> {
+    return this.request(
+      `/api/tools/toolsets?platform=${encodeURIComponent(platform)}`,
+    );
   }
 
   async setToolsetEnabled(
     name: string,
     enabled: boolean,
-  ): Promise<{ ok: boolean; name: string; enabled: boolean }> {
+    platform: string = CHAT_TOOLSET_PLATFORM,
+  ): Promise<{ ok: boolean; name: string; platform: string; enabled: boolean }> {
     return this.request(`/api/tools/toolsets/${encodeURIComponent(name)}`, {
       method: "PUT",
-      json: { enabled },
+      json: { enabled, platform },
     });
   }
 

@@ -1,10 +1,11 @@
 /**
- * /api/tools/toolsets/[name] — POST {enabled} toggles a `hermes tools`
- * toolset for the cli platform (same flag the CLI picker writes).
+ * /api/tools/toolsets/[name] — POST {enabled} turns a tool group on/off for
+ * Aquarium chats (`platform_toolsets.api_server`, the platform
+ * `build_session_agent` uses). Applies to new chats only.
  */
 import { NextResponse } from "next/server";
 
-import { HermesApiError } from "@/lib/api/client";
+import { CHAT_TOOLSET_PLATFORM, HermesApiError } from "@/lib/api/client";
 import { apiClientForRequest, getPrincipal } from "@/lib/auth/principal";
 
 export async function POST(
@@ -16,9 +17,9 @@ export async function POST(
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   }
   const { name } = await params;
-  let body: { enabled?: boolean };
+  let body: { enabled?: boolean; platform?: string };
   try {
-    body = (await request.json()) as { enabled?: boolean };
+    body = (await request.json()) as { enabled?: boolean; platform?: string };
   } catch {
     return NextResponse.json({ error: "bad_json" }, { status: 400 });
   }
@@ -31,7 +32,13 @@ export async function POST(
   try {
     const client = await apiClientForRequest();
     return NextResponse.json(
-      await client.setToolsetEnabled(name, body.enabled),
+      await client.setToolsetEnabled(
+        name,
+        body.enabled,
+        typeof body.platform === "string" && body.platform
+          ? body.platform
+          : CHAT_TOOLSET_PLATFORM,
+      ),
     );
   } catch (err) {
     if (err instanceof HermesApiError) {
