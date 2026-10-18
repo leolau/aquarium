@@ -35,7 +35,12 @@ Type=simple
 User=hermes
 Group=hermes
 WorkingDirectory=/opt/data/hermes-agent/agent-home
-EnvironmentFile=/opt/data/hermes-agent/agent-home/agent-home.env
+# Secrets live in /etc/aquarium/agent-home.env (root:root 0600; systemd reads it
+# as root, so the hermes user and the agent's shell can't). The old in-checkout
+# file is still read first so a box that hasn't moved it keeps working; the
+# /etc one wins for any key in both (security review F16).
+EnvironmentFile=-/opt/data/hermes-agent/agent-home/agent-home.env
+EnvironmentFile=-/etc/aquarium/agent-home.env
 # PATH must resolve node/npm for the service user. Verify with `command -v npm`
 # on the box during deploy and edit this line if node lives elsewhere (e.g. nvm).
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
