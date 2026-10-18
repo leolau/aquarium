@@ -8,8 +8,11 @@ confirmations for medium-confidence merge suggestions (fuzzy names, same
 domain, or a known phone/email quoted in the message body).
 """
 
+import hashlib
+import hmac
 import json
 import sqlite3
+import time
 import os
 import uuid
 import re
@@ -23,7 +26,25 @@ DB_PATH = os.environ.get('MESSAGING_DB_PATH', '/opt/data/whatsapp-messages/messa
 EMAIL_DB_PATH = os.environ.get('EMAIL_DB_PATH', '/opt/data/email-messages/email_data.db')
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_USER_ID = os.environ.get('TELEGRAM_USER_ID', '')
-CALLBACK_SERVER_BASE = os.environ.get('CALLBACK_SERVER_BASE', 'http://8.217.86.90:7902')
+# Public HTTPS address of telegram_callback_handler (e.g. behind Caddy). No
+# default: the old fallback pointed at a released IP. When unset the merge
+# suggestion is still sent, just without the Merge/Keep buttons.
+CALLBACK_SERVER_BASE = os.environ.get('CALLBACK_SERVER_BASE', '').rstrip('/')
+CALLBACK_LINK_TTL_SECONDS = 7 * 24 * 3600
+
+
+def _callback_signing_key():
+    """Shared with telegram_callback_handler: CALLBACK_SIGNING_SECRET, else
+    derived from the bot token both processes already have."""
+    secret = os.environ.get('CALLBACK_SIGNING_SECRET') or TELEGRAM_BOT_TOKEN
+    return hmac.new(secret.encode(), b'contact-merge-callback', hashlib.sha256).digest()
+
+
+def sign_callback_url(action, suggestion_id, now=None):
+    exp = int((now if now is not None else time.time()) + CALLBACK_LINK_TTL_SECONDS)
+    msg = f"{action}:{suggestion_id}:{exp}".encode()
+    sig = hmac.new(_callback_signing_key(), msg, hashlib.sha256).hexdigest()
+    return f"{CALLBACK_SERVER_BASE}/action/{action}/{suggestion_id}?exp={exp}&sig={sig}"
 
 
 def get_db():
@@ -198,8 +219,14 @@ def send_merge_confirmation(db, suggestion_id, new_handle, new_name,
     text += f"\n{handles_text}\n"
     text += f"Reason: {reason}"
 
-    merge_url = f"{CALLBACK_SERVER_BASE}/action/merge/{suggestion_id}"
-    reject_url = f"{CALLBACK_SERVER_BASE}/action/reject/{suggestion_id}"
+    if not CALLBACK_SERVER_BASE:
+        print("[contacts] CALLBACK_SERVER_BASE not set; merge suggestion sent without buttons")
+        text += f"\n\nSuggestion id: <code>{suggestion_id}</code> (Merge/Keep buttons are off: CALLBACK_SERVER_BASE is not set)"
+        send_telegram(text)
+        return
+
+    merge_url = sign_callback_url('merge', suggestion_id)
+    reject_url = sign_callback_url('reject', suggestion_id)
 
     reply_markup = {
         "inline_keyboard": [[
