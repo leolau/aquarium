@@ -9989,6 +9989,12 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         """
         history = history or []
         message_text = event.text or ""
+        # Expand @ references on the sender's own text only, before quoted
+        # replies, channel backfill or attachment notes are added (F23).
+        if "@" in message_text:
+            message_text = await self._expand_sender_context_references(message_text, source)
+            if message_text is None:
+                return None
         _group_sessions_per_user = getattr(self.config, "group_sessions_per_user", True)
         _thread_sessions_per_user = getattr(self.config, "thread_sessions_per_user", False)
         # Use the same helper every other call site uses so the write key here
@@ -10220,48 +10226,67 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             else:
                 message_text = f'[Replying to: "{reply_snippet}"]\n\n{message_text}'
 
-        if "@" in message_text:
+        return message_text
+
+    async def _expand_sender_context_references(
+        self, message_text: str, source: SessionSource
+    ) -> Optional[str]:
+        """Expand the @ references *source* may use; ``None`` when refused.
+
+        See gateway/context_refs_policy.py for who may expand what.
+        """
+        try:
+            from agent.context_references import preprocess_context_references_async
+            from agent.model_metadata import get_model_context_length_async
+            from gateway.context_refs_policy import reference_policy
+            from hermes_cli.tools_config import _get_platform_tools
+
+            _msg_cfg = _load_gateway_config()
+            _policy = reference_policy(
+                source,
+                platform_toolsets=_get_platform_tools(
+                    _msg_cfg, _platform_config_key(source.platform)
+                ),
+                default_cwd=os.environ.get("TERMINAL_CWD", os.path.expanduser("~")),
+            )
+            if _policy is None:
+                return message_text
+            _msg_runtime = _resolve_runtime_agent_kwargs()
+            _msg_config_ctx = None
             try:
-                from agent.context_references import preprocess_context_references_async
-                from agent.model_metadata import get_model_context_length_async
-
-                _msg_cwd = os.environ.get("TERMINAL_CWD", os.path.expanduser("~"))
-                _msg_runtime = _resolve_runtime_agent_kwargs()
-                _msg_config_ctx = None
-                try:
-                    _msg_cfg = _load_gateway_config()
-                    _msg_model_cfg = _msg_cfg.get("model", {})
-                    if isinstance(_msg_model_cfg, dict):
-                        _msg_raw_ctx = _msg_model_cfg.get("context_length")
-                        if _msg_raw_ctx is not None:
-                            _msg_config_ctx = int(_msg_raw_ctx)
-                except Exception:
-                    pass
-                _msg_ctx_len = await get_model_context_length_async(
-                    self._model,
-                    base_url=self._base_url or _msg_runtime.get("base_url") or "",
-                    api_key=_msg_runtime.get("api_key") or "",
-                    config_context_length=_msg_config_ctx,
-                )
-                _ctx_result = await preprocess_context_references_async(
-                    message_text,
-                    cwd=_msg_cwd,
-                    context_length=_msg_ctx_len,
-                    allowed_root=_msg_cwd,
-                )
-                if _ctx_result.blocked:
-                    _adapter = self.adapters.get(source.platform)
-                    if _adapter:
-                        await _adapter.send(
-                            source.chat_id,
-                            "\n".join(_ctx_result.warnings) or "Context injection refused.",
-                        )
-                    return None
-                if _ctx_result.expanded:
-                    message_text = _ctx_result.message
-            except Exception as exc:
-                logger.debug("@ context reference expansion failed: %s", exc)
-
+                _msg_model_cfg = _msg_cfg.get("model", {})
+                if isinstance(_msg_model_cfg, dict):
+                    _msg_raw_ctx = _msg_model_cfg.get("context_length")
+                    if _msg_raw_ctx is not None:
+                        _msg_config_ctx = int(_msg_raw_ctx)
+            except Exception:
+                pass
+            _msg_ctx_len = await get_model_context_length_async(
+                self._model,
+                base_url=self._base_url or _msg_runtime.get("base_url") or "",
+                api_key=_msg_runtime.get("api_key") or "",
+                config_context_length=_msg_config_ctx,
+            )
+            _ctx_result = await preprocess_context_references_async(
+                message_text,
+                cwd=_policy.root,
+                context_length=_msg_ctx_len,
+                allowed_root=_policy.root,
+                allowed_kinds=_policy.allowed_kinds,
+                protect_hermes_state=True,
+            )
+            if _ctx_result.blocked:
+                _adapter = self.adapters.get(source.platform)
+                if _adapter:
+                    await _adapter.send(
+                        source.chat_id,
+                        "\n".join(_ctx_result.warnings) or "Context injection refused.",
+                    )
+                return None
+            if _ctx_result.expanded:
+                return _ctx_result.message
+        except Exception as exc:
+            logger.debug("@ context reference expansion failed: %s", exc)
         return message_text
 
     def _consume_pending_native_image_paths(self, session_key: str) -> List[str]:
