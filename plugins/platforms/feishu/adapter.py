@@ -2676,6 +2676,13 @@ class FeishuAdapter(BasePlatformAdapter):
             return P2CardActionTriggerResponse() if P2CardActionTriggerResponse else None
 
         user_name = self._get_cached_sender_name(open_id) or open_id
+        operator_user_id = sender_id.user_id
+        if self._approval_clicker_id(state["session_key"], open_id, operator_user_id) is None:
+            logger.warning(
+                "[Feishu] Approval %s clicked by %s, who did not ask for it - ignoring",
+                approval_id, open_id or "<unknown>",
+            )
+            return P2CardActionTriggerResponse() if P2CardActionTriggerResponse else None
 
         chat_context = getattr(event, "context", None)
         chat_id = str(getattr(chat_context, "open_chat_id", "") or "")
@@ -2687,6 +2694,7 @@ class FeishuAdapter(BasePlatformAdapter):
                 user_name=user_name,
                 open_id=open_id,
                 chat_id=chat_id,
+                user_id=operator_user_id,
             ),
         ):
             return P2CardActionTriggerResponse() if P2CardActionTriggerResponse else None
@@ -2758,6 +2766,21 @@ class FeishuAdapter(BasePlatformAdapter):
             response.card = card
         return response
 
+    @staticmethod
+    def _approval_clicker_id(session_key: str, open_id: str, user_id: str = "") -> Optional[str]:
+        """The clicker id that may answer this approval, or None.
+
+        Messages record the sender as ``user_id or open_id``, so either id of
+        the clicker can match the person who asked for the command.
+        """
+        from tools.approval import can_resolve_gateway_approval
+
+        candidates = [i for i in (user_id, open_id) if i]
+        for candidate in candidates:
+            if can_resolve_gateway_approval(session_key, candidate):
+                return candidate
+        return None
+
     async def _resolve_approval(
         self,
         approval_id: Any,
@@ -2766,6 +2789,7 @@ class FeishuAdapter(BasePlatformAdapter):
         *,
         open_id: str = "",
         chat_id: str = "",
+        user_id: str = "",
     ) -> None:
         """Pop approval state and unblock the waiting agent thread."""
         state = self._approval_state.get(approval_id)
@@ -2774,6 +2798,13 @@ class FeishuAdapter(BasePlatformAdapter):
             return
         if not self._is_interactive_operator_authorized(open_id):
             logger.warning("[Feishu] Unauthorized approval click by %s for approval %s", open_id or "<unknown>", approval_id)
+            return
+        clicker_id = self._approval_clicker_id(state["session_key"], open_id, user_id)
+        if clicker_id is None:
+            logger.warning(
+                "[Feishu] Approval %s clicked by %s, who did not ask for it - ignoring",
+                approval_id, open_id or "<unknown>",
+            )
             return
         expected_chat_id = str(state.get("chat_id", "") or "")
         if expected_chat_id and chat_id and expected_chat_id != chat_id:
@@ -2788,7 +2819,7 @@ class FeishuAdapter(BasePlatformAdapter):
             return
         try:
             from tools.approval import resolve_gateway_approval
-            count = resolve_gateway_approval(state["session_key"], choice)
+            count = resolve_gateway_approval(state["session_key"], choice, approver_id=clicker_id)
             logger.info(
                 "Feishu button resolved %d approval(s) for session %s (choice=%s, user=%s)",
                 count, state["session_key"], choice, user_name,
