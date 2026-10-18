@@ -263,7 +263,7 @@ class TestTelegramApprovalCallback:
             with patch("tools.approval.resolve_gateway_approval", return_value=1) as mock_resolve:
                 await adapter._handle_callback_query(update, context)
 
-        mock_resolve.assert_called_once_with("agent:main:telegram:group:12345:99", "once")
+        mock_resolve.assert_called_once_with("agent:main:telegram:group:12345:99", "once", approver_id="12345")
         query.answer.assert_called_once()
         query.edit_message_text.assert_called_once()
 
@@ -382,7 +382,7 @@ class TestTelegramApprovalCallback:
             with patch("tools.approval.resolve_gateway_approval", return_value=1) as mock_resolve:
                 await adapter._handle_callback_query(update, context)
 
-        mock_resolve.assert_called_once_with("some-session", "deny")
+        mock_resolve.assert_called_once_with("some-session", "deny", approver_id="12345")
         edit_kwargs = query.edit_message_text.call_args[1]
         assert "Denied" in edit_kwargs["text"]
 
@@ -588,3 +588,43 @@ class TestTelegramApprovalCallback:
         query.answer.assert_called_once()
         query.edit_message_text.assert_called_once()
         assert (tmp_path / ".update_response").read_text() == "n"
+
+
+class TestTelegramApprovalRequesterBinding:
+    """F22: in a group, only the requester's click resolves their approval."""
+
+    @pytest.mark.asyncio
+    async def test_other_users_click_leaves_approval_pending(self):
+        from tools import approval as mod
+
+        key = "agent:main:telegram:group:-100:7"
+        entry = mod._ApprovalEntry({"command": "rm -rf /tmp/x"}, requester_id="111")
+        mod._gateway_queues[key] = [entry]
+        try:
+            adapter = _make_adapter()
+            adapter._approval_state[5] = key
+
+            def click(uid):
+                query = AsyncMock()
+                query.data = "ea:always:5"
+                query.message = MagicMock()
+                query.message.chat_id = -100
+                query.from_user = MagicMock()
+                query.from_user.first_name = "U" + uid
+                query.from_user.id = uid
+                update = MagicMock()
+                update.callback_query = query
+                return update, query
+
+            with patch.dict(os.environ, {"TELEGRAM_ALLOWED_USERS": "*"}, clear=False):
+                update, query = click("222")
+                await adapter._handle_callback_query(update, MagicMock())
+                assert "Only the person who asked" in query.answer.call_args.kwargs["text"]
+                assert not entry.event.is_set()
+                assert adapter._approval_state.get(5) == key
+
+                update, query = click("111")
+                await adapter._handle_callback_query(update, MagicMock())
+            assert entry.event.is_set() and entry.result == "always"
+        finally:
+            mod._gateway_queues.pop(key, None)

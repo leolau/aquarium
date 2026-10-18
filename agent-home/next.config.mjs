@@ -1,4 +1,5 @@
 import { execSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 import {
   baselineSecurityHeaders,
@@ -38,6 +39,12 @@ const nextConfig = {
   // Python `/api/*` layer, and does server-side Supabase reads with the
   // principal's RLS context. So there is deliberately NO `output: "export"`.
   reactStrictMode: true,
+  // Release tarballs (scripts/build-release.sh) ship a self-contained server
+  // so customer boxes never run `next build`. Tracing starts at the repo root
+  // because npm workspaces hoist node_modules there.
+  ...(process.env.AQUARIUM_STANDALONE === "1"
+    ? { output: "standalone", outputFileTracingRoot: fileURLToPath(new URL("..", import.meta.url)) }
+    : {}),
   // Lint and typecheck run as dedicated `npm run lint` / `npm run typecheck`
   // steps (and in CI); don't couple them to the production build.
   eslint: { ignoreDuringBuilds: true },

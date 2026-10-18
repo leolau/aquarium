@@ -99,7 +99,13 @@ Binary files are detected via MIME type and null-byte scanning. Known text exten
 
 Context references are primarily a **CLI feature**. They work in the interactive CLI where `@` triggers tab completion and references are expanded before the message is sent to the agent.
 
-In **messaging platforms** (Telegram, Discord, etc.), the `@` syntax is not expanded by the gateway — messages are passed through as-is. The agent itself can still reference files via the `read_file`, `search_files`, and `web_extract` tools.
+In **messaging platforms** (Telegram, WhatsApp, Discord, etc.), the gateway expands `@` references only in text written by an enrolled person (someone with a role: owner, admin, member or viewer). It never expands them for unknown senders or third-party contacts, webhook payloads, Home Assistant events, quoted replies or channel backfill. For enrolled people:
+
+- each kind needs the matching tool to be on for that platform and allowed for the person's role (`@file:`/`@folder:` need file tools, `@url:` needs web tools, `@diff`/`@staged`/`@git:` need the terminal);
+- people whose file tools are limited to their own folder (members and viewers by default, `$HERMES_HOME/workspaces/<user_id>/`) can only attach files from that folder and can't use the git kinds;
+- Hermes' own data (`config.yaml`, `state.db`, `memories/`, `sessions/`, `logs/`, `profiles/`) is never attached.
+
+The OpenAI-compatible API server and the Aquarium (agent-home) chat pass `@` text to the model as-is; the agent can still read files with its own tools.
 
 ## Interaction with Context Compression
 
