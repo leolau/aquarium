@@ -579,14 +579,14 @@ For details on declaring config settings in your own skills, see [Creating Skill
 
 ### Guard on agent-created skill writes
 
-When the agent uses `skill_manage` to create, edit, patch, or delete a skill, Hermes can optionally scan the new/updated content for dangerous keyword patterns (credential harvesting, obvious prompt injection, exfil instructions). The scanner is **off by default** — real agent workflows that legitimately touch `~/.ssh/` or mention `$OPENAI_API_KEY` were tripping the heuristic too often. Turn it back on if you want the scanner to prompt you before the agent's skill writes land:
+When the agent uses `skill_manage` to create, edit, patch, or delete a skill, Hermes scans the new/updated content for dangerous keyword patterns (credential harvesting, obvious prompt injection, exfil instructions). The scanner is **on by default**: a skill is reloaded into later conversations, and the agent may have been steered into writing it by an untrusted message. Only a *dangerous* verdict blocks the write (returned to the agent as an error so it can retry without the flagged content); *caution* findings are allowed. If the scanner cannot run, the write is blocked. To turn it off:
 
 ```yaml
 skills:
-  guard_agent_created: true   # default: false
+  guard_agent_created: false   # default: true
 ```
 
-When on, any flagged `skill_manage` write surfaces as an approval prompt with the scanner's rationale. Accepted writes land; denied writes return an explanatory error to the agent.
+Agent-created and hub/community skills are always scanned in full: their `.skillignore` / `.clawhubignore` is not honored, because the same author wrote it. Only builtin and trusted-repo skills may exclude files from the scan.
 
 ### Write approval for skill writes
 

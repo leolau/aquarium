@@ -39,3 +39,33 @@ def looks_destructive(name: str | None) -> bool:
     if not name:
         return False
     return bool(_PATTERN.search(name))
+
+
+# Fields whose value must never reach agent context (snapshot / read).
+SENSITIVE_WORDS = (
+    "password",
+    "passcode",
+    "passphrase",
+    "secret",
+    "token",
+    "api key",
+    "api-key",
+    "apikey",
+    "private key",
+    "pin",
+    "otp",
+    "one-time code",
+    "credential",
+)
+
+_SENSITIVE = re.compile(
+    r"\b(?:" + "|".join(re.escape(w) for w in SENSITIVE_WORDS) + r")s?\b",
+    re.IGNORECASE,
+)
+
+
+def looks_sensitive(name: str | None) -> bool:
+    """True when a field's accessible name reads like it holds a secret."""
+    if not name:
+        return False
+    return bool(_SENSITIVE.search(name))

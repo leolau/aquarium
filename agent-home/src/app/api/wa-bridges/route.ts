@@ -3,7 +3,8 @@
  * (Settings → WhatsApp bridges).
  *
  * GET lists every hermes-wa-bridge-* unit with pairing/QR state; POST
- * {name} provisions a new bridge unit via the host's wa-bridge-add.sh.
+ * {name} provisions a new bridge unit via the host's root-owned
+ * /usr/local/sbin/hermes-wa-bridge-add helper.
  * The Python side is owner-gated — bridges are box-global.
  */
 import { NextResponse } from "next/server";

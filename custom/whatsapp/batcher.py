@@ -515,7 +515,7 @@ def main():
     db.commit()
     
     # Start health server
-    health_server = HTTPServer(('0.0.0.0', 7900), HealthHandler)
+    health_server = HTTPServer((os.environ.get('WA_BATCHER_HEALTH_HOST', '127.0.0.1'), 7900), HealthHandler)
     health_thread = threading.Thread(target=health_server.serve_forever, daemon=True)
     health_thread.start()
     print("[batcher] Health endpoint on port 7900")
