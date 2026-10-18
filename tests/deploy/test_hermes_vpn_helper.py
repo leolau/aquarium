@@ -453,6 +453,7 @@ def test_up_connects_routes_and_mounts_read_only(h):
         "file_mode=0440",
         "dir_mode=0550",
         "vers=default",
+        "iocharset=utf8",
         "ip=10.20.1.5",
         "uid=hermes",
         "gid=hermes",
@@ -880,6 +881,7 @@ def test_mount_folder_through_connected_vpn(h):
         "file_mode=0440",
         "dir_mode=0550",
         "vers=default",
+        "iocharset=utf8",
         "ip=10.20.1.9",
         "uid=hermes",
         "gid=hermes",
@@ -916,12 +918,138 @@ def test_mount_folder_needs_connected_vpn(h):
     assert not os.path.exists(folder_mount_path(h))
 
 
-def test_mount_folder_outside_routes_refused(h):
+def vpn_state(h, slug="office-files"):
+    return json.loads((Path(h.RUN_DIR) / slug / "state.json").read_text())
+
+
+def tunnel_routes(h):
+    return json.loads((h.world / "routes.json").read_text())
+
+
+def test_mount_folder_outside_routes_adds_a_host_route(h):
     up(h)
     doc = fmount(h, share_path="//10.99.0.5/Projects")
-    assert doc["mounted"] is False
-    assert "outside the VPN routes 10.20.0.0/16" in doc["error"]
-    assert len(calls(h, "mount")) == 1  # only the VPN's own share
+    assert doc["mounted"] is True, doc
+    assert tunnel_routes(h) == [["10.20.0.0/16", "ppp0"], ["10.99.0.5/32", "ppp0"]]
+    state = vpn_state(h)
+    assert state["folder_routes"] == {"10.99.0.5/32": ["tenders"]}
+    assert h.cmd_status("office-files")["routes"] == ["10.20.0.0/16", "10.99.0.5/32"]
+
+
+def test_mount_folder_inside_vpn_routes_adds_no_route(h):
+    up(h)
+    fmount(h)
+    assert tunnel_routes(h) == [["10.20.0.0/16", "ppp0"]]
+    assert vpn_state(h).get("folder_routes", {}) == {}
+
+
+def connection_only(h, **over):
+    """A VPN entry that is only the connection: no routes, no share."""
+    spec = base_spec(trusted_cert=GOOD_SHA, **over)
+    spec.pop("routes")
+    spec.pop("share_path")
+    return h.cmd_up(write_spec(h, spec))
+
+
+def test_up_without_routes_or_share_is_a_bare_tunnel(h):
+    doc = connection_only(h)
+    assert doc["state"] == "connected", doc
+    assert doc["routes"] == [] and doc["mounted"] is False
+    assert not (h.world / "routes.json").exists() or tunnel_routes(h) == []
+    assert calls(h, "mount") == []
+    assert not any(c[1:4] == ["-4", "route", "replace"] for c in calls(h, "ip"))
+    check = h.cmd_check("office-files")["check"]
+    assert check["ok"] is True and "no file share" in check["message"]
+    assert h.cmd_down("office-files")["state"] == "disconnected"
+
+
+def test_folder_route_lifecycle_on_a_connection_only_vpn(h):
+    connection_only(h)
+    assert fmount(h)["mounted"] is True
+    assert fmount(h, folder_slug="hr", share_path="//10.20.1.9/HR")["mounted"] is True
+    assert tunnel_routes(h) == [["10.20.1.9/32", "ppp0"]]
+    assert vpn_state(h)["folder_routes"] == {"10.20.1.9/32": ["hr", "tenders"]}
+    # re-mounting the same spec is a no-op: no route churn
+    before = len(calls(h, "ip"))
+    assert fmount(h)["mounted"] is True
+    assert not any(c[1:4] in (["-4", "route", "del"], ["-4", "route", "replace"])
+                   for c in calls(h, "ip")[before:])
+    # one of two users leaves: route stays
+    h.cmd_umount("tenders")
+    assert tunnel_routes(h) == [["10.20.1.9/32", "ppp0"]]
+    assert vpn_state(h)["folder_routes"] == {"10.20.1.9/32": ["hr"]}
+    # last user leaves: route goes
+    h.cmd_umount("hr")
+    assert tunnel_routes(h) == []
+    state = vpn_state(h)
+    assert state["folder_routes"] == {} and state["routes"] == []
+    assert h.cmd_status("office-files")["state"] == "connected"
+
+
+def test_folder_moving_to_another_server_swaps_its_route(h):
+    connection_only(h)
+    fmount(h)
+    assert fmount(h, share_path="//10.20.1.7/Projects")["mounted"] is True
+    assert tunnel_routes(h) == [["10.20.1.7/32", "ppp0"]]
+    assert vpn_state(h)["folder_routes"] == {"10.20.1.7/32": ["tenders"]}
+
+
+def test_down_removes_folder_routes(h):
+    connection_only(h)
+    fmount(h)
+    h.cmd_down("office-files")
+    assert tunnel_routes(h) == []
+    assert "folder_routes" not in vpn_state(h)
+
+
+def test_failed_folder_mount_gives_the_route_back(h):
+    connection_only(h)
+    (h.world / "mount-fail").touch()
+    doc = fmount(h)
+    assert doc["mounted"] is False and doc["error"].startswith("File share login failed")
+    assert tunnel_routes(h) == []
+    assert vpn_state(h)["folder_routes"] == {}
+
+
+def test_moving_folder_to_another_vpn_releases_its_route(h):
+    connection_only(h)
+    fmount(h)
+    fmount(h, vpn_slug="other-vpn")
+    assert tunnel_routes(h) == []
+    assert vpn_state(h)["folder_routes"] == {}
+
+
+@pytest.mark.parametrize(
+    "share_path, reason",
+    [
+        ("//95.217.1.2/Projects", "overlaps this server's network"),
+        ("//172.31.1.1/Projects", "overlaps this server's network"),
+        ("//172.17.0.9/Projects", "overlaps reserved network"),
+        ("//203.0.113.10/Projects", "VPN gateway's own address"),
+    ],
+)
+def test_folder_route_overlapping_the_box_is_refused(h, share_path, reason):
+    connection_only(h)
+    doc = fmount(h, share_path=share_path)
+    assert doc["mounted"] is False and reason in doc["error"], doc
+    assert calls(h, "mount") == []
+    assert not (h.world / "routes.json").exists() or tunnel_routes(h) == []
+    assert vpn_state(h)["folder_routes"] == {}
+
+
+def test_legacy_share_retry_adds_host_route_when_vpn_has_no_routes(h):
+    (h.world / "mount-fail").touch()
+    up(h, routes=[])
+    state = vpn_state(h)
+    # an older tunnel whose /32 is gone (e.g. state from before this helper)
+    h.run([h.bin_path("ip"), "-4", "route", "del", "10.20.1.5/32", "dev", "ppp0"])
+    state["routes"] = []
+    (Path(h.RUN_DIR) / "office-files" / "state.json").write_text(json.dumps(state))
+    (h.world / "mount-fail").unlink()
+    doc = up(h, routes=[])
+    assert doc["mounted"] is True and doc["share_error"] is None, doc
+    assert tunnel_routes(h) == [["10.20.1.5/32", "ppp0"]]
+    assert doc["routes"] == ["10.20.1.5/32"]
 
 
 def test_mount_folder_unknown_server(h):
@@ -1122,6 +1250,14 @@ def test_main_folder_commands(h, monkeypatch, capsys):
         ("mount error(112): Host is down", "is not reachable through the VPN"),
         ("mount error(95): Operation not supported", "only offers SMB 1.0"),
         ("mount error(22): Invalid argument", "Could not mount //fs01/Projects"),
+        (
+            "mount error(79): Can not access a needed shared library",
+            "missing the kernel's UTF-8 file name support",
+        ),
+        (
+            "CIFS: VFS: CIFS mount error: iocharset utf8 not found",
+            "install linux-modules-extra-$(uname -r)",
+        ),
     ],
 )
 def test_mount_cifs_error_messages(h, monkeypatch, stderr, expected):
@@ -1134,3 +1270,75 @@ def test_mount_cifs_error_messages(h, monkeypatch, stderr, expected):
     monkeypatch.setattr(h, "run", lambda argv, **kw: proc)
     message = h.mount_cifs(("fs01", "Projects", []), "/x", "/c", "10.20.1.9")
     assert expected in message
+
+
+def test_elibacc_message_is_exact_and_not_retried_as_smb1(h, monkeypatch):
+    tried = []
+
+    class Proc:
+        returncode = 32
+        stdout = ""
+        stderr = "mount error(79): Can not access a needed shared library"
+
+    def fake_run(argv, **kw):
+        tried.append(argv)
+        return Proc()
+
+    monkeypatch.setattr(h, "run", fake_run)
+    message = h.mount_cifs(("fs01", "Projects", []), "/x", "/c", "10.20.1.9")
+    assert message == (
+        "The server is missing the kernel's UTF-8 file name support "
+        "(install linux-modules-extra-$(uname -r))"
+    )
+    assert len(tried) == 1
+
+
+def test_check_message_for_a_full_count(h, tmp_path):
+    (tmp_path / "share" / "a").mkdir(parents=True)
+    (tmp_path / "share" / "a" / "HSD 員工假期及加班表格.xlsx").write_text("x")
+    check = h.walk_check(str(tmp_path / "share"))
+    assert check == {"ok": True, "file_count": 1,
+                     "message": "File server reachable, 1 files listed."}
+
+
+def test_check_message_when_counting_hits_the_time_budget(h, tmp_path, monkeypatch):
+    monkeypatch.setattr(h, "count_files", lambda root, deadline: (26412, "time"))
+    check = h.walk_check(str(tmp_path))
+    assert check["ok"] is True and check["file_count"] == 26412
+    assert check["message"] == (
+        "File server reachable, at least 26,412 files (stopped counting after 20 s)."
+    )
+
+
+def test_count_files_reports_why_it_stopped(h, tmp_path, monkeypatch):
+    tmp_path = tmp_path / "share"
+    tmp_path.mkdir()
+    for i in range(3):
+        (tmp_path / f"f{i}").write_text("x")
+    assert h.count_files(str(tmp_path), h.time.monotonic() + 5) == (3, None)
+    assert h.count_files(str(tmp_path), h.time.monotonic() - 1) == (0, "time")
+    monkeypatch.setattr(h, "CHECK_MAX_ENTRIES", 2)
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "g").write_text("x")
+    count, stop = h.count_files(str(tmp_path), h.time.monotonic() + 5)
+    assert stop == "entries" and count >= 2
+
+
+def test_check_message_when_the_file_server_hangs(h, tmp_path, monkeypatch):
+    import threading
+
+    release = threading.Event()
+    monkeypatch.setattr(h, "count_files", lambda root, deadline: (release.wait(5), (0, None))[1])
+    monkeypatch.setattr(h, "CHECK_TIMEOUT", 0.05)
+    monkeypatch.setattr(h, "CHECK_GRACE", 0.05)
+    try:
+        check = h.walk_check(str(tmp_path))
+    finally:
+        release.set()
+    assert check["ok"] is False and check["file_count"] is None
+    assert check["message"].startswith("File server is too slow to answer (no reply within")
+
+
+def test_slow_message_matches_the_contract_with_default_budget():
+    h = load_helper()
+    assert h.slow_message() == "File server is too slow to answer (no reply within 25 s)."
