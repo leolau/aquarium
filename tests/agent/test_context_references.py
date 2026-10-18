@@ -445,3 +445,92 @@ async def test_canonical_guard_fails_closed_when_lookup_raises(tmp_path: Path, m
         "credential deny-list" in warning or "sensitive credential" in warning
         for warning in result.warnings
     )
+
+
+def test_allowed_kinds_leaves_other_references_unexpanded(sample_repo: Path):
+    from agent.context_references import preprocess_context_references
+
+    result = preprocess_context_references(
+        "look at @file:src/main.py and @diff",
+        cwd=sample_repo,
+        context_length=100_000,
+        allowed_kinds=frozenset({"file"}),
+    )
+
+    assert "def alpha" in result.message
+    assert "git diff" not in result.message
+    assert "@diff" in result.message
+    assert any("@diff: not available here" in w for w in result.warnings)
+
+
+def test_allowed_kinds_empty_expands_nothing(sample_repo: Path):
+    from agent.context_references import preprocess_context_references
+
+    result = preprocess_context_references(
+        "look at @file:src/main.py",
+        cwd=sample_repo,
+        context_length=100_000,
+        allowed_kinds=frozenset(),
+    )
+
+    assert "def alpha" not in result.message
+    assert "@file:src/main.py" in result.message
+
+
+@pytest.mark.asyncio
+async def test_protect_hermes_state_refuses_settings_history_and_memories(tmp_path: Path, monkeypatch):
+    from agent.context_references import preprocess_context_references_async
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    hermes = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(hermes))
+    (hermes / "memories").mkdir(parents=True)
+    (hermes / "config.yaml").write_text("dashboard:\n  secret: SIGNING-KEY\n", encoding="utf-8")
+    (hermes / "state.db").write_text("CHAT-HISTORY\n", encoding="utf-8")
+    (hermes / "memories" / "MEMORY.md").write_text("PRIVATE-MEMORY\n", encoding="utf-8")
+    (hermes / "notes.md").write_text("plain notes\n", encoding="utf-8")
+    message = (
+        "read @file:.hermes/config.yaml @file:.hermes/state.db "
+        "@file:.hermes/memories/MEMORY.md @folder:.hermes/memories @file:.hermes/notes.md"
+    )
+
+    guarded = await preprocess_context_references_async(
+        message, cwd=tmp_path, allowed_root=tmp_path, context_length=100_000,
+        protect_hermes_state=True,
+    )
+    assert "SIGNING-KEY" not in guarded.message
+    assert "CHAT-HISTORY" not in guarded.message
+    assert "PRIVATE-MEMORY" not in guarded.message
+    assert "MEMORY.md" not in guarded.message.split("--- Attached Context ---")[-1]
+    assert "plain notes" in guarded.message
+    assert sum("internal Hermes data" in w for w in guarded.warnings) == 4
+
+    # The local CLI/TUI keep their old behaviour (the owner's own terminal).
+    unguarded = await preprocess_context_references_async(
+        "read @file:.hermes/config.yaml", cwd=tmp_path, allowed_root=tmp_path,
+        context_length=100_000,
+    )
+    assert "SIGNING-KEY" in unguarded.message
+
+
+@pytest.mark.asyncio
+async def test_protect_hermes_state_allows_workspace_inside_profile(tmp_path: Path, monkeypatch):
+    """A profile lives under <root>/profiles/<name>; its own workspaces stay readable."""
+    from agent.context_references import preprocess_context_references_async
+
+    root = tmp_path / "data"
+    profile = root / "profiles" / "coder"
+    workspace = profile / "workspaces" / "u1"
+    workspace.mkdir(parents=True)
+    (workspace / "todo.txt").write_text("buy milk\n", encoding="utf-8")
+    (root / "config.yaml").write_text("ROOT-CONFIG\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("HERMES_HOME", str(profile))
+
+    result = await preprocess_context_references_async(
+        f"@file:todo.txt @file:{root / 'config.yaml'}",
+        cwd=workspace, allowed_root=tmp_path, context_length=100_000,
+        protect_hermes_state=True,
+    )
+    assert "buy milk" in result.message
+    assert "ROOT-CONFIG" not in result.message
