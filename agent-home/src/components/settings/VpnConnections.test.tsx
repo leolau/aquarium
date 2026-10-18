@@ -7,7 +7,6 @@ import {
   buildPayload,
   formatLocalTime,
   groupFingerprint,
-  parseRoutes,
 } from "@/components/settings/VpnConnections";
 import type { VpnView } from "@/types";
 
@@ -61,6 +60,8 @@ const STORED = {
   share_domain: "OFFICE",
 };
 
+const LEGACY_KEYS = ["routes", "share_path", "share_username", "share_password", "share_domain"];
+
 type Call = { method: string; url: string; body: unknown };
 
 function mockApi(
@@ -94,30 +95,6 @@ function mockApi(
   return calls;
 }
 
-describe("parseRoutes", () => {
-  it("accepts comma/newline separated CIDRs and bare hosts", () => {
-    expect(parseRoutes("10.20.0.0/16,\n192.168.50.0/24 10.1.2.3")).toEqual({
-      routes: ["10.20.0.0/16", "192.168.50.0/24", "10.1.2.3/32"],
-      error: null,
-    });
-  });
-
-  it.each([
-    ["", /at least one/],
-    ["0.0.0.0/0", /all traffic/],
-    ["10.0.0.0/0", /all traffic/],
-    ["10.20.1.0/16", /did you mean 10\.20\.0\.0\/16/],
-    ["300.1.1.1/32", /not a valid/],
-    ["10.0.0.0/33", /not a valid/],
-    ["fileserver01", /not an IPv4 range/],
-    ["fd00::/8", /not an IPv4 range/],
-  ])("rejects %j", (text, msg) => {
-    const { routes, error } = parseRoutes(text);
-    expect(routes).toEqual([]);
-    expect(error).toMatch(msg);
-  });
-});
-
 describe("helpers", () => {
   it("groups the fingerprint in 16-char chunks", () => {
     expect(groupFingerprint(SHA)).toBe(
@@ -137,7 +114,7 @@ describe("helpers", () => {
     expect(formatLocalTime(null, now)).toBeNull();
   });
 
-  it("keeps unshown stored fields and drops blank secrets", () => {
+  it("keeps unshown stored fields, drops blank secrets and never sends legacy share/route fields", () => {
     const payload = buildPayload(
       {
         name: "Office files",
@@ -146,21 +123,22 @@ describe("helpers", () => {
         username: "leolau",
         password: "",
         realm: "",
-        routes: "10.20.0.0/16",
-        share_path: "",
-        share_username: "",
-        share_password: "",
         visibility: "private",
       },
-      { ...STORED, realm: "old", password: "leaked?" },
+      {
+        ...STORED,
+        realm: "old",
+        password: "leaked?",
+        share_username: "alice",
+        share_password: "leaked?",
+      },
     );
     expect(payload).not.toHaveProperty("password");
-    expect(payload).not.toHaveProperty("share_password");
     expect(payload).not.toHaveProperty("realm");
-    expect(payload).not.toHaveProperty("share_path");
+    for (const k of LEGACY_KEYS) expect(payload).not.toHaveProperty(k);
     expect(payload.trusted_cert).toBe(SHA);
     expect(payload.idle_minutes).toBe(45);
-    expect(payload.share_domain).toBe("OFFICE");
+    expect(payload.auto_connect).toBe(true);
   });
 });
 
@@ -190,11 +168,38 @@ describe("VpnConnections", () => {
     expect(li.textContent).toContain("address 10.212.134.5");
     expect(q.getByText("10.20.0.0/16")).toBeTruthy();
     expect(q.getByText("/opt/data/vpn-files/office-files")).toBeTruthy();
+    const move = q.getByText("Move this to Files → Bridge");
+    expect(move.getAttribute("href")).toBe("/files/bridge");
     expect(li.textContent).toContain("File server reachable, 1,284 files listed.");
     expect(q.getByText("Disconnect")).toBeTruthy();
     expect(q.getByText("Test again")).toBeTruthy();
     expect(q.getByText("Edit")).toBeTruthy();
     expect(li.textContent).toContain("Disconnects after 30 minutes");
+  });
+
+  it("hides the routes and files lines for a connection-only VPN", async () => {
+    mockApi([vpn({ routes: [], share_path: null, mount_path: null })]);
+    render(<VpnConnections />);
+    const li = (await screen.findByText(/Office files/, { selector: "span" })).closest("li")!;
+    expect(li.textContent).not.toContain("Routes through VPN");
+    expect(li.textContent).not.toContain("Files:");
+    expect(within(li).queryByText("Move this to Files → Bridge")).toBeNull();
+    expect(li.textContent).toContain("Not connected");
+  });
+
+  it("shows live tunnel routes (e.g. a folder's /32) without a share line", async () => {
+    mockApi([
+      vpn({
+        routes: ["192.168.0.91/32"],
+        share_path: null,
+        mount_path: null,
+        status: { state: "connected" },
+      }),
+    ]);
+    render(<VpnConnections />);
+    const li = (await screen.findByText(/Office files/, { selector: "span" })).closest("li")!;
+    expect(li.textContent).toContain("Routes through VPN: 192.168.0.91/32");
+    expect(li.textContent).not.toContain("Files:");
   });
 
   it("shows the last error in red and a Connect button", async () => {
@@ -284,25 +289,35 @@ describe("VpnConnections", () => {
     fireEvent.click(q.getByText("Save & test connection"));
     expect(q.getByText(/VPN password/)).toBeTruthy();
 
-    fireEvent.change(q.getByText("Password").parentElement!.querySelector("input")!, {
-      target: { value: "pw" },
-    });
-    fireEvent.change(q.getByPlaceholderText("10.20.0.0/16, 192.168.50.0/24"), {
-      target: { value: "0.0.0.0/0" },
-    });
-    fireEvent.click(q.getByText("Save & test connection"));
-    expect(q.getByText(/all traffic/)).toBeTruthy();
-
-    fireEvent.change(q.getByPlaceholderText("10.20.0.0/16, 192.168.50.0/24"), {
-      target: { value: "10.20.0.0/16" },
-    });
-    fireEvent.change(q.getByPlaceholderText("\\\\fileserver01\\Shared"), {
-      target: { value: "fileserver01/Shared" },
-    });
-    fireEvent.click(q.getByText("Save & test connection"));
-    expect(q.getByText(/Windows share like/)).toBeTruthy();
-
     expect(calls.some((c) => c.method === "PUT")).toBe(false);
+  });
+
+  it("asks only for the connection and points files to Files → Bridge", async () => {
+    mockApi([]);
+    render(<VpnConnections />);
+    fireEvent.click(await screen.findByText("+ Add a Fortinet VPN"));
+    const form = document.querySelector("[data-vpn-form]") as HTMLElement;
+    const labels = Array.from(form.querySelectorAll("label > span:first-child")).map(
+      (l) => l.textContent,
+    );
+    expect(labels).toEqual([
+      "Name",
+      "VPN gateway",
+      "Port",
+      "Username",
+      "Password",
+      "Realm (optional)",
+      "Who can use it",
+    ]);
+    expect(form.textContent).not.toMatch(/Addresses to reach|Files location|Share login/);
+    expect(within(form).queryByLabelText("Share username")).toBeNull();
+    const note = form.querySelector("[data-vpn-folders-note]")!;
+    expect(note.textContent).toBe(
+      "Only the VPN connection is set up here. To read files, add a network folder in Files → Bridge with its \\\\server\\share path. Only traffic to those file servers goes through the VPN.",
+    );
+    expect(within(note as HTMLElement).getByText("Files → Bridge").getAttribute("href")).toBe(
+      "/files/bridge",
+    );
   });
 
   it("saves a new VPN then tests it", async () => {
@@ -325,12 +340,6 @@ describe("VpnConnections", () => {
     fireEvent.change(q.getByText("Password").parentElement!.querySelector("input")!, {
       target: { value: "s3cret" },
     });
-    fireEvent.change(q.getByPlaceholderText("10.20.0.0/16, 192.168.50.0/24"), {
-      target: { value: "10.20.0.0/16\n192.168.50.0/24" },
-    });
-    fireEvent.change(q.getByPlaceholderText("\\\\fileserver01\\Shared"), {
-      target: { value: "\\\\fileserver01\\Shared" },
-    });
     fireEvent.click(q.getByText("Save & test connection"));
     await waitFor(() =>
       expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/test"))).toBe(true),
@@ -345,8 +354,6 @@ describe("VpnConnections", () => {
         port: 443,
         username: "leolau",
         password: "s3cret",
-        routes: ["10.20.0.0/16", "192.168.50.0/24"],
-        share_path: "\\\\fileserver01\\Shared",
         auto_connect: true,
         idle_minutes: 30,
       },
@@ -371,13 +378,12 @@ describe("VpnConnections", () => {
     const pw = q.getByText("Password").parentElement!.querySelector("input")!;
     expect(pw.value).toBe("");
     expect(pw.getAttribute("placeholder")).toBe("unchanged");
-    expect(q.getByLabelText("Share password").getAttribute("placeholder")).toBe("unchanged");
     fireEvent.click(q.getByText("Save & test connection"));
     await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
     const put = calls.find((c) => c.method === "PUT")!;
     const payload = (put.body as { payload: Record<string, unknown> }).payload;
     expect(payload).not.toHaveProperty("password");
-    expect(payload).not.toHaveProperty("share_password");
+    for (const k of LEGACY_KEYS) expect(payload).not.toHaveProperty(k);
     expect(payload.username).toBe("leolau");
     expect(payload.trusted_cert).toBe(SHA);
     expect(payload.idle_minutes).toBe(45);
@@ -397,6 +403,8 @@ describe("VpnConnections", () => {
     expect(body.visibility).toBe("private:alice");
     expect(body.payload.auto_connect).toBe(false);
     expect(body.payload).not.toHaveProperty("password");
+    for (const k of LEGACY_KEYS) expect(body.payload).not.toHaveProperty(k);
+    expect(body.payload.trusted_cert).toBe(SHA);
   });
 
   it("shows the certificate for approval and POSTs trust with its fingerprint", async () => {
