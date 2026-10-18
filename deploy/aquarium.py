@@ -715,7 +715,13 @@ def run_probe(cfg: Dict[str, str], rel: Path, check: str, timeout: float = 600) 
     python = rel / ".venv/bin/python"
     if not python.exists():
         return 127, [{"check": check, "status": "warn", "message": "the installed release has no Python environment", "fix": ""}]
-    proc = run([str(python), "-I", "-m", "hermes_cli.aquarium_probe", check], check=False,
+    argv, stdin = [str(python), "-I", "-m", "hermes_cli.aquarium_probe", check], None
+    admin = P(f"{ETC}/db-admin.env")
+    if check == "migrate" and admin.is_file():
+        # Schema owner's address, over stdin so it never sits in the service user's env.
+        argv.append("--dsn-stdin")
+        stdin = admin.read_bytes()
+    proc = run(argv, check=False, input=stdin,
                env=app_env(cfg, rel), cwd=rel, as_service=cfg["SERVICE_USER"], timeout=timeout)
     rows: List[Dict] = []
     for line in proc.stdout.decode(errors="replace").splitlines():

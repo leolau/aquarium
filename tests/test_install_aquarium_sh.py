@@ -266,12 +266,18 @@ def _step(number: int) -> str:
 def test_pgvector_is_created_once_before_any_service_starts():
     # On a fresh database the dashboard, gateway and app-mcp all create the extension on
     # their first connection at the same moment; all but one hit a duplicate-key error.
+    # Step 6 runs `hermes db migrate`, whose steps create the extension once, after the
+    # app schema it lands in (initialize_access; before that, Postgres fails with "no
+    # schema has been selected to create in") and before any table that uses it.
     step6 = _step(6)
-    create = step6.find('await connection.execute("CREATE EXTENSION IF NOT EXISTS vector")')
-    assert create != -1, "step 6 must create the vector extension"
-    # The app schema it lands in is created by initialize_access; before that, Postgres
-    # fails with "no schema has been selected to create in".
-    assert step6.find("await initialize_access(connection)") < create
+    assert "hermes_cli.db_migrate --dsn-stdin < /etc/aquarium/db-admin.env" in step6
+    from hermes_cli.datastore import SupabaseAppStore
+    from hermes_cli.db_migrate import _steps
+
+    store = SupabaseAppStore(mode="prod", schema="app_prod", dsn="postgresql://unused")
+    names = [name for name, _ in _steps(store, {})]
+    assert names.index("people and logins") < names.index("pgvector extension")
+    assert names.index("pgvector extension") < names.index("memory")
     assert TEXT.find(step6) < TEXT.find("systemctl restart hermes-embed")
 
 
