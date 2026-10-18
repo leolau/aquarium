@@ -5128,7 +5128,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     if _normalized_args:
                         _synth = f"{_synth} {_normalized_args}"
                     event.text = _synth
-                    _reply = await _approval_handler(event)
+                    _reply = self._check_slash_access(event.source, _verb)
+                    if _reply is None:
+                        _reply = await _approval_handler(event)
                     logger.info(
                         "Approval response via plain text: session=%s verb=%s args=%r",
                         session_key, _verb, _normalized_args,
