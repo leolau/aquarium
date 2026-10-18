@@ -321,6 +321,8 @@ def test_full_run_passes_and_leaves_only_what_was_there(box):
         "--auth-provider",
         "fakepw",
         "--include-owner",
+        "--skip",
+        "e",  # e reports open findings F17/F22; covered in test_live_access_check_gate.py
     ])
     out = "\n".join(lines)
 
@@ -400,6 +402,8 @@ def test_config_override_is_the_expected_policy(box):
         "--auth-provider",
         "fakepw",
         "--no-chat-turn",
+        "--skip",
+        "e",
     ])
     out = "\n".join(lines)
 
