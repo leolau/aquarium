@@ -17,6 +17,7 @@ import json
 import os
 import sqlite3
 import time
+from html import escape as _esc
 from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlsplit
@@ -154,8 +155,8 @@ def handle_merge(suggestion_id):
 
         send_telegram(
             f"\u2705 <b>Merged</b>\n\n"
-            f"\U0001f464 <b>{target['display_name']}</b>\n"
-            f"Handles: {handles_text}"
+            f"\U0001f464 <b>{_esc(target['display_name'])}</b>\n"
+            f"Handles: {_esc(handles_text)}"
         )
 
         print(f"[callback] Merged {source_contact_id} into {target_contact_id} "
@@ -201,7 +202,7 @@ def handle_reject(suggestion_id):
 
         send_telegram(
             f"\u274c <b>Kept Separate</b>\n\n"
-            f"\"{new_name}\" and \"{candidate_name}\" will remain as separate contacts."
+            f"\"{_esc(new_name)}\" and \"{_esc(candidate_name)}\" will remain as separate contacts."
         )
 
         print(f"[callback] Rejected merge {suggestion_id} "
@@ -220,7 +221,7 @@ def html_response(title, message, success=True):
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{title}</title>
+    <title>{_esc(title)}</title>
     <style>
         body {{ font-family: -apple-system, sans-serif; display: flex;
                justify-content: center; align-items: center; min-height: 100vh;
@@ -236,8 +237,8 @@ def html_response(title, message, success=True):
 <body>
     <div class="card">
         <div class="icon">{icon}</div>
-        <h1>{title}</h1>
-        <p>{message}</p>
+        <h1>{_esc(title)}</h1>
+        <p>{_esc(message)}</p>
         <p style="margin-top: 16px; color: #999; font-size: 13px;">
             You can close this tab and return to Telegram.
         </p>

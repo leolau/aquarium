@@ -227,6 +227,88 @@ def normalize_reference_images(value: Any) -> Optional[List[str]]:
     return out or None
 
 
+# Source images for image-to-image edits. Only real image files are read or
+# fetched: a path like ``~/.hermes/.env`` or a URL like
+# ``http://169.254.169.254/`` must never be sent on to the image provider.
+MAX_SOURCE_IMAGE_BYTES = 50 * 1024 * 1024
+_MAX_SOURCE_REDIRECTS = 5
+
+
+def sniff_image_ext(data: bytes) -> Optional[str]:
+    """Return ``png``/``jpeg``/``gif``/``webp`` from the file signature, else None."""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "jpeg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def read_local_source_image(ref: str) -> Tuple[bytes, str]:
+    """Read a local source image; refuse anything that is not an image file."""
+    import os
+
+    raw = ref.strip()
+    if raw.lower().startswith("file://"):
+        raw = raw[len("file://"):]
+    path = Path(os.path.expanduser(raw))
+    if not path.is_file():
+        raise ValueError(f"source image not found: {ref}")
+    if path.stat().st_size > MAX_SOURCE_IMAGE_BYTES:
+        raise ValueError(f"source image is larger than {MAX_SOURCE_IMAGE_BYTES // (1024 * 1024)} MB: {ref}")
+    data = path.read_bytes()
+    if sniff_image_ext(data[:16]) is None:
+        raise ValueError(f"{ref} is not a PNG, JPEG, GIF or WebP image")
+    return data, path.name or "image.png"
+
+
+def fetch_source_image(url: str, timeout: float = 60) -> Tuple[bytes, str]:
+    """Download a source image from a public URL.
+
+    Every hop (including redirects) must pass ``tools.url_safety.is_safe_url``,
+    so private, loopback and cloud-metadata addresses are refused. The body
+    must be an image and at most ``MAX_SOURCE_IMAGE_BYTES``.
+    """
+    from urllib.parse import urljoin
+
+    import requests
+
+    from tools.url_safety import is_safe_url
+
+    current = url.strip()
+    for _ in range(_MAX_SOURCE_REDIRECTS + 1):
+        if not is_safe_url(current):
+            raise ValueError(f"source image URL is not allowed (private or internal address): {current}")
+        resp = requests.get(current, timeout=timeout, allow_redirects=False, stream=True)
+        try:
+            if resp.is_redirect:
+                location = resp.headers.get("location")
+                if not location:
+                    raise ValueError("redirect without a Location header")
+                current = urljoin(current, location)
+                continue
+            resp.raise_for_status()
+            chunks: List[bytes] = []
+            total = 0
+            for chunk in resp.iter_content(chunk_size=64 * 1024):
+                total += len(chunk)
+                if total > MAX_SOURCE_IMAGE_BYTES:
+                    raise ValueError(
+                        f"source image is larger than {MAX_SOURCE_IMAGE_BYTES // (1024 * 1024)} MB")
+                chunks.append(chunk)
+        finally:
+            resp.close()
+        data = b"".join(chunks)
+        if sniff_image_ext(data[:16]) is None:
+            raise ValueError(f"{url} did not return a PNG, JPEG, GIF or WebP image")
+        name = current.split("?", 1)[0].rsplit("/", 1)[-1] or "image.png"
+        return data, name
+    raise ValueError(f"too many redirects fetching {url}")
+
+
 def _images_cache_dir() -> Path:
     """Return ``$HERMES_HOME/cache/images/``, creating parents as needed."""
     from hermes_constants import get_hermes_home

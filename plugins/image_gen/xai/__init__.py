@@ -29,9 +29,11 @@ from agent.image_gen_provider import (
     ImageGenProvider,
     error_response,
     normalize_reference_images,
+    read_local_source_image,
     resolve_aspect_ratio,
     save_b64_image,
     save_url_image,
+    sniff_image_ext,
     success_response,
 )
 from tools.xai_http import (
@@ -133,15 +135,11 @@ def _xai_image_field(source: str) -> Dict[str, str]:
     lower = source.lower()
     if lower.startswith(("http://", "https://", "data:")):
         return {"url": source, "type": "image_url"}
-    # Local file path → base64 data URI.
+    # Local file path → base64 data URI (image files only).
     import base64
-    import os as _os
 
-    with open(_os.path.expanduser(source), "rb") as fh:  # windows-footgun: ok
-        raw = fh.read()
-    ext = (_os.path.splitext(source)[1].lstrip(".") or "png").lower()
-    if ext == "jpg":
-        ext = "jpeg"
+    raw, _name = read_local_source_image(source)
+    ext = sniff_image_ext(raw[:16]) or "png"
     b64 = base64.b64encode(raw).decode("utf-8")
     return {"url": f"data:image/{ext};base64,{b64}", "type": "image_url"}
 

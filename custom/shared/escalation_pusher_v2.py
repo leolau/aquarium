@@ -10,6 +10,7 @@ import json
 import os
 import sqlite3
 import time
+from html import escape as _esc
 from datetime import datetime, timezone
 from urllib.request import Request, urlopen
 
@@ -128,11 +129,11 @@ def format_whatsapp_escalation(row, db):
     phone_label = 'Phone 1' if source == 'phone1' else 'Phone 2'
 
     text = (
-        f"{emoji} <b>WhatsApp Escalation</b> [{priority.upper()}]\n\n"
-        f"<b>From:</b> {sender_name or sender}\n"
-        f"<b>Reason:</b> {reason.replace('_', ' ').title()}\n"
+        f"{emoji} <b>WhatsApp Escalation</b> [{_esc(priority.upper())}]\n\n"
+        f"<b>From:</b> {_esc(sender_name or sender)}\n"
+        f"<b>Reason:</b> {_esc(reason.replace('_', ' ').title())}\n"
         f"<b>Phone:</b> {phone_label}\n\n"
-        f"{summary}"
+        f"{_esc(summary)}"
     )
     return text
 
@@ -187,15 +188,15 @@ def format_email_escalation(row, db):
     emoji = emoji_map.get(reason, '\U0001f4e7')
 
     text = (
-        f"{emoji} <b>Email Escalation</b> [{priority.upper()}]\n\n"
-        f"<b>From:</b> {sender_name or sender_email}\n"
-        f"<b>Email:</b> {sender_email}\n"
-        f"<b>Account:</b> {account_label}\n"
-        f"<b>Reason:</b> {reason.replace('_', ' ').title()}\n"
+        f"{emoji} <b>Email Escalation</b> [{_esc(priority.upper())}]\n\n"
+        f"<b>From:</b> {_esc(sender_name or sender_email)}\n"
+        f"<b>Email:</b> {_esc(sender_email)}\n"
+        f"<b>Account:</b> {_esc(str(account_label))}\n"
+        f"<b>Reason:</b> {_esc(reason.replace('_', ' ').title())}\n"
     )
     if subject:
-        text += f"<b>Subject:</b> {subject}\n"
-    text += f"\n{summary}"
+        text += f"<b>Subject:</b> {_esc(subject)}\n"
+    text += f"\n{_esc(summary)}"
 
     return text
 
