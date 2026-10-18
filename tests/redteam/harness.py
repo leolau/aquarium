@@ -36,6 +36,7 @@ import http.server
 import json
 import logging
 import os
+import shutil
 import socket
 import tempfile
 import threading
@@ -180,8 +181,8 @@ class RedteamEnv:
 
     @property
     def agent_home_env(self) -> Path:
-        """Mirrors ``agent-home/agent-home.env`` — the file F16 is about."""
-        return self.home / "agent-home" / "agent-home.env"
+        """Mirrors ``/etc/aquarium/agent-home.env`` — the file F16 is about."""
+        return self.home.parent / f"{self.home.name}-etc-aquarium" / "agent-home.env"
 
     @property
     def whatsapp_creds(self) -> Path:
@@ -247,6 +248,9 @@ def redteam_env() -> Iterator[RedteamEnv]:
             f"AGENT_HOME_SESSION_SECRET={_CANARY_VALUES[1]}\n"
             f"DATABASE_URL={_CANARY_VALUES[0]}\n"
         )
+        # Root-owned 0600 on a real box; 0000 is the same thing for a test
+        # that cannot chown to root.
+        env.agent_home_env.chmod(0)
         env.whatsapp_creds.write_text(json.dumps({"noiseKey": _CANARY_VALUES[2]}))
 
         overrides = {
@@ -259,6 +263,7 @@ def redteam_env() -> Iterator[RedteamEnv]:
             with patch.dict(os.environ, overrides), _module_homes_pinned_to(home):
                 yield env
         finally:
+            shutil.rmtree(env.agent_home_env.parent, ignore_errors=True)
             # Terminal sandboxes are cached per task; drop them so the next
             # attack does not inherit a shell whose cwd was this deleted home.
             from tools.terminal_tool import cleanup_all_environments

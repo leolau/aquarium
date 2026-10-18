@@ -167,6 +167,8 @@ def is_env_passthrough(var_name: str) -> bool:
     Returns ``True`` if the variable was registered by a skill or listed in
     the user's ``tools.env_passthrough`` config.
     """
+    if _db_credential_hidden(var_name):
+        return False
     if var_name in _get_allowed():
         return True
     return var_name in _load_config_passthrough()
@@ -174,7 +176,20 @@ def is_env_passthrough(var_name: str) -> bool:
 
 def get_all_passthrough() -> frozenset[str]:
     """Return the union of skill-registered and config-based passthrough vars."""
-    return frozenset(_get_allowed()) | _load_config_passthrough()
+    names = frozenset(_get_allowed()) | _load_config_passthrough()
+    return frozenset(n for n in names if not _db_credential_hidden(n))
+
+
+def _db_credential_hidden(var_name: str) -> bool:
+    """DATABASE_URL and the service-role key pass only via their own setting.
+
+    Checked at lookup time, not registration, so turning
+    ``security.terminal_database_credentials`` off applies to skills that
+    were loaded before the change too.
+    """
+    from tools import terminal_db_credentials as tdc
+
+    return tdc.is_gated(var_name) and not tdc.allowed()
 
 
 def clear_env_passthrough() -> None:

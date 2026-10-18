@@ -298,6 +298,9 @@ def default(d, key, value):
     d.setdefault(key, value)
     return d[key]
 default(cfg, "datastore", {"mode": "prod", "supabase_app": {"dsn": "${DATABASE_URL}"}})
+# New installs keep DATABASE_URL out of the agent's shell; written explicitly so
+# deploy-hermes.sh's switch for boxes set up before F16 leaves it alone.
+default(cfg, "security", {}).setdefault("terminal_database_credentials", False)
 mem = default(cfg, "memory", {})
 mem.setdefault("provider", "supabase_pgvector")
 mem.setdefault("embedding", {"provider": "local_http", "endpoint": "http://127.0.0.1:8791",

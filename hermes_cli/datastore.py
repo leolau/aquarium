@@ -68,6 +68,17 @@ class SessionOrigin(Protocol):
         ...
 
 
+def _dsn_missing(dsn: str) -> bool:
+    """Empty, or a ``${VAR}`` reference whose variable is not set."""
+    return not dsn or dsn.lstrip().startswith("${")
+
+
+def _terminal_hint() -> str:
+    from tools.terminal_db_credentials import hidden_hint
+
+    return hidden_hint()
+
+
 @dataclass(frozen=True)
 class SQLiteCoreStore:
     """Resolved SQLite core store for one Hermes mode."""
@@ -92,11 +103,11 @@ class SupabaseAppStore:
 
     async def connect(self) -> asyncpg.Connection:
         """Open a connection whose search path is pinned to this store."""
-        if not self.dsn:
+        if _dsn_missing(self.dsn):
             raise RuntimeError(
                 "Supabase app datastore is not configured; set "
                 "datastore.supabase_app.dsn in config.yaml, preferably as "
-                "${DATABASE_URL}."
+                "${DATABASE_URL}." + _terminal_hint()
             )
         if not _VALID_SCHEMA.fullmatch(self.schema):
             raise ValueError(f"Invalid Supabase schema name: {self.schema!r}")
@@ -437,10 +448,10 @@ async def connect_for_publish(
     target = app_schema(store.mode, profile=profile)
     if not _VALID_SCHEMA.fullmatch(target):
         raise ValueError(f"Invalid Supabase schema name: {target!r}")
-    if not store.dsn:
+    if _dsn_missing(store.dsn):
         raise RuntimeError(
             "Supabase app datastore is not configured; set "
-            "datastore.supabase_app.dsn in config.yaml."
+            "datastore.supabase_app.dsn in config.yaml." + _terminal_hint()
         )
 
     from tools.lazy_deps import ensure

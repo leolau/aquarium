@@ -2602,6 +2602,11 @@ DEFAULT_CONFIG = {
         # for restricted networks, audited environments, or air-gapped
         # systems where any runtime install is unacceptable.
         "allow_lazy_installs": True,
+        # Let the agent's terminal see DATABASE_URL and the Supabase
+        # service-role key (full database access). Off by default; needed only
+        # when the agent itself runs `hermes promote` / `hermes owner transfer`
+        # / the office-documents registry script. See security.md.
+        "terminal_database_credentials": False,
     },
 
     "cron": {

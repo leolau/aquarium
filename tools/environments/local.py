@@ -415,6 +415,9 @@ def _sanitize_subprocess_env(base_env: dict | None, extra_env: dict | None = Non
         elif key not in _HERMES_PROVIDER_ENV_BLOCKLIST or _is_passthrough(key):
             sanitized[key] = value
 
+    from tools.terminal_db_credentials import hide_from as _hide_db_credentials
+    _hide_db_credentials(sanitized)
+
     _inject_context_hermes_home(sanitized)
 
     from hermes_constants import apply_subprocess_home_env
@@ -842,6 +845,9 @@ def _make_run_env(env: dict) -> dict:
         # to bare ``hermes`` via the terminal tool even when the gateway was
         # launched without it on PATH (systemd, service managers, cron, etc.).
         run_env[path_key] = _prepend_hermes_bin_dir(new_path)
+
+    from tools.terminal_db_credentials import hide_from as _hide_db_credentials
+    _hide_db_credentials(run_env)
 
     _inject_context_hermes_home(run_env)
 

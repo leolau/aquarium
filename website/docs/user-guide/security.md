@@ -433,6 +433,21 @@ terminal:
     - ANOTHER_TOKEN
 ```
 
+### Database credentials in the agent's terminal {#terminal-database-credentials}
+
+`DATABASE_URL` and the Supabase service-role key (`SUPABASE_SERVICE_ROLE_KEY`, plus its aliases `SUPABASE_SERVICE_KEY`, `HERMES_SUPABASE_SERVICE_ROLE_KEY` and `HERMES_DASHBOARD_SUPABASE_SERVICE_ROLE_KEY`) give full access to the app database. The gateway keeps them, but by default the agent's terminal does **not** get them, whether it runs a foreground or background command on the local or Docker backend. Neither skill passthrough nor `terminal.env_passthrough` can hand them back, and `execute_code` never gets them. Without this, one command from a prompt-injected email or web page (`printenv DATABASE_URL | rev`) prints the database password.
+
+Some features run a Hermes CLI from the agent's terminal and need them: `hermes promote` (promote-artifact skill), `hermes owner transfer` (transfer-ownership), create-in-house-tool, and the office-documents `registry_file.py`. To let the agent run them itself, turn the setting on:
+
+```yaml
+security:
+  terminal_database_credentials: true   # default: false
+```
+
+or `hermes config set security.terminal_database_credentials true`. New commands pick it up immediately; there is no need to restart the gateway. Only the YAML boolean `true` turns it on. While it is off, these commands stop with a message that names this setting, not with a database connection error. They still work if the profile's own `.env` sets `DATABASE_URL`, because the Hermes CLI reads that file itself.
+
+`deploy/hermes-deploy.sh` sets the setting to `true` once on profiles created before it existed, so those boxes keep working. A profile that already has the key, including `install-aquarium.sh` installs (which write `false`), is left alone. An explicit `docker_forward_env` entry is an operator choice and still forwards the variable.
+
 ### Credential File Passthrough (OAuth tokens, etc.) {#credential-file-passthrough}
 
 Some skills need **files** (not just env vars) in the sandbox — for example, Google Workspace stores OAuth tokens as `google_token.json` under the active profile's `HERMES_HOME`. Skills declare these in frontmatter:
