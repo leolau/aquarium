@@ -2,9 +2,19 @@
 # install-aquarium.sh — install the whole Aquarium stack on a fresh Ubuntu 24.04 VM.
 #
 #   curl -fsSL https://raw.githubusercontent.com/leolau/aquarium/develop/install-aquarium.sh \
-#     | sudo AQUARIUM_HOME_DOMAIN=home.example.com AQUARIUM_DASHBOARD_DOMAIN=example.com bash
+#     | sudo AQUARIUM_HOME_DOMAIN=home.example.com AQUARIUM_DASHBOARD_DOMAIN=example.com bash -s -- [OPTION]
 #
-# Installs: system packages, Docker, Node 22, uv, Caddy; the Aquarium checkout and its
+# What to install (one option; default --channel stable):
+#   --version vX.Y.Z      that GitHub release of leolau/aquarium
+#   --channel stable|beta newest release on the channel (beta includes pre-releases)
+#   --from-branch BRANCH  a git checkout of BRANCH (development boxes only; not verified)
+# A release is installed only after its SHA256SUMS passes a cosign signature check (signed by
+# this repo's release workflow for that tag) and the tarball matches it. Releases are unpacked
+# root-owned into /opt/aquarium/releases/<version>; /opt/aquarium/current points at the active
+# one and $AQUARIUM_ROOT/hermes-agent points at current. Tool versions, the Supabase commit and
+# its image digests are pinned in deploy/install/pins.env and supabase-images.lock.
+#
+# Installs: system packages, Docker, Node 22, uv, Caddy; the Aquarium release (or checkout) and its
 # Python/Node dependencies; self-hosted Supabase (Docker Compose); the database roles and
 # first owner; the local embedding service (bge-m3); app-mcp; agent-home; the dashboard
 # and gateway; systemd units and the Caddy site with automatic TLS. Then runs health checks.
@@ -17,9 +27,13 @@
 #                              only SSH is reachable from outside (useful for a test VM).
 #   AQUARIUM_DASHBOARD_DOMAIN  public hostname for the operator dashboard.
 #   AQUARIUM_OWNER_ID          login name of the first owner            (default: admin)
-#   AQUARIUM_REPO / AQUARIUM_BRANCH   source               (default: leolau/aquarium, develop)
+#   AQUARIUM_REPO / AQUARIUM_BRANCH   source for --from-branch (default: leolau/aquarium, develop);
+#                              setting AQUARIUM_BRANCH alone also selects a branch install
 #   AQUARIUM_ROOT              install root                              (default: /opt/data)
-#   AQUARIUM_SUPABASE_REF      supabase/supabase git ref for the compose files (default: master)
+#   AQUARIUM_SUPABASE_REF      supabase/supabase commit for the compose files (default: pins.env;
+#                              every image it uses must be in deploy/install/supabase-images.lock)
+#   AQUARIUM_INSTALLER_REF     git ref to fetch deploy/install/ from when this script is piped
+#                              from curl (default: AQUARIUM_BRANCH)
 #   AQUARIUM_SKIP_EMBED_MODEL=1  don't download the ~2.3 GB embedding model now
 set -Eeuo pipefail
 
@@ -29,7 +43,7 @@ BRANCH=${AQUARIUM_BRANCH:-develop}
 HOME_DOMAIN=${AQUARIUM_HOME_DOMAIN:-}
 DASH_DOMAIN=${AQUARIUM_DASHBOARD_DOMAIN:-}
 OWNER_ID=${AQUARIUM_OWNER_ID:-admin}
-SUPABASE_REF=${AQUARIUM_SUPABASE_REF:-master}
+SUPABASE_REF=${AQUARIUM_SUPABASE_REF:-}
 APP=$ROOT/hermes-agent
 HERMES_HOME_DIR=$ROOT/hermes-home
 SUPA=$ROOT/supabase/docker
@@ -42,6 +56,27 @@ EMBED_REV=5617a9f61b028005a4858fdac845db406aefb181
 log()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 die()  { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 trap 'die "failed at line $LINENO: $BASH_COMMAND"' ERR
+
+# Release/pin/component helpers live in deploy/install/ next to this script; when the script
+# is piped from curl there is no "next to", so fetch them from the same ref.
+HELPERS=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)/deploy/install
+if [ ! -f "$HELPERS/lib.sh" ]; then
+  HELPERS=$(mktemp -d)
+  for f in lib.sh pins.env supabase-images.lock; do
+    curl -fsSL "https://raw.githubusercontent.com/leolau/aquarium/${AQUARIUM_INSTALLER_REF:-$BRANCH}/deploy/install/$f" \
+      -o "$HELPERS/$f" || die "cannot fetch deploy/install/$f"
+  done
+fi
+# shellcheck source=deploy/install/lib.sh
+. "$HELPERS/lib.sh"
+# shellcheck source=deploy/install/pins.env
+. "$HELPERS/pins.env"
+SUPABASE_REF=${SUPABASE_REF:-$SUPABASE_COMMIT}
+aq_parse_args "$@"
+if [ "$SOURCE_MODE" = help ]; then
+  echo "usage: install-aquarium.sh [--version vX.Y.Z | --channel stable|beta | --from-branch BRANCH]"
+  exit 0
+fi
 as_hermes() { sudo -u hermes -H env HERMES_HOME="$HERMES_HOME_DIR" "$@"; }
 rand() { openssl rand -hex "${1:-24}"; }
 # uv-managed Pythons must live outside /root so the hermes account can run the venvs.
@@ -75,18 +110,13 @@ ufw default deny incoming >/dev/null
 ufw allow OpenSSH >/dev/null && ufw allow 80/tcp >/dev/null && ufw allow 443/tcp >/dev/null
 ufw --force enable >/dev/null
 
-if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 22 ]; then
-  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-  apt-get install -y -q nodejs
-fi
-if ! command -v uv >/dev/null; then
-  curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh
-fi
-if [ -n "$HOME_DOMAIN$DASH_DOMAIN" ] && ! command -v caddy >/dev/null; then
-  curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/gpg.key | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-  curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt > /etc/apt/sources.list.d/caddy-stable.list
-  apt-get update -q && apt-get install -y -q caddy
-fi
+# Exact versions from deploy/install/pins.env.
+aq_install_node
+aq_install_uv
+if [ -n "$HOME_DOMAIN$DASH_DOMAIN" ]; then aq_install_caddy; fi
+log "Automatic security updates and SSH check"
+aq_enable_unattended_upgrades
+aq_ssh_check
 if [ "$(swapon --noheadings | wc -l)" -eq 0 ] && [ ! -f /swapfile ]; then
   fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile
   echo '/swapfile none swap sw 0 0' >> /etc/fstab
@@ -125,13 +155,29 @@ ANON_KEY=$(secret SUPABASE_ANON_KEY "$(jwt anon)")
 SERVICE_KEY=$(secret SUPABASE_SERVICE_ROLE_KEY "$(jwt service_role)")
 
 # ---------------------------------------------------------------- 3. application checkout
-log "Aquarium source ($REPO_URL @ $BRANCH)"
-if [ ! -d "$APP/.git" ]; then
-  git clone --branch "$BRANCH" "$REPO_URL" "$APP"
+if [ "$SOURCE_MODE" = branch ]; then
+  log "Aquarium source ($REPO_URL @ $BRANCH, unverified development install)"
+  [ ! -L "$APP" ] || die "$APP points at a release install; install a release with --version instead"
+  if [ ! -d "$APP/.git" ]; then
+    git clone --branch "$BRANCH" "$REPO_URL" "$APP"
+  else
+    git -C "$APP" fetch -q origin "$BRANCH" && git -C "$APP" merge -q --ff-only "origin/$BRANCH"
+  fi
+  git config --system --add safe.directory "$APP" 2>/dev/null || true
 else
-  git -C "$APP" fetch -q origin "$BRANCH" && git -C "$APP" merge -q --ff-only "origin/$BRANCH"
+  aq_check_compat_path "$APP"
+  VERSION=$(aq_resolve_version)
+  log "Aquarium release $VERSION (signature + checksum verified)"
+  if [ ! -d "$AQ_OPT/releases/$VERSION" ]; then
+    DL=$(mktemp -d)
+    aq_download_release "$VERSION" "$DL"
+    COSIGN=$(aq_install_cosign)
+    aq_verify_release "$COSIGN" "$DL" "$VERSION"
+    aq_unpack_release "$DL/$(aq_tarball_name "$VERSION")" "$VERSION"
+    rm -rf "$DL"
+  fi
+  aq_activate_release "$VERSION" "$APP"
 fi
-git config --system --add safe.directory "$APP" 2>/dev/null || true
 
 log "Python dependencies"
 cd "$APP"
@@ -144,19 +190,24 @@ uv pip install -q --python .venv/bin/python \
   pytesseract==0.3.13 tabulate==0.10.0 tornado==6.5.7 numpy==2.4.3
 
 log "Node dependencies and builds (agent-home, dashboard)"
-npm ci --no-audit --no-fund --silent
-(cd web && npm run build)
-npm run build --workspace agent-home
+# A release ships agent-home and the dashboard prebuilt; build only what is missing.
+if [ "$SOURCE_MODE" = branch ] || [ ! -d node_modules ]; then npm ci --no-audit --no-fund --silent; fi
+if [ "$SOURCE_MODE" = branch ] || [ ! -f hermes_cli/web_dist/index.html ]; then (cd web && npm run build); fi
+if [ "$SOURCE_MODE" = branch ] || [ ! -f agent-home/.next/BUILD_ID ]; then npm run build --workspace agent-home; fi
 chmod +x agent-home/deploy/start.sh
+# WhatsApp bridge dependencies (the service account cannot write into a release).
+(cd scripts/whatsapp-bridge && npm ci --no-audit --no-fund --silent --omit=dev)
+
+log "VPN helper and office file-share support"
+aq_install_vpn_support "$APP"
 
 # ---------------------------------------------------------------- 4. Supabase
 log "Supabase (self-hosted, Docker Compose)"
 if [ ! -f "$SUPA/docker-compose.yml" ]; then
   rm -rf "$ROOT/supabase/src"
-  git clone -q --depth 1 --filter=blob:none --sparse --branch "$SUPABASE_REF" \
-    https://github.com/supabase/supabase "$ROOT/supabase/src"
-  git -C "$ROOT/supabase/src" sparse-checkout set docker
+  aq_fetch_supabase "$SUPABASE_REF" "$ROOT/supabase/src"
   mkdir -p "$SUPA" && cp -a "$ROOT/supabase/src/docker/." "$SUPA/"
+  aq_pin_compose_images "$SUPA/docker-compose.yml" "$HELPERS/supabase-images.lock"
   cp "$SUPA/.env.example" "$SUPA/.env"
 fi
 chmod 600 "$SUPA/.env"
@@ -323,7 +374,11 @@ ENV
 sed "s/^APP_MCP_TICKET_SECRET=.*/APP_MCP_TICKET_SECRET=$APP_MCP_SECRET/" app-mcp/deploy/app-mcp.env.example > app-mcp/app-mcp.env
 umask 022
 chown hermes:hermes agent-home/agent-home.env app-mcp/app-mcp.env
-find "$APP" -path "$APP/.venv" -prune -o -print0 | xargs -0 chown hermes:hermes
+if [ "$SOURCE_MODE" = branch ]; then
+  find "$APP" -path "$APP/.venv" -prune -o -print0 | xargs -0 chown hermes:hermes
+else
+  aq_release_writable_dirs "$APP"
+fi
 chown -R root:root "$APP/.venv"
 
 # ---------------------------------------------------------------- 9. systemd
@@ -333,6 +388,10 @@ fix_paths() { sed "s#/opt/data/hermes-agent#$APP#g; s#/opt/data/hermes-embed#$EM
 fix_paths < agent-home/deploy/agent-home.service > $UNIT_DIR/agent-home.service
 fix_paths < app-mcp/deploy/app-mcp.service > $UNIT_DIR/app-mcp.service
 fix_paths < deploy/hermes-embed.service > $UNIT_DIR/hermes-embed.service
+# Template only (one instance per linked phone); see the unit file for how to start one.
+fix_paths < deploy/hermes-wa-bridge@.service | sed "s#/opt/data/hermes-home#$HERMES_HOME_DIR#g" \
+  > "$UNIT_DIR/hermes-wa-bridge@.service"
+install -d -m 700 /etc/aquarium
 # ProtectHome hides ~hermes, so point the Hugging Face cache/token lookups at the model dir.
 sed -i "/^\[Service\]/a Environment=HF_HOME=$EMBED/hf" $UNIT_DIR/hermes-embed.service
 if [ "${AQUARIUM_SKIP_EMBED_MODEL:-0}" = 1 ]; then sed -i 's/ --offline//' $UNIT_DIR/hermes-embed.service; fi
@@ -453,6 +512,10 @@ Aquarium installed (${HOME_DOMAIN:-http://127.0.0.1:3100}).
   Secrets     : $SECRETS (root only)
   Next        : add your model API key(s) to $HERMES_HOME_DIR/.env, then
                 systemctl restart hermes-gateway hermes-dashboard
-  Deploy later: $ROOT/deploy-hermes.sh $BRANCH
 DONE
+if [ "$SOURCE_MODE" = branch ]; then
+  echo "  Deploy later: $ROOT/deploy-hermes.sh $BRANCH"
+else
+  echo "  Version     : $VERSION  (upgrade: re-run this installer with --version <newer tag>)"
+fi
 exit $fail
