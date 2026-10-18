@@ -22,6 +22,7 @@ export function ConsentForm({ busy, onOpen }: ConsentFormProps) {
   return (
     <section
       data-component="ConsentForm"
+      data-appmcp-deny="consent"
       className="flex flex-col gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
     >
       <div className="flex items-center gap-2">

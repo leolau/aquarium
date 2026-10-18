@@ -604,7 +604,7 @@ export function NetworkFolders() {
               />
             </label>
           </div>
-          <label className="mt-3 flex items-center gap-2 text-xs">
+          <label className="mt-3 flex items-center gap-2 text-xs" data-appmcp-deny="consent">
             <input
               type="checkbox"
               checked={form.values.trusted_for_import}

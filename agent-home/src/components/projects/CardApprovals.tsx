@@ -168,7 +168,7 @@ function ApprovalRow({
       <p className="text-sm font-medium">Waiting on you: allow {approval.label}?</p>
       <ApprovalDetail approval={approval} />
       {canAct ? (
-        <div className="mt-2 flex flex-wrap gap-2">
+        <div className="mt-2 flex flex-wrap gap-2" data-appmcp-deny="consent">
           <ActionButton
             busy={action.busy}
             pendingLabel="Saving…"
