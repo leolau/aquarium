@@ -1,0 +1,5 @@
+# Lets the Hermes runtime (user hermes) provision a new WhatsApp bridge unit
+# from Settings. Points at the root-owned copy only, never at the checkout (the
+# hermes user can write the checkout). The helper validates its one argument.
+# Install: root:root 0440. See docs/deployment/PRODUCTION.md "WhatsApp bridges".
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/hermes-wa-bridge-add

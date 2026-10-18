@@ -11,6 +11,7 @@
  *   POST /send           - Send a message { chatId, message, replyTo? }
  *   POST /edit           - Edit a sent message { chatId, messageId, message }
  *   POST /send-media     - Send media natively { chatId, filePath, mediaType?, caption?, fileName? }
+ *                          (filePath must be inside outboundMediaDir, see /health)
  *   POST /typing         - Send typing indicator { chatId }
  *   GET  /chat/:id       - Get chat info
  *   GET  /health         - Health check
@@ -28,7 +29,6 @@ import dns from 'dns';
 import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { randomBytes, createHash } from 'crypto';
-import { execSync } from 'child_process';
 import { tmpdir } from 'os';
 import qrcode from 'qrcode-terminal';
 
@@ -42,6 +42,8 @@ dns.setDefaultResultOrder('ipv4first');
 import { matchesAllowedUser, parseAllowedUsers } from './allowlist.js';
 import { createOutboundIdTracker } from './outbound_ids.js';
 import { classifyOwnerMessageGate } from './owner_message_gate.js';
+import { defaultOutboundMediaDir, ensureOutboundMediaDir, resolveAllowedMediaPath } from './media_paths.js';
+import { convertToOpus } from './audio_convert.js';
 
 // Parse CLI args
 const args = process.argv.slice(2);
@@ -84,6 +86,8 @@ const DOCUMENT_CACHE_DIR = process.env.HERMES_DOCUMENT_CACHE_DIR
   || path.join(process.env.HOME || '~', '.hermes', 'document_cache');
 const AUDIO_CACHE_DIR = process.env.HERMES_AUDIO_CACHE_DIR
   || path.join(process.env.HOME || '~', '.hermes', 'audio_cache');
+// /send-media only reads files from here (see media_paths.js).
+const OUTBOUND_MEDIA_DIR = defaultOutboundMediaDir(SESSION_DIR);
 
 // Self-hash of this script file.  Reported in /health so the Python gateway
 // can detect a running bridge that predates the current bridge.js and
@@ -706,13 +710,15 @@ app.post('/send-media', async (req, res) => {
     return res.status(400).json({ error: 'chatId and filePath are required' });
   }
 
-  try {
-    if (!existsSync(filePath)) {
-      return res.status(404).json({ error: `File not found: ${filePath}` });
-    }
+  const allowed = resolveAllowedMediaPath(filePath, [OUTBOUND_MEDIA_DIR]);
+  if (!allowed.ok) {
+    return res.status(allowed.status).json({ error: allowed.error });
+  }
+  const mediaPath = allowed.path;
 
-    const buffer = readFileSync(filePath);
-    const ext = filePath.toLowerCase().split('.').pop();
+  try {
+    const buffer = readFileSync(mediaPath);
+    const ext = mediaPath.toLowerCase().split('.').pop();
     const type = mediaType || inferMediaType(ext);
     let msgPayload;
 
@@ -734,10 +740,7 @@ app.post('/send-media', async (req, res) => {
         if (needsConversion) {
           tmpPath = path.join(tmpdir(), `hermes_voice_${randomBytes(6).toString('hex')}.ogg`);
           try {
-            execSync(
-              `ffmpeg -y -i ${JSON.stringify(filePath)} -ar 48000 -ac 1 -c:a libopus ${JSON.stringify(tmpPath)}`,
-              { timeout: 30000, stdio: 'pipe' }
-            );
+            convertToOpus(mediaPath, tmpPath);
             audioBuffer = readFileSync(tmpPath);
             audioExt = 'ogg';
           } catch (convErr) {
@@ -755,7 +758,7 @@ app.post('/send-media', async (req, res) => {
       default:
         msgPayload = {
           document: buffer,
-          fileName: fileName || path.basename(filePath),
+          fileName: fileName || path.basename(mediaPath),
           caption: caption || undefined,
           mimetype: MIME_MAP[ext] || 'application/octet-stream',
         };
@@ -819,6 +822,7 @@ app.get('/health', (req, res) => {
     queueLength: messageQueue.length,
     uptime: process.uptime(),
     scriptHash: SCRIPT_HASH,
+    outboundMediaDir: OUTBOUND_MEDIA_DIR,
   });
 });
 
@@ -830,6 +834,11 @@ if (PAIR_ONLY) {
   console.log();
   startSocket();
 } else {
+  try {
+    ensureOutboundMediaDir(OUTBOUND_MEDIA_DIR);
+  } catch (err) {
+    console.warn(`[bridge] could not create media folder ${OUTBOUND_MEDIA_DIR}:`, err.message);
+  }
   app.listen(PORT, '127.0.0.1', () => {
     console.log(`🌉 WhatsApp bridge listening on port ${PORT} (mode: ${WHATSAPP_MODE})`);
     console.log(`📁 Session stored in: ${SESSION_DIR}`);
