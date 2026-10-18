@@ -124,4 +124,30 @@ describe("ToolsSettings", () => {
       expect(posts.some((u) => u.endsWith("/oauth/redirect"))).toBe(true),
     );
   }, 10000);
+
+  it("shows the lists read-only when the viewer cannot manage tools", () => {
+    const calls: string[] = [];
+    mockFetch((url) => {
+      calls.push(url);
+      return { ok: true };
+    });
+    render(
+      <ToolsSettings servers={[CANVA, FIGMA]} toolsets={[TOOLSET]} canManage={false} />,
+    );
+    expect(screen.getByTestId("tools-read-only-note").textContent).toContain(
+      "Only the owner or an admin can change tools and integrations.",
+    );
+    expect(screen.getByText("canva")).toBeTruthy();
+    expect(screen.getByText("needs auth")).toBeTruthy();
+    expect(screen.getByText("Web tools")).toBeTruthy();
+    for (const label of ["Test connection", "Re-authenticate", "Remove", "Enable"]) {
+      expect(screen.queryByText(label)).toBeNull();
+    }
+    // The only remaining button is the toolset switch, and it is disabled.
+    const buttons = screen.getAllByRole("button");
+    expect(buttons).toHaveLength(1);
+    expect((buttons[0] as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(buttons[0]);
+    expect(calls).toEqual([]);
+  });
 });

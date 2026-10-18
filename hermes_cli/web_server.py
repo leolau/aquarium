@@ -3295,6 +3295,33 @@ def _require_all_chats(scope: Optional[str]) -> None:
         )
 
 
+#: Roles allowed to change the profile's tools and integrations (MCP servers,
+#: toolsets, tool registry rows). Everyone else may only look.
+_TOOLS_MANAGER_ROLES = ("owner", "admin")
+_TOOLS_MANAGE_DENIED = "Only the owner or an admin can change tools and integrations."
+
+
+async def _require_tools_manager(request: Request) -> None:
+    """Dependency: 403 unless the logged-in person is an owner or admin.
+
+    Tool and MCP settings apply to every user of the profile, so a member or
+    viewer may read them but not change them. A caller with no interactive
+    login (operator token, CLI, desktop app) and a single-user install with no
+    multi-user datastore keep full access, as before.
+    """
+    if not _comms_session_subject(request):
+        return
+    try:
+        principal = await _comms_resolve_principal(request)
+    except _CommsNotConfigured:
+        return
+    if getattr(principal, "role", None) not in _TOOLS_MANAGER_ROLES:
+        raise HTTPException(status_code=403, detail=_TOOLS_MANAGE_DENIED)
+
+
+_TOOLS_MANAGER = [Depends(_require_tools_manager)]
+
+
 def _comms_unconfigured_payload(key: str) -> dict:
     return {"configured": False, key: [], "principal": None}
 
@@ -12465,7 +12492,7 @@ async def list_mcp_servers(profile: Optional[str] = None):
     return {"servers": out}
 
 
-@app.post("/api/mcp/servers")
+@app.post("/api/mcp/servers", dependencies=_TOOLS_MANAGER)
 async def add_mcp_server(body: MCPServerCreate, profile: Optional[str] = None):
     from hermes_cli.mcp_config import _get_mcp_servers, _save_mcp_server
 
@@ -12510,7 +12537,7 @@ async def add_mcp_server(body: MCPServerCreate, profile: Optional[str] = None):
     return _mcp_server_summary(name, server_config)
 
 
-@app.delete("/api/mcp/servers/{name}")
+@app.delete("/api/mcp/servers/{name}", dependencies=_TOOLS_MANAGER)
 async def remove_mcp_server(name: str, profile: Optional[str] = None):
     from hermes_cli.mcp_config import _remove_mcp_server
 
@@ -12521,7 +12548,7 @@ async def remove_mcp_server(name: str, profile: Optional[str] = None):
     return {"ok": True}
 
 
-@app.post("/api/mcp/servers/{name}/test")
+@app.post("/api/mcp/servers/{name}/test", dependencies=_TOOLS_MANAGER)
 async def test_mcp_server(name: str, profile: Optional[str] = None):
     """Connect to the server, list its tools, disconnect.  Returns tool list."""
     from hermes_cli.mcp_config import _get_mcp_servers, _probe_single_server
@@ -12566,7 +12593,7 @@ class MCPEnabledToggle(BaseModel):
     profile: Optional[str] = None
 
 
-@app.put("/api/mcp/servers/{name}/enabled")
+@app.put("/api/mcp/servers/{name}/enabled", dependencies=_TOOLS_MANAGER)
 async def set_mcp_server_enabled(
     name: str, body: MCPEnabledToggle, profile: Optional[str] = None
 ):
@@ -12715,7 +12742,7 @@ def _run_mcp_oauth_flow(name: str, cfg: Dict[str, Any], profile: Optional[str], 
         state["finished_at"] = time.time()
 
 
-@app.post("/api/mcp/servers/{name}/oauth/start")
+@app.post("/api/mcp/servers/{name}/oauth/start", dependencies=_TOOLS_MANAGER)
 async def start_mcp_oauth_flow(name: str, profile: Optional[str] = None):
     """Begin a browser-driven re-auth for an ``auth: oauth`` MCP server.
 
@@ -12787,7 +12814,7 @@ async def get_mcp_oauth_flow(name: str, profile: Optional[str] = None):
     return dict(state)
 
 
-@app.post("/api/mcp/servers/{name}/oauth/redirect")
+@app.post("/api/mcp/servers/{name}/oauth/redirect", dependencies=_TOOLS_MANAGER)
 async def submit_mcp_oauth_redirect(name: str, body: McpOAuthRedirectBody):
     """Feed a pasted redirect URL (or ``?code=…&state=…`` query) to a waiting flow."""
     from tools.mcp_oauth import write_drop_redirect
@@ -12811,7 +12838,7 @@ async def submit_mcp_oauth_redirect(name: str, body: McpOAuthRedirectBody):
     return {"ok": True}
 
 
-@app.post("/api/mcp/servers/{name}/oauth/cancel")
+@app.post("/api/mcp/servers/{name}/oauth/cancel", dependencies=_TOOLS_MANAGER)
 async def cancel_mcp_oauth_flow(name: str, profile: Optional[str] = None):
     """Abort a waiting flow: drop an error redirect so the callback poller
     fails fast instead of sitting out its 300s timeout."""
@@ -12897,7 +12924,7 @@ async def list_tools(request: Request, mode: Optional[str] = None):
     }
 
 
-@app.put("/api/tools/{name}/enabled")
+@app.put("/api/tools/{name}/enabled", dependencies=_TOOLS_MANAGER)
 async def set_tool_enabled(name: str, body: ToolEnabledToggle):
     """Enable/disable a tool (owner or owning principal); records C5 provenance."""
     from hermes_cli.datastore import get_store
@@ -12931,7 +12958,7 @@ async def set_tool_enabled(name: str, body: ToolEnabledToggle):
     return tool.as_dict()
 
 
-@app.put("/api/tools/{name}/config")
+@app.put("/api/tools/{name}/config", dependencies=_TOOLS_MANAGER)
 async def set_tool_config(name: str, body: ToolConfigUpdate):
     """Replace a tool's config_json (validated: no HERMES_* non-secret keys)."""
     from hermes_cli.datastore import get_store
@@ -12967,7 +12994,7 @@ async def set_tool_config(name: str, body: ToolConfigUpdate):
     return tool.as_dict()
 
 
-@app.post("/api/tools/{name}/promote")
+@app.post("/api/tools/{name}/promote", dependencies=_TOOLS_MANAGER)
 async def promote_tool_route(name: str, body: ToolPromoteRequest):
     """Approval-gated (C6) dev→prod promotion. The explicit POST is the approval."""
     from hermes_cli.datastore import get_store
@@ -13163,7 +13190,7 @@ class MCPCatalogInstall(BaseModel):
     profile: Optional[str] = None
 
 
-@app.post("/api/mcp/catalog/install")
+@app.post("/api/mcp/catalog/install", dependencies=_TOOLS_MANAGER)
 async def install_mcp_catalog_entry(body: MCPCatalogInstall, profile: Optional[str] = None):
     """Install a catalog MCP into config.yaml.
 
@@ -15620,7 +15647,7 @@ class ToolsetToggle(BaseModel):
     platform: Optional[str] = None
 
 
-@app.put("/api/tools/toolsets/{name}")
+@app.put("/api/tools/toolsets/{name}", dependencies=_TOOLS_MANAGER)
 async def toggle_toolset(
     name: str,
     body: ToolsetToggle,
@@ -15737,7 +15764,7 @@ class ToolsetProviderSelect(BaseModel):
     profile: Optional[str] = None
 
 
-@app.put("/api/tools/toolsets/{name}/provider")
+@app.put("/api/tools/toolsets/{name}/provider", dependencies=_TOOLS_MANAGER)
 async def select_toolset_provider(
     name: str, body: ToolsetProviderSelect, profile: Optional[str] = None
 ):
@@ -15773,7 +15800,7 @@ class ToolsetEnvUpdate(BaseModel):
     profile: Optional[str] = None
 
 
-@app.put("/api/tools/toolsets/{name}/env")
+@app.put("/api/tools/toolsets/{name}/env", dependencies=_TOOLS_MANAGER)
 async def save_toolset_env(name: str, body: ToolsetEnvUpdate, profile: Optional[str] = None):
     """Persist API keys for a toolset's provider env vars.
 
@@ -15833,7 +15860,7 @@ class ToolsetPostSetup(BaseModel):
     profile: Optional[str] = None
 
 
-@app.post("/api/tools/toolsets/{name}/post-setup")
+@app.post("/api/tools/toolsets/{name}/post-setup", dependencies=_TOOLS_MANAGER)
 async def run_toolset_post_setup(
     name: str, body: ToolsetPostSetup, profile: Optional[str] = None
 ):
@@ -15909,7 +15936,7 @@ async def get_computer_use_status(profile: Optional[str] = None):
         return computer_use_status()
 
 
-@app.post("/api/tools/computer-use/permissions/grant")
+@app.post("/api/tools/computer-use/permissions/grant", dependencies=_TOOLS_MANAGER)
 async def grant_computer_use_permissions(profile: Optional[str] = None):
     """Spawn ``hermes computer-use permissions grant`` as a background action.
 
