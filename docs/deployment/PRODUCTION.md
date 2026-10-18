@@ -173,6 +173,20 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:9220/mcp
 Then ask the agent in agent-home "what page am I on?": it must still answer.
 Undo: delete the `HERMES_HOME` line from `app-mcp.env` and `systemctl restart app-mcp`.
 
+#### Root-owned checkout (security review F13/F15)
+The deploy runs as root, so it only runs code root owns. On its first run
+against a hermes-owned checkout it makes the checkout root-owned and not
+group/world-writable by itself. It saves every old owner/mode first to
+`/opt/data/backups/root-owned-checkout-<time>/owners.txt` and prints the undo
+(`bash …/rollback.sh`). These stay hermes's: `agent-home/.next/cache`, and env
+files (`.env`, `.env.*`, `*.env`). It also runs git with hooks/fsmonitor off,
+`python -I`, and `npm ci --ignore-scripts` (then `npm rebuild` of the reviewed
+native packages in `NPM_REBUILD`), and it warns about an untracked `.npmrc`.
+Root timers (`hermes-secret-backup`, reviewed copy in `deploy/`) run `python -I`
+from this root-owned tree. Services running as hermes only read the checkout.
+If something must write there, make that one path hermes-writable rather than
+undoing everything.
+
 ### 5.2 Dashboard update
 ```bash
 # code lives at /opt/data/hermes-agent (Python, uv-managed)

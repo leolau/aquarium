@@ -9,6 +9,7 @@ import { getUiContext, type UiContext } from "@/lib/app-mcp/state";
 import {
   accessibleName,
   inShellChrome,
+  isAppMcpDenied,
   isHidden,
   isSensitiveInput,
   snapshotElements,
@@ -112,6 +113,11 @@ export function executeCommand(cmd: AppMcpCommand): AppMcpActionResult {
 
   const el = resolveElement(cmd);
   if (!el) return fail(`No element matched ${JSON.stringify(cmd)}`);
+  if (isAppMcpDenied(el) && cmd.type !== "read" && cmd.type !== "scroll") {
+    return fail(
+      `${describe(el)} is a user-only control (approval or folder trust); app-mcp never operates it`,
+    );
+  }
   if (typeof cmd.expectName === "string" && accessibleName(el) !== cmd.expectName) {
     return fail("The page changed since it was described. Call app_describe_page again.");
   }
