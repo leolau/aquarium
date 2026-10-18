@@ -92,6 +92,26 @@ def ext_of(name: Optional[str]) -> Optional[str]:
     return ext if 0 < len(ext) <= 8 and ext.isalnum() else None
 
 
+# Agents can write any file, HTML included. Only types a browser shows
+# without running script open inline; every response is sandboxed and never
+# sniffed (same rules as agent-home's src/lib/http/file-headers.ts).
+_INLINE_SAFE_PREFIXES = ("image/", "video/", "audio/")
+_INLINE_UNSAFE = {"image/svg+xml"}
+_INLINE_SAFE_EXACT = {"application/pdf", "text/plain"}
+_UNTRUSTED_FILE_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "sandbox; default-src 'none'; img-src 'self' data: blob:; "
+    "media-src 'self' data: blob:; style-src 'unsafe-inline'; frame-ancestors 'self'",
+}
+
+
+def _inline_safe(media_type: str) -> bool:
+    essence = media_type.split(";")[0].strip().lower()
+    if essence in _INLINE_UNSAFE:
+        return False
+    return essence in _INLINE_SAFE_EXACT or essence.startswith(_INLINE_SAFE_PREFIXES)
+
+
 def mime_of(name: Optional[str], declared: Optional[str] = None) -> Optional[str]:
     if declared:
         return declared
@@ -685,9 +705,11 @@ async def artifact_content(request: Request, artifact_id: str):
     path = await asyncio.to_thread(resolve_content, project, principal, artifact_id)
     if path is None:
         raise HTTPException(status_code=404, detail="file not found")
+    media_type = mime_of(path.name) or "application/octet-stream"
     return FileResponse(
         str(path),
-        media_type=mime_of(path.name) or "application/octet-stream",
+        media_type=media_type,
         filename=path.name,
-        content_disposition_type="inline",
+        content_disposition_type="inline" if _inline_safe(media_type) else "attachment",
+        headers=_UNTRUSTED_FILE_HEADERS,
     )

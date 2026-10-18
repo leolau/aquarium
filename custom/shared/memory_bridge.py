@@ -3,9 +3,14 @@
 Memory Bridge
 
 Pushes facts from standalone triage agents (WhatsApp, email, calendar) into
-Hermes's long-term memory file (MEMORY.md). The agent reads this file at
-session start via tools/memory_tool.py, so facts pushed here appear in the
-agent's system prompt snapshot for the next conversation.
+the untrusted inbox-facts file ($HERMES_HOME/memories/INBOX_FACTS.md). The
+facts come from messages other people wrote, so they never go into the
+profile-wide MEMORY.md that every principal reads as shared memory (security
+review F6). tools/memory_tool.py shows the inbox file to the owner only, quoted
+as data under an "untrusted" header; see tools/inbox_memory.py.
+
+Entries written by older versions of this bridge into MEMORY.md are moved to
+the inbox file on the next write.
 
 Memory entries use the § (section sign) delimiter, matching the format that
 tools/memory_tool.py expects. Each fact is prefixed with a provenance tag
@@ -13,15 +18,16 @@ showing the source channel, date, and sender.
 
 Configuration (read from the triage agent's config.json under the "memory" key):
     enabled            — if false, no-op (default: true)
-    memory_file        — override path to MEMORY.md (default: $HERMES_HOME/memories/MEMORY.md)
+    memory_file        — override path to the inbox file (default:
+                         $HERMES_HOME/memories/INBOX_FACTS.md). Ignored if it
+                         points at a curated memory file (MEMORY.md / USER.md).
     max_facts_per_batch — cap to prevent flooding memory (default: 10)
-    max_file_chars     — rolling budget for bridged entries in MEMORY.md
-                         (default: 2200, the memory tool's own file limit).
-                         When exceeded, the OLDEST bridged entries are evicted;
-                         hand-written (untagged) agent notes are never touched.
+    max_file_chars     — rolling budget for the inbox file (default: 2200, the
+                         memory tool's own file limit). When exceeded, the
+                         OLDEST bridged entries are evicted.
 
-MEMORY.md is injected verbatim into every system prompt, so an unbounded
-append here inflates every conversation's baseline context.
+The inbox file is injected into the owner's system prompt, so an unbounded
+append here inflates every owner conversation's baseline context.
 """
 
 import json
@@ -31,9 +37,17 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-ENTRY_DELIMITER = "\n§\n"
+from tools.inbox_memory import (
+    ENTRY_DELIMITER,
+    INBOX_FILENAME,
+    file_lock,
+    is_bridged_entry,
+    read_entries,
+    split_bridged,
+    write_entries,
+)
+
 DEFAULT_MAX_FILE_CHARS = 2200
-_PROVENANCE_RE = re.compile(r"^\[(whatsapp|email|calendar) \d{4}-\d{2}-\d{2} \d{2}:\d{2} from ")
 
 # Cache the config so we don't re-read config.json on every batch.
 _config_cache = None
@@ -49,7 +63,7 @@ def _get_memory_config(config_path=None):
     config = {}
     if config_path and os.path.exists(config_path):
         try:
-            with open(config_path) as f:
+            with open(config_path, encoding='utf-8') as f:
                 full_config = json.load(f)
             config = full_config.get('memory', {})
         except Exception:
@@ -60,19 +74,25 @@ def _get_memory_config(config_path=None):
     return config
 
 
-def _get_memory_file(config_path=None):
-    """Resolve the MEMORY.md path."""
-    mem_cfg = _get_memory_config(config_path)
-    override = mem_cfg.get('memory_file')
-    if override:
-        return Path(override)
-
+def _get_memory_dir():
     hermes_home = os.environ.get('HERMES_HOME', '')
     if hermes_home:
-        return Path(hermes_home) / 'memories' / 'MEMORY.md'
+        return Path(hermes_home) / 'memories'
+    return Path.home() / '.hermes' / 'memories'
 
-    # Fallback: ~/.hermes/memories/MEMORY.md
-    return Path.home() / '.hermes' / 'memories' / 'MEMORY.md'
+
+def _get_memory_file(config_path=None):
+    """Resolve the inbox-facts path (never a file the memory tool curates)."""
+    default = _get_memory_dir() / INBOX_FILENAME
+    override = _get_memory_config(config_path).get('memory_file')
+    if not override:
+        return default
+    path = Path(override)
+    if path.name in ('MEMORY.md', 'USER.md'):
+        print(f"[memory_bridge] Ignoring memory_file={override}: facts from "
+              f"incoming messages must not go into curated memory; using {default}")
+        return default
+    return path
 
 
 def _is_enabled(config_path=None):
@@ -96,7 +116,7 @@ def _get_max_file_chars(config_path=None):
 
 
 def _is_bridged(entry):
-    return bool(_PROVENANCE_RE.match(entry))
+    return is_bridged_entry(entry)
 
 
 def _fit_to_budget(entries, budget):
@@ -118,11 +138,29 @@ def _fit_to_budget(entries, budget):
     return entries
 
 
-def remember_facts(facts, *, source, sender, config_path=None):
-    """Append facts to MEMORY.md using the § delimiter.
+def _take_legacy_entries(shared_file):
+    """Remove bridged entries from the shared MEMORY.md; return them.
 
-    Each fact is a self-contained statement. The agent will see these in its
-    system prompt snapshot at the next session start.
+    Caller holds the shared file's lock. A file that does not round-trip
+    (hand-edited) is left alone; the memory tool still keeps its bridged
+    entries out of the shared block.
+    """
+    try:
+        raw = shared_file.read_text(encoding='utf-8')
+    except (OSError, IOError):
+        return [], None
+    entries = [e.strip() for e in raw.split(ENTRY_DELIMITER) if e.strip()]
+    if raw.strip() != ENTRY_DELIMITER.join(entries):
+        return [], None
+    kept, legacy = split_bridged(entries)
+    return legacy, kept
+
+
+def remember_facts(facts, *, source, sender, config_path=None):
+    """Append facts to the inbox-facts file using the § delimiter.
+
+    Each fact is a self-contained statement. The owner's next session shows
+    them in the untrusted inbox block of its system prompt.
 
     Args:
         facts: list of {"fact": str, "category": str} dicts
@@ -166,38 +204,36 @@ def remember_facts(facts, *, source, sender, config_path=None):
         if not fact_text:
             continue
 
-        # Build a provenance-prefixed entry
-        provenance = f"[{source} {date_str} {time_str} from {sender}]"
+        # One line per fact: a newline could forge an entry delimiter and
+        # split off text that no longer carries its provenance tag.
+        fact_text = ' '.join(fact_text.split())
+        provenance = f"[{source} {date_str} {time_str} from {' '.join(str(sender).split())}]"
         entry = f"{provenance} {fact_text}"
         entries.append(entry)
 
     if not entries:
         return 0
 
-    # Read existing content
+    shared_file = _get_memory_dir() / 'MEMORY.md'
+    # Lock order: inbox, then shared. The memory tool only ever holds one.
     try:
-        existing = memory_file.read_text(encoding='utf-8') if memory_file.exists() else ''
-    except Exception:
-        existing = ''
-
-    existing_entries = [e.strip() for e in existing.split(ENTRY_DELIMITER) if e.strip()]
-    combined = _fit_to_budget(existing_entries + entries, _get_max_file_chars(config_path))
-    content = ENTRY_DELIMITER.join(combined)
-    written = sum(1 for e in entries if e in combined)
-    if written == 0:
-        return 0
-
-    # Atomic write via temp file + rename
-    tmp_file = memory_file.with_suffix('.md.tmp')
-    try:
-        tmp_file.write_text(content, encoding='utf-8')
-        tmp_file.replace(memory_file)
+        with file_lock(memory_file), file_lock(shared_file):
+            legacy, shared_kept = _take_legacy_entries(shared_file)
+            existing = read_entries(memory_file)
+            combined = list(dict.fromkeys(legacy + existing + entries))
+            combined = _fit_to_budget(combined, _get_max_file_chars(config_path))
+            written = sum(1 for e in entries if e in combined)
+            if written == 0 and not legacy:
+                return 0
+            write_entries(memory_file, combined)
+            if legacy:
+                # Inbox written first, so a failure here only leaves a
+                # duplicate that the memory tool already keeps out of shared.
+                write_entries(shared_file, shared_kept)
+                print(f"[memory_bridge] Moved {len(legacy)} older fact(s) out of "
+                      f"shared {shared_file} into {memory_file}")
     except Exception as e:
         print(f"[memory_bridge] Failed to write {memory_file}: {e}")
-        try:
-            tmp_file.unlink(missing_ok=True)
-        except Exception:
-            pass
         return 0
 
     return written
