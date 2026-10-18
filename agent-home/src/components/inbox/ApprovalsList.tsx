@@ -61,7 +61,7 @@ export function ApprovalsList({
             ) : null}
 
             {pending ? (
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2" data-appmcp-deny="consent">
                 {item.kind === "approval" ? (
                   <>
                     <button

@@ -66,6 +66,15 @@ describe("FolderBridgeView network folders", () => {
     expect(screen.getByText("Network folders (through a VPN)")).toBeTruthy();
   });
 
+  it("marks the consent controls as user-only for app-mcp (F18)", async () => {
+    render(<FolderBridgeView />);
+    await screen.findByText("Tender documents");
+    for (const name of ["Connect", "Add folder"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button.closest("[data-appmcp-deny]")).not.toBeNull();
+    }
+  });
+
   it("still shows network folders in a browser without a folder picker", async () => {
     pickerSupported.mockReturnValue(false);
     render(<FolderBridgeView />);

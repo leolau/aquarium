@@ -69,3 +69,36 @@ def looks_sensitive(name: str | None) -> bool:
     if not name:
         return False
     return bool(_SENSITIVE.search(name))
+
+
+# Approval and consent controls: only the human may press these (security
+# review F17/F18). Refused for app_act AND app_act_destructive, by name here
+# and by the page's `data-appmcp-deny` marker (snapshot `denied: true`).
+CONSENT_WORDS = (
+    r"approve[sd]?",
+    r"approval",
+    r"re-?approv\w*",
+    r"allow",
+    r"deny",
+    r"denied",
+    r"grant",
+    r"authori[sz]e",
+    r"trust",
+    r"trusted",
+    r"consent",
+    r"acknowledge",
+)
+
+_CONSENT = re.compile(r"\b(?:" + "|".join(CONSENT_WORDS) + r")\b", re.IGNORECASE)
+
+
+def looks_like_consent(name: str | None) -> bool:
+    """True when the control's name reads like an approval/consent decision."""
+    if not name:
+        return False
+    return bool(_CONSENT.search(name))
+
+
+def is_user_only(entry: dict) -> bool:
+    """A control app-mcp must never operate: page-marked or consent-named."""
+    return bool(entry.get("denied")) or looks_like_consent(str(entry.get("name") or ""))
