@@ -1187,6 +1187,9 @@ def execute_code(
 
     # --- Set up temp directory with hermes_tools.py and script.py ---
     tmpdir = tempfile.mkdtemp(prefix="hermes_sandbox_")
+    from tools import terminal_user
+
+    _run_as = terminal_user.configured_user()
     # Use /tmp on macOS to avoid the long /var/folders/... path that pushes
     # Unix domain socket paths past the 104-byte macOS AF_UNIX limit.
     # On Linux, tempfile.gettempdir() already returns /tmp.
@@ -1251,6 +1254,12 @@ def execute_code(
             server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             server_sock.bind(sock_path)
             os.chmod(sock_path, 0o600)
+            if _run_as:
+                # The script runs as terminal.run_as; let only its group connect.
+                terminal_user.share_with(_run_as, sock_path, 0o660)
+                terminal_user.share_with(_run_as, tmpdir, 0o2770)
+                for _name in ("hermes_tools.py", "script.py"):
+                    terminal_user.share_with(_run_as, os.path.join(tmpdir, _name), 0o640)
         server_sock.listen(1)
 
         # Wrapped so the thread inherits the turn's approval context + callbacks
@@ -1331,8 +1340,11 @@ def execute_code(
         _child_cwd = _resolve_child_cwd(_mode, tmpdir)
         _script_path = os.path.join(tmpdir, "script.py")
 
+        _child_argv = [_child_python, _script_path]
+        if _run_as:
+            _child_argv = terminal_user.wrap_command(_child_argv, _run_as)
         proc = subprocess.Popen(
-            [_child_python, _script_path],
+            _child_argv,
             cwd=_child_cwd,
             env=child_env,
             stdout=subprocess.PIPE,
@@ -1341,6 +1353,7 @@ def execute_code(
             start_new_session=True,
             creationflags=subprocess.CREATE_NO_WINDOW if _IS_WINDOWS else 0,
         )
+        proc._hermes_run_as = _run_as
 
         # --- Poll loop: watch for exit, timeout, and interrupt ---
         deadline = time.monotonic() + timeout
@@ -1567,6 +1580,15 @@ def execute_code(
 def _kill_process_group(proc, escalate: bool = False):
     """Kill the child and its entire process tree (cross-platform via psutil)."""
     import psutil
+
+    run_as = getattr(proc, "_hermes_run_as", "")
+    if run_as:
+        # terminal.run_as processes belong to another user; only it can signal them.
+        import signal
+
+        from tools.terminal_user import signal_group
+
+        signal_group(run_as, proc.pid, signal.SIGTERM)
     try:
         parent = psutil.Process(proc.pid)
         children = parent.children(recursive=True)
@@ -1593,6 +1615,8 @@ def _kill_process_group(proc, escalate: bool = False):
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
+            if run_as:
+                signal_group(run_as, proc.pid, signal.SIGKILL)
             try:
                 parent = psutil.Process(proc.pid)
                 for child in parent.children(recursive=True):

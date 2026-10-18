@@ -298,6 +298,11 @@ if [ -e "$TOOLS_HELPER" ] && ! cmp -s "$TOOLS_HELPER" "$REPO/deploy/hermes-tools
   echo "TOOLS HELPER STALE: $TOOLS_HELPER differs from the reviewed copy at $AFTER. Install it with:"
   echo "    sudo install -m 755 -o root -g root $REPO/deploy/hermes-tools-exec $TOOLS_HELPER"
 fi
+TOOLS_RULE=/etc/sudoers.d/hermes-tools
+if [ -e "$TOOLS_RULE" ] && ! cmp -s "$TOOLS_RULE" "$REPO/deploy/sudoers.d/hermes-tools"; then
+  echo "TOOLS SUDOERS RULE STALE: $TOOLS_RULE differs from the reviewed copy at $AFTER. Install it with:"
+  echo "    sudo visudo -cf $REPO/deploy/sudoers.d/hermes-tools && sudo install -m 440 -o root -g root $REPO/deploy/sudoers.d/hermes-tools $TOOLS_RULE"
+fi
 
 # The deploy tool does not deploy itself: /opt/data/deploy-hermes.sh is a copy
 # installed by hand, so a merged fix to this script changes nothing on the box

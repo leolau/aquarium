@@ -448,6 +448,19 @@ or `hermes config set security.terminal_database_credentials true`. New commands
 
 `deploy/hermes-deploy.sh` sets the setting to `true` once on profiles created before it existed, so those boxes keep working. A profile that already has the key, including `install-aquarium.sh` installs (which write `false`), is left alone. An explicit `docker_forward_env` entry is an operator choice and still forwards the variable.
 
+### Agent commands as their own Linux user {#terminal-run-as}
+
+On the local backend the agent's commands normally run as the same Linux user as the gateway. That user can read the gateway's environment (`cat /proc/<gateway pid>/environ`), `$HERMES_HOME/.env` and `$HERMES_HOME/auth/`, so the variable filtering above stops accidents, not a determined prompt injection. `terminal.run_as` closes that gap:
+
+```yaml
+terminal:
+  run_as: hermes-tools   # default: "" (the gateway's own user)
+```
+
+With it set, foreground commands, background processes and `execute_code` start through the root-owned helper `/usr/local/sbin/hermes-tools-exec` (`sudo -n -E -u hermes-tools`, never root). They keep the already-filtered environment and `PATH`, but the gateway's process and its `0600` files belong to another user. Timeouts and `process kill` signal them through the same helper. The gateway user must be in the `hermes-tools` group so it can read the working-directory files a command leaves behind (`usermod -aG hermes-tools hermes`, then restart the gateway).
+
+The helper, its sudoers rule (`deploy/sudoers.d/hermes-tools`) and the user are installed by `install-aquarium.sh`; the header of `deploy/hermes-tools-exec` has the commands for an existing box. If the setting names a user but the helper is missing or not root-owned, commands fail with a message naming `terminal.run_as` instead of falling back to the gateway user. Folders the agent should work in must be readable (and writable, where it edits files) by `hermes-tools`.
+
 ### Credential File Passthrough (OAuth tokens, etc.) {#credential-file-passthrough}
 
 Some skills need **files** (not just env vars) in the sandbox — for example, Google Workspace stores OAuth tokens as `google_token.json` under the active profile's `HERMES_HOME`. Skills declare these in frontmatter:

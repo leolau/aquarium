@@ -129,6 +129,9 @@ id hermes >/dev/null 2>&1 || useradd --system --create-home --home-dir /home/her
 # user cannot read the gateway's environment (/proc/<pid>/environ) or hermes's secret files.
 id hermes-tools >/dev/null 2>&1 || useradd --system --create-home --home-dir /home/hermes-tools \
   --shell /usr/sbin/nologin hermes-tools
+# hermes is in the hermes-tools group (not the other way round) so the gateway can read the
+# working-directory and snapshot files a command leaves behind; hermes-tools still can't read hermes's.
+usermod -aG hermes-tools hermes
 install -d -m 700 -o root -g root "$ROOT/deploy"
 touch "$SECRETS" && chmod 600 "$SECRETS"
 secret() {  # secret NAME [value]: read from the secrets file, else set it once

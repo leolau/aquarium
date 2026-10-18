@@ -1033,6 +1033,12 @@ class LocalEnvironment(BaseEnvironment):
                 cmd_string = _prepend_shell_init(cmd_string, init_files)
         args = [bash, "-l", "-c", cmd_string] if login else [bash, "-c", cmd_string]
         run_env = _make_run_env(self.env)
+        from tools import terminal_user
+
+        run_as = terminal_user.configured_user()
+        if run_as:
+            args = terminal_user.wrap_bash(args, run_as)
+            self._run_as = run_as
 
         # Recover when the cwd has been deleted out from under us — usually by
         # a previous tool call that ran ``rm -rf`` on its own working dir
@@ -1076,6 +1082,7 @@ class LocalEnvironment(BaseEnvironment):
             cwd=_popen_cwd,
             **_popen_kwargs,
         )
+        proc._hermes_run_as = run_as
         if not _IS_WINDOWS:
             try:
                 proc._hermes_pgid = os.getpgid(proc.pid)
@@ -1139,6 +1146,13 @@ class LocalEnvironment(BaseEnvironment):
                     if pgid is None:
                         raise
 
+                # Commands run as terminal.run_as are another user's processes:
+                # only that user can signal them, via the helper.
+                run_as = getattr(proc, "_hermes_run_as", "")
+                if run_as:
+                    from tools.terminal_user import signal_group
+
+                    signal_group(run_as, pgid, signal.SIGTERM)
                 try:
                     os.killpg(pgid, signal.SIGTERM)  # windows-footgun: ok — POSIX process-group SIGTERM (guarded by _IS_WINDOWS above)
                 except ProcessLookupError:
@@ -1150,6 +1164,8 @@ class LocalEnvironment(BaseEnvironment):
                 if _wait_for_group_exit(pgid, 1.0):
                     return
 
+                if run_as:
+                    signal_group(run_as, pgid, signal.SIGKILL)
                 try:
                     # POSIX-only: _IS_WINDOWS is handled by the outer branch.
                     os.killpg(pgid, signal.SIGKILL)  # windows-footgun: ok — POSIX process-group SIGKILL
@@ -1220,6 +1236,15 @@ class LocalEnvironment(BaseEnvironment):
 
     def cleanup(self):
         """Clean up temp files."""
+        run_as = getattr(self, "_run_as", "")
+        if run_as:
+            # terminal.run_as wrote these, and /tmp is sticky: only it may delete them.
+            import glob
+
+            from tools.terminal_user import remove_files
+
+            remove_files(run_as, [self._snapshot_path, self._cwd_file,
+                                  *glob.glob(f"{self._snapshot_path}.tmp.*")])
         for f in (self._snapshot_path, self._cwd_file):
             try:
                 os.unlink(f)
