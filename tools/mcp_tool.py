@@ -1427,7 +1427,7 @@ class MCPServerTask:
     """
 
     __slots__ = (
-        "name", "session", "tool_timeout", "max_result_chars",
+        "name", "session", "tool_timeout", "max_result_chars", "forward_principal",
         "_task", "_ready", "_shutdown_event", "_reconnect_event",
         "_tools", "_error", "_config",
         "_sampling", "_elicitation",
@@ -1442,6 +1442,9 @@ class MCPServerTask:
         self.session: Optional[Any] = None
         self.tool_timeout: float = _DEFAULT_TOOL_TIMEOUT
         self.max_result_chars: int = _DEFAULT_MAX_RESULT_CHARS
+        # ``forward_principal: true`` — send the chat's user id in the call's
+        # ``_meta`` so a first-party server (app-mcp) acts for that user only.
+        self.forward_principal: bool = False
         self._task: Optional[asyncio.Task] = None
         self._ready = asyncio.Event()
         self._shutdown_event = asyncio.Event()
@@ -2311,6 +2314,9 @@ class MCPServerTask:
         self._config = config
         self.tool_timeout = config.get("timeout", _DEFAULT_TOOL_TIMEOUT)
         self.max_result_chars = _coerce_max_result_chars(config.get("max_result_chars"))
+        self.forward_principal = _parse_boolish(
+            config.get("forward_principal", False), default=False
+        )
         self._auth_type = (config.get("auth") or "").lower().strip()
 
         # Set up sampling handler if enabled and SDK types are available
@@ -3385,6 +3391,11 @@ def _clip_result(text: str, limit: int) -> str:
     )
 
 
+# ``_meta`` key carrying the chat's user id to servers with
+# ``forward_principal: true`` (read by app-mcp/app_mcp/server.py).
+PRINCIPAL_META_KEY = "aquarium_principal_user_id"
+
+
 def _make_tool_handler(
     server_name: str,
     tool_name: str,
@@ -3463,7 +3474,15 @@ def _make_tool_handler(
                 # it and detect the gateway platform / session for routing.
                 server._pending_call_context = contextvars.copy_context()
                 try:
-                    result = await server.session.call_tool(tool_name, arguments=args)
+                    principal = kwargs.get("principal_user_id")
+                    if server.forward_principal is True and principal:
+                        result = await server.session.call_tool(
+                            tool_name,
+                            arguments=args,
+                            meta={PRINCIPAL_META_KEY: str(principal)},
+                        )
+                    else:
+                        result = await server.session.call_tool(tool_name, arguments=args)
                 finally:
                     server._pending_call_context = None
             # MCP CallToolResult has .content (list of content blocks) and .isError
