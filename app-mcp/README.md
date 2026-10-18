@@ -110,6 +110,10 @@ are left ungated by default (names/sizes/timestamps only, same sensitivity as
 mcp_servers:
   app:
     url: "http://127.0.0.1:9220/mcp"
+    # Send the chat's user id with every call (MCP `_meta`). app-mcp routes
+    # UI and Folder Bridge commands to THAT user's browser only and refuses
+    # calls without it, so this is required.
+    forward_principal: true
     # Per-tool-call deadline on the agent side (default 300 s). A large
     # folder import uploads browser → BFF → Storage and can take tens of
     # minutes — the hub-side timeout is a *silence* deadline kept alive by
