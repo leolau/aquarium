@@ -399,11 +399,11 @@ class TestProvidersDictApiModeAnthropicMessages:
             AsyncAnthropicAuxiliaryClient,
         )
         async_client, async_model = get_async_text_auxiliary_client("compression")
-        assert isinstance(async_client, AsyncAnthropicAuxiliaryClient)
+        assert isinstance(getattr(async_client, "_client", async_client), AsyncAnthropicAuxiliaryClient)
         assert async_model == "claude-sonnet-4.6"
 
         sync_client, sync_model = get_text_auxiliary_client("compression")
-        assert isinstance(sync_client, AnthropicAuxiliaryClient)
+        assert isinstance(getattr(sync_client, "_client", sync_client), AnthropicAuxiliaryClient)
         assert sync_model == "claude-sonnet-4.6"
 
     def test_provider_without_api_mode_still_uses_openai(self, tmp_path):
