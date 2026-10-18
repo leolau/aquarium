@@ -189,12 +189,15 @@ new model tools.
 | Storage | credential kind `smb-folder`, provider `fortinet` (`hermes_cli/credential_store.py`): `vpn`, `share_path` (normalised `//server/share[/sub]`), optional `share_username`/`share_password` (secret, redacted, kept on edit)/`share_domain`, `trusted_for_import`. Never materialized. Private to its owner. |
 | Manager | `hermes_cli/vpn_folders.py`: slugs (`$HERMES_HOME/vpn/state.json` → `folder_slugs`, stable across renames; folder id `net-<slug>`), views, `ensure` (connect the VPN if needed, then mount), test/disconnect/delete, internal list/import |
 | User API | `/api/vpn/folders` (`hermes_cli/vpn_api.py`): `GET`, `POST`, `PUT /{name}`, `DELETE /{name}`, `POST /{name}/test`, `POST /{name}/disconnect`. Caller's own folders only; anyone else's is a 404. The VPN must be readable by the caller. |
-| Mount | root helper `mount <spec>` / `umount` / `fstatus` / `fcheck <folder_slug>` (`deploy/hermes-vpn-helper`): read-only CIFS at `/opt/data/vpn-files/net-<slug>`, same options as the VPN's own share, only through a connected VPN and only to a server inside that VPN's routes. `down`/idle disconnect unmounts the VPN's folders. VPN slugs can't start with `net-`. |
+| Mount | root helper `mount <spec>` / `umount` / `fstatus` / `fcheck <folder_slug>` (`deploy/hermes-vpn-helper`): read-only CIFS at `/opt/data/vpn-files/net-<slug>`, same options as the VPN's own share (`iocharset=utf8`, SMB 3.x/2.1, else 2.0; never 1.0), only through a connected VPN. If the tunnel doesn't reach the file server yet, the helper adds `<server_ip>/32` on it (after the box-overlap check), records it in the VPN state's `folder_routes`, and removes it when the last folder using it is unmounted. `down`/idle disconnect unmounts the VPN's folders and drops their routes. VPN slugs can't start with `net-`. |
 | Agent side | `app-mcp/app_mcp/netfolders.py`: `net-*` ids are served by app-mcp from the mount (list/search/read/metadata; same shapes as the browser; `..` and symlinks refused). app-mcp runs as `hermes` without sudo, so it asks the dashboard to mount (`POST /api/internal/vpn/folders/ensure {id}`) and to import (`POST /api/internal/vpn/folders/import {id, path, approved}`); `GET /api/internal/vpn/folders` lists every folder on the box. |
 | Internal auth | `Authorization: Bearer $APP_MCP_HERMES_TOKEN` (same value in `app-mcp/app-mcp.env` and the Hermes `.env`), verified by the `app-mcp-internal` token provider through the dashboard's token-auth seam (exact routes; fails closed without a ≥32-char token). Requests carrying `X-Forwarded-For`/`Forwarded` (i.e. via Caddy) are refused. |
 
 Share login: the folder's own login when set, else the VPN entry's
-`share_username`/`share_password`/`share_domain`, else the VPN login.
+`share_username`/`share_password`/`share_domain` (legacy entries only), else
+the VPN login. A VPN entry is only the network connection; `hermes vpn
+migrate-shares [--dry-run]` turns a legacy VPN's own share into a network
+folder and strips the share and routes from the VPN.
 
 Visibility: while mounted, any agent on the box may read a network folder
 (box-level, like a VPN's own share), so `folder_bridge_list_folders` lists all
