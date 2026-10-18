@@ -4949,6 +4949,14 @@ class TelegramAdapter(BasePlatformAdapter):
                     await query.answer(text="⛔ You are not authorized to approve commands.")
                     return
 
+                _clicker_id = str(getattr(query.from_user, "id", "") or "")
+                _pending_key = self._approval_state.get(approval_id)
+                if _pending_key:
+                    from tools.approval import can_resolve_gateway_approval
+                    if not can_resolve_gateway_approval(_pending_key, _clicker_id):
+                        await query.answer(text="⛔ Only the person who asked for this command (or an owner/admin, with /approve) can answer it.")
+                        return
+
                 session_key = self._approval_state.pop(approval_id, None)
                 if not session_key:
                     await query.answer(text="This approval has already been resolved.")
@@ -4979,7 +4987,9 @@ class TelegramAdapter(BasePlatformAdapter):
                 # Resolve the approval — unblocks the agent thread
                 try:
                     from tools.approval import resolve_gateway_approval
-                    count = resolve_gateway_approval(session_key, choice)
+                    count = resolve_gateway_approval(
+                        session_key, choice, approver_id=_clicker_id,
+                    )
                     logger.info(
                         "Telegram button resolved %d approval(s) for session %s (choice=%s, user=%s)",
                         count, session_key, choice, user_display,

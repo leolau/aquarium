@@ -3606,6 +3606,20 @@ class SlackAdapter(BasePlatformAdapter):
         }
         choice = choice_map.get(action_id, "deny")
 
+        from tools.approval import can_resolve_gateway_approval
+        if not can_resolve_gateway_approval(session_key, user_id):
+            logger.warning(
+                "[Slack] Approval click by %s (%s) on someone else's command - ignoring",
+                user_name, user_id,
+            )
+            try:
+                await self._get_client(channel_id).chat_postEphemeral(
+                    channel=channel_id, user=user_id, text="⛔ Only the person who asked for this command (or an owner/admin, with /approve) can answer it.",
+                )
+            except Exception:
+                pass
+            return
+
         # Prevent double-clicks — atomic pop; first caller gets False, others get True (default)
         if self._approval_resolved.pop(msg_ts, True):
             return
@@ -3656,7 +3670,7 @@ class SlackAdapter(BasePlatformAdapter):
         try:
             from tools.approval import resolve_gateway_approval
 
-            count = resolve_gateway_approval(session_key, choice)
+            count = resolve_gateway_approval(session_key, choice, approver_id=user_id)
             logger.info(
                 "Slack button resolved %d approval(s) for session %s (choice=%s, user=%s)",
                 count,

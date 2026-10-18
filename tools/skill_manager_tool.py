@@ -91,7 +91,7 @@ def _reset_background_review_read_marks() -> None:
     _background_review_read_paths.set(frozenset())
 
 # Import security scanner — external hub installs always get scanned;
-# agent-created skills only get scanned when skills.guard_agent_created is on.
+# agent-created skills are scanned unless skills.guard_agent_created is off.
 try:
     from tools.skills_guard import scan_skill, should_allow_install, format_scan_report
     _GUARD_AVAILABLE = True
@@ -100,33 +100,36 @@ except ImportError:
 
 
 def _guard_agent_created_enabled() -> bool:
-    """Read skills.guard_agent_created from config (default False).
+    """Read skills.guard_agent_created from config (default True).
 
-    Off by default because the agent can already execute the same code
-    paths via terminal() with no gate, so the scan adds friction without
-    meaningful security.  Users who want belt-and-suspenders can turn it
-    on via `hermes config set skills.guard_agent_created true`.
+    On by default: a skill is reloaded into later conversations, and the
+    agent may have been steered into writing it by an untrusted message
+    (WhatsApp, email, a web page). An unreadable config keeps the scan on. Owners who find it too strict can
+    run `hermes config set skills.guard_agent_created false`.
     """
     try:
         from hermes_cli.config import load_config
         cfg = load_config()
         return is_truthy_value(
             cfg_get(cfg, "skills", "guard_agent_created"),
-            default=False,
+            default=True,
         )
     except Exception:
-        return False
+        return True
 
 
 def _security_scan_skill(skill_dir: Path) -> Optional[str]:
     """Scan a skill directory after write. Returns error string if blocked, else None.
 
-    No-op when skills.guard_agent_created is disabled (the default).
+    No-op only when skills.guard_agent_created is turned off. Fails closed:
+    a missing scanner or a scan error blocks the write.
     """
-    if not _GUARD_AVAILABLE:
-        return None
     if not _guard_agent_created_enabled():
         return None
+    if not _GUARD_AVAILABLE:
+        logger.warning("Skill security scanner unavailable; blocking write to %s", skill_dir)
+        return ("Security scan could not run (scanner unavailable), so this skill "
+                "write was blocked.")
     try:
         result = scan_skill(skill_dir, source="agent-created")
         allowed, reason = should_allow_install(result)
@@ -142,6 +145,7 @@ def _security_scan_skill(skill_dir: Path) -> Optional[str]:
             return f"Security scan blocked this skill ({reason}):\n{report}"
     except Exception as e:
         logger.warning("Security scan failed for %s: %s", skill_dir, e, exc_info=True)
+        return f"Security scan failed ({type(e).__name__}), so this skill write was blocked."
     return None
 
 import yaml
@@ -1251,8 +1255,12 @@ def _apply_skill_write_gate(action, name, **payload_kwargs):
 
     try:
         from tools import write_approval as wa
-    except Exception:
-        return None  # fail open
+    except Exception as exc:
+        logger.warning("Skill write gate unavailable (%s); blocking %s", exc, action)
+        return tool_error(
+            "Skill write approval gate could not load, so this skill change was blocked.",
+            success=False,
+        )
 
     decision = wa.evaluate_gate(wa.SKILLS)
     if decision.allow:

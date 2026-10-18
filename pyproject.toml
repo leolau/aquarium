@@ -420,3 +420,5 @@ select = ["PLW1514"]
 "skills/**" = ["PLW1514"]
 "optional-skills/**" = ["PLW1514"]
 "plugins/**" = ["PLW1514"]
+# Aquarium's custom/ services run only on the Linux server (UTF-8 locale).
+"custom/**" = ["PLW1514"]
