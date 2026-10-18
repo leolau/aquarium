@@ -4,6 +4,7 @@ import json
 import sys
 
 from run_agent import AIAgent
+from tools.session_search_tool import owner_scope_for
 
 
 def _mock_response(*, usage: dict, content: str = "done"):
@@ -84,6 +85,7 @@ def test_session_search_lazily_opens_db_when_entrypoint_did_not_pass_one(monkeyp
         return json.dumps({"success": True, "results": []})
 
     session_search_mod.session_search = fake_session_search
+    session_search_mod.owner_scope_for = owner_scope_for
     monkeypatch.setitem(sys.modules, "tools.session_search_tool", session_search_mod)
 
     agent = _make_agent(None, platform="acp")
@@ -92,4 +94,5 @@ def test_session_search_lazily_opens_db_when_entrypoint_did_not_pass_one(monkeyp
     assert result["success"] is True
     assert captured["db"] is sentinel_db
     assert captured["query"] == "Hermes"
+    assert captured["owner_user_id"] is None  # no resolved person → unscoped
     assert agent._session_db is sentinel_db
