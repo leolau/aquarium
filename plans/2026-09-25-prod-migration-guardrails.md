@@ -13,7 +13,7 @@ services, chasing a phantom "reverse proxy caching stale JS" theory — against
 `aliyun oos StartExecution`. Every deploy reported success. Nothing the user
 observed ever changed, because **that box has not been production since
 2026-08-20**. The real production box is a Hetzner server
-(`188.245.219.105`), reachable by plain SSH, documented in
+(`<prod-host>`), reachable by plain SSH, documented in
 `docs/deployment/PRODUCTION.md`. The agent never opened that file and instead
 reused the Alibaba/OOS access pattern from earlier conversation history (and
 from the `testing-hermes-systest-box` skill, which described exactly that

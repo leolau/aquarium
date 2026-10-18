@@ -232,7 +232,7 @@ def test_callback_server_binds_loopback_by_default(handler_rel, monkeypatch):
 
 
 @pytest.mark.parametrize("base,expected", [
-    ("http://188.245.219.105:7902", "0.0.0.0"),
+    ("http://203.0.113.10:7902", "0.0.0.0"),
     ("https://home.example/contact-callback", "127.0.0.1"),
     ("http://127.0.0.1:7902", "127.0.0.1"),
     ("", "127.0.0.1"),

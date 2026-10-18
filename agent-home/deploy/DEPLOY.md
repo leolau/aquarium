@@ -3,10 +3,9 @@
 > **⚠️ SUPERSEDED 2026-08-20 — production moved to Hetzner.** The live box,
 > access method, and every fact below (instance ID, EIP, `aliyun` CLI) are
 > **historical**. The authoritative ops document is
-> [`docs/deployment/PRODUCTION.md`](../../docs/deployment/PRODUCTION.md) —
-> read that first. Reach production by SSH
-> (`ssh -i ~/.ssh/hetzner_hermes_ed25519 root@188.245.219.105`), not `aliyun`/
-> `OOS_RunCommand`. Deploying agent-home is now just one step of the single
+> [`production/PRODUCTION.md`](https://github.com/leolau/aquarium-ops/blob/main/production/PRODUCTION.md) in the private
+> repo `leolau/aquarium-ops` — read that first. Reach production by SSH as
+> described there, not `aliyun`/`OOS_RunCommand`. Deploying agent-home is now just one step of the single
 > whole-stack `deploy-hermes.sh` script documented there — there is no
 > separate dedicated clone anymore. Keep reading only for the historical
 > record of the original FG-20 rollout decisions.
@@ -24,25 +23,25 @@ on its own subdomain, same box + same Supabase as the Python AI layer and the
 - **Reach it:** `aliyun` CLI → ECS RunCommand (creds `ALIBABA_CLOUD_ACCESS_KEY_ID/SECRET` in the agent VM env; no SSH key on file). Runs as `root`.
 - **agent-home checkout:** `/opt/data/agent-home-app` — a **dedicated fresh clone** of `develop` for this app. (The older `/opt/data/hermes-agent` tree is a copied snapshot, **not** a git repo, so it can't `git pull`; deploy agent-home from its own clone instead.)
 - **Port:** agent-home Next runs on `127.0.0.1:3100`. **`:3000` is already taken** by the WhatsApp bridge (`scripts/whatsapp-bridge/bridge.js`) — do not reuse it.
-- **Python AI layer / dashboard:** bound `0.0.0.0:9119`, fronted by Caddy at `leolau.ai-and-i.io`.
+- **Python AI layer / dashboard:** bound `0.0.0.0:9119`, fronted by Caddy at `<dashboard-host>`.
 - **Caddy:** v2.11.4, config `/etc/caddy/Caddyfile`.
-- **DNS/TLS:** Cloudflare zone `ai-and-i.io`; A records are **DNS-only (unproxied)**; Let's Encrypt via Caddy HTTP-01. Cloudflare token `CLOUDFLARE_DNS_API_TOKEN` (Zone·DNS·Edit) enables subdomain automation.
+- **DNS/TLS:** Cloudflare zone `<dns-zone>`; A records are **DNS-only (unproxied)**; Let's Encrypt via Caddy HTTP-01. Cloudflare token `CLOUDFLARE_DNS_API_TOKEN` (Zone·DNS·Edit) enables subdomain automation.
 - **Supabase:** self-hosted Docker stack on the box (Postgres + Storage + RLS). The Python `datastore.supabase_app.dsn` resolves to env `DATABASE_URL` (role `postgres`). **Caveat:** that role has `BYPASSRLS`, so per-principal RLS is *not* enforced for it — fine while the owner is the only login (owner sees all rows), but provision a dedicated non-BYPASSRLS role before onboarding other users. agent-home is deployed with `AGENT_HOME_DATASTORE_MODE=prod` (`app_prod`).
 
 ## 1. DNS — point a subdomain at the box
 
-Pick a subdomain, e.g. `home.leolau.ai-and-i.io`. Add a Cloudflare **A record**
+Pick a subdomain, e.g. `<agent-home-host>`. Add a Cloudflare **A record**
 → `47.83.199.25`, **DNS-only (grey cloud)** — mirroring the existing dashboard
 record. Automatable with the Cloudflare API using `CLOUDFLARE_DNS_API_TOKEN`:
 
 ```bash
 ZONE=$(curl -sS -H "Authorization: Bearer $CLOUDFLARE_DNS_API_TOKEN" \
-  "https://api.cloudflare.com/client/v4/zones?name=ai-and-i.io" \
+  "https://api.cloudflare.com/client/v4/zones?name=<dns-zone>" \
   | python3 -c "import sys,json;print(json.load(sys.stdin)['result'][0]['id'])")
 curl -sS -X POST -H "Authorization: Bearer $CLOUDFLARE_DNS_API_TOKEN" \
   -H "Content-Type: application/json" \
   "https://api.cloudflare.com/client/v4/zones/$ZONE/dns_records" \
-  --data '{"type":"A","name":"home.leolau.ai-and-i.io","content":"47.83.199.25","ttl":1,"proxied":false}'
+  --data '{"type":"A","name":"<agent-home-host>","content":"47.83.199.25","ttl":1,"proxied":false}'
 ```
 
 ## 2. Build on the box
@@ -120,9 +119,9 @@ sudo systemctl reload caddy
 ## 6. Verify
 
 ```bash
-curl -sSI https://home.leolau.ai-and-i.io/login | head        # 200, valid TLS
-curl -sSI https://home.leolau.ai-and-i.io/manifest.webmanifest # 200, correct type
-curl -sSI https://home.leolau.ai-and-i.io/sw.js                # 200
+curl -sSI https://<agent-home-host>/login | head        # 200, valid TLS
+curl -sSI https://<agent-home-host>/manifest.webmanifest # 200, correct type
+curl -sSI https://<agent-home-host>/sw.js                # 200
 ```
 
 Then on a phone over HTTPS: **iOS Safari** → Share → Add to Home Screen;

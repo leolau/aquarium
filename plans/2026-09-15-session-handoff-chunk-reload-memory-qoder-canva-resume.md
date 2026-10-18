@@ -7,7 +7,7 @@ each item is stated explicitly — not everything below is deployed yet.
 
 ### 1. iOS PWA crash after a deploy → chunk-load auto-reload (PR #410, merged, NOT yet deployed)
 
-- **Report:** the installed iOS PWA for `home.leolau.ai-and-i.io` showed
+- **Report:** the installed iOS PWA for `<agent-home-host>` showed
   "Application error: a client-side exception has occurred" after this
   session ran three production deploys in a row; desktop (freshly loaded)
   was fine. Force-quitting and reopening the PWA fixed it.
@@ -37,7 +37,7 @@ each item is stated explicitly — not everything below is deployed yet.
 
 ### 2. Production memory/swap inspection (informational only, no code)
 
-- Box (`188.245.219.105`) was observed with **swap fully used (4.0/4.0
+- Box (`<prod-host>`) was observed with **swap fully used (4.0/4.0
   GiB)** while Hermes itself was healthy (no OOM kills in the logs).
 - Root cause was **not Hermes** — the box also runs an unrelated fleet of
   ~21 `qoder-daemon-*.service` systemd units (user `aicoder`, a separate
