@@ -2,18 +2,23 @@
  * GET /api/projects/:slug/artifacts/:artifactId/content — open one produced
  * file. The bytes are piped through the BFF (the Python layer is not
  * reachable from the browser); the upstream checks the project read gate
- * and serves only files a card of this project produced.
+ * and serves only files a card of this project produced. An agent can write
+ * any file (HTML included), so the inline/download decision and the sandbox
+ * headers are made here, not taken from upstream.
  */
 import { NextResponse } from "next/server";
 
 import { HermesApiError } from "@/lib/api/client";
 import { apiClientForRequest, getPrincipal } from "@/lib/auth/principal";
+import {
+  applyFileSafetyHeaders,
+  filenameFromDisposition,
+} from "@/lib/http/file-headers";
 
 const PASSED_HEADERS = [
   "content-type",
   "content-length",
   "content-range",
-  "content-disposition",
   "accept-ranges",
   "etag",
   "last-modified",
@@ -41,6 +46,10 @@ export async function GET(
       if (value) out.set(name, value);
     }
     out.set("cache-control", "private, no-store");
+    applyFileSafetyHeaders(out, {
+      filename: filenameFromDisposition(upstream.headers.get("content-disposition")),
+      download: new URL(req.url).searchParams.get("download") === "1",
+    });
     return new Response(upstream.body, { status: upstream.status, headers: out });
   } catch (err) {
     if (err instanceof HermesApiError) {
