@@ -10,7 +10,10 @@ This router is the Settings surface for those units: list/status, fetch the
 pending QR payload, restart (refresh), stop, rebind (wipe session + restart
 to force a fresh QR), and provision a new bridge unit. Service control goes
 through the hermes user's NOPASSWD systemctl grant; unit provisioning goes
-through ``deploy/wa-bridge-add.sh`` which needs its own sudoers entry. All
+through the root-owned ``/usr/local/sbin/hermes-wa-bridge-add`` (a reviewed
+copy of ``deploy/hermes-wa-bridge-add``, sudoers rule in
+``deploy/sudoers.d/hermes-wa-bridge``). Never the checkout's copy: the hermes
+user can write the checkout, so sudo-running it would hand that user root. All
 routes are owner-gated — bridges are box-global and the QR payload is
 authentication material.
 """
@@ -33,6 +36,8 @@ _UNIT_PREFIX = "hermes-wa-bridge-"
 #: qr.txt older than this is almost certainly dead — Baileys rotates the
 #: payload every ~60s while unpaired.
 _QR_STALE_SECONDS = 90
+#: Root-owned install of deploy/hermes-wa-bridge-add; the sudoers rule names it.
+_ADD_HELPER = "/usr/local/sbin/hermes-wa-bridge-add"
 
 
 def _wa_dir() -> Path:
@@ -119,6 +124,10 @@ def _describe(name: str) -> Dict[str, Any]:
     }
 
 
+def _add_helper_installed() -> bool:
+    return Path(_ADD_HELPER).is_file()
+
+
 async def _owner_principal(request: Request):
     from hermes_cli.web_server import _comms_resolve_principal
 
@@ -190,7 +199,7 @@ async def rebind_bridge(request: Request, name: str):
 
 @router.post("")
 async def add_bridge(request: Request):
-    """Provision a new bridge unit via deploy/wa-bridge-add.sh (sudo)."""
+    """Provision a new bridge unit via the root-owned add helper (sudo)."""
     await _owner_principal(request)
     body = await request.json()
     name = _valid_name(str(body.get("name") or ""))
@@ -198,12 +207,15 @@ async def add_bridge(request: Request):
         _unit_name(n) for n in _bridge_names()
     }:
         raise HTTPException(409, f"bridge '{name}' already exists")
-    script = Path(__file__).resolve().parent.parent / "deploy" / "wa-bridge-add.sh"
-    if not script.is_file():
-        raise HTTPException(501, "deploy/wa-bridge-add.sh not installed on this host")
+    if not _add_helper_installed():
+        raise HTTPException(
+            501,
+            f"{_ADD_HELPER} is not installed on this host "
+            "(see docs/deployment/PRODUCTION.md, WhatsApp bridges)",
+        )
     try:
         out = subprocess.run(
-            ["sudo", "-n", "bash", str(script), name],
+            ["sudo", "-n", _ADD_HELPER, name],
             capture_output=True, text=True, timeout=30,
         )
     except subprocess.TimeoutExpired:
