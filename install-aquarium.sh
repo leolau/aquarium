@@ -125,6 +125,10 @@ fi
 # ---------------------------------------------------------------- 2. service account + secrets
 log "Service account and secrets"
 id hermes >/dev/null 2>&1 || useradd --system --create-home --home-dir /home/hermes --shell /usr/sbin/nologin hermes
+# The agent's terminal commands run as hermes-tools (deploy/hermes-tools-exec): a separate
+# user cannot read the gateway's environment (/proc/<pid>/environ) or hermes's secret files.
+id hermes-tools >/dev/null 2>&1 || useradd --system --create-home --home-dir /home/hermes-tools \
+  --shell /usr/sbin/nologin hermes-tools
 install -d -m 700 -o root -g root "$ROOT/deploy"
 touch "$SECRETS" && chmod 600 "$SECRETS"
 secret() {  # secret NAME [value]: read from the secrets file, else set it once
@@ -442,6 +446,10 @@ UNIT
 done
 install -m 755 deploy/hermes-deploy.sh "$ROOT/deploy-hermes.sh"
 install -m 755 -o root -g root deploy/aquarium.py /usr/local/sbin/aquarium
+# Agent terminal commands as hermes-tools: root-owned helper + sudoers rule (validated first).
+install -m 755 -o root -g root deploy/hermes-tools-exec /usr/local/sbin/hermes-tools-exec
+visudo -cf deploy/sudoers.d/hermes-tools >/dev/null
+install -m 440 -o root -g root deploy/sudoers.d/hermes-tools /etc/sudoers.d/hermes-tools
 systemctl daemon-reload
 systemctl enable -q hermes-embed hermes-dashboard hermes-gateway app-mcp agent-home
 systemctl restart hermes-embed hermes-dashboard hermes-gateway app-mcp agent-home

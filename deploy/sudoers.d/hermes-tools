@@ -1,0 +1,3 @@
+# Agent terminal commands run as hermes-tools (never root); see deploy/hermes-tools-exec.
+# SETENV keeps the gateway's already-filtered terminal environment (sudo -E).
+hermes ALL=(hermes-tools) NOPASSWD:SETENV: /usr/local/sbin/hermes-tools-exec

@@ -1,0 +1,31 @@
+#!/bin/bash
+# Run one agent terminal command as the unprivileged `hermes-tools` user.
+#
+# The gateway runs as `hermes` and holds every secret (Telegram token, model
+# keys, DATABASE_URL in its environment and in $HERMES_HOME/.env). A command
+# the agent runs as `hermes` can read all of that, e.g. `cat /proc/$PPID/environ`.
+# With `terminal.run_as: hermes-tools` the local terminal backend starts its
+# shell through this helper instead:
+#
+#   sudo -n -E -u hermes-tools /usr/local/sbin/hermes-tools-exec bash -c '<cmd>'
+#
+# sudo switches to hermes-tools (never root), keeps the already-filtered
+# terminal environment (-E; the rule carries SETENV), and this script only
+# checks who it runs as and hands the arguments to bash. sudo may only ever run
+# a root-owned copy of this file, never the one in the checkout:
+#
+#   install -m 0755 -o root -g root deploy/hermes-tools-exec /usr/local/sbin/hermes-tools-exec
+#   install -m 0440 -o root -g root deploy/sudoers.d/hermes-tools /etc/sudoers.d/hermes-tools
+set -euo pipefail
+if [[ "$(id -un)" != hermes-tools ]]; then
+  echo "hermes-tools-exec: must run as hermes-tools (sudo -u hermes-tools)" >&2
+  exit 2
+fi
+if [[ "${1:-}" != bash ]]; then
+  echo "usage: hermes-tools-exec bash [-l] -c COMMAND" >&2
+  exit 2
+fi
+shift
+umask 007
+export HOME=/home/hermes-tools USER=hermes-tools LOGNAME=hermes-tools
+exec /bin/bash "$@"
