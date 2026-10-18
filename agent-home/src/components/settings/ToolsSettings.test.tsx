@@ -76,6 +76,17 @@ describe("ToolsSettings", () => {
     expect(calls[0][2]).toEqual({ enabled: false });
   });
 
+  it("labels the section for Aquarium chats and lists the groups that are on", () => {
+    const off: Toolset = { ...TOOLSET, name: "terminal", label: "Terminal", enabled: false, tools: ["terminal"] };
+    render(<ToolsSettings servers={[]} toolsets={[TOOLSET, off]} />);
+    expect(screen.getByText("Tool groups for Aquarium chats")).toBeTruthy();
+    expect(screen.queryByText("CLI toolsets")).toBeNull();
+    expect(screen.getByTestId("chat-tool-groups-on").textContent).toBe(
+      "New chats can use: Web tools.",
+    );
+    expect(screen.getByText("Tools: web_search, web_fetch")).toBeTruthy();
+  });
+
   it("starts the OAuth flow and shows the authorization link", async () => {
     mockFetch((url) => {
       if (url.endsWith("/oauth/start")) return { status: "starting" };

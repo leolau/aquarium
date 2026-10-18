@@ -15557,25 +15557,46 @@ async def update_skill_content(body: SkillContentUpdate):
     return result
 
 
+_TOOLSET_DEFAULT_PLATFORM = "cli"
+
+
+def _toolset_platform(platform: Optional[str]) -> str:
+    """Validate the ``platform`` whose ``platform_toolsets`` entry a toolset
+    endpoint reads/writes. Defaults to ``cli`` (the ``hermes tools`` picker and
+    the ``web/`` dashboard); agent-home passes ``api_server``, the platform its
+    chats build their agent with (``gateway.session_chat.build_session_agent``).
+    """
+    from hermes_cli.tools_config import PLATFORMS
+
+    key = (platform or "").strip() or _TOOLSET_DEFAULT_PLATFORM
+    if key not in PLATFORMS:
+        raise HTTPException(status_code=400, detail=f"Unknown platform: {key}")
+    return key
+
+
 @app.get("/api/tools/toolsets")
-async def get_toolsets(profile: Optional[str] = None):
+async def get_toolsets(profile: Optional[str] = None, platform: Optional[str] = None):
     from hermes_cli.tools_config import (
         _get_effective_configurable_toolsets,
         _get_platform_tools,
+        _toolset_allowed_for_platform,
         _toolset_has_keys,
         gui_toolset_label,
     )
     from toolsets import resolve_toolset
 
+    plat = _toolset_platform(platform)
     with _profile_scope(profile):
         config = load_config()
         enabled_toolsets = _get_platform_tools(
             config,
-            "cli",
+            plat,
             include_default_mcp_servers=False,
         )
     result = []
     for name, label, desc in _get_effective_configurable_toolsets():
+        if not _toolset_allowed_for_platform(name, plat):
+            continue
         try:
             tools = sorted(set(resolve_toolset(name)))
         except Exception:
@@ -15596,38 +15617,56 @@ async def get_toolsets(profile: Optional[str] = None):
 class ToolsetToggle(BaseModel):
     enabled: bool
     profile: Optional[str] = None
+    platform: Optional[str] = None
 
 
 @app.put("/api/tools/toolsets/{name}")
-async def toggle_toolset(name: str, body: ToolsetToggle, profile: Optional[str] = None):
-    """Enable/disable a configurable toolset for the desktop (cli) platform.
+async def toggle_toolset(
+    name: str,
+    body: ToolsetToggle,
+    profile: Optional[str] = None,
+    platform: Optional[str] = None,
+):
+    """Enable/disable a configurable toolset for one platform (default ``cli``).
 
-    Persists to ``platform_toolsets.cli`` via the same ``_save_platform_tools``
-    helper the CLI ``hermes tools`` picker uses, so the GUI and CLI stay in
-    lockstep. Scoped to ``body.profile`` when provided. Returns 400 for
-    unknown toolset keys.
+    Persists to ``platform_toolsets.<platform>`` via the same
+    ``_save_platform_tools`` helper the CLI ``hermes tools`` picker uses, so the
+    GUI and CLI stay in lockstep. Scoped to ``body.profile`` when provided.
+    Returns 400 for unknown toolset keys, unknown platforms, and toolsets that
+    are not offered on that platform. ``enabled`` in the response is the state
+    re-read after saving (what the next new chat on that platform gets).
     """
     from hermes_cli.tools_config import (
         _get_effective_configurable_toolsets,
         _get_platform_tools,
         _save_platform_tools,
+        _toolset_allowed_for_platform,
     )
 
+    plat = _toolset_platform(body.platform or platform)
     valid = {ts_key for ts_key, _, _ in _get_effective_configurable_toolsets()}
     if name not in valid:
         raise HTTPException(status_code=400, detail=f"Unknown toolset: {name}")
+    if not _toolset_allowed_for_platform(name, plat):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Toolset {name} is not available on platform {plat}",
+        )
 
     with _profile_scope(body.profile or profile):
         config = load_config()
         enabled = set(
-            _get_platform_tools(config, "cli", include_default_mcp_servers=False)
+            _get_platform_tools(config, plat, include_default_mcp_servers=False)
         )
         if body.enabled:
             enabled.add(name)
         else:
             enabled.discard(name)
-        _save_platform_tools(config, "cli", enabled)
-    return {"ok": True, "name": name, "enabled": body.enabled}
+        _save_platform_tools(config, plat, enabled)
+        effective = _get_platform_tools(
+            load_config(), plat, include_default_mcp_servers=False
+        )
+    return {"ok": True, "name": name, "platform": plat, "enabled": name in effective}
 
 
 @app.get("/api/tools/toolsets/{name}/config")
