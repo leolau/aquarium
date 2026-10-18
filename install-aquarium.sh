@@ -323,6 +323,9 @@ cd "$APP"
 # non-BYPASSRLS hermes_app role. Membership is skipped: `GRANT hermes_app TO CURRENT_USER`
 # kills the backend on self-hosted Supabase (see ensure_app_role), so agent-home reads
 # through the separate agent_home_app LOGIN role below instead.
+# pgvector is created here, once, before any service starts: on first boot the dashboard,
+# gateway and app-mcp each run `CREATE EXTENSION IF NOT EXISTS vector` at the same moment,
+# and all but one fail with a duplicate-key error on pg_extension.
 run_env "$APP/.venv/bin/python" - <<'PY'
 import asyncio
 from hermes_cli.access import ensure_app_role, initialize_access
@@ -331,6 +334,7 @@ async def main():
     store = _prod_app_store()
     connection = await store.connect()
     try:
+        await connection.execute("CREATE EXTENSION IF NOT EXISTS vector")
         await initialize_access(connection)
         await ensure_app_role(connection, store.schema, grant_membership=False)
     finally:
@@ -399,9 +403,12 @@ for svc in dashboard gateway; do
   if [ $svc = dashboard ]; then
     desc="Aquarium dashboard API (:9119, agent-home auth bridge)"
     cmd="$APP/.venv/bin/hermes dashboard --skip-build --host 0.0.0.0 --port 9119 --no-open"
+    stop=20
   else
     desc="Aquarium messaging gateway"
     cmd="$APP/.venv/bin/hermes gateway run"
+    # Same budget as `hermes gateway install` (max(60, drain) + 30): room to drain chats.
+    stop=90
   fi
   cat > $UNIT_DIR/hermes-$svc.service <<UNIT
 [Unit]
@@ -420,7 +427,7 @@ ExecStart=$cmd
 Restart=always
 RestartSec=5
 KillMode=mixed
-TimeoutStopSec=20
+TimeoutStopSec=$stop
 
 [Install]
 WantedBy=multi-user.target
