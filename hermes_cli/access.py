@@ -765,6 +765,8 @@ async def revoke_item_grant(
 async def bind_principal(
     connection: asyncpg.Connection,
     principal: Principal,
+    *,
+    session: bool = False,
 ) -> None:
     """Bind ``principal`` to the connection for the length of the transaction.
 
@@ -772,13 +774,19 @@ async def bind_principal(
     policy reads. Uses ``set_config(..., is_local => true)`` so the binding is
     scoped to the current transaction, mirroring how a per-request JWT scopes
     ``request.jwt.claims`` on the deployed PostgREST/GoTrue stack.
+
+    ``session=True`` binds for the whole connection instead; only for a
+    connection the caller opened and closes itself (an operator job), never a
+    pooled one.
     """
+    local = not session
     await connection.execute(
-        "SELECT set_config($1, $2, true), set_config($3, $4, true)",
+        "SELECT set_config($1, $2, $5), set_config($3, $4, $5)",
         _GUC_ID,
         principal.user_id,
         _GUC_ROLE,
         principal.role,
+        local,
     )
 
 
@@ -835,8 +843,17 @@ async def ensure_app_role(
     *,
     role_name: str = APP_ROLE_NAME,
     grant_membership: bool = True,
+    password: str | None = None,
 ) -> None:
     """Provision the least-privilege, non-BYPASSRLS app role (idempotent).
+
+    With ``password`` the role becomes a ``LOGIN`` role a service connects to
+    directly (no ``SET ROLE``, so no membership grant is needed). Every table
+    with row-level security also gets write rules for the role — the read
+    rules are ``FOR SELECT`` only, and without a matching rule Postgres refuses
+    every insert/update/delete from a role that does not bypass RLS. Reads
+    stay scoped by the read rules; updates and deletes still only reach rows
+    the read rule shows (Postgres applies the SELECT rule to their WHERE).
 
     Creates ``role_name`` (``NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE``),
     grants it ``USAGE`` on ``schema`` and DML on the schema's current + future
@@ -881,8 +898,77 @@ async def ensure_app_role(
             GRANT USAGE, SELECT ON SEQUENCES TO {role_name};
         """
     )
+    await apply_app_write_policies(connection, schema, role_name=role_name)
+    if password:
+        literal = _quote_literal(password)
+        # Password/LOGIN-only ALTER: restating the other attributes needs
+        # superuser on some builds, and CREATE above already set them.
+        await connection.execute(f"ALTER ROLE {role_name} WITH LOGIN PASSWORD {literal};")
+        current_db = await connection.fetchval("SELECT current_database()")
+        await connection.execute(f'GRANT CONNECT ON DATABASE "{current_db}" TO {role_name};')
     if grant_membership:
         await connection.execute(f"GRANT {role_name} TO CURRENT_USER;")
+
+
+async def apply_app_write_policies(
+    connection: asyncpg.Connection,
+    schema: str,
+    *,
+    role_name: str = APP_ROLE_NAME,
+) -> None:
+    """Give ``role_name`` the rules it needs on every RLS table in ``schema``.
+
+    - insert/update/delete rules: the read rules are ``FOR SELECT`` only, and
+      without a write rule Postgres refuses every write from a non-bypass role.
+      Separate rules per command on purpose: a ``FOR ALL`` rule would also be
+      a read rule.
+    - ``hermes_app_unbound_read``: a connection that has not bound a principal
+      (background jobs, and writes whose ``RETURNING`` row Postgres checks
+      against the read rules) sees rows as ``postgres`` does today. A request
+      that binds a principal stays scoped by the read rules. This adds no
+      reach for someone holding the password: they could already bind
+      ``principal_role=owner`` themselves (the binding is a client setting).
+
+    Re-run after new RLS tables appear (``hermes db migrate`` does, last).
+    """
+    if not _VALID_COLUMN.fullmatch(role_name):
+        raise ValueError(f"Invalid role name: {role_name!r}")
+    if not _VALID_SCHEMA.fullmatch(schema):
+        raise ValueError(f"Invalid schema name: {schema!r}")
+    await connection.execute(
+        f"""
+        DO $$
+        DECLARE r record;
+        BEGIN
+            FOR r IN
+                SELECT c.relname AS rn
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = '{schema}'
+                    AND c.relkind = 'r'
+                    AND c.relrowsecurity
+            LOOP
+                EXECUTE format('DROP POLICY IF EXISTS hermes_app_insert ON %I.%I', '{schema}', r.rn);
+                EXECUTE format('DROP POLICY IF EXISTS hermes_app_update ON %I.%I', '{schema}', r.rn);
+                EXECUTE format('DROP POLICY IF EXISTS hermes_app_delete ON %I.%I', '{schema}', r.rn);
+                EXECUTE format('DROP POLICY IF EXISTS hermes_app_unbound_read ON %I.%I', '{schema}', r.rn);
+                EXECUTE format(
+                    'CREATE POLICY hermes_app_unbound_read ON %I.%I FOR SELECT TO {role_name} '
+                    'USING (coalesce(current_setting(%L, true), %L) = %L)',
+                    '{schema}', r.rn, '{_GUC_ID}', '', '');
+                EXECUTE format(
+                    'CREATE POLICY hermes_app_insert ON %I.%I FOR INSERT TO {role_name} WITH CHECK (true)',
+                    '{schema}', r.rn);
+                EXECUTE format(
+                    'CREATE POLICY hermes_app_update ON %I.%I FOR UPDATE TO {role_name} USING (true) WITH CHECK (true)',
+                    '{schema}', r.rn);
+                EXECUTE format(
+                    'CREATE POLICY hermes_app_delete ON %I.%I FOR DELETE TO {role_name} USING (true)',
+                    '{schema}', r.rn);
+            END LOOP;
+        END $$;
+        """
+    )
 
 
 async def ensure_read_role(

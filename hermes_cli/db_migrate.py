@@ -10,7 +10,8 @@ once per deploy with the owner's address:
 ``--dsn-stdin`` reads ``HERMES_DB_ADMIN_URL=...`` (or ``DATABASE_URL=...``, or
 a bare ``postgresql://`` address) from standard input, so the owner password
 never sits in this process's environment where other processes of the same
-user could read it. Without it the configured datastore address is used.
+user could read it. A ``HERMES_APP_DB_PASSWORD=...`` line in the same input
+makes ``hermes_app`` a login role with that password. Without it the configured datastore address is used.
 Safe to run again: every step is idempotent. Never prints the address.
 """
 
@@ -25,11 +26,15 @@ from typing import Any, Awaitable, Callable, List, Optional, Tuple
 Step = Tuple[str, Callable[[Any], Awaitable[Any]]]
 
 _DSN_KEYS = ("HERMES_DB_ADMIN_URL", "DATABASE_URL")
+#: hermes_app's login password; with it migrate makes hermes_app a LOGIN role.
+APP_PASSWORD_KEY = "HERMES_APP_DB_PASSWORD"
+#: agent-home's read-only login (agent_home_app); with it migrate refreshes its grants.
+READ_PASSWORD_KEY = "HERMES_APP_READ_DB_PASSWORD"
 
 
-def parse_dsn(text: str) -> str:
-    """The admin address from an env-file body or a bare URL ('' if none)."""
-    values = {}
+def parse_env(text: str) -> dict:
+    """``KEY=VALUE`` lines of an env-file body; a bare URL lands under ``""``."""
+    values: dict = {}
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -42,6 +47,12 @@ def parse_dsn(text: str) -> str:
         key, sep, value = line.partition("=")
         if sep:
             values[key.strip()] = value.strip().strip("'\"")
+    return values
+
+
+def parse_dsn(text: str) -> str:
+    """The admin address from an env-file body or a bare URL ('' if none)."""
+    values = parse_env(text)
     for key in (*_DSN_KEYS, ""):
         if values.get(key):
             return values[key]
@@ -118,7 +129,9 @@ def _steps(store: Any, config: dict) -> List[Step]:
     ]
 
 
-async def migrate_store(store: Any, config: dict) -> List[Tuple[str, Optional[str]]]:
+async def migrate_store(
+    store: Any, config: dict, *, app_password: str = "", read_password: str = ""
+) -> List[Tuple[str, Optional[str]]]:
     """Run every setup step on ``store``; ``[(step, error or None)]``."""
     from hermes_cli import db_setup
     from hermes_cli.access import ensure_app_role
@@ -143,17 +156,36 @@ async def migrate_store(store: Any, config: dict) -> List[Tuple[str, Optional[st
         try:
             # New tables get the least-privilege role's row grants. Membership
             # is skipped: it kills the backend on self-hosted Supabase.
-            await ensure_app_role(connection, store.schema, grant_membership=False)
+            await ensure_app_role(
+                connection, store.schema, grant_membership=False,
+                password=app_password or None,
+            )
         except Exception as error:
             results.append(("hermes_app grants", f"{type(error).__name__}: {error}"))
         else:
             results.append(("hermes_app grants", None))
+        if read_password:
+            from hermes_cli.access import ensure_read_role
+
+            try:
+                # SELECT on every row-ruled table, including ones made above.
+                await ensure_read_role(connection, store.schema, password=read_password)
+            except Exception as error:
+                results.append(("agent_home_app grants", f"{type(error).__name__}: {error}"))
+            else:
+                results.append(("agent_home_app grants", None))
     finally:
         await connection.close()
     return results
 
 
-def migrate(admin_dsn: str = "", *, config: Optional[dict] = None) -> List[Tuple[str, str, Optional[str]]]:
+def migrate(
+    admin_dsn: str = "",
+    *,
+    config: Optional[dict] = None,
+    app_password: str = "",
+    read_password: str = "",
+) -> List[Tuple[str, str, Optional[str]]]:
     """Migrate the prod and dev schemas; ``[(mode, step, error or None)]``."""
     from hermes_cli.config import load_config_readonly
     from hermes_cli.datastore import get_store
@@ -166,21 +198,31 @@ def migrate(admin_dsn: str = "", *, config: Optional[dict] = None) -> List[Tuple
             continue  # this profile has no Supabase datastore
         if admin_dsn:
             store = dataclasses.replace(store, dsn=admin_dsn)
-        for name, error in asyncio.run(migrate_store(store, config)):
+        for name, error in asyncio.run(
+            migrate_store(
+                store, config, app_password=app_password,
+                read_password=read_password if mode == "prod" else "",
+            )
+        ):
             rows.append((mode, name, error))
     return rows
 
 
 def db_migrate_command(args: argparse.Namespace) -> int:
-    admin_dsn = ""
+    admin_dsn = app_password = read_password = ""
     if getattr(args, "dsn_stdin", False):
-        admin_dsn = parse_dsn(sys.stdin.read())
+        text = sys.stdin.read()
+        admin_dsn = parse_dsn(text)
+        # The same file carries the two limited logins' passwords.
+        values = parse_env(text)
+        app_password = values.get(APP_PASSWORD_KEY, "")
+        read_password = values.get(READ_PASSWORD_KEY, "")
         if not admin_dsn:
             print("No database address on standard input "
                   "(expected HERMES_DB_ADMIN_URL=postgresql://...).", file=sys.stderr)
             return 1
     try:
-        rows = migrate(admin_dsn)
+        rows = migrate(admin_dsn, app_password=app_password, read_password=read_password)
     except (RuntimeError, ValueError, OSError) as error:
         print(f"Database migration failed: {error}", file=sys.stderr)
         return 1
