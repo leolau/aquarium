@@ -226,6 +226,22 @@ _HERMES_PROVIDER_ENV_BLOCKLIST = _build_provider_env_blocklist()
 _ACTIVE_VENV_MARKER_VARS = ("VIRTUAL_ENV", "CONDA_PREFIX")
 
 
+# Deployment secrets of the services that share the gateway's host and uid
+# (agent-home session signing, app-mcp tickets, Supabase JWT signing). The
+# gateway never needs them in an agent shell, and with them a shell command can
+# mint an owner session or a Supabase admin token (security review F16).
+_HERMES_DEPLOY_SECRET_ENV_VARS = frozenset({
+    "AGENT_HOME_SESSION_SECRET",
+    "AGENT_HOME_APP_MCP_SECRET",
+    "APP_MCP_TICKET_SECRET",
+    "SUPABASE_JWT_SECRET",
+    "GOTRUE_JWT_SECRET",
+    "HERMES_DASHBOARD_SUPABASE_JWT_SECRET",
+    "JWT_SECRET",
+    "POSTGRES_PASSWORD",
+})
+
+
 def _is_hermes_internal_secret(key: str) -> bool:
     """Return True for Hermes-internal secrets injected under *dynamic* names.
 
@@ -260,6 +276,12 @@ def _is_hermes_internal_secret(key: str) -> bool:
     a model-driving CLI legitimately needs matches these patterns.
     """
     upper = key.upper()
+    if upper in _HERMES_DEPLOY_SECRET_ENV_VARS or upper.endswith("_JWT_SECRET"):
+        return True
+    if upper.startswith("AGENT_HOME_") and upper.endswith(
+        ("_SECRET", "_KEY", "_TOKEN", "_PASSWORD")
+    ):
+        return True
     if upper.startswith("AUXILIARY_") and (
         upper.endswith("_API_KEY") or upper.endswith("_BASE_URL")
     ):

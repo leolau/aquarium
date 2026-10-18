@@ -724,3 +724,47 @@ class TestHermesInternalDynamicSecrets:
         assert "GATEWAY_RELAY_SECRET" in _HERMES_PROVIDER_ENV_BLOCKLIST
         assert "GATEWAY_RELAY_DELIVERY_KEY" in _HERMES_PROVIDER_ENV_BLOCKLIST
         assert "GATEWAY_RELAY_ID" in _HERMES_PROVIDER_ENV_BLOCKLIST
+
+
+class TestDeploySecretsStripped:
+    """F16: secrets of the services sharing the gateway's host/uid (agent-home
+    session key, app-mcp ticket key, Supabase JWT signing key) must not reach
+    an agent shell — with them one `env` mints an owner session."""
+
+    DEPLOY_SECRETS = {
+        "AGENT_HOME_SESSION_SECRET": "ahs",
+        "AGENT_HOME_APP_MCP_SECRET": "ahm",
+        "AGENT_HOME_SOME_FUTURE_TOKEN": "aht",
+        "APP_MCP_TICKET_SECRET": "amt",
+        "SUPABASE_JWT_SECRET": "jwt",
+        "GOTRUE_JWT_SECRET": "gjwt",
+        "HERMES_DASHBOARD_SUPABASE_JWT_SECRET": "djwt",
+        "POSTGRES_PASSWORD": "pg",
+    }
+
+    def test_stripped_from_terminal_subprocess(self):
+        result_env = _run_with_env(extra_os_env={
+            **self.DEPLOY_SECRETS,
+            "AGENT_HOME_URL": "https://home.example",
+            "SUPABASE_URL": "http://127.0.0.1:8000",
+        })
+        for key in self.DEPLOY_SECRETS:
+            assert key not in result_env, key
+        # Non-secret config the agent's tools read stays visible.
+        assert result_env["AGENT_HOME_URL"] == "https://home.example"
+        assert result_env["SUPABASE_URL"] == "http://127.0.0.1:8000"
+
+    def test_cannot_be_force_reallowed(self):
+        """The _HERMES_FORCE_ escape hatch must not hand these back."""
+        result_env = _run_with_env(extra_os_env={
+            f"{_HERMES_PROVIDER_ENV_FORCE_PREFIX}AGENT_HOME_SESSION_SECRET": "x",
+            "AGENT_HOME_SESSION_SECRET": "ahs",
+        })
+        assert result_env.get("AGENT_HOME_SESSION_SECRET") in (None, "")
+
+    def test_hermes_subprocess_env_strips_them(self):
+        from tools.environments.local import hermes_subprocess_env
+        with patch.dict(os.environ, {"PATH": "/usr/bin", **self.DEPLOY_SECRETS}, clear=True):
+            env = hermes_subprocess_env()
+        for key in self.DEPLOY_SECRETS:
+            assert key not in env, key
