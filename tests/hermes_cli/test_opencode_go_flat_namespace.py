@@ -126,9 +126,14 @@ def _run_switch(raw_input: str, **extra):
         # For other providers, return empty so tests don't depend on them.
         return []
 
+    # validate_requested_model probes the provider's live /models endpoint;
+    # serve the same mocked catalog so the test never reaches the network.
     with patch(
         "hermes_cli.model_switch.list_provider_models",
         side_effect=fake_list_provider_models,
+    ), patch(
+        "hermes_cli.models.fetch_api_models",
+        return_value=list(_OPENCODE_GO_LIVE),
     ):
         return switch_model(raw_input=raw_input, **defaults)
 

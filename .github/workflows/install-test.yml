@@ -1,0 +1,208 @@
+name: Install test (fresh Hetzner VM)
+
+# Runs install-aquarium.sh end to end on a brand-new throwaway Hetzner VM, checks the
+# result, then always deletes the VM and its SSH key. Costs a few cents per run.
+#
+# Needs the repo secret HCLOUD_TOKEN: a Hetzner Cloud API token (Read & Write) for a
+# project where throwaway servers may be created. See docs/deployment/install-test.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or tag to install (default = the ref this run is started from)
+        required: false
+        default: ""
+      tls:
+        description: Also test Caddy + TLS through <vm-ip>.sslip.io (needs Let's Encrypt)
+        type: boolean
+        default: true
+      skip_embed_model:
+        description: Skip the ~2.3 GB embedding model download (embedding check is skipped)
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "v*-rc.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-test-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  HCLOUD_VERSION: v1.70.1
+  HCLOUD_SHA256: 85182e0d51f9a26abeefd79b37de8a7fb51215d54c59ee290c3c9141e8aa887e
+  SERVER_TYPE: cx33
+  LOCATION: nbg1
+  IMAGE: ubuntu-24.04
+  NAME: aq-install-test-${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Check the HCLOUD_TOKEN secret
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: |
+          if [ -z "$HCLOUD_TOKEN" ]; then
+            echo "::error::Repo secret HCLOUD_TOKEN is not set (see docs/deployment/install-test.md)"
+            exit 1
+          fi
+
+      - name: Install hcloud CLI
+        run: |
+          curl -fsSL -o /tmp/hcloud.tgz \
+            "https://github.com/hetznercloud/cli/releases/download/$HCLOUD_VERSION/hcloud-linux-amd64.tar.gz"
+          echo "$HCLOUD_SHA256  /tmp/hcloud.tgz" | sha256sum -c -
+          tar -xzf /tmp/hcloud.tgz -C /tmp hcloud
+          sudo install -m 755 /tmp/hcloud /usr/local/bin/hcloud
+          hcloud version
+
+      # release.yml runs the tests, then builds, signs and publishes the release for the same
+      # tag; wait for it so the test installs exactly what customers will download.
+      - name: Wait for the signed release (release-candidate tags)
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          for _ in $(seq 1 75); do
+            if gh release view "$TAG" --json assets --jq '.assets[].name' | grep -qx SHA256SUMS.sig; then
+              echo "release $TAG is published"; exit 0
+            fi
+            state=$(gh run list --workflow release.yml --branch "$TAG" --limit 1 \
+              --json status,conclusion --jq '.[0] | "\(.status) \(.conclusion)"' 2>/dev/null || true)
+            case "$state" in
+              "completed success"|"") ;;
+              completed*) echo "::error::Release workflow for $TAG ended: $state"; exit 1 ;;
+            esac
+            sleep 60
+          done
+          echo "::error::release $TAG was not published within 75 minutes"; exit 1
+
+      - name: Create the throwaway VM
+        id: vm
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: |
+          ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/id_vm" -C "$NAME"
+          hcloud ssh-key create --name "$NAME" --public-key-from-file "$RUNNER_TEMP/id_vm.pub" \
+            --label purpose=aquarium-install-test
+          hcloud server create --name "$NAME" --type "$SERVER_TYPE" --location "$LOCATION" \
+            --image "$IMAGE" --ssh-key "$NAME" --label purpose=aquarium-install-test
+          ip=$(hcloud server ip "$NAME")
+          echo "ip=$ip" >> "$GITHUB_OUTPUT"
+          echo "VM $NAME at $ip"
+
+      - name: Wait for SSH
+        env:
+          IP: ${{ steps.vm.outputs.ip }}
+        run: |
+          for _ in $(seq 1 60); do
+            ssh -i "$RUNNER_TEMP/id_vm" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -o ConnectTimeout=5 -o LogLevel=ERROR "root@$IP" true && exit 0
+            sleep 5
+          done
+          echo "::error::SSH to $IP never came up"; exit 1
+
+      - name: Run install-aquarium.sh (as a customer would)
+        env:
+          IP: ${{ steps.vm.outputs.ip }}
+          REF: ${{ inputs.ref || github.ref_name }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}.git
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          TLS: ${{ github.event_name == 'push' || inputs.tls }}
+          SKIP_EMBED: ${{ inputs.skip_embed_model && '1' || '0' }}
+        run: |
+          # A tag with a published, signed release is installed the way customers get it
+          # (--version, verified); any other branch or tag is a development install of it.
+          if gh release view "$REF" >/dev/null 2>&1; then
+            mode="--version $REF"
+          else
+            mode="--from-branch $REF"
+          fi
+          domains=""
+          if [ "$TLS" = true ]; then
+            dashed=${IP//./-}
+            domains="AQUARIUM_HOME_DOMAIN=$dashed.sslip.io AQUARIUM_DASHBOARD_DOMAIN=dash.$dashed.sslip.io"
+          fi
+          echo "Installing with: $mode"
+          ssh -i "$RUNNER_TEMP/id_vm" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o LogLevel=ERROR -o ServerAliveInterval=30 "root@$IP" \
+            "curl -fsSL 'https://raw.githubusercontent.com/$GH_REPO/$REF/install-aquarium.sh' \
+              | env $domains AQUARIUM_REPO='$REPO_URL' AQUARIUM_INSTALLER_REF='$REF' \
+                AQUARIUM_SKIP_EMBED_MODEL='$SKIP_EMBED' bash -s -- $mode"
+
+      - name: Extra checks (owner login, memory store, ports, TLS)
+        env:
+          IP: ${{ steps.vm.outputs.ip }}
+          TLS: ${{ github.event_name == 'push' || inputs.tls }}
+        run: |
+          vm() { ssh -i "$RUNNER_TEMP/id_vm" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o LogLevel=ERROR "root@$IP" "$@"; }
+          vm "sudo -u hermes -H bash -c 'set -a; . /opt/data/hermes.env; set +a; exec /opt/data/hermes-agent/.venv/bin/hermes owner show'" \
+            | grep '^Owner:'
+          # The first owner can sign in to agent-home with the generated password; a wrong one is refused.
+          # (Installs that hand out a one-time setup link instead of a password skip the 200 check.)
+          vm 'set -e; . /opt/data/aquarium-secrets.env
+              login() { curl -s -o /dev/null -w "%{http_code}" -H "Content-Type: application/json" \
+                -d "{\"provider\":\"basic\",\"username\":\"admin\",\"password\":\"$1\"}" \
+                http://127.0.0.1:3100/api/session/login; }
+              [ "$(login wrong-password)" = 401 ] || { echo "wrong password was not refused"; exit 1; }
+              if [ -n "${OWNER_PASSWORD:-}" ]; then
+                [ "$(login "$OWNER_PASSWORD")" = 200 ] || { echo "owner login failed"; exit 1; }
+                echo "owner login ok"
+              else
+                echo "no OWNER_PASSWORD in the secrets file (setup-link install); owner login not tried"
+              fi'
+          # Services started together must not race each other creating pgvector.
+          if vm 'journalctl --no-pager -u hermes-dashboard -u hermes-gateway -u app-mcp | grep -q pg_extension_name_index'; then
+            echo "::error::duplicate pgvector extension error in the service logs"; exit 1
+          fi
+          vm 'ufw status | grep -q "Status: active"'
+          # From outside only SSH (and 80/443 with TLS) may answer.
+          for port in 3100 5432 6543 8000 8443 8791 9119 9220 9221; do
+            if timeout 5 bash -c "</dev/tcp/$IP/$port" 2>/dev/null; then
+              echo "::error::port $port is reachable from the internet"; exit 1
+            fi
+          done
+          if [ "$TLS" = true ]; then
+            curl -sf -o /dev/null "https://${IP//./-}.sslip.io/login"
+            curl -sf -o /dev/null "https://dash.${IP//./-}.sslip.io/"
+          fi
+
+      # Later: install the previous release first, then upgrade to this ref and re-check.
+
+      - name: Collect logs on failure
+        if: failure() && steps.vm.outputs.ip != ''
+        env:
+          IP: ${{ steps.vm.outputs.ip }}
+        run: |
+          ssh -i "$RUNNER_TEMP/id_vm" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o LogLevel=ERROR "root@$IP" \
+            'systemctl --no-pager status hermes-embed hermes-dashboard hermes-gateway app-mcp agent-home caddy;
+             journalctl --no-pager -n 200 -u hermes-dashboard -u hermes-gateway -u agent-home -u app-mcp -u hermes-embed -u caddy;
+             docker ps -a' || true
+
+      - name: Delete the VM and its SSH key
+        if: always()
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: |
+          [ -n "$HCLOUD_TOKEN" ] || exit 0
+          hcloud server delete "$NAME" 2>/dev/null || true
+          hcloud ssh-key delete "$NAME" 2>/dev/null || true
+          if hcloud server describe "$NAME" >/dev/null 2>&1 || hcloud ssh-key describe "$NAME" >/dev/null 2>&1; then
+            echo "::error::$NAME was not deleted; remove it in the Hetzner console"; exit 1
+          fi
+          echo "deleted server + ssh key $NAME"

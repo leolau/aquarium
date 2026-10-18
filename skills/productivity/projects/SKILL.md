@@ -124,8 +124,8 @@ down from `supervised`, and only with the user's explicit say-so.
 
 That is what the record is for. `hermes projects runs <slug>` then
 `hermes projects retro <slug> <run_no>` — a low score with a note is the most
-specific instruction the project has. Scoring a run (`score <slug> <run_no>
-<1-5>`) is human-only and will refuse you; if the user tells you their
+specific instruction the project has. Scoring a run
+(`score <slug> <run_no> <1-5>`) is human-only and will refuse you; if the user tells you their
 score, pass exactly their judgement through with `--as-human` — never score
 on your own say-so, and a `≤2` with a note is what teaches the project most.
 

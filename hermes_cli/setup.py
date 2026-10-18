@@ -2290,6 +2290,18 @@ def _gateway_platform_short_label(label: str) -> str:
     return base or label
 
 
+def _is_credentialless_channel(platform: dict) -> bool:
+    """True for plugin channels that need no credentials (e.g. the Aquarium
+    app channel): they always report "configured", so they are no evidence
+    that the user has set up a messaging platform."""
+    entry = platform.get("_registry_entry")
+    return (
+        entry is not None
+        and entry.is_connected is None
+        and not entry.required_env
+    )
+
+
 def _get_section_config_summary(config: dict, section_key: str) -> Optional[str]:
     """Return a short summary if a setup section is already configured, else None.
 
@@ -2324,7 +2336,8 @@ def _get_section_config_summary(config: dict, section_key: str) -> Optional[str]
         configured = [
             _gateway_platform_short_label(plat["label"])
             for plat in _all_platforms()
-            if _platform_status(plat) and _platform_status(plat) != "not configured"
+            if not _is_credentialless_channel(plat)
+            and _platform_status(plat) and _platform_status(plat) != "not configured"
         ]
         if configured:
             return ", ".join(configured)
