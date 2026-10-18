@@ -1929,7 +1929,7 @@ class TestDispatchInteractiveReplyApproval:
         calls = []
         monkeypatch.setattr(
             "tools.approval.resolve_gateway_approval",
-            lambda session_key, choice: calls.append((session_key, choice)) or 1,
+            lambda session_key, choice, **_kw: calls.append((session_key, choice)) or 1,
         )
 
         raw = {
@@ -1961,7 +1961,7 @@ class TestDispatchInteractiveReplyApproval:
         choices_seen = []
         monkeypatch.setattr(
             "tools.approval.resolve_gateway_approval",
-            lambda session_key, choice: choices_seen.append(choice) or 1,
+            lambda session_key, choice, **_kw: choices_seen.append(choice) or 1,
         )
 
         raw = {
@@ -2437,3 +2437,41 @@ class TestReplyContextResolution:
             == "here is your answer"
         )
 
+
+
+class TestApprovalTapBoundToRequester:
+    """F22: a tap only answers the tapper's own command (real approval queue)."""
+
+    @pytest.mark.asyncio
+    async def test_other_users_tap_leaves_approval_pending(self):
+        from tools import approval as mod
+
+        key = "agent:main:whatsapp_cloud:dm:15551234567"
+        entry = mod._ApprovalEntry({"command": "rm -rf /tmp/x"}, requester_id="15551234567")
+        mod._gateway_queues[key] = [entry]
+        try:
+            adapter = _make_adapter()
+            adapter._exec_approval_state["app9"] = key
+            adapter.send = AsyncMock()
+
+            def tap(sender):
+                return {
+                    "from": sender,
+                    "type": "interactive",
+                    "interactive": {
+                        "type": "button_reply",
+                        "button_reply": {"id": "appr:app9:approve", "title": "Approve"},
+                    },
+                }
+
+            handled = await adapter._dispatch_interactive_reply(tap("15559999999"), {})
+            assert handled is True
+            assert not entry.event.is_set()
+            assert adapter._exec_approval_state["app9"] == key
+            assert "Only the person who asked" in adapter.send.call_args.args[1]
+
+            await adapter._dispatch_interactive_reply(tap("15551234567"), {})
+            assert entry.event.is_set()
+            assert "app9" not in adapter._exec_approval_state
+        finally:
+            mod._gateway_queues.pop(key, None)

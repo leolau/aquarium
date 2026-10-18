@@ -322,7 +322,7 @@ class TestResolveApproval:
         with patch("tools.approval.resolve_gateway_approval", return_value=1) as mock_resolve:
             await adapter._resolve_approval(1, "once", "Norbert", open_id="ou_user1", chat_id="oc_12345")
 
-        mock_resolve.assert_called_once_with("agent:main:feishu:group:oc_12345", "once")
+        mock_resolve.assert_called_once_with("agent:main:feishu:group:oc_12345", "once", approver_id="ou_user1")
         assert 1 not in adapter._approval_state
 
     @pytest.mark.asyncio
@@ -337,7 +337,7 @@ class TestResolveApproval:
         with patch("tools.approval.resolve_gateway_approval", return_value=1) as mock_resolve:
             await adapter._resolve_approval(2, "deny", "Alice", open_id="ou_user1", chat_id="oc_12345")
 
-        mock_resolve.assert_called_once_with("some-session", "deny")
+        mock_resolve.assert_called_once_with("some-session", "deny", approver_id="ou_user1")
 
     @pytest.mark.asyncio
     async def test_resolves_session(self):
@@ -351,7 +351,7 @@ class TestResolveApproval:
         with patch("tools.approval.resolve_gateway_approval", return_value=1) as mock_resolve:
             await adapter._resolve_approval(3, "session", "Bob", open_id="ou_user1", chat_id="oc_99")
 
-        mock_resolve.assert_called_once_with("sess-3", "session")
+        mock_resolve.assert_called_once_with("sess-3", "session", approver_id="ou_user1")
 
     @pytest.mark.asyncio
     async def test_resolves_always(self):
@@ -365,7 +365,7 @@ class TestResolveApproval:
         with patch("tools.approval.resolve_gateway_approval", return_value=1) as mock_resolve:
             await adapter._resolve_approval(4, "always", "Carol", open_id="ou_user1", chat_id="oc_55")
 
-        mock_resolve.assert_called_once_with("sess-4", "always")
+        mock_resolve.assert_called_once_with("sess-4", "always", approver_id="ou_user1")
 
     @pytest.mark.asyncio
     async def test_already_resolved_drops_silently(self):
@@ -872,3 +872,76 @@ class TestResolveUpdatePrompt:
 
         assert not (tmp_path / ".hermes" / ".update_response").exists()
         assert 10 in adapter._update_prompt_state
+
+
+# ===========================================================================
+# F22 — a click only answers the clicker's own command (real approval queue)
+# ===========================================================================
+
+@pytest.fixture
+def _alice_pending():
+    from tools import approval as mod
+
+    key = "agent:main:feishu:group:oc_12345"
+    entry = mod._ApprovalEntry({"command": "rm -rf /tmp/x"}, requester_id="u_alice")
+    mod._gateway_queues[key] = [entry]
+    yield key, entry
+    mod._gateway_queues.pop(key, None)
+
+
+class TestApprovalBoundToRequester:
+    def _adapter(self, key):
+        adapter = _make_adapter()
+        adapter._approval_state[7] = {"session_key": key, "message_id": "m", "chat_id": "oc_12345"}
+        adapter._is_interactive_operator_authorized = lambda _open_id: True
+        return adapter
+
+    @pytest.mark.asyncio
+    async def test_other_users_click_leaves_approval_pending(self, _alice_pending):
+        key, entry = _alice_pending
+        adapter = self._adapter(key)
+        await adapter._resolve_approval(7, "once", "Bob", open_id="ou_bob", chat_id="oc_12345", user_id="u_bob")
+        assert not entry.event.is_set()
+        assert 7 in adapter._approval_state
+
+    @pytest.mark.asyncio
+    async def test_requester_click_resolves(self, _alice_pending):
+        key, entry = _alice_pending
+        adapter = self._adapter(key)
+        await adapter._resolve_approval(7, "once", "Alice", open_id="ou_alice", chat_id="oc_12345", user_id="u_alice")
+        assert entry.event.is_set() and entry.result == "once"
+
+    @pytest.mark.asyncio
+    async def test_requester_recorded_by_open_id_matches_open_id_click(self):
+        """Without the user_id permission the sender is recorded by open_id."""
+        from tools import approval as mod
+
+        key = "agent:main:feishu:dm:oc_dm"
+        entry = mod._ApprovalEntry({"command": "x"}, requester_id="ou_alice")
+        mod._gateway_queues[key] = [entry]
+        try:
+            adapter = _make_adapter()
+            adapter._approval_state[8] = {"session_key": key, "message_id": "m", "chat_id": "oc_dm"}
+            adapter._is_interactive_operator_authorized = lambda _open_id: True
+            await adapter._resolve_approval(8, "deny", "Alice", open_id="ou_alice", chat_id="oc_dm", user_id="u_alice")
+            assert entry.event.is_set() and entry.result == "deny"
+        finally:
+            mod._gateway_queues.pop(key, None)
+
+    def test_card_callback_from_other_user_does_not_mark_card_resolved(
+        self, _alice_pending, _patch_callback_card_types,
+    ):
+        key, entry = _alice_pending
+        adapter = self._adapter(key)
+        adapter._loop = MagicMock()
+        adapter._loop.is_closed = MagicMock(return_value=False)
+        adapter._allowed_group_users = {"ou_bob"}
+        data = _make_card_action_data({"hermes_action": "approve_once", "approval_id": 7}, open_id="ou_bob")
+
+        with patch("asyncio.run_coroutine_threadsafe") as mock_submit:
+            response = adapter._on_card_action_trigger(data)
+
+        mock_submit.assert_not_called()
+        assert response.card is None
+        assert not entry.event.is_set()
+        assert 7 in adapter._approval_state

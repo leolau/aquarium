@@ -1125,3 +1125,35 @@ class TestTeamsMediaAttachments:
         result = await adapter.send_document("19:abc@thread.v2", "/no/such/file.pdf")
         assert not result.success
         adapter._app.send.assert_not_awaited()
+
+
+class TestTeamsApprovalBoundToRequester:
+    """F22: an Adaptive Card click only answers the clicker's own command."""
+
+    @staticmethod
+    def _ctx(session_key, aad_id):
+        return SimpleNamespace(activity=SimpleNamespace(
+            value=SimpleNamespace(action=SimpleNamespace(
+                data={"hermes_action": "approve_once", "session_key": session_key, "cmd": "rm -rf /tmp/x"},
+            )),
+            from_=SimpleNamespace(aad_object_id=aad_id, id="29:" + aad_id),
+        ))
+
+    @pytest.mark.asyncio
+    async def test_other_users_click_leaves_approval_pending(self, monkeypatch):
+        from tools import approval as mod
+
+        monkeypatch.setenv("TEAMS_ALLOW_ALL_USERS", "true")
+        key = "agent:main:teams:group:19:chat"
+        entry = mod._ApprovalEntry({"command": "rm -rf /tmp/x"}, requester_id="aad-alice")
+        mod._gateway_queues[key] = [entry]
+        try:
+            adapter = TeamsAdapter(_make_config(client_id="i", client_secret="s", tenant_id="t"))
+            resp = await adapter._on_card_action(self._ctx(key, "aad-bob"))
+            assert "Only the person who asked" in resp.body.value
+            assert not entry.event.is_set()
+
+            await adapter._on_card_action(self._ctx(key, "aad-alice"))
+            assert entry.event.is_set() and entry.result == "once"
+        finally:
+            mod._gateway_queues.pop(key, None)

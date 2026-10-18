@@ -1147,8 +1147,19 @@ class QQAdapter(BasePlatformAdapter):
             try:
                 # Import lazily to keep the adapter importable in tests that
                 # don't exercise the approval subsystem.
-                from tools.approval import resolve_gateway_approval
-                count = resolve_gateway_approval(session_key, choice)
+                from tools.approval import (
+                    can_resolve_gateway_approval,
+                    resolve_gateway_approval,
+                )
+                operator = str(event.operator_openid or "").strip()
+                if not can_resolve_gateway_approval(session_key, operator):
+                    logger.warning(
+                        "[%s] Approval click by %s on someone else's command "
+                        "(session=%s) - ignoring",
+                        self._log_tag, operator, session_key,
+                    )
+                    return
+                count = resolve_gateway_approval(session_key, choice, approver_id=operator)
                 logger.info(
                     "[%s] Button resolved %d approval(s) for session %s "
                     "(choice=%s, operator=%s)",
