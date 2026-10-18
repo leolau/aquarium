@@ -368,6 +368,7 @@ WantedBy=multi-user.target
 UNIT
 done
 install -m 755 deploy/hermes-deploy.sh "$ROOT/deploy-hermes.sh"
+install -m 755 -o root -g root deploy/aquarium.py /usr/local/sbin/aquarium
 systemctl daemon-reload
 systemctl enable -q hermes-embed hermes-dashboard hermes-gateway app-mcp agent-home
 systemctl restart hermes-embed hermes-dashboard hermes-gateway app-mcp agent-home
