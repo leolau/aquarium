@@ -206,6 +206,29 @@ These patterns are loaded at startup and silently approved in all future session
 Use `hermes config edit` to review or remove patterns from your permanent allowlist.
 :::
 
+### sudo always asks
+
+Any `sudo` command the agent types in its terminal asks for approval first,
+including `sudo -n …`, `sudo su`, `sudo -i` and `sudo bash …`. On a server
+the `hermes` user has passwordless sudo rules for its helpers, so `sudo -n`
+would otherwise run as root with nobody asked.
+
+To trust sudo, use the same `command_allowlist`. Answering **always** to a
+sudo prompt stores the pattern name; you can also add it, or a narrower
+command glob, by hand:
+
+```yaml
+command_allowlist:
+  - "sudo (run a command as root)"                    # trust every plain sudo
+  - "sudo -n /usr/local/sbin/hermes-vpn-helper *"     # or only this helper
+```
+
+`sudo -S` / `-A` / `-s` keep their own, stricter pattern and are not
+covered by the first entry. A command glob only matches a single command
+(no `;`, `&&`, `|`, redirects). Hermes's own features that use sudo, such as
+`hermes vpn` and Settings → Private networks, call it directly and never
+ask.
+
 ## User Authorization (Gateway)
 
 When running the messaging gateway, Hermes controls who can interact with the bot through a layered authorization system.
