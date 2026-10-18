@@ -20,7 +20,8 @@ Aquarium on a brand-new Ubuntu 24.04 server, the way a customer would run it.
 3. The installer's own health checks must pass (it exits non-zero on any `FAIL`).
    Then the workflow also checks:
    - a first owner exists, and `admin` can sign in to agent-home (`/api/session/login`)
-     with the generated password while a wrong password gets 401;
+     with the generated password (skipped when the install hands out a one-time
+     setup link instead of a password) while a wrong password gets 401;
    - no service logged the duplicate pgvector error (`pg_extension_name_index`);
    - ufw is on, and from the internet none of the internal ports
      (3100, 5432, 6543, 8000, 8443, 8791, 9119, 9220, 9221) answer;
