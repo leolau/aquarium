@@ -254,6 +254,49 @@ def test_existing_model_keys_file_is_kept():
     assert '[ -f "$HERMES_HOME_DIR/.env" ] || install' in TEXT
 
 
+def _step(number: int) -> str:
+    """Body of the installer section ``# ---- N. ...`` up to the next section."""
+    match = re.search(
+        rf"^# -+ {number}\. .*?(?=^# -+ {number + 1}\. )", TEXT, re.MULTILINE | re.DOTALL
+    )
+    assert match, f"step {number} not found"
+    return match.group(0)
+
+
+def test_pgvector_is_created_once_before_any_service_starts():
+    # On a fresh database the dashboard, gateway and app-mcp all create the extension on
+    # their first connection at the same moment; all but one hit a duplicate-key error.
+    step6 = _step(6)
+    create = step6.find('await connection.execute("CREATE EXTENSION IF NOT EXISTS vector")')
+    assert create != -1, "step 6 must create the vector extension"
+    # The app schema it lands in is created by initialize_access; before that, Postgres
+    # fails with "no schema has been selected to create in".
+    assert step6.find("await initialize_access(connection)") < create
+    assert TEXT.find(step6) < TEXT.find("systemctl restart hermes-embed")
+
+
+def _unit_value(service: str, key: str) -> str:
+    """Value of ``key`` in the unit the step-9 loop writes for hermes-<service>."""
+    step9 = _step(9)
+    stop = re.search(
+        rf"\[ \$svc = dashboard \]; then(.*?)else(.*?)fi", step9, re.DOTALL
+    )
+    branch = stop.group(1) if service == "dashboard" else stop.group(2)
+    variables = dict(re.findall(r"^\s+(\w+)=(\S+)$", branch, re.MULTILINE))
+    raw = re.search(rf"^{key}=(\S+)$", step9, re.MULTILINE).group(1)
+    return variables.get(raw.lstrip("$"), raw) if raw.startswith("$") else raw
+
+
+def test_gateway_unit_leaves_systemd_time_to_drain():
+    # The gateway warns "Stale systemd unit detected" and systemd may SIGKILL it mid-drain
+    # when TimeoutStopSec is below its drain budget; match `hermes gateway install`.
+    from hermes_cli.config import DEFAULT_CONFIG
+
+    drain = int(DEFAULT_CONFIG["agent"]["restart_drain_timeout"] or 0)
+    assert int(_unit_value("gateway", "TimeoutStopSec")) >= max(60, drain) + 30
+    assert int(_unit_value("dashboard", "TimeoutStopSec")) > 0
+
+
 def test_no_owner_password_in_a_file_and_a_setup_link_at_the_end():
     code = "\n".join(line for line in TEXT.splitlines() if not line.lstrip().startswith("#"))
     assert "OWNER_PASSWORD" not in code
