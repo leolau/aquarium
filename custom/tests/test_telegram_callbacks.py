@@ -385,7 +385,8 @@ class TestInlineKeyboardMarkup(unittest.TestCase):
             {'handle_type': 'phone', 'handle_value': '+85294066060', 'message_count': 42},
         ]
 
-        with patch('contact_manager.send_telegram') as mock_send:
+        with patch('contact_manager.send_telegram') as mock_send, \
+                patch('contact_manager.CALLBACK_SERVER_BASE', 'https://home.example/contact-callback'):
             from contact_manager import send_merge_confirmation
             send_merge_confirmation(
                 db, 'suggestion-123', 'heidi@gmail.com', 'Heidi Lui',
@@ -419,6 +420,20 @@ class TestInlineKeyboardMarkup(unittest.TestCase):
             self.assertIn('heidi@gmail.com', text)
             self.assertIn('Contact Merge Suggestion', text)
 
+        db.real_close()
+
+    def test_send_merge_confirmation_without_callback_base_sends_no_buttons(self):
+        """No CALLBACK_SERVER_BASE: still tell the owner, but no dead/foreign links."""
+        db = create_test_db()
+        candidate_contact = {'id': 'c1', 'display_name': 'Heidi Lui'}
+        with patch('contact_manager.send_telegram') as mock_send, \
+                patch('contact_manager.CALLBACK_SERVER_BASE', ''):
+            from contact_manager import send_merge_confirmation
+            send_merge_confirmation(db, 'suggestion-456', 'heidi@gmail.com', 'Heidi Lui',
+                                    candidate_contact, [], 'Exact name match')
+            mock_send.assert_called_once()
+            self.assertNotIn('reply_markup', mock_send.call_args[1])
+            self.assertIn('suggestion-456', mock_send.call_args[0][0])
         db.real_close()
 
 

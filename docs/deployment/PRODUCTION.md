@@ -181,6 +181,17 @@ sudo systemctl restart hermes-wa-bridge-connectar hermes-wa-bridge-personal
 # check logs: tail -f /var/log/hermes-wa-bridge-connectar.log — expect "✅ WhatsApp connected!"
 ```
 
+Adding a bridge from Settings → WhatsApp bridges runs
+`sudo -n /usr/local/sbin/hermes-wa-bridge-add <name>` as the hermes user. That
+helper is a root-owned copy of `deploy/hermes-wa-bridge-add`; sudo must never
+point into `/opt/data/hermes-agent` (the hermes user can edit it). Install or
+refresh it (the deploy prints `WA BRIDGE HELPER STALE` when it is out of date):
+```bash
+install -m 0755 -o root -g root /opt/data/hermes-agent/deploy/hermes-wa-bridge-add /usr/local/sbin/hermes-wa-bridge-add
+install -m 0440 -o root -g root /opt/data/hermes-agent/deploy/sudoers.d/hermes-wa-bridge /root/hermes-wa-bridge.sudoers
+visudo -cf /root/hermes-wa-bridge.sudoers && mv /root/hermes-wa-bridge.sudoers /etc/sudoers.d/hermes-wa-bridge
+```
+
 ### 5.6 Supabase upgrade
 ```bash
 cd /opt/data/supabase/docker

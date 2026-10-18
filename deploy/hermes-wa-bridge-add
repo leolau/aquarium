@@ -1,12 +1,26 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Provision a new WhatsApp bridge unit: hermes-wa-bridge-<name>.service.
-# Runs as root via `sudo -n` from hermes_cli/wa_bridge_api.py — the only
-# bridge operation the hermes user's systemctl grant can't do is writing a
-# new unit file. Requires a sudoers entry, e.g.:
-#   hermes ALL=(root) NOPASSWD: /usr/bin/bash /opt/data/hermes-agent/deploy/wa-bridge-add.sh *
+#
+# Runs as root via `sudo -n` from hermes_cli/wa_bridge_api.py; the only bridge
+# operation the hermes user's systemctl grant can't do is writing a new unit
+# file. sudo may only ever run a root-owned copy of this file, never the one in
+# the checkout (the hermes user can edit the checkout, so a rule pointing there
+# hands it root):
+#
+#   install -m 0755 -o root -g root deploy/hermes-wa-bridge-add /usr/local/sbin/hermes-wa-bridge-add
+#   install -m 0440 -o root -g root deploy/sudoers.d/hermes-wa-bridge /etc/sudoers.d/hermes-wa-bridge
+#
+# The sudoers rule is in deploy/sudoers.d/hermes-wa-bridge. deploy-hermes.sh
+# reports when the installed copy differs from this reviewed one.
 set -euo pipefail
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+umask 022
 
-name="${1:-}"
+if [[ $# -ne 1 ]]; then
+  echo "usage: hermes-wa-bridge-add <name>" >&2
+  exit 2
+fi
+name="$1"
 if ! [[ "$name" =~ ^[a-z0-9][a-z0-9-]{0,30}$ ]]; then
   echo "invalid bridge name: '$name'" >&2
   exit 2
@@ -36,7 +50,14 @@ while ss -tln | grep -q ":${port} " || grep -qx "$port" <<<"$used_ports"; do
   port=$((port + 1))
 done
 
-install -d -o hermes -g hermes "$session_dir"
+# The whatsapp/ dir is hermes-writable, so a session path may already be a
+# symlink planted by the hermes user. Never chown/create through it as root:
+# create it as hermes, and refuse anything that isn't a plain directory.
+if [[ -L "$session_dir" ]] || { [[ -e "$session_dir" ]] && [[ ! -d "$session_dir" ]]; }; then
+  echo "refusing: $session_dir exists and is not a plain directory" >&2
+  exit 4
+fi
+runuser -u hermes -- mkdir -p -m 700 "$session_dir"
 
 cat > "$unit_path" <<EOF
 [Unit]

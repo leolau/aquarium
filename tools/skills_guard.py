@@ -54,8 +54,8 @@ INSTALL_POLICY = {
     "trusted":       ("allow",  "allow",   "block"),
     "community":     ("allow",  "block",   "block"),
     # Agent-created: "ask" on dangerous surfaces as an error to the agent,
-    # which can retry without the flagged content. This gate only runs when
-    # skills.guard_agent_created is enabled (off by default) — see
+    # which can retry without the flagged content. This gate runs unless
+    # skills.guard_agent_created is turned off (on by default) — see
     # tools/skill_manager_tool.py::_guard_agent_created_enabled.
     "agent-created": ("allow",  "allow",   "ask"),
 }
@@ -641,6 +641,10 @@ def scan_skill(skill_path: Path, source: str = "community") -> ScanResult:
     file itself is always excluded. Patterns cannot un-ignore the
     skill's own `SKILL.md`, which is always scanned.
 
+    The ignore file is honored only for builtin and trusted sources.
+    Community/hub and agent-created skills are scanned in full (including
+    the ignore file), because their author also wrote the ignore file.
+
     Args:
         skill_path: Path to the skill directory (must contain SKILL.md)
         source: Source identifier for trust level resolution (e.g. "openai/skills")
@@ -654,7 +658,13 @@ def scan_skill(skill_path: Path, source: str = "community") -> ScanResult:
     all_findings: List[Finding] = []
 
     if skill_path.is_dir():
-        ignore = _load_skill_ignore(skill_path)
+        # Only skills we already trust may hide files from the scan. For
+        # hub/community and agent-created skills the author controls the
+        # ignore file, so honoring it would let them exempt the payload.
+        if trust_level in _IGNORE_FILE_TRUST_LEVELS:
+            ignore = _load_skill_ignore(skill_path)
+        else:
+            ignore = _scan_everything
 
         # Structural checks first (honoring the ignore list)
         all_findings.extend(_check_structure(skill_path, ignore=ignore))
@@ -961,6 +971,14 @@ _SKILL_IGNORE_FILENAMES = (".skillignore", ".clawhubignore")
 # which can never be un-scanned via the ignore file.
 _ALWAYS_IGNORED_NAMES = set(_SKILL_IGNORE_FILENAMES)
 _NEVER_IGNORABLE = {"SKILL.md"}
+
+# Trust levels whose `.skillignore` is honored by scan_skill().
+_IGNORE_FILE_TRUST_LEVELS = frozenset({"builtin", "trusted"})
+
+
+def _scan_everything(_rel: str) -> bool:
+    """Ignore matcher used for untrusted skills: nothing is skipped."""
+    return False
 
 
 def _load_skill_ignore(skill_dir: Path):

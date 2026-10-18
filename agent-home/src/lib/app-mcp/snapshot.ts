@@ -17,6 +17,8 @@ export interface AppMcpElement {
   tag: string;
   selector: string;
   value?: string;
+  /** Password/secret field: its value is never included. */
+  sensitive?: boolean;
   checked?: boolean;
   disabled?: boolean;
 }
@@ -52,7 +54,31 @@ export function inShellChrome(el: Element): boolean {
 
 let nextId = 1;
 
-function isHidden(el: Element): boolean {
+const SENSITIVE_HINT =
+  /\b(pass(word|code|phrase)?|secret|token|api[ _-]?key|private[ _-]?key|pin|otp|one[ -]time[ _-]code|credentials?)s?\b/i;
+const SENSITIVE_AUTOCOMPLETE = /(current-password|new-password|one-time-code|cc-number|cc-csc)/i;
+
+/**
+ * True for inputs whose value must never reach the agent: password fields,
+ * one-time codes, and anything labelled like a secret/token/API key.
+ */
+export function isSensitiveInput(el: Element): boolean {
+  if (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") return false;
+  const input = el as HTMLInputElement;
+  if (el.tagName === "INPUT" && input.type === "password") return true;
+  if (SENSITIVE_AUTOCOMPLETE.test(el.getAttribute("autocomplete") ?? "")) return true;
+  const label = input.labels && input.labels.length > 0 ? input.labels[0]?.textContent : "";
+  const hints = [
+    el.getAttribute("name"),
+    el.id,
+    el.getAttribute("aria-label"),
+    el.getAttribute("placeholder"),
+    label,
+  ];
+  return hints.some((h) => Boolean(h) && SENSITIVE_HINT.test(String(h).replace(/[_-]/g, " ")));
+}
+
+export function isHidden(el: Element): boolean {
   const html = el as HTMLElement;
   if (html.hidden || html.getAttribute("aria-hidden") === "true") return true;
   if ((el as HTMLInputElement).type === "hidden") return true;
@@ -106,7 +132,7 @@ export function accessibleName(el: Element): string {
     el.getAttribute("placeholder") ??
     el.getAttribute("title") ??
     el.getAttribute("alt") ??
-    (el as HTMLInputElement).value ??
+    (isSensitiveInput(el) ? "" : (el as HTMLInputElement).value) ??
     "";
   return attr.trim();
 }
@@ -172,7 +198,9 @@ export function snapshotElements(root: ParentNode = document): AppMcpElement[] {
       selector: selectorFor(el),
     };
     const input = el as HTMLInputElement;
-    if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") {
+    if (isSensitiveInput(el)) {
+      entry.sensitive = true;
+    } else if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") {
       entry.value = input.value;
     }
     if (el.tagName === "INPUT" && (input.type === "checkbox" || input.type === "radio")) {
