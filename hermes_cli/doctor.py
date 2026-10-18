@@ -359,6 +359,29 @@ def _check_capacity_headroom(issues: list[str]) -> None:
         check_info(
             "Not measured: " + ", ".join(sorted(verdict.indicators.unavailable))
         )
+    _check_upload_storage(config)
+
+
+def _check_upload_storage(config: dict) -> None:
+    """Uploads are unlimited, so a filling upload disk is the owner's cue."""
+    from hermes_cli.capacity import collect_upload_storage
+
+    try:
+        storage = collect_upload_storage(config)
+    except Exception as exc:
+        check_info(f"Upload storage free space unavailable ({exc})")
+        return
+    if not storage.measured:
+        check_info("Upload storage free space: not measured")
+        return
+    warning = storage.warning()
+    if warning:
+        check_warn(warning)
+    else:
+        check_ok(
+            "Upload storage has room",
+            f"({storage.free_bytes / 1024 ** 3:.1f} GB free on {storage.path})",
+        )
 
 
 def _check_app_datastore_binding(issues: list[str]) -> None:

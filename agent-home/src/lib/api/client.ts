@@ -18,6 +18,7 @@ import { hermesApiBaseUrl } from "@/lib/env";
 import type {
   AgentAttachmentPayload,
   CapacityResponse,
+  UploadStorageStatus,
   ChangeOpResponse,
   ChangesResponse,
   ChatMessagesResponse,
@@ -327,6 +328,11 @@ export class HermesApiClient {
    */
   async capacity(): Promise<CapacityResponse> {
     return this.request("/api/capacity");
+  }
+
+  /** Free space on the disk holding uploads (the Supabase storage volume). */
+  async uploadStorage(): Promise<UploadStorageStatus> {
+    return this.request("/api/capacity/upload-storage");
   }
 
   // --- Status strip + Tools & Integrations -------------------------------

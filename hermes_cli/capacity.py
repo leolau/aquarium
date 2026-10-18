@@ -22,6 +22,8 @@ leases, ``psutil`` for RSS/available memory, the write-retry accounting in
 from __future__ import annotations
 
 import logging
+import os
+import shutil
 import sqlite3
 import time
 from dataclasses import dataclass, field
@@ -96,6 +98,11 @@ class CapacityThresholds:
     #: load average feeds the verdict.
     watch_load_ratio: float = 1.0
     constrained_load_ratio: float = 2.0
+    #: Free space the upload store (the Supabase storage volume) should keep.
+    #: Uploads are unlimited, so the owner is warned when free space drops
+    #: below *either* floor instead of refusing files at a fixed size.
+    upload_min_free_gb: float = 5.0
+    upload_min_free_pct: float = 0.10
     #: Trailing window for contention and latency.
     window_s: float = 86400.0
 
@@ -453,6 +460,98 @@ def collect_storage_load() -> StorageLoad:
     load.total_mb = usage.total / 1048576.0
     load.path = str(target)
     return load
+
+
+#: Where the standard install keeps uploaded files: install-aquarium.sh runs
+#: Supabase from ``$AQUARIUM_ROOT/supabase/docker`` and its storage service
+#: bind-mounts ``./volumes/storage``.
+_SUPABASE_STORAGE_SUBDIR = Path("supabase") / "docker" / "volumes" / "storage"
+
+
+def upload_storage_path(config: Optional[Dict[str, Any]] = None) -> Path:
+    """The directory whose disk holds uploads.
+
+    ``capacity.upload_storage_path`` in config.yaml wins; then the standard
+    Supabase storage volume; then the hermes home (same disk on a one-box
+    install), so a box without Supabase storage still gets a reading.
+    """
+    section = config.get("capacity") if isinstance(config, dict) else None
+    configured = section.get("upload_storage_path") if isinstance(section, dict) else None
+    if isinstance(configured, str) and configured.strip():
+        return Path(configured.strip()).expanduser()
+    root = Path(os.environ.get("AQUARIUM_ROOT") or "/opt/data")
+    candidate = root / _SUPABASE_STORAGE_SUBDIR
+    if candidate.is_dir():
+        return candidate
+    from hermes_constants import get_hermes_home
+
+    return Path(get_hermes_home())
+
+
+@dataclass
+class UploadStorage:
+    """Free space on the disk that holds uploaded files."""
+
+    path: Optional[str] = None
+    free_bytes: Optional[int] = None
+    total_bytes: Optional[int] = None
+    min_free_bytes: Optional[int] = None
+
+    @property
+    def measured(self) -> bool:
+        return self.free_bytes is not None and bool(self.total_bytes)
+
+    @property
+    def low(self) -> bool:
+        return (
+            self.measured
+            and self.min_free_bytes is not None
+            and self.free_bytes < self.min_free_bytes
+        )
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "path": self.path,
+            "free_bytes": self.free_bytes,
+            "total_bytes": self.total_bytes,
+            "min_free_bytes": self.min_free_bytes,
+            "low": self.low,
+        }
+
+    def warning(self) -> Optional[str]:
+        if not self.low:
+            return None
+        gb = 1024.0 ** 3
+        return (
+            f"Upload storage is running low: {self.free_bytes / gb:.1f} GB free of "
+            f"{self.total_bytes / gb:.0f} GB on {self.path}. Free up space or add "
+            "disk before large uploads start failing."
+        )
+
+
+def collect_upload_storage(
+    config: Optional[Dict[str, Any]] = None,
+    thresholds: Optional[CapacityThresholds] = None,
+) -> UploadStorage:
+    thresholds = thresholds or CapacityThresholds.from_config(config)
+    try:
+        target = upload_storage_path(config)
+        while not target.exists() and target != target.parent:
+            target = target.parent
+        usage = shutil.disk_usage(str(target))
+    except Exception as exc:
+        log.debug("capacity: upload storage unavailable: %s", exc)
+        return UploadStorage()
+    floor = max(
+        thresholds.upload_min_free_gb * 1024.0 ** 3,
+        thresholds.upload_min_free_pct * usage.total,
+    )
+    return UploadStorage(
+        path=str(target),
+        free_bytes=int(usage.free),
+        total_bytes=int(usage.total),
+        min_free_bytes=int(floor),
+    )
 
 
 def collect_cpu_load() -> CpuLoad:
