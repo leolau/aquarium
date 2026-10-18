@@ -96,7 +96,7 @@ def _state_dir() -> Path:
 
 def _match_home_owner(path: Path) -> None:
     """Root (the dashboard) writes files the hermes CLI must still update."""
-    if os.geteuid() != 0:
+    if os.geteuid() != 0:  # windows-footgun: ok — Linux-server-only code
         return
     with contextlib.suppress(OSError):
         home = path.parent.parent.stat()
@@ -210,7 +210,7 @@ def helper_spec(cred: Credential, slug: str) -> Dict[str, Any]:
 
 
 def _helper_argv(args: List[str]) -> List[str]:
-    if os.geteuid() == 0:
+    if os.geteuid() == 0:  # windows-footgun: ok — Linux-server-only code
         return [HELPER_PATH, *args]
     return ["sudo", "-n", HELPER_PATH, *args]
 

@@ -1538,13 +1538,66 @@ _permanent_approved: set = set()
 
 
 class _ApprovalEntry:
-    """One pending dangerous-command approval inside a gateway session."""
-    __slots__ = ("event", "data", "result")
+    """One pending dangerous-command approval inside a gateway session.
 
-    def __init__(self, data: dict):
+    ``requester_id`` (platform user id) and ``requester_user_id`` (internal
+    principal) record whose turn asked for the command, so in a shared chat
+    only that person (or an owner/admin) can answer it. Both stay ``None``
+    for turns with no sender (cron, CLI), which anyone may answer as before.
+    """
+    __slots__ = ("event", "data", "result", "requester_id", "requester_user_id")
+
+    def __init__(self, data: dict, requester_id: Optional[str] = None,
+                 requester_user_id: Optional[str] = None):
         self.event = threading.Event()
         self.data = data          # command, description, pattern_keys, …
         self.result: Optional[str] = None  # "once"|"session"|"always"|"deny"
+        self.requester_id = str(requester_id) if requester_id else None
+        self.requester_user_id = str(requester_user_id) if requester_user_id else None
+
+
+def _current_requester() -> tuple[Optional[str], Optional[str]]:
+    """(platform user id, internal user id) of the person this turn runs for."""
+    platform_id = None
+    internal_id = None
+    try:
+        from gateway.session_context import get_session_env
+        platform_id = get_session_env("HERMES_SESSION_USER_ID", "") or None
+    except Exception:
+        pass
+    try:
+        from tools.access_policy import _principal
+        internal_id = _principal.get()[0] or None
+    except Exception:
+        pass
+    return platform_id, internal_id
+
+
+def _approver_matches(entry: "_ApprovalEntry", approver_id: Optional[str],
+                      approver_user_id: Optional[str]) -> bool:
+    """True when the approver is the person who asked for *entry*."""
+    if entry.requester_id is None and entry.requester_user_id is None:
+        return True
+    if entry.requester_user_id and approver_user_id:
+        return entry.requester_user_id == str(approver_user_id)
+    if entry.requester_id and approver_id:
+        return entry.requester_id == str(approver_id)
+    return False
+
+
+def can_resolve_gateway_approval(session_key: str, approver_id: Optional[str],
+                                 approver_user_id: Optional[str] = None,
+                                 approver_is_admin: bool = False) -> bool:
+    """Whether this approver may answer a pending approval (True when none is pending).
+
+    Platform button handlers call this before they consume their own button
+    state, so a click by someone else leaves the prompt in place.
+    """
+    with _lock:
+        queue = list(_gateway_queues.get(session_key) or [])
+    if not queue or approver_is_admin:
+        return True
+    return any(_approver_matches(e, approver_id, approver_user_id) for e in queue)
 
 
 _gateway_queues: dict[str, list] = {}        # session_key → [_ApprovalEntry, …]
@@ -1577,7 +1630,10 @@ def unregister_gateway_notify(session_key: str) -> None:
 
 
 def resolve_gateway_approval(session_key: str, choice: str,
-                             resolve_all: bool = False) -> int:
+                             resolve_all: bool = False, *,
+                             approver_id: Optional[str] = None,
+                             approver_user_id: Optional[str] = None,
+                             approver_is_admin: bool = False) -> int:
     """Called by the gateway's /approve or /deny handler to unblock
     waiting agent thread(s).
 
@@ -1585,17 +1641,29 @@ def resolve_gateway_approval(session_key: str, choice: str,
     resolved at once (``/approve all``).  Otherwise only the oldest one
     is resolved (FIFO).
 
-    Returns the number of approvals resolved (0 means nothing was pending).
+    When the caller names the approver (*approver_id* = platform user id,
+    *approver_user_id* = internal user id), only approvals that person asked
+    for are resolved, unless *approver_is_admin*. Callers that name nobody
+    (local dashboard/TUI/API surfaces with their own auth) keep the old
+    behaviour.
+
+    Returns the number of approvals resolved (0 means nothing was pending
+    that this approver may answer).
     """
+    bound = (approver_id is not None or approver_user_id is not None) and not approver_is_admin
     with _lock:
         queue = _gateway_queues.get(session_key)
         if not queue:
             return 0
-        if resolve_all:
-            targets = list(queue)
-            queue.clear()
-        else:
-            targets = [queue.pop(0)]
+        eligible = [
+            e for e in queue
+            if not bound or _approver_matches(e, approver_id, approver_user_id)
+        ]
+        if not eligible:
+            return 0
+        targets = eligible if resolve_all else [eligible[0]]
+        for entry in targets:
+            queue.remove(entry)
         if not queue:
             _gateway_queues.pop(session_key, None)
 
@@ -2299,7 +2367,7 @@ def _await_gateway_decision(session_key: str, notify_cb, approval_data: dict,
     primary_key = approval_data.get("pattern_key", "")
     all_keys = approval_data.get("pattern_keys", [primary_key])
 
-    entry = _ApprovalEntry(approval_data)
+    entry = _ApprovalEntry(approval_data, *_current_requester())
     with _lock:
         _gateway_queues.setdefault(session_key, []).append(entry)
 

@@ -366,7 +366,7 @@ def facts_or_note(
             "component": component,
             "expected": "readable",
             "actual": "permission denied",
-            "detail": f"cannot inspect {path} as {_user(os.geteuid())} — this "
+            "detail": f"cannot inspect {path} as {_user(os.geteuid())} — this "  # windows-footgun: ok — Linux-server-only code
             "layer is unverified. Make the file readable, or run this check as "
             "root",
         })

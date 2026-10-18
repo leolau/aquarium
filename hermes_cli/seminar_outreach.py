@@ -131,7 +131,7 @@ def main() -> None:
     async def _run() -> None:
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(sig, stop.set)
+            loop.add_signal_handler(sig, stop.set)  # windows-footgun: ok — Linux-server-only code
         await store.initialize()
         logger.info(
             "seminar outreach worker started (campaign=%s, bridge=%s)",

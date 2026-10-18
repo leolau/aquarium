@@ -438,7 +438,7 @@ def verify(
                 "expected": "visible to this user",
                 "actual": "permission denied",
                 "detail": f"cannot tell whether {path} is backed up as "
-                f"{_user(os.geteuid())} — run this check as root to include it",
+                f"{_user(os.geteuid())} — run this check as root to include it",  # windows-footgun: ok — Linux-server-only code
             })
             continue
         if not present:
@@ -509,7 +509,7 @@ def restore(bundle: Path, identity: Path, out: Path) -> list[dict[str, str]]:
             mode = str(entry.get("mode", "600"))
             os.chmod(target, int(mode, 8))
             owner = str(entry.get("owner", ""))
-            if owner and os.geteuid() == 0:
+            if owner and os.geteuid() == 0:  # windows-footgun: ok — Linux-server-only code
                 user, _, group = owner.partition(":")
                 try:
                     os.chown(
