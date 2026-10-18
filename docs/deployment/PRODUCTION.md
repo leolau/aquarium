@@ -151,6 +151,28 @@ on the box changes *how the command is carried*, not who may run it.
 Either way, success ends with `deploy OK (<sha>)` and all services `active`; verify
 independently with the §5.7 health check.
 
+**One-time post-deploy step: app-mcp MCP endpoint token (security review F19).**
+After the first deploy that contains it, the gateway/dashboard create
+`/opt/data/hermes-home-staging/auth/app-mcp-token` (hermes, 0600) and send it to
+app-mcp. app-mcp only checks it once its `app-mcp.env` names the Hermes home;
+until then `127.0.0.1:9220/mcp` stays open exactly as before and nothing breaks.
+`install-aquarium.sh` writes the line on new installs; on this box add it once:
+
+```bash
+# 0. both must print HERMES_HOME=/opt/data/hermes-home-staging; if one differs, stop
+for u in hermes-gateway hermes-dashboard; do
+  tr '\0' '\n' < /proc/$(systemctl show -p MainPID --value $u)/environ | grep '^HERMES_HOME='
+done
+# 1. tell app-mcp where the token is, 2. restart it
+sudo -u hermes sh -c 'echo HERMES_HOME=/opt/data/hermes-home-staging >> /opt/data/hermes-agent/app-mcp/app-mcp.env'
+systemctl restart app-mcp
+# 3. check: 401 = protection on; 400 or 406 = still open (no line, or no token file yet)
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:9220/mcp
+```
+
+Then ask the agent in agent-home "what page am I on?": it must still answer.
+Undo: delete the `HERMES_HOME` line from `app-mcp.env` and `systemctl restart app-mcp`.
+
 ### 5.2 Dashboard update
 ```bash
 # code lives at /opt/data/hermes-agent (Python, uv-managed)
@@ -341,18 +363,9 @@ propagate into its mount namespace — and never needs sudo. Mobile apps are
 unaffected. Rollback: reinstall the backed-up helper; the old helper ignores
 folder mounts (unmount them first with `hermes-vpn-helper umount <slug>`).
 
-app-mcp MCP endpoint token (F19): the first time the gateway/dashboard
-connects to app-mcp it creates `$HERMES_HOME/auth/app-mcp-token` (hermes,
-0600; outside the code checkout, so a root-owned checkout or release layout
-does not matter) and sends it as a bearer token. app-mcp only reads it, and
-only once `app-mcp/app-mcp.env` has `HERMES_HOME=<the gateway's Hermes home>`
-(`install-aquarium.sh` writes it; on a box installed before this, add the line
-and `systemctl restart app-mcp`). Without that line, or before the file exists,
-`/mcp` stays open as before. Check it switched on:
-`curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:9220/mcp`
-prints `401` (it prints `400` or `406` while still open), and the agent's app
-tools still work. Undo: remove the `HERMES_HOME` line and restart app-mcp, or
-`rm` the token file (open again until Hermes reconnects).
+app-mcp MCP endpoint token (F19): see the one-time post-deploy step in §5.1.
+The token is `$HERMES_HOME/auth/app-mcp-token`; the agent's app tools work with
+or without it.
 
 Operate: `systemctl list-units 'hermes-vpn-*'`,
 `cat /run/hermes-vpn/<slug>/openfortivpn.log`,
