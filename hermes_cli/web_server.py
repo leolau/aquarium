@@ -3985,6 +3985,77 @@ async def auth_redeem_invitation(request: Request):
     return {"ok": True}
 
 
+# --- unauthenticated first-run owner setup (hermes_cli/first_run.py) -------
+
+
+async def _setup_body(request: "Request") -> dict:
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    return body if isinstance(body, dict) else {}
+
+
+@app.post("/api/setup/check")
+async def setup_check(request: Request):
+    """Is this first-run link still usable? **Unauthenticated**, does not use it up."""
+    from hermes_cli import first_run
+
+    token = str((await _setup_body(request)).get("token", "") or "")
+    allowed = bool(token) and first_run.THROTTLE.allow(
+        ip=_forwarded_client_ip(request), token=token
+    )
+    if not allowed or not first_run.check(token):
+        raise HTTPException(status_code=400, detail=first_run.NEUTRAL_DETAIL)
+    return {"ok": True}
+
+
+def _setup_owner_deps():
+    service = _comms_user_service()
+    return service._store, service._admin, service._config
+
+
+@app.post("/api/setup/owner")
+async def setup_owner(request: Request):
+    """Create the owner's login from a first-run link. **Unauthenticated.**
+
+    Body ``{token, email, password}``. Every token problem answers the same 400;
+    only a fixable form error (email, password policy, email taken) says why,
+    and that does not use up the link.
+    """
+    from hermes_cli import first_run
+    from hermes_cli.invitations import InvitationError
+
+    body = await _setup_body(request)
+    token = str(body.get("token", "") or "")
+    if not token or not first_run.THROTTLE.allow(
+        ip=_forwarded_client_ip(request), token=token
+    ):
+        raise HTTPException(status_code=400, detail=first_run.NEUTRAL_DETAIL)
+    if not first_run.check(token):
+        raise HTTPException(status_code=400, detail=first_run.NEUTRAL_DETAIL)
+    try:
+        store, admin, config = _setup_owner_deps()
+        created = await first_run.create_owner(
+            token=token,
+            email=str(body.get("email", "") or ""),
+            password=str(body.get("password", "") or ""),
+            store=store,
+            admin=admin,
+            config=config,
+        )
+    except InvitationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 — never leak the reason
+        _log.warning("first-run owner setup failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=400, detail=first_run.NEUTRAL_DETAIL) from exc
+    if not created:
+        raise HTTPException(status_code=400, detail=first_run.NEUTRAL_DETAIL)
+    return {"ok": True}
+
+
 def _forwarded_client_ip(request: "Request") -> str:
     """The invitee's own IP for the unauthenticated invitation endpoints.
 

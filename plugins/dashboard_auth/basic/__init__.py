@@ -226,6 +226,12 @@ class BasicAuthProvider(DashboardAuthProvider):
 
     # ---- OAuth methods: not used (pure-password provider) ------------------
 
+    def set_password_hash(self, password_hash: str) -> None:
+        """Swap the password live (hermes_cli/first_run.py sets the owner's)."""
+        if not password_hash:
+            raise ValueError("password_hash must be non-empty")
+        self._password_hash = password_hash
+
     def start_login(self, *, redirect_uri: str) -> LoginStart:
         raise NotImplementedError(
             "BasicAuthProvider is password-only; there is no OAuth redirect "
