@@ -1,0 +1,27 @@
+# WhatsApp bridge, one instance per linked phone: hermes-wa-bridge@<name>.service.
+# Per-instance settings live in /etc/aquarium/wa-bridge-<name>.env (root, 0600), e.g.
+#   WA_BRIDGE_PORT=3001
+# then: systemctl enable --now hermes-wa-bridge@<name>
+[Unit]
+Description=Aquarium WhatsApp bridge (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hermes
+Group=hermes
+WorkingDirectory=/opt/data/hermes-agent/scripts/whatsapp-bridge
+Environment=WHATSAPP_MODE=bot
+Environment=WHATSAPP_ALLOWED_USERS=*
+Environment=WHATSAPP_FORWARD_OWNER_MESSAGES=1
+Environment=WA_BRIDGE_PORT=3000
+EnvironmentFile=/etc/aquarium/wa-bridge-%i.env
+ExecStartPre=+/usr/bin/install -d -o hermes -g hermes -m 700 /opt/data/hermes-home/whatsapp/session-%i
+ExecStart=/usr/bin/node bridge.js --port ${WA_BRIDGE_PORT} --session /opt/data/hermes-home/whatsapp/session-%i
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
