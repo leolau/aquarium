@@ -15,6 +15,8 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 
+from hermes_cli.route_roles import ADMIN
+
 router = APIRouter(prefix="/api/memory/providers")
 
 
@@ -54,7 +56,7 @@ def _scope_to_profile(profile: Optional[str]):
         reset_hermes_home_override(token)
 
 
-@router.post("/{provider}/oauth/start")
+@router.post("/{provider}/oauth/start", dependencies=ADMIN)
 async def start_memory_oauth(provider: str, profile: Optional[str] = None):
     """Begin a provider's zero-CLI OAuth flow — opens the browser and captures
     the grant via the loopback listener. Returns immediately; poll status."""

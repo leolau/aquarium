@@ -18,6 +18,7 @@ The plan is ``docs/plans/2026-08-11-001-todos-staging-layer-plan.md``.
 
 import asyncio
 import logging
+from html import escape as _esc
 from datetime import datetime, time, timezone
 from typing import Any, Optional
 
@@ -231,9 +232,9 @@ def push_todo(title: str, announcement) -> bool:
     try:
         from shared.escalation_pusher_v2 import send_telegram
 
-        text = f"\u2705 <b>New to-do</b>\n{title}"
+        text = f"\u2705 <b>New to-do</b>\n{_esc(title)}"
         if announcement.body:
-            text += f"\n<i>{announcement.body}</i>"
+            text += f"\n<i>{_esc(announcement.body)}</i>"
         return bool(send_telegram(text, parse_mode="HTML"))
     except Exception as exc:
         logger.warning("todo registration: could not push %r (%s)", title, exc)

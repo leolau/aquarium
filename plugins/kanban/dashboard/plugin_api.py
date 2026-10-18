@@ -547,10 +547,17 @@ def download_attachment(attachment_id: int, board: Optional[str] = Query(None)):
             raise HTTPException(status_code=404, detail="attachment file unavailable")
         if not stored.is_file():
             raise HTTPException(status_code=404, detail="attachment file missing on disk")
+        # The uploader picks both the bytes and the content type, so always
+        # download, never sniff, and sandbox it if a browser renders it anyway.
         return FileResponse(
             path=str(stored),
             filename=att.filename,
             media_type=att.content_type or "application/octet-stream",
+            content_disposition_type="attachment",
+            headers={
+                "X-Content-Type-Options": "nosniff",
+                "Content-Security-Policy": "sandbox; default-src 'none'",
+            },
         )
     finally:
         conn.close()

@@ -27,6 +27,13 @@ ELEMENTS = [
     {"id": 5, "role": "button", "name": "", "tag": "button", "selector": "#icon"},
     {"id": 6, "role": "button", "name": "Open", "tag": "button", "selector": "div > button"},
     {"id": 7, "role": "button", "name": "Open", "tag": "button", "selector": "#open2"},
+    {"id": 8, "role": "button", "name": "Approve", "tag": "button", "selector": "#ok",
+     "denied": True},
+    {"id": 9, "role": "button", "name": "Always approve", "tag": "button", "selector": "#always"},
+    {"id": 10, "role": "checkbox", "name": "Trusted for import", "tag": "input",
+     "selector": "#trust", "checked": False},
+    {"id": 11, "role": "button", "name": "Add folder", "tag": "button", "selector": "#add",
+     "denied": True},
 ]
 
 
@@ -174,3 +181,36 @@ def test_folder_tools_route_to_the_callers_bridge_only():
         assert res["ok"] is True and leo_bridge.commands[0]["type"] == "getFileMetadata"
     finally:
         server.folder_hub.detach(leo_bridge)
+
+
+@pytest.mark.parametrize("tool", ["app_act", "app_act_destructive"])
+@pytest.mark.parametrize(
+    "target",
+    [
+        {"element_id": 8},
+        {"name": "Approve"},
+        {"selector": "#always"},
+        {"element_id": 9},
+        {"element_id": 10},
+        {"name": "trusted for import"},
+        {"element_id": 11},
+    ],
+)
+def test_approval_and_trust_controls_are_never_operated(leo_browser, tool, target):
+    """F17/F18: before, app_act clicked Approve/Always approve/Trusted for import."""
+    res = call(tool, {"action": "click", **target})
+    assert res["ok"] is False and "Only the user" in res["detail"]
+    assert leo_browser.commands == []
+
+
+def test_user_only_controls_cannot_be_focused_or_selected(leo_browser):
+    for action in ("focus", "select", "type"):
+        res = call("app_act", {"action": action, "element_id": 10, "value": "x"})
+        assert res["ok"] is False
+    assert leo_browser.commands == []
+
+
+def test_user_only_controls_can_still_be_read(leo_browser):
+    res = call("app_act", {"action": "read", "element_id": 9})
+    assert res["ok"] is True
+    assert leo_browser.commands == [{"type": "read", "elementId": 9, "expectName": "Always approve"}]

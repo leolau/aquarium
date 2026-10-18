@@ -19,6 +19,8 @@ export interface AppMcpElement {
   value?: string;
   /** Password/secret field: its value is never included. */
   sensitive?: boolean;
+  /** Inside a `data-appmcp-deny` region: user-only control, app-mcp never operates it. */
+  denied?: boolean;
   checked?: boolean;
   disabled?: boolean;
 }
@@ -76,6 +78,18 @@ export function isSensitiveInput(el: Element): boolean {
     label,
   ];
   return hints.some((h) => Boolean(h) && SENSITIVE_HINT.test(String(h).replace(/[_-]/g, " ")));
+}
+
+/**
+ * Controls only a human may operate: approval buttons (Approve / Always
+ * approve / Deny) and Folder Bridge consent (Trusted for import, Add folder,
+ * Connect). The page marks them with `data-appmcp-deny`; app-mcp refuses them
+ * server-side as well (security review F17/F18).
+ */
+export const APPMCP_DENY_SELECTOR = "[data-appmcp-deny]";
+
+export function isAppMcpDenied(el: Element): boolean {
+  return Boolean(el.closest(APPMCP_DENY_SELECTOR));
 }
 
 export function isHidden(el: Element): boolean {
@@ -207,6 +221,7 @@ export function snapshotElements(root: ParentNode = document): AppMcpElement[] {
       entry.checked = input.checked;
     }
     if (input.disabled) entry.disabled = true;
+    if (isAppMcpDenied(el)) entry.denied = true;
     out.push(entry);
   }
   return out;

@@ -906,13 +906,16 @@ class TestOversizedFileSnapshot:
         monkeypatch.setattr("tools.memory_tool.get_memory_dir", lambda: tmp_path)
         entries = [f"[calendar 2026-08-{i%28+1:02d} 02:30 from a@b.c] fact {i} " + "x" * 60 for i in range(40)]
         (tmp_path / "MEMORY.md").write_text("\n§\n".join(entries), encoding="utf-8")
-        s = MemoryStore(memory_char_limit=500, user_char_limit=300)
+        s = MemoryStore(memory_char_limit=500, user_char_limit=300, shared_memory_char_limit=500)
         s.load_from_disk()
 
-        block = s.format_for_system_prompt("memory")
+        # The external appender is the triage bridge; its tagged entries render
+        # as untrusted inbox facts, not as MEMORY (F6). Same bound applies.
+        assert s.format_for_system_prompt("memory") is None
+        block = s.format_for_system_prompt("inbox")
         assert len(s.memory_entries) == 40
         assert "fact 39" in block
         assert "fact 0 " not in block
         assert "older entries omitted" in block
-        body = block.split("═" * 46)[-1]
+        body = block.split("<untrusted_inbox_facts>")[-1]  # entries only, not the notice
         assert len(body) < 500 + 200  # content bounded near the limit (+ the omission marker)
