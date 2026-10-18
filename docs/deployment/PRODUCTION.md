@@ -341,14 +341,18 @@ propagate into its mount namespace — and never needs sudo. Mobile apps are
 unaffected. Rollback: reinstall the backed-up helper; the old helper ignores
 folder mounts (unmount them first with `hermes-vpn-helper umount <slug>`).
 
-app-mcp MCP endpoint token (F19): nothing to set by hand. The first time the
-gateway/dashboard connects to app-mcp it creates
-`/opt/data/hermes-agent/app-mcp/.mcp-token` (hermes, 0600, git-ignored; the
-deploy's `git checkout -f` leaves it alone) and sends it as a bearer token.
-app-mcp refuses `/mcp` calls without it as soon as the file exists. Check it:
+app-mcp MCP endpoint token (F19): the first time the gateway/dashboard
+connects to app-mcp it creates `$HERMES_HOME/auth/app-mcp-token` (hermes,
+0600; outside the code checkout, so a root-owned checkout or release layout
+does not matter) and sends it as a bearer token. app-mcp only reads it, and
+only once `app-mcp/app-mcp.env` has `HERMES_HOME=<the gateway's Hermes home>`
+(`install-aquarium.sh` writes it; on a box installed before this, add the line
+and `systemctl restart app-mcp`). Without that line, or before the file exists,
+`/mcp` stays open as before. Check it switched on:
 `curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:9220/mcp`
-prints `401`, and the agent's app tools still work. Undo: `rm` the file (the
-endpoint is open again, as before).
+prints `401` (it prints `400` or `406` while still open), and the agent's app
+tools still work. Undo: remove the `HERMES_HOME` line and restart app-mcp, or
+`rm` the token file (open again until Hermes reconnects).
 
 Operate: `systemctl list-units 'hermes-vpn-*'`,
 `cat /run/hermes-vpn/<slug>/openfortivpn.log`,

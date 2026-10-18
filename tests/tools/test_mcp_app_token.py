@@ -16,17 +16,26 @@ APP = {"url": "http://127.0.0.1:9220/mcp"}
 
 @pytest.fixture
 def token_file(tmp_path, monkeypatch):
-    path = tmp_path / ".mcp-token"
-    monkeypatch.setattr(mcp_tool, "APP_MCP_TOKEN_FILE", path)
-    monkeypatch.setattr(mcp_tool._app_mcp_token, "__defaults__", (path,))
-    return path
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    return tmp_path / "auth" / "app-mcp-token"
 
 
-def test_token_created_0600_and_stable(token_file):
+def test_token_created_0600_in_hermes_home_and_stable(token_file):
     first = mcp_tool._app_mcp_token()
     assert len(first) == 64
     assert stat.S_IMODE(os.stat(token_file).st_mode) == 0o600
+    assert stat.S_IMODE(os.stat(token_file.parent).st_mode) == 0o700
     assert mcp_tool._app_mcp_token() == first
+
+
+def test_profile_override_still_uses_process_hermes_home(token_file, tmp_path):
+    from hermes_constants import _HERMES_HOME_OVERRIDE
+
+    reset = _HERMES_HOME_OVERRIDE.set(str(tmp_path / "profiles" / "other"))
+    try:
+        assert mcp_tool._app_mcp_token_file() == token_file
+    finally:
+        _HERMES_HOME_OVERRIDE.reset(reset)
 
 
 def test_existing_app_entry_gets_authorization_header(token_file):
@@ -54,20 +63,21 @@ def test_other_servers_never_get_the_token(token_file, name, config):
 
 
 def test_unwritable_location_falls_back_to_no_token(tmp_path, monkeypatch):
-    path = tmp_path / "missing-dir" / ".mcp-token"
-    monkeypatch.setattr(mcp_tool._app_mcp_token, "__defaults__", (path,))
+    blocker = tmp_path / "home"
+    blocker.write_text("not a directory")
+    monkeypatch.setenv("HERMES_HOME", str(blocker))
     headers: dict = {}
     mcp_tool._add_app_mcp_token("app", dict(APP), headers)
     assert headers == {}
 
 
-def test_hermes_and_app_mcp_use_the_same_file():
+def test_hermes_and_app_mcp_use_the_same_file(token_file):
     sys.path.insert(0, str(Path(mcp_tool.__file__).resolve().parents[1] / "app-mcp"))
     try:
-        from app_mcp.mcp_auth import TOKEN_FILE
+        from app_mcp.mcp_auth import token_file as app_mcp_token_file
     finally:
         sys.path.pop(0)
-    assert TOKEN_FILE == mcp_tool.APP_MCP_TOKEN_FILE
+    assert app_mcp_token_file() == mcp_tool._app_mcp_token_file() == token_file
 
 
 @pytest.mark.parametrize(
@@ -77,3 +87,10 @@ def test_terminal_env_drops_app_mcp_secrets(key):
     env = _sanitize_subprocess_env({key: "s3cret", "PATH": "/usr/bin"})
     assert key not in env
     assert env["PATH"] == "/usr/bin"
+
+
+def test_agent_file_tools_cannot_read_the_token(token_file):
+    from agent.file_safety import get_read_block_error
+
+    mcp_tool._app_mcp_token()
+    assert get_read_block_error(str(token_file)) is not None

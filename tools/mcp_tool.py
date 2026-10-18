@@ -3397,16 +3397,31 @@ def _forward_principal_setting(name: str, config: dict) -> bool:
     return _parse_boolish(config.get("forward_principal", default), default=default)
 
 
-APP_MCP_TOKEN_FILE = Path(__file__).resolve().parents[1] / "app-mcp" / ".mcp-token"
+APP_MCP_TOKEN_RELPATH = Path("auth") / "app-mcp-token"
 
 
-def _app_mcp_token(path: Path = APP_MCP_TOKEN_FILE) -> str:
-    """app-mcp's bearer token, created (0600) on first use.
+def _app_mcp_token_file() -> Path:
+    """``$HERMES_HOME/auth/app-mcp-token``, the file app-mcp reads.
 
-    app-mcp (``app-mcp/app_mcp/mcp_auth.py``) reads the same file from the same
-    checkout. If it cannot be created (read-only tree) this returns "" and
-    app-mcp stays open, the behaviour before the token existed.
+    Uses the process's ``HERMES_HOME`` (what app-mcp.env names), not a
+    per-profile override, so every profile sends the same token.
     """
+    home = os.environ.get("HERMES_HOME", "").strip()
+    if not home:
+        from hermes_constants import get_hermes_home
+
+        home = str(get_hermes_home())
+    return Path(home) / APP_MCP_TOKEN_RELPATH
+
+
+def _app_mcp_token(path: Path | None = None) -> str:
+    """app-mcp's bearer token, created (0600, dir 0700) on first use.
+
+    app-mcp (``app-mcp/app_mcp/mcp_auth.py``) only reads it. If it cannot be
+    created this returns "" and app-mcp stays open, the behaviour before the
+    token existed.
+    """
+    path = path or _app_mcp_token_file()
     try:
         return path.read_text(encoding="utf-8").strip()
     except FileNotFoundError:
@@ -3417,6 +3432,7 @@ def _app_mcp_token(path: Path = APP_MCP_TOKEN_FILE) -> str:
 
     token = secrets.token_hex(32)
     try:
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
         return _app_mcp_token(path)

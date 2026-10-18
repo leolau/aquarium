@@ -1,4 +1,4 @@
-"""F19: the loopback /mcp endpoint needs the bearer token from app-mcp/.mcp-token."""
+"""F19: the loopback /mcp endpoint needs the bearer token from $HERMES_HOME/auth/app-mcp-token."""
 from __future__ import annotations
 
 import httpx
@@ -23,7 +23,8 @@ async def _post(app, headers=None):
 
 @pytest.fixture
 def token_file(tmp_path):
-    path = tmp_path / ".mcp-token"
+    path = tmp_path / "auth" / "app-mcp-token"
+    path.parent.mkdir()
     path.write_text(TOKEN + "\n", encoding="utf-8")
     return path
 
@@ -65,7 +66,7 @@ async def test_no_token_file_keeps_endpoint_open(tmp_path):
 
 @pytest.mark.anyio
 async def test_token_file_created_later_is_enforced_without_restart(tmp_path):
-    path = tmp_path / ".mcp-token"
+    path = tmp_path / "app-mcp-token"
     app = BearerTokenMiddleware(_ok_app, path)
     assert (await _post(app)).status_code == 200
     path.write_text(TOKEN, encoding="utf-8")
@@ -99,6 +100,23 @@ def test_real_mcp_app_requires_token(token_file):
         assert "serverInfo" in good.text
 
 
-def test_default_token_file_is_next_to_the_package():
-    assert mcp_auth.TOKEN_FILE.name == ".mcp-token"
-    assert mcp_auth.TOKEN_FILE.parent.name == "app-mcp"
+@pytest.mark.anyio
+async def test_no_hermes_home_keeps_endpoint_open(monkeypatch):
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+    assert mcp_auth.token_file() is None
+    assert (await _post(BearerTokenMiddleware(_ok_app, None))).status_code == 200
+
+
+def test_token_file_lives_in_hermes_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    assert mcp_auth.token_file() == tmp_path / "auth" / "app-mcp-token"
+
+
+def test_service_app_reads_hermes_home_token(token_file, monkeypatch):
+    """mcp_http_app() with no argument (what the service runs) checks $HERMES_HOME's token."""
+    from app_mcp import server
+
+    monkeypatch.setenv("HERMES_HOME", str(token_file.parents[1]))
+    app = server.mcp_http_app()
+    assert isinstance(app, BearerTokenMiddleware)
+    assert app.token_file == token_file

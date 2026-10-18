@@ -111,7 +111,7 @@ mcp_servers:
   app:
     url: "http://127.0.0.1:9220/mcp"
     # Hermes sends the chat's user id with every call (MCP `_meta`) and the
-    # bearer token from app-mcp/.mcp-token automatically for this entry (named
+    # bearer token from $HERMES_HOME/auth/app-mcp-token automatically for this entry (named
     # `app` or pointing at 127.0.0.1:9220/mcp). No headers needed.
     # forward_principal: false   # would turn the user id off (app-mcp then refuses UI calls)
     # Per-tool-call deadline on the agent side (default 300 s). A large
@@ -134,12 +134,14 @@ approvals:
 `Authorization: Bearer <token>`. Without it, any local process (the
 agent's own terminal included) could call `app_act_destructive` or
 `folder_bridge_read_file` directly and skip the approval prompt. The token is
-the file `app-mcp/.mcp-token` (mode 0600, git-ignored). Hermes creates it the
-first time it connects to the `app` server and sends it on every call.
-app-mcp re-reads it per request, so neither side needs a restart or a
-config edit. Until the file exists the endpoint stays open (the old behaviour,
-logged as a warning at startup). Deleting the file and restarting Hermes
-issues a new token. The agent's terminal environment never carries the app-mcp
+the file `$HERMES_HOME/auth/app-mcp-token` (mode 0600, outside the code
+checkout). Hermes creates it the first time it connects to the `app` server and
+sends it on every call. app-mcp only reads it (its unit is
+`ProtectSystem=strict`), re-reading it per request, and finds it through
+`HERMES_HOME` in `app-mcp.env`, which must be the gateway's Hermes home. While
+`HERMES_HOME` is unset or the file does not exist, the endpoint stays open (the
+old behaviour, logged as a warning at startup). Deleting the file and
+restarting Hermes issues a new token. The agent's terminal environment never carries the app-mcp
 secrets (`APP_MCP_HERMES_TOKEN`, `APP_MCP_TICKET_SECRET`,
 `AGENT_HOME_APP_MCP_SECRET`). It still runs as the same `hermes` user and could
 read the file itself; moving secrets out of that user's reach is F16.

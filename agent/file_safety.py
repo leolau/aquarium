@@ -255,6 +255,8 @@ def get_read_block_error(path: str) -> Optional[str]:
         "google_client_secret.json",
         "google_oauth_pending.json",
         os.path.join("auth", "google_oauth.json"),
+        # app-mcp MCP endpoint bearer token (tools/mcp_tool.py, F19).
+        os.path.join("auth", "app-mcp-token"),
         # Bitwarden Secrets Manager disk cache: stores plaintext secret values
         # to avoid re-fetching across back-to-back CLI invocations. The file
         # was introduced by #31968 but not added to this guard.

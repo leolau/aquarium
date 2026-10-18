@@ -5,20 +5,21 @@ agent's own terminal) can reach loopback, and a direct ``tools/call`` would
 skip the in-agent approval gate. Hermes therefore sends
 ``Authorization: Bearer <token>``.
 
-The token lives in ``app-mcp/.mcp-token`` (mode 0600) next to this package.
-Hermes creates it the first time it connects (``tools/mcp_tool.py``), so an
-existing install needs no manual step. app-mcp re-reads the file for every
-request. While the file does not exist the endpoint stays open, which is the
-behaviour before this check existed.
+The token is the file ``$HERMES_HOME/auth/app-mcp-token`` (mode 0600). Hermes
+creates it the first time it connects (``tools/mcp_tool.py``); app-mcp only
+reads it, re-reading it for every request (its unit is ProtectSystem=strict and
+cannot write there). While app-mcp has no ``HERMES_HOME`` or the file does not
+exist, the endpoint stays open, which is the behaviour before this check.
 """
 from __future__ import annotations
 
 import hmac
 import json
+import os
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-TOKEN_FILE = Path(__file__).resolve().parents[1] / ".mcp-token"
+TOKEN_RELPATH = Path("auth") / "app-mcp-token"
 
 Scope = dict[str, Any]
 Receive = Callable[[], Awaitable[dict[str, Any]]]
@@ -26,7 +27,14 @@ Send = Callable[[dict[str, Any]], Awaitable[None]]
 ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
 
-def read_token(path: Path = TOKEN_FILE) -> str:
+def token_file() -> Path | None:
+    home = os.environ.get("HERMES_HOME", "").strip()
+    return Path(home) / TOKEN_RELPATH if home else None
+
+
+def read_token(path: Path | None) -> str:
+    if path is None:
+        return ""
     try:
         return path.read_text(encoding="utf-8").strip()
     except OSError:
@@ -45,7 +53,7 @@ def _presented_token(scope: Scope) -> str:
 class BearerTokenMiddleware:
     """Refuse HTTP requests that do not carry the shared bearer token."""
 
-    def __init__(self, app: ASGIApp, token_file: Path = TOKEN_FILE) -> None:
+    def __init__(self, app: ASGIApp, token_file: Path | None) -> None:
         self.app = app
         self.token_file = token_file
 
@@ -73,4 +81,4 @@ class BearerTokenMiddleware:
         await send({"type": "http.response.body", "body": body})
 
 
-__all__ = ["TOKEN_FILE", "BearerTokenMiddleware", "read_token"]
+__all__ = ["TOKEN_RELPATH", "BearerTokenMiddleware", "read_token", "token_file"]
