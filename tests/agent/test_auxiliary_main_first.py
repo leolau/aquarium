@@ -338,7 +338,7 @@ class TestResolveVisionMainFirst:
             provider, client, model = resolve_vision_provider_client()
 
         assert provider == "openrouter"
-        assert client is mock_client
+        assert getattr(client, "_client", client) is mock_client
         assert model == "anthropic/claude-sonnet-4.6"
         # Verify it did NOT call the strict vision backend for OpenRouter
         # (which would have used a cheap gemini-flash-preview default)
@@ -454,7 +454,7 @@ class TestResolveVisionMainFirst:
             provider, client, model = resolve_vision_provider_client()
 
         assert provider == "copilot"
-        assert client is mock_client
+        assert getattr(client, "_client", client) is mock_client
         assert model == "configured-copilot-model"
         assert captured == {"is_agent_turn": True, "is_vision": True}
         assert mock_openai.call_args.kwargs["default_headers"]["Copilot-Vision-Request"] == "true"
@@ -516,7 +516,7 @@ class TestResolveVisionMainFirst:
 
             provider, client, model = resolve_vision_provider_client()
 
-        assert client is fallback_client
+        assert getattr(client, "_client", client) is fallback_client
         assert provider in {"openrouter", "nous"}
 
     def test_explicit_provider_override_still_wins(self):
