@@ -1,4 +1,5 @@
 import { MobileShell } from "@/components/MobileShell";
+import { RoleLimitsSection } from "@/components/settings/RoleLimitsSection";
 import { ToolsSettings } from "@/components/settings/ToolsSettings";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
 import { canManageTools } from "@/lib/auth/roles";
@@ -46,6 +47,7 @@ export default async function Page() {
           canManage={canManageTools(principal)}
         />
       )}
+      <RoleLimitsSection canEdit={principal.role === "owner" || principal.role === "admin"} />
     </MobileShell>
   );
 }
