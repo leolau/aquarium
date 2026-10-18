@@ -84,7 +84,11 @@ def test_mcp_server_requires_bearer_token_and_sends_no_wildcard_cors(rel, token_
     assert status == 200 and "result" in json.loads(body)
     assert "Access-Control-Allow-Origin" not in resp_headers
     assert _request(f"{base}/call", {"tool": tool, "params": {}}, auth)[0] == 200
-    assert _request(f"{base}/call?tool={tool}", None, auth)[0] == 200
+    assert _request(f"{base}/tools", None, auth)[0] == 200
+    assert _request(f"{base}/call", {"tool": tool, "params": {}}, {"X-MCP-Token": "s3cret-token"})[0] == 200
+    assert len(calls) == 3
+    # GET /call is gone even with the token: a link must never run a tool
+    assert _request(f"{base}/call?tool={tool}", None, auth)[0] == 405
     assert len(calls) == 3
     # /health stays open for local monitoring (status only, no data)
     assert _request(f"{base}/health")[0] == 200
@@ -148,6 +152,32 @@ def test_callback_links_are_signed_and_unsigned_links_refused(handler_rel, cm_re
 
 
 @pytest.mark.parametrize("handler_rel", CALLBACK_HANDLERS)
+def test_callback_refuses_everything_without_a_signing_key(handler_rel, serve, monkeypatch):
+    sys.path.insert(0, str(REPO_ROOT / Path(handler_rel).parent))
+    handler = _load(handler_rel)
+    monkeypatch.setattr(handler, "TELEGRAM_BOT_TOKEN", "")
+    monkeypatch.delenv("CALLBACK_SIGNING_SECRET", raising=False)
+    merged = []
+    monkeypatch.setattr(handler, "handle_merge", lambda sid: merged.append(sid) or (True, "ok"))
+    base = serve(handler.CallbackHandler)
+    # a signature made with an empty key must not be accepted
+    import hashlib
+    import hmac
+    key = hmac.new(b"", b"contact-merge-callback", hashlib.sha256).digest()
+    sig = hmac.new(key, b"merge:sug-1:9999999999", hashlib.sha256).hexdigest()
+    assert _request(f"{base}/action/merge/sug-1?exp=9999999999&sig={sig}")[0] == 403
+    assert merged == []
+
+
+@pytest.mark.parametrize("cm_rel", CONTACT_MANAGERS)
+def test_contact_manager_has_no_hardcoded_callback_host(cm_rel, monkeypatch):
+    monkeypatch.delenv("CALLBACK_SERVER_BASE", raising=False)
+    cm = _load(cm_rel)
+    assert cm.CALLBACK_SERVER_BASE == ""
+    assert "8.217.86.90" not in (REPO_ROOT / cm_rel).read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("handler_rel", CALLBACK_HANDLERS)
 def test_callback_server_binds_loopback_by_default(handler_rel, monkeypatch):
     handler = _load(handler_rel)
     monkeypatch.setattr(handler, "TELEGRAM_BOT_TOKEN", "t")
@@ -176,3 +206,31 @@ def test_health_servers_default_to_loopback(rel, needle):
     src = (REPO_ROOT / rel).read_text(encoding="utf-8")
     assert "'0.0.0.0'" not in src
     assert needle in src
+
+
+@pytest.mark.parametrize("rel,token_env,_host_env", MCP_SERVERS)
+def test_hermes_mcp_client_still_connects_with_token_header(rel, token_env, _host_env, serve, monkeypatch, tmp_path):
+    """The legit client (Hermes' own MCP client, config.yaml ``headers`` with
+    ``${TOKEN}`` interpolation) still lists the tools through the new gate."""
+    import asyncio
+
+    from tools import mcp_tool
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    monkeypatch.setenv(token_env, "s3cret-token")
+    module = _load(rel)
+    base = serve(module.MCPHandler)
+    cfg = mcp_tool._interpolate_env_vars({
+        "url": f"{base}/jsonrpc",
+        "headers": {"Authorization": "Bearer ${%s}" % token_env},
+        "connect_timeout": 8,
+    })
+
+    async def _connect():
+        server = await asyncio.wait_for(mcp_tool._connect_server("custom", cfg), 20)
+        try:
+            return {t.name for t in server._tools}
+        finally:
+            await server.shutdown()
+
+    assert asyncio.run(_connect()) == set(module.TOOLS)

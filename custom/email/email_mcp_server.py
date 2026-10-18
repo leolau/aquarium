@@ -12,7 +12,7 @@ import sqlite3
 import os
 from datetime import datetime, timezone, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse
 import uuid
 
 DB_PATH = os.environ.get('EMAIL_DB_PATH', '/opt/data/email-messages/email_data.db')
@@ -613,17 +613,9 @@ class MCPHandler(BaseHTTPRequestHandler):
             tools_list = [{'name': n, 'description': t['description'], 'parameters': t['params']} for n, t in TOOLS.items()]
             self._respond(200, {'tools': tools_list})
         elif parsed.path == '/call':
-            qs = parse_qs(parsed.query)
-            tool_name = qs.get('tool', [''])[0]
-            if tool_name not in TOOLS:
-                self._respond(404, {'error': f'Unknown tool: {tool_name}'})
-                return
-            params = {k: v[0] for k, v in qs.items() if k != 'tool'}
-            try:
-                result = TOOLS[tool_name]['fn'](params)
-                self._respond(200, {'result': result})
-            except Exception as e:
-                self._respond(500, {'error': str(e)})
+            # Tool calls are POST-only: a GET link (e.g. <img src>) must never
+            # read or change data (security review F1).
+            self._respond(405, {'error': 'Use POST /call'})
         else:
             self._respond(404, {'error': 'Not found'})
 

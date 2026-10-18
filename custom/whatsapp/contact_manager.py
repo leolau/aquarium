@@ -26,7 +26,10 @@ DB_PATH = os.environ.get('MESSAGING_DB_PATH', '/opt/data/whatsapp-messages/messa
 EMAIL_DB_PATH = os.environ.get('EMAIL_DB_PATH', '/opt/data/email-messages/email_data.db')
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_USER_ID = os.environ.get('TELEGRAM_USER_ID', '')
-CALLBACK_SERVER_BASE = os.environ.get('CALLBACK_SERVER_BASE', 'http://8.217.86.90:7902')
+# Public HTTPS address of telegram_callback_handler (e.g. behind Caddy). No
+# default: the old fallback pointed at a released IP. When unset the merge
+# suggestion is still sent, just without the Merge/Keep buttons.
+CALLBACK_SERVER_BASE = os.environ.get('CALLBACK_SERVER_BASE', '').rstrip('/')
 CALLBACK_LINK_TTL_SECONDS = 7 * 24 * 3600
 
 
@@ -215,6 +218,12 @@ def send_merge_confirmation(db, suggestion_id, new_handle, new_name,
 
     text += f"\n{handles_text}\n"
     text += f"Reason: {reason}"
+
+    if not CALLBACK_SERVER_BASE:
+        print("[contacts] CALLBACK_SERVER_BASE not set; merge suggestion sent without buttons")
+        text += f"\n\nSuggestion id: <code>{suggestion_id}</code> (Merge/Keep buttons are off: CALLBACK_SERVER_BASE is not set)"
+        send_telegram(text)
+        return
 
     merge_url = sign_callback_url('merge', suggestion_id)
     reject_url = sign_callback_url('reject', suggestion_id)

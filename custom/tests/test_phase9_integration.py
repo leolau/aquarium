@@ -35,13 +35,10 @@ def check_process(name):
 
 
 def mcp_call(base, tool, params=None):
-    if params:
-        qs = "&".join(f"{k}={v}" for k, v in params.items())
-        url = f"{base}/call?tool={tool}&{qs}"
-    else:
-        url = f"{base}/call?tool={tool}"
     token = os.environ.get("EMAIL_MCP_TOKEN" if base == EMAIL_MCP else "WHATSAPP_MCP_TOKEN", "")
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    body = json.dumps({"tool": tool, "params": params or {}}).encode()
+    req = urllib.request.Request(f"{base}/call", data=body, headers={
+        "Authorization": f"Bearer {token}", "Content-Type": "application/json"})
     try:
         resp = urllib.request.urlopen(req, timeout=10)
         return json.loads(resp.read().decode())

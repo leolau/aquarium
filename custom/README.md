@@ -139,7 +139,9 @@ All custom HTTP servers bind `127.0.0.1` by default (security review F1):
 | Email poller health | 7901 | none (status only) | `EMAIL_HEALTH_HOST` |
 | Calendar poller health | 7903 | none (status only) | `CALENDAR_HEALTH_HOST` |
 
-No wildcard CORS header is sent. Register the MCP servers in Hermes `config.yaml`
+No wildcard CORS header is sent, and tools run only from `POST /call` or
+`POST /jsonrpc` (`GET /call?tool=...` now answers 405, so a link or `<img>` can
+never run a tool). Register the MCP servers in Hermes `config.yaml`
 with the token header, e.g.
 
 ```yaml
@@ -153,7 +155,10 @@ mcp_servers:
 The merge/keep buttons open in the owner's phone browser, so the callback
 server must be reachable from there: put it behind the HTTPS reverse proxy and
 set `CALLBACK_SERVER_BASE=https://<host>/<prefix>` for the triage processes.
-Links sent before this change are unsigned and are refused (403).
+If `CALLBACK_SERVER_BASE` is not set, the merge suggestion still arrives in
+Telegram but without the Merge/Keep buttons (the old default pointed at a
+released IP, 8.217.86.90). Links sent before this change are unsigned and are
+refused (403).
 
 ## MCP Tools
 

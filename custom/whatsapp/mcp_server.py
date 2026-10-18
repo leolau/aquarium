@@ -12,7 +12,7 @@ import sqlite3
 import os
 from datetime import datetime, timezone, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse
 import threading
 import uuid
 
@@ -388,18 +388,9 @@ class MCPHandler(BaseHTTPRequestHandler):
                 })
             self._respond(200, {'tools': tools_list})
         elif parsed.path == '/call':
-            # GET-based tool call: /call?tool=name&param1=val1&...
-            qs = parse_qs(parsed.query)
-            tool_name = qs.get('tool', [''])[0]
-            if tool_name not in TOOLS:
-                self._respond(404, {'error': f'Unknown tool: {tool_name}'})
-                return
-            params = {k: v[0] for k, v in qs.items() if k != 'tool'}
-            try:
-                result = TOOLS[tool_name]['fn'](params)
-                self._respond(200, {'result': result})
-            except Exception as e:
-                self._respond(500, {'error': str(e)})
+            # Tool calls are POST-only: a GET link (e.g. <img src>) must never
+            # read or change data (security review F1).
+            self._respond(405, {'error': 'Use POST /call'})
         else:
             self._respond(404, {'error': 'Not found'})
 
