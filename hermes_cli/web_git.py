@@ -58,6 +58,24 @@ def _git_ok(cwd: str, args: list[str]) -> None:
         raise RuntimeError(err.strip() or f"git {' '.join(args)} failed")
 
 
+def _resolve_commit(cwd: str, ref: str | None) -> str | None:
+    """Full SHA of the commit *ref* names, or None if it names none.
+
+    Caller-supplied refs (``base``, ``ref``) must never reach git as an option:
+    a value like ``--output=<file>`` placed before ``--`` makes ``git diff``
+    write an arbitrary file. Refuse a leading ``-`` outright, then let git
+    resolve it behind ``--end-of-options`` and pass on only the SHA.
+    """
+    value = str(ref or "").strip()
+    if not value or value.startswith("-") or "\0" in value:
+        return None
+    code, out, _ = _git(
+        cwd, ["rev-parse", "--verify", "--quiet", "--end-of-options", f"{value}^{{commit}}"]
+    )
+    sha = out.strip()
+    return sha if code == 0 and re.fullmatch(r"[0-9a-f]{40,64}", sha) else None
+
+
 def _is_dir(cwd: str) -> bool:
     try:
         return Path(cwd).is_dir()
@@ -261,7 +279,7 @@ def review_list(cwd: str, scope: str, base_ref: str | None) -> dict:
         return {"files": [], "base": None}
 
     if scope in ("branch", "lastTurn"):
-        base = _branch_base(cwd) if scope == "branch" else base_ref
+        base = _branch_base(cwd) if scope == "branch" else _resolve_commit(cwd, base_ref)
         if not base:
             return {"files": [], "base": None}
         rng = f"{base}...HEAD" if scope == "branch" else base
@@ -312,7 +330,8 @@ def review_diff(cwd: str, file_path: str, scope: str, base_ref: str | None, stag
         base = _branch_base(cwd)
         return _git_out(cwd, ["diff", f"{base}...HEAD", "--", file_path]) if base else ""
     if scope == "lastTurn":
-        return _git_out(cwd, ["diff", base_ref, "--", file_path]) if base_ref else ""
+        base = _resolve_commit(cwd, base_ref)
+        return _git_out(cwd, ["diff", base, "--", file_path]) if base else ""
     if staged:
         return _git_out(cwd, ["diff", "--cached", "--", file_path])
     worktree = _git_out(cwd, ["diff", "--", file_path])
@@ -357,8 +376,7 @@ def review_revert(cwd: str, file_path: str | None) -> dict:
 
 
 def review_rev_parse(cwd: str, ref: str | None) -> str | None:
-    out = _git_out(cwd, ["rev-parse", ref or "HEAD"]).strip()
-    return out or None
+    return _resolve_commit(cwd, ref or "HEAD")
 
 
 def review_commit(cwd: str, message: str, push: bool) -> dict:
@@ -597,7 +615,10 @@ def worktree_add(cwd: str, options: dict) -> dict:
     target = _unique_dir(os.path.join(root, ".worktrees", slug))
     args = ["worktree", "add", "-b", branch, target]
     if options.get("base"):
-        args.append(str(options["base"]))
+        base = _resolve_commit(root, str(options["base"]))
+        if not base:
+            raise RuntimeError(f"Unknown base: {options['base']}")
+        args.append(base)
     code, _, err = _git(root, args)
     if code != 0:
         if "already exists" in (err or "").lower():

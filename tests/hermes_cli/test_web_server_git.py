@@ -175,3 +175,89 @@ def test_git_endpoints_require_auth(repo):
 
     assert unauth.get("/api/git/status", params={"path": str(repo)}).status_code == 401
     assert unauth.post("/api/git/review/stage", json={"path": str(repo)}).status_code == 401
+
+
+# ── F9: a caller-supplied ref must never become a git option ────────────────
+
+_OPTION_REFS = ["--output={target}", "-o{target}", "--no-index", " --output={target}"]
+
+
+def _head(repo: Path) -> str:
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+@pytest.mark.parametrize("template", _OPTION_REFS)
+def test_review_diff_base_cannot_be_an_option(client, repo, tmp_path, template):
+    target = tmp_path / "pwned.txt"
+    resp = client.get(
+        "/api/git/review/diff",
+        params={
+            "path": str(repo),
+            "file": "a.txt",
+            "scope": "lastTurn",
+            "base": template.format(target=target),
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"diff": ""}
+    assert not target.exists()
+
+
+@pytest.mark.parametrize("template", _OPTION_REFS)
+def test_review_list_base_cannot_be_an_option(client, repo, tmp_path, template):
+    target = tmp_path / "pwned.txt"
+    resp = client.get(
+        "/api/git/review/list",
+        params={"path": str(repo), "scope": "lastTurn", "base": template.format(target=target)},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"files": [], "base": None}
+    assert not target.exists()
+
+
+def test_last_turn_review_still_works_with_a_real_base(client, repo):
+    sha = _head(repo)
+    listed = client.get(
+        "/api/git/review/list", params={"path": str(repo), "scope": "lastTurn", "base": sha}
+    ).json()
+    assert listed["base"] == sha
+    assert {f["path"] for f in listed["files"]} == {"a.txt", "new.py"}
+    by_name = client.get(
+        "/api/git/review/list", params={"path": str(repo), "scope": "lastTurn", "base": "HEAD"}
+    ).json()
+    assert by_name["base"] == sha
+    diff = client.get(
+        "/api/git/review/diff",
+        params={"path": str(repo), "file": "a.txt", "scope": "lastTurn", "base": "HEAD"},
+    ).json()["diff"]
+    assert "+three" in diff
+
+
+def test_rev_parse_refuses_options_and_resolves_refs(client, repo, tmp_path):
+    target = tmp_path / "pwned.txt"
+    bad = client.get(
+        "/api/git/review/rev-parse", params={"path": str(repo), "ref": f"--output={target}"}
+    ).json()
+    assert bad == {"sha": None}
+    assert client.get("/api/git/review/rev-parse", params={"path": str(repo)}).json() == {
+        "sha": _head(repo)
+    }
+    assert client.get(
+        "/api/git/review/rev-parse", params={"path": str(repo), "ref": "no-such-ref"}
+    ).json() == {"sha": None}
+
+
+def test_worktree_add_base_cannot_be_an_option(client, repo):
+    resp = client.post(
+        "/api/git/worktree/add",
+        json={"path": str(repo), "branch": "feature/x", "base": "--detach"},
+    )
+    assert resp.status_code == 400
+    ok = client.post(
+        "/api/git/worktree/add",
+        json={"path": str(repo), "branch": "feature/y", "base": "HEAD"},
+    ).json()
+    assert ok["branch"] == "feature/y"
+    assert Path(ok["path"]).is_dir()
