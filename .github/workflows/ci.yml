@@ -12,8 +12,9 @@ name: CI
 
 on:
   pull_request:
+    branches: [main, develop]
   push:
-    branches: [main]
+    branches: [main, develop]
 
 permissions:
   contents: read
@@ -91,7 +92,8 @@ jobs:
   contributor-check:
     name: Check contributors
     needs: detect
-    if: needs.detect.outputs.python == 'true'
+    # Upstream-only: checks authors against scripts/release.py AUTHOR_MAP.
+    if: github.repository == 'NousResearch/hermes-agent' && needs.detect.outputs.python == 'true'
     uses: ./.github/workflows/contributor-check.yml
 
   uv-lockfile:

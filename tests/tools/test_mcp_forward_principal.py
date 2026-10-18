@@ -9,7 +9,15 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from tools.mcp_tool import PRINCIPAL_META_KEY, MCPServerTask, _make_tool_handler, _servers
+import pytest
+
+from tools.mcp_tool import (
+    PRINCIPAL_META_KEY,
+    MCPServerTask,
+    _forward_principal_setting,
+    _make_tool_handler,
+    _servers,
+)
 
 
 def _run_direct(coro_or_factory, timeout=30):
@@ -59,5 +67,34 @@ def test_no_principal_means_no_meta():
     call_tool.assert_called_once_with("app_state", arguments={})
 
 
-def test_off_by_default():
+def test_off_before_config_is_read():
     assert MCPServerTask("app").forward_principal is False
+
+
+@pytest.mark.parametrize(
+    "name, config",
+    [
+        # The live box's entry predates forward_principal: it must keep working.
+        ("app", {"url": "http://127.0.0.1:9220/mcp", "timeout": 3600}),
+        ("aquarium-ui", {"url": "http://localhost:9220/mcp/"}),
+    ],
+)
+def test_on_by_default_for_app_mcp(name, config):
+    assert _forward_principal_setting(name, config) is True
+
+
+@pytest.mark.parametrize(
+    "name, config",
+    [
+        ("github", {"url": "https://api.githubcopilot.com/mcp/"}),
+        ("other", {"url": "http://127.0.0.1:9999/mcp"}),
+        ("fs", {"command": "npx", "args": ["@modelcontextprotocol/server-filesystem"]}),
+    ],
+)
+def test_off_by_default_for_other_servers(name, config):
+    assert _forward_principal_setting(name, config) is False
+
+
+def test_explicit_setting_wins():
+    assert _forward_principal_setting("app", {"forward_principal": False}) is False
+    assert _forward_principal_setting("other", {"forward_principal": "true"}) is True

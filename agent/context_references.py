@@ -9,7 +9,7 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Awaitable, Callable
+from typing import AbstractSet, Awaitable, Callable
 
 from agent.model_metadata import estimate_tokens_rough
 from hermes_cli._subprocess_compat import IS_WINDOWS, windows_hide_flags
@@ -21,6 +21,10 @@ REFERENCE_PATTERN = re.compile(
 TRAILING_PUNCTUATION = ",.;!?"
 _SENSITIVE_HOME_DIRS = (".ssh", ".aws", ".gnupg", ".kube", ".docker", ".azure", ".config/gh")
 _SENSITIVE_HERMES_DIRS = (Path("skills") / ".hub",)
+# Hermes' own state (settings, chat history, memories, logs, other profiles).
+# Refused when expanding references written in remote chat messages.
+_HERMES_STATE_NAMES = ("config.yaml", "memories", "sessions", "logs", "profiles")
+_HERMES_STATE_PREFIXES = ("state.db",)
 _SENSITIVE_HOME_FILES = (
     Path(".ssh") / "authorized_keys",
     Path(".ssh") / "id_rsa",
@@ -110,6 +114,8 @@ def preprocess_context_references(
     context_length: int,
     url_fetcher: Callable[[str], str | Awaitable[str]] | None = None,
     allowed_root: str | Path | None = None,
+    allowed_kinds: AbstractSet[str] | None = None,
+    protect_hermes_state: bool = False,
 ) -> ContextReferenceResult:
     coro = preprocess_context_references_async(
         message,
@@ -117,6 +123,8 @@ def preprocess_context_references(
         context_length=context_length,
         url_fetcher=url_fetcher,
         allowed_root=allowed_root,
+        allowed_kinds=allowed_kinds,
+        protect_hermes_state=protect_hermes_state,
     )
     # Safe for both CLI (no loop) and gateway (loop already running).
     try:
@@ -137,9 +145,35 @@ async def preprocess_context_references_async(
     context_length: int,
     url_fetcher: Callable[[str], str | Awaitable[str]] | None = None,
     allowed_root: str | Path | None = None,
+    allowed_kinds: AbstractSet[str] | None = None,
+    protect_hermes_state: bool = False,
 ) -> ContextReferenceResult:
+    """Expand ``@`` references in *message*.
+
+    *allowed_kinds* limits which reference kinds (``file``, ``folder``,
+    ``diff``, ``staged``, ``git``, ``url``) are expanded; others stay in the
+    text untouched with a warning. *protect_hermes_state* also refuses
+    Hermes' own settings, chat history, memories, logs and profiles.
+    """
     refs = parse_context_references(message)
+    warnings: list[str] = []
+    if allowed_kinds is not None:
+        kept = [ref for ref in refs if ref.kind in allowed_kinds]
+        warnings.extend(
+            f"{ref.raw}: not available here, so it was not attached"
+            for ref in refs
+            if ref.kind not in allowed_kinds
+        )
+        refs = kept
     if not refs:
+        if warnings:
+            final = f"{message}\n\n--- Context Warnings ---\n" + "\n".join(f"- {w}" for w in warnings)
+            return ContextReferenceResult(
+                message=final.strip(),
+                original_message=message,
+                warnings=warnings,
+                expanded=True,
+            )
         return ContextReferenceResult(message=message, original_message=message)
 
     cwd_path = Path(cwd).expanduser().resolve()
@@ -148,7 +182,6 @@ async def preprocess_context_references_async(
     allowed_root_path = (
         Path(allowed_root).expanduser().resolve() if allowed_root is not None else cwd_path
     )
-    warnings: list[str] = []
     blocks: list[str] = []
     injected_tokens = 0
 
@@ -165,6 +198,7 @@ async def preprocess_context_references_async(
                 cwd_path,
                 url_fetcher=url_fetcher,
                 allowed_root=allowed_root_path,
+                protect_hermes_state=protect_hermes_state,
             )
             for ref in refs
         )
@@ -221,12 +255,17 @@ async def _expand_reference(
     *,
     url_fetcher: Callable[[str], str | Awaitable[str]] | None = None,
     allowed_root: Path | None = None,
+    protect_hermes_state: bool = False,
 ) -> tuple[str | None, str | None]:
     try:
         if ref.kind == "file":
-            return _expand_file_reference(ref, cwd, allowed_root=allowed_root)
+            return _expand_file_reference(
+                ref, cwd, allowed_root=allowed_root, protect_hermes_state=protect_hermes_state
+            )
         if ref.kind == "folder":
-            return _expand_folder_reference(ref, cwd, allowed_root=allowed_root)
+            return _expand_folder_reference(
+                ref, cwd, allowed_root=allowed_root, protect_hermes_state=protect_hermes_state
+            )
         if ref.kind == "diff":
             return _expand_git_reference(ref, cwd, ["diff"], "git diff")
         if ref.kind == "staged":
@@ -250,9 +289,10 @@ def _expand_file_reference(
     cwd: Path,
     *,
     allowed_root: Path | None = None,
+    protect_hermes_state: bool = False,
 ) -> tuple[str | None, str | None]:
     path = _resolve_path(cwd, ref.target, allowed_root=allowed_root)
-    _ensure_reference_path_allowed(path)
+    _ensure_reference_path_allowed(path, protect_hermes_state=protect_hermes_state)
     if not path.exists():
         return f"{ref.raw}: file not found", None
     if not path.is_file():
@@ -284,9 +324,10 @@ def _expand_folder_reference(
     cwd: Path,
     *,
     allowed_root: Path | None = None,
+    protect_hermes_state: bool = False,
 ) -> tuple[str | None, str | None]:
     path = _resolve_path(cwd, ref.target, allowed_root=allowed_root)
-    _ensure_reference_path_allowed(path)
+    _ensure_reference_path_allowed(path, protect_hermes_state=protect_hermes_state)
     if not path.exists():
         return f"{ref.raw}: folder not found", None
     if not path.is_dir():
@@ -361,10 +402,39 @@ def _resolve_path(cwd: Path, target: str, *, allowed_root: Path | None = None) -
     return resolved
 
 
-def _ensure_reference_path_allowed(path: Path) -> None:
+def _hermes_state_roots(home: Path, hermes_home: Path) -> list[Path]:
+    from hermes_constants import get_default_hermes_root
+
+    roots = [hermes_home, home / ".hermes"]
+    try:
+        roots.append(get_default_hermes_root().resolve())
+    except Exception:
+        pass
+    return list(dict.fromkeys(roots))
+
+
+def _is_hermes_state_path(path: Path, roots: list[Path]) -> bool:
+    # The first root that contains *path* decides, so files inside the active
+    # profile (e.g. its workspaces/) aren't refused as "<root>/profiles/...".
+    for root in roots:
+        try:
+            rel = path.relative_to(root)
+        except ValueError:
+            continue
+        if not rel.parts:
+            return False
+        first = rel.parts[0]
+        return first in _HERMES_STATE_NAMES or first.startswith(_HERMES_STATE_PREFIXES)
+    return False
+
+
+def _ensure_reference_path_allowed(path: Path, *, protect_hermes_state: bool = False) -> None:
     from hermes_constants import get_hermes_home
     home = Path(os.path.expanduser("~")).resolve()
     hermes_home = get_hermes_home().resolve()
+
+    if protect_hermes_state and _is_hermes_state_path(path, _hermes_state_roots(home, hermes_home)):
+        raise ValueError("path is internal Hermes data and cannot be attached")
 
     blocked_exact = {home / rel for rel in _SENSITIVE_HOME_FILES}
     blocked_exact.add(hermes_home / ".env")
