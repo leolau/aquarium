@@ -58,7 +58,7 @@ def test_vision_base_url_override_keeps_explicit_provider():
         provider, client, model = resolve_vision_provider_client()
 
     assert provider == "zai"
-    assert client is fake_client
+    assert getattr(client, "_client", client) is fake_client
     assert model == "glm-4v"
     assert mock_resolve.call_args.args[0] == "zai"
     assert mock_resolve.call_args.kwargs["explicit_base_url"] == "https://open.bigmodel.cn/api/paas/v4"
