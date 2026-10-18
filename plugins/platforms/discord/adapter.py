@@ -6454,6 +6454,11 @@ def _define_discord_view_classes() -> None:
                 )
                 return
 
+            from tools.approval import can_resolve_gateway_approval
+            if not can_resolve_gateway_approval(self.session_key, str(interaction.user.id)):
+                await interaction.response.send_message("⛔ Only the person who asked for this command (or an owner/admin, with /approve) can answer it.", ephemeral=True)
+                return
+
             self.resolved = True
 
             # Update the embed with the decision
@@ -6471,7 +6476,9 @@ def _define_discord_view_classes() -> None:
             # Unblock the waiting agent thread via the gateway approval queue
             try:
                 from tools.approval import resolve_gateway_approval
-                count = resolve_gateway_approval(self.session_key, choice)
+                count = resolve_gateway_approval(
+                    self.session_key, choice, approver_id=str(interaction.user.id),
+                )
                 logger.info(
                     "Discord button resolved %d approval(s) for session %s (choice=%s, user=%s)",
                     count, self.session_key, choice, interaction.user.display_name,
