@@ -152,24 +152,18 @@ Either way, success ends with `deploy OK (<sha>)` and all services `active`; ver
 independently with the §5.7 health check.
 
 #### Root-owned checkout (security review F13/F15)
-The deploy runs as root, so it refuses (`ABORT: … is not root-owned`) a
-checkout the hermes user can edit: hermes may own only
-`agent-home/.next/cache`, `agent-home/agent-home.env`, `app-mcp/app-mcp.env`.
-It runs git with hooks/fsmonitor disabled, `python -I`, `npm ci
---ignore-scripts` (then `npm rebuild` of the reviewed native packages in
-`NPM_REBUILD`), refuses a project `.npmrc`, and runs the handover check as
-hermes. Root timers (`hermes-secret-backup`, reviewed copy in `deploy/`) run
-`python -I` from this root-owned tree. One-time move from the old hermes-owned
-layout (backup first, rollback restores the saved owners):
-```bash
-B=/opt/data/backups/root-owned-$(date +%F); mkdir -p $B
-find /opt/data/hermes-agent -xdev -printf '%u:%g %m %p\n' > $B/owners.txt
-cd /opt/data/hermes-agent && git status --porcelain --ignored | grep -v node_modules > $B/untracked.txt   # review before step 3
-chown -R root:root /opt/data/hermes-agent && chmod -R go-w /opt/data/hermes-agent
-install -d -o hermes -g hermes agent-home/.next/cache
-chown hermes:hermes agent-home/agent-home.env app-mcp/app-mcp.env
-# rollback: while read -r og m p; do chown -h "$og" "$p"; chmod "$m" "$p" 2>/dev/null; done < $B/owners.txt
-```
+The deploy runs as root, so it only runs code root owns. On its first run
+against a hermes-owned checkout it makes the checkout root-owned and not
+group/world-writable by itself. It saves every old owner/mode first to
+`/opt/data/backups/root-owned-checkout-<time>/owners.txt` and prints the undo
+(`bash …/rollback.sh`). These stay hermes's: `agent-home/.next/cache`, and env
+files (`.env`, `.env.*`, `*.env`). It also runs git with hooks/fsmonitor off,
+`python -I`, and `npm ci --ignore-scripts` (then `npm rebuild` of the reviewed
+native packages in `NPM_REBUILD`), and it warns about an untracked `.npmrc`.
+Root timers (`hermes-secret-backup`, reviewed copy in `deploy/`) run `python -I`
+from this root-owned tree. Services running as hermes only read the checkout.
+If something must write there, make that one path hermes-writable rather than
+undoing everything.
 
 ### 5.2 Dashboard update
 ```bash

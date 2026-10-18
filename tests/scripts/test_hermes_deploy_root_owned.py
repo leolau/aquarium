@@ -7,6 +7,7 @@ are contracts on the script text."""
 from __future__ import annotations
 
 import getpass
+import grp
 import json
 import os
 import re
@@ -26,13 +27,18 @@ def _block(start: str, end: str) -> str:
     return match.group(0)
 
 
-def _gate(repo: Path) -> subprocess.CompletedProcess[str]:
-    # "root" stands in for the test user: the gate's question is "owned by the
+def _gate(repo: Path, backups: Path) -> subprocess.CompletedProcess[str]:
+    # The test user stands in for root: the gate's question is "owned by the
     # deploying user and not group/world-writable".
-    block = _block(r"HERMES_WRITABLE=\(", "fi").replace("-user root", f"-user {getpass.getuser()}")
+    me = f"{getpass.getuser()}:{grp.getgrgid(os.getgid()).gr_name}"
+    block = (
+        _block(r"HERMES_WRITABLE=\(", "fi")
+        .replace("-user root", f"-user {getpass.getuser()}")
+        .replace("chown root:root", f"chown {me}")
+    )
     return subprocess.run(
         ["bash", "-c", f"set -euo pipefail\nREPO={repo}\n{block}\necho GATE-OK"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, env={**os.environ, "DEPLOY_BACKUP_ROOT": str(backups)},
     )
 
 
@@ -47,26 +53,46 @@ def tree(tmp_path: Path) -> Path:
     return repo
 
 
-def test_root_owned_tree_passes(tree: Path) -> None:
-    result = _gate(tree)
+def _mode(path: Path) -> int:
+    return path.stat().st_mode & 0o777
+
+
+def test_root_owned_tree_is_left_alone(tree: Path, tmp_path: Path) -> None:
+    result = _gate(tree, tmp_path / "backups")
     assert "GATE-OK" in result.stdout, result.stderr
+    assert not (tmp_path / "backups").exists()
 
 
 @pytest.mark.parametrize("rel", ["scripts/deploy_state.py", ".git/hooks", "scripts"])
-def test_hermes_writable_code_aborts_the_deploy(tree: Path, rel: str) -> None:
-    (tree / rel).chmod(0o775 if (tree / rel).is_dir() else 0o664)
-    result = _gate(tree)
-    assert result.returncode == 1
-    assert "GATE-OK" not in result.stdout
-    assert f"{tree / rel} is not root-owned" in result.stderr
+def test_hermes_writable_checkout_is_made_root_owned_with_rollback(
+    tree: Path, tmp_path: Path, rel: str,
+) -> None:
+    """The existing box's checkout is all hermes-owned: the deploy must fix
+    that itself (no manual step) and leave an exact undo."""
+    before = 0o775 if (tree / rel).is_dir() else 0o664
+    (tree / rel).chmod(before)
+    result = _gate(tree, tmp_path / "backups")
+    assert "GATE-OK" in result.stdout, result.stderr
+    assert "now root-owned" in result.stdout
+    assert _mode(tree / rel) == before & ~0o022
+    (migrated,) = (tmp_path / "backups").iterdir()
+    assert f"{before:o} {tree / rel}\n" in (migrated / "owners.txt").read_text()
+
+    subprocess.run(["bash", str(migrated / "rollback.sh")], check=True)
+    assert _mode(tree / rel) == before
 
 
-def test_runtime_cache_and_env_files_may_belong_to_hermes(tree: Path) -> None:
+def test_runtime_cache_and_env_files_keep_their_owner(tree: Path, tmp_path: Path) -> None:
     (tree / "agent-home/.next/cache").chmod(0o777)
     (tree / "agent-home/.next/cache/x").chmod(0o666)
-    (tree / "agent-home/agent-home.env").write_text("K=v\n")
-    (tree / "agent-home/agent-home.env").chmod(0o664)
-    assert "GATE-OK" in _gate(tree).stdout
+    for env in ("agent-home/agent-home.env", ".env", "custom/local.env"):
+        (tree / env).parent.mkdir(exist_ok=True)
+        (tree / env).write_text("K=v\n")
+        (tree / env).chmod(0o660)
+    assert "GATE-OK" in _gate(tree, tmp_path / "backups").stdout
+    assert _mode(tree / "agent-home/.next/cache") == 0o777
+    for env in ("agent-home/agent-home.env", ".env", "custom/local.env"):
+        assert _mode(tree / env) == 0o660, env
 
 
 def _npm(tmp_path: Path, rc: str | None) -> tuple[subprocess.CompletedProcess[str], str]:
@@ -98,11 +124,11 @@ def test_npm_ci_runs_without_lifecycle_scripts(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("rc", [".npmrc", "web/.npmrc", "agent-home/.npmrc"])
-def test_project_npmrc_aborts(tmp_path: Path, rc: str) -> None:
+def test_untracked_project_npmrc_is_flagged(tmp_path: Path, rc: str) -> None:
     result, calls = _npm(tmp_path, rc)
-    assert result.returncode == 1
-    assert "refuses project npm config" in result.stderr
-    assert calls == ""
+    assert result.returncode == 0, result.stderr
+    assert f"untracked {tmp_path / 'work' / rc} is used by npm" in result.stderr
+    assert calls.startswith("npm ci --ignore-scripts")
 
 
 def test_every_runtime_install_script_is_reviewed() -> None:
@@ -132,10 +158,10 @@ def test_git_hooks_and_fsmonitor_are_disabled_before_any_git_call() -> None:
     assert wrapper < first_git
 
 
-def test_root_runs_python_isolated_and_handover_as_hermes() -> None:
+def test_root_runs_python_isolated() -> None:
     assert "./.venv/bin/python -I -m pip install" in TEXT
     assert "pip install -q -e ." not in TEXT.replace("-m pip install -q -e .", "")
-    assert "runuser -u hermes -- ./.venv/bin/python -I scripts/deploy_state.py handover" in TEXT
+    assert "./.venv/bin/python -I scripts/deploy_state.py handover" in TEXT
     code = "\n".join(line for line in TEXT.splitlines() if not line.lstrip().startswith("#"))
     assert not re.search(r"npm ci (?!--ignore-scripts)", code)
 

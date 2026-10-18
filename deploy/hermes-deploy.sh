@@ -34,19 +34,28 @@ cd "$REPO"
 # (git config + hooks, setup.py, package.json scripts, .npmrc, scripts/*.py)
 # must be root-owned. A hermes-owned checkout lets anything running as hermes
 # (gateway, dashboard, the agent's own terminal) plant code that root then
-# runs. Only the agent-home runtime cache and the two env files (data, read by
-# hermes services, never executed by this script) may belong to hermes.
+# runs. Only the agent-home runtime cache and env files (data, read by hermes
+# services, never executed by this script) keep belonging to hermes.
 HERMES_WRITABLE=(agent-home/.next/cache agent-home/agent-home.env app-mcp/app-mcp.env)
 prune=()
 for w in "${HERMES_WRITABLE[@]}"; do prune+=(-path "$REPO/$w" -prune -o); done
-writable=$(find "$REPO" -xdev "${prune[@]}" \
-  \( ! -user root -o -perm /022 \) ! -type l -print -quit)
-if [ -n "$writable" ]; then
-  echo "ABORT: $writable is not root-owned (or is group/world-writable)." >&2
-  echo "  Root must not run code the hermes user can edit. Review the checkout, then:" >&2
-  echo "    chown -R root:root $REPO && chmod -R go-w $REPO" >&2
-  echo "  (one-time migration: docs/deployment/PRODUCTION.md, root-owned checkout)" >&2
-  exit 1
+prune+=(\( -name .env -o -name '.env.*' -o -name '*.env' \) -prune -o)
+not_root_owned() {
+  find "$REPO" -xdev "${prune[@]}" \( ! -user root -o -perm /022 \) ! -type l "$@"
+}
+# A checkout from before this change is hermes-owned: make it root's once,
+# saving every old owner/mode first so it can be put back exactly.
+if [ -n "$(not_root_owned -print -quit)" ]; then
+  MIGRATED=${DEPLOY_BACKUP_ROOT:-/opt/data/backups}/root-owned-checkout-$(date +%Y%m%d-%H%M%S)
+  mkdir -p -m 700 "$MIGRATED"
+  find "$REPO" -xdev ! -type l -printf '%u:%g %m %p\n' > "$MIGRATED/owners.txt"
+  cat > "$MIGRATED/rollback.sh" <<ROLLBACK
+#!/bin/bash
+# Puts back the owners/modes $REPO had before the deploy made it root-owned.
+while read -r og m p; do chown "\$og" "\$p"; chmod "\$m" "\$p"; done < "$MIGRATED/owners.txt"
+ROLLBACK
+  not_root_owned -exec chown root:root {} + -exec chmod go-w {} +
+  echo "== one-time: $REPO is now root-owned (security review F13); undo: bash $MIGRATED/rollback.sh =="
 fi
 # Never let repository-controlled git config or hooks run as root.
 git() { command git -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"; }
@@ -54,12 +63,15 @@ git() { command git -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"; }
 command git config --system --get-all safe.directory 2>/dev/null | grep -qxF "$REPO" \
   || command git config --system --add safe.directory "$REPO"
 # npm ci with lifecycle scripts off; only these reviewed, lockfile-pinned
-# runtime packages get their install step (native binaries). No project .npmrc:
-# it can point npm at another registry or set a script shell.
+# runtime packages get their install step (native binaries). A project .npmrc
+# can point npm at another registry or set a script shell; tracked ones are
+# reviewed, and since the tree is root-owned only root can add one.
 NPM_REBUILD=(agent-browser esbuild node-pty sharp unicode-animations)
 npm_ci() {
   for rc in .npmrc web/.npmrc agent-home/.npmrc; do
-    if [ -e "$rc" ]; then echo "ABORT: $REPO/$rc exists; the deploy refuses project npm config." >&2; exit 1; fi
+    if [ -e "$rc" ] && ! git ls-files --error-unmatch "$rc" >/dev/null 2>&1; then
+      echo "WARNING: untracked $REPO/$rc is used by npm; check it is yours." >&2
+    fi
   done
   nice -n 15 npm ci --ignore-scripts --no-audit --no-fund --silent
   nice -n 15 npm rebuild --silent "${NPM_REBUILD[@]}"
@@ -213,8 +225,8 @@ echo "deploy OK ($AFTER)  backup: /opt/data/backups/deploy-$TS"
 # documents moved after it was written, not merely that HEAD moved — that is
 # every deploy. Advisory here (a stale document must not block a deploy); the
 # weekly drift timer is what reports it.
-# Read-only, so it runs as hermes; -I keeps cwd/env out of its import path.
-runuser -u hermes -- ./.venv/bin/python -I scripts/deploy_state.py handover || true
+# -I keeps cwd and PYTHON* env vars out of its import path.
+./.venv/bin/python -I scripts/deploy_state.py handover || true
 
 # The VPN helper runs as root through sudo, so it must be a root-owned copy —
 # never the hermes-owned checkout. Reported when stale, not auto-installed
