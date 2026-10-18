@@ -2766,6 +2766,16 @@ class GatewaySlashCommandsMixin:
         # Apply approved writes against a fresh on-disk store (the gateway has
         # no long-lived agent; the store persists to the same MEMORY/USER.md).
         # load_on_disk_store() honors the user's configured char limits.
+        if len(args) >= 2 and args[0] == "approval" and args[1] in {"off", "disable", "false"}:
+            from gateway.command_authority import (
+                resolve_sender_authority,
+                safety_denied_message,
+            )
+
+            authority = await resolve_sender_authority(self, event.source)
+            if not authority.may_change_safety:
+                return safety_denied_message("Turning off memory-write approval")
+
         store = load_on_disk_store()
 
         out = handle_pending_subcommand(
@@ -2906,6 +2916,14 @@ class GatewaySlashCommandsMixin:
             disable_session_yolo(session_key)
             return EphemeralReply(t("gateway.yolo.disabled"))
         else:
+            from gateway.command_authority import (
+                resolve_sender_authority,
+                safety_denied_message,
+            )
+
+            authority = await resolve_sender_authority(self, event.source)
+            if not authority.may_change_safety:
+                return EphemeralReply(safety_denied_message("Turning on /yolo"))
             enable_session_yolo(session_key)
             return EphemeralReply(t("gateway.yolo.enabled"))
 
@@ -4269,9 +4287,25 @@ class GatewaySlashCommandsMixin:
         else:
             choice = "once"
 
-        count = resolve_gateway_approval(session_key, choice, resolve_all=resolve_all)
+        from gateway.command_authority import (
+            approval_refusal,
+            resolve_sender_authority,
+        )
+
+        authority = await resolve_sender_authority(self, source)
+        refusal = approval_refusal(self, source, authority, choice=choice)
+        if refusal:
+            return refusal
+        count = resolve_gateway_approval(
+            session_key, choice, resolve_all=resolve_all,
+            approver_id=source.user_id or "",
+            approver_user_id=authority.internal_user_id,
+            approver_is_admin=authority.is_admin,
+        )
         if not count:
-            return t("gateway.approve.no_pending")
+            if not has_blocking_approval(session_key):
+                return t("gateway.approve.no_pending")
+            return approval_refusal(self, source, authority, choice=choice, none_owned=True)
 
         # Resume typing indicator — agent is about to continue processing.
         _adapter = self.adapters.get(source.platform)
@@ -4306,9 +4340,22 @@ class GatewaySlashCommandsMixin:
         args = event.get_command_args().strip().lower()
         resolve_all = "all" in args
 
-        count = resolve_gateway_approval(session_key, "deny", resolve_all=resolve_all)
+        from gateway.command_authority import (
+            approval_refusal,
+            resolve_sender_authority,
+        )
+
+        authority = await resolve_sender_authority(self, source)
+        count = resolve_gateway_approval(
+            session_key, "deny", resolve_all=resolve_all,
+            approver_id=source.user_id or "",
+            approver_user_id=authority.internal_user_id,
+            approver_is_admin=authority.is_admin,
+        )
         if not count:
-            return t("gateway.deny.no_pending")
+            if not has_blocking_approval(session_key):
+                return t("gateway.deny.no_pending")
+            return approval_refusal(self, source, authority, choice="deny", none_owned=True)
 
         # Resume typing indicator — agent continues (with BLOCKED result).
         _adapter = self.adapters.get(source.platform)

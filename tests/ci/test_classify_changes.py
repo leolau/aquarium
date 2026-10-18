@@ -50,6 +50,7 @@ CASES = {
     "uv.lock → python": (["uv.lock"], _lanes(python=True)),
     "ts package → frontend": (["apps/desktop/src/app.tsx"], _lanes(frontend=True)),
     "ui-tui → frontend": (["ui-tui/src/entry.ts"], _lanes(frontend=True)),
+    "agent-home → frontend": (["agent-home/src/app/page.tsx"], _lanes(frontend=True)),
     # Lockfile bump shifts every TS package's tree, but not the Python suite.
     "root lockfile → frontend, not python": (["package-lock.json"], _lanes(frontend=True)),
     "website → site": (["website/docs/intro.md"], _lanes(site=True)),
