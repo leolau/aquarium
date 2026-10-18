@@ -41,6 +41,7 @@ import { Card, CardContent } from "@nous-research/ui/ui/components/card";
 import { Input } from "@nous-research/ui/ui/components/input";
 import { Label } from "@nous-research/ui/ui/components/label";
 import { useI18n } from "@/i18n";
+import { useIsAdmin } from "@/contexts/useAdminRole";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { PluginSlot } from "@/plugins";
 import { Segmented } from "@nous-research/ui/ui/components/segmented";
@@ -509,6 +510,7 @@ const STATUS_TONE: Record<string, "success" | "warning" | "destructive"> = {
 };
 
 export default function CronPage() {
+  const isAdmin = useIsAdmin();
   const [jobs, setJobs] = useState<CronJob[]>([]);
   const [profiles, setProfiles] = useState<ProfileInfo[]>([]);
   const [selectedProfile, setSelectedProfile] = useState("all");
@@ -744,6 +746,7 @@ export default function CronPage() {
 
   // Put "Create" button in page header
   useLayoutEffect(() => {
+    if (!isAdmin) return;
     setEnd(
       <Button
         className="uppercase"
@@ -759,7 +762,7 @@ export default function CronPage() {
     return () => {
       setEnd(null);
     };
-  }, [setEnd, t.common.create, loading, selectedProfile]);
+  }, [setEnd, t.common.create, loading, selectedProfile, isAdmin]);
 
   if (loading) {
     return (
@@ -1063,6 +1066,7 @@ export default function CronPage() {
                   )}
                 </div>
 
+                {isAdmin && (
                 <div className="flex items-center gap-1 shrink-0">
                   <Button
                     ghost
@@ -1110,6 +1114,7 @@ export default function CronPage() {
                     <Trash2 />
                   </Button>
                 </div>
+                )}
               </CardContent>
             </Card>
           );

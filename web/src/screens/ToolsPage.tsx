@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from "@nous-research/ui/ui/components/dialog";
 import { useToast } from "@nous-research/ui/hooks/use-toast";
+import { useIsAdmin } from "@/contexts/useAdminRole";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { api } from "@/lib/api";
 import type { Tool, ToolChange, ToolHealth, ToolMode } from "@/lib/api";
@@ -31,6 +32,7 @@ const KIND_TONE: Record<string, "success" | "warning" | "secondary"> = {
 };
 
 export default function ToolsPage() {
+  const isAdmin = useIsAdmin();
   const [mode, setMode] = useState<ToolMode>("dev");
   const [tools, setTools] = useState<Tool[]>([]);
   const [changes, setChanges] = useState<ToolChange[]>([]);
@@ -252,6 +254,8 @@ export default function ToolsPage() {
                     >
                       <Stethoscope className="h-4 w-4" /> Health
                     </Button>
+                    {isAdmin && (
+                    <>
                     <Button
                       ghost
                       size="sm"
@@ -277,6 +281,8 @@ export default function ToolsPage() {
                         <Rocket className="h-4 w-4" /> Promote
                       </Button>
                     ) : null}
+                    </>
+                    )}
                   </div>
                 </div>
                 {tool.mcp_endpoint_ref ? (

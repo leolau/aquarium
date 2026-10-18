@@ -42,6 +42,7 @@ import {
 } from "@nous-research/ui/ui/components/select";
 import { Checkbox } from "@nous-research/ui/ui/components/checkbox";
 import { useI18n } from "@/i18n";
+import { useIsAdmin } from "@/contexts/useAdminRole";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { cn, themedBody } from "@/lib/utils";
 
@@ -253,6 +254,7 @@ function ProfileActionsMenu({
 }
 
 export default function ProfilesPage() {
+  const isAdmin = useIsAdmin();
   const navigate = useNavigate();
   const [profiles, setProfiles] = useState<ProfileInfo[]>([]);
   const [activeInfo, setActiveInfo] = useState<ActiveProfileInfo | null>(null);
@@ -747,6 +749,7 @@ export default function ProfilesPage() {
 
   // Put "Build" (full builder) + "Create" (quick modal) buttons in header
   useLayoutEffect(() => {
+    if (!isAdmin) return;
     setEnd(
       <div className="flex items-center gap-2">
         <Button
@@ -769,7 +772,7 @@ export default function ProfilesPage() {
     return () => {
       setEnd(null);
     };
-  }, [setEnd, t.common.create, loading, navigate]);
+  }, [setEnd, t.common.create, loading, navigate, isAdmin]);
 
   const cloning = cloneFrom !== null;
 
@@ -1124,6 +1127,7 @@ export default function ProfilesPage() {
                           )}
                         </div>
 
+                        {isAdmin && (
                         <ProfileActionsMenu
                           isActive={active}
                           isDefault={p.is_default}
@@ -1160,6 +1164,7 @@ export default function ProfilesPage() {
                           }}
                           onSetActive={() => handleSetActive(p.name)}
                         />
+                        )}
                       </div>
 
                       <div className="flex items-center gap-1.5 text-xs">
