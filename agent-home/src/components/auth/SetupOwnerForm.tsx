@@ -9,7 +9,7 @@ const MIN_PASSWORD_LENGTH = 12;
 
 export const SETUP_LINK_INVALID =
   "This setup link is not valid. It may have expired (links last 24 hours) or " +
-  "been used already. Ask whoever installed Aquarium to run `hermes setup-link` " +
+  "been used already. Ask whoever installed Aquarium to run \"hermes setup-link\" " +
   "on the server for a new one.";
 
 /** The one-time token from a `#token=…` fragment, or "" when there is none. */
@@ -64,6 +64,11 @@ export function SetupOwnerForm() {
         setPhase("form");
       })
       .catch(() => setPhase("invalid"));
+    // A link pasted into a tab already on /setup only changes the fragment, which
+    // does not reload the page; reload so the new token is read.
+    const onHashChange = () => window.location.reload();
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
   async function submit(evt: React.FormEvent) {
@@ -107,7 +112,14 @@ export function SetupOwnerForm() {
   if (phase === "invalid") {
     return (
       <div data-component="SetupInvalid" role="alert" className={card}>
-        <p>{SETUP_LINK_INVALID}</p>
+        <p>
+          This setup link is not valid. It may have expired (links last 24 hours) or
+          been used already.
+        </p>
+        <p className="mt-2 text-[var(--color-muted)]">
+          To get a new one, run <code className="font-mono">hermes setup-link</code> on
+          the server (as the Aquarium service account). A new link cancels the old one.
+        </p>
       </div>
     );
   }
