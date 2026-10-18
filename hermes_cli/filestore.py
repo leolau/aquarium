@@ -27,6 +27,12 @@ DEFAULT_BUCKET = "agent-home-media"
 DEFAULT_SIGNED_URL_TTL = 300
 
 
+def _terminal_hint() -> str:
+    from tools.terminal_db_credentials import hidden_hint
+
+    return hidden_hint()
+
+
 class StorageNotConfigured(RuntimeError):
     """Raised when the Storage credentials are absent.
 
@@ -63,7 +69,7 @@ class SupabaseStorage:
             raise StorageNotConfigured(
                 "Supabase Storage is not configured; set SUPABASE_URL and "
                 "SUPABASE_SERVICE_ROLE_KEY in .env (the same values "
-                "agent-home.env carries)."
+                "agent-home.env carries)." + _terminal_hint()
             )
         name = (
             bucket

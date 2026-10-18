@@ -209,6 +209,18 @@ fi
 # the hermes user put in the old cache is read by a root build.
 install -d -o hermes -g hermes "$REPO/agent-home/.next/cache"
 
+# F16: the agent's shell no longer sees DATABASE_URL / the Supabase service-role
+# key unless security.terminal_database_credentials is true. A profile set up
+# before that keeps `hermes promote` etc. working from chat: the first deploy
+# writes true once; an explicit value (installer's false, operator's choice) is
+# never touched again.
+for cfg in ${HERMES_HOME_GLOB:-/opt/data/hermes-home*/config.yaml}; do
+  [ -f "$cfg" ] || continue
+  runuser -u hermes -- env HERMES_HOME="$(dirname "$cfg")" \
+    ./.venv/bin/python -I scripts/keep_terminal_db_credentials.py \
+    || echo "WARNING: could not check security.terminal_database_credentials in $cfg" >&2
+done
+
 echo "== restarting services =="
 systemctl daemon-reload
 # agent-home runs as `hermes` and `next start` writes into .next, so it is
