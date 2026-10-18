@@ -12304,7 +12304,7 @@ _BUILTIN_SUBCOMMANDS = frozenset(
         "postinstall", "profile",
         "project", "projects", "promote", "proxy",
         "prompt-size",
-        "send", "sessions", "setup", "todos", "vpn",
+        "send", "sessions", "setup", "setup-link", "todos", "vpn",
         "skills", "slack", "status", "tool", "tools", "uninstall", "update",
         "version", "webhook", "whatsapp", "whatsapp-cloud", "chat", "secrets", "security",
         # Help-ish invocations — plugin commands not being listed in
