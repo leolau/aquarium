@@ -28,6 +28,8 @@ Step = Tuple[str, Callable[[Any], Awaitable[Any]]]
 _DSN_KEYS = ("HERMES_DB_ADMIN_URL", "DATABASE_URL")
 #: hermes_app's login password; with it migrate makes hermes_app a LOGIN role.
 APP_PASSWORD_KEY = "HERMES_APP_DB_PASSWORD"
+#: agent-home's read-only login (agent_home_app); with it migrate refreshes its grants.
+READ_PASSWORD_KEY = "HERMES_APP_READ_DB_PASSWORD"
 
 
 def parse_env(text: str) -> dict:
@@ -128,7 +130,7 @@ def _steps(store: Any, config: dict) -> List[Step]:
 
 
 async def migrate_store(
-    store: Any, config: dict, *, app_password: str = ""
+    store: Any, config: dict, *, app_password: str = "", read_password: str = ""
 ) -> List[Tuple[str, Optional[str]]]:
     """Run every setup step on ``store``; ``[(step, error or None)]``."""
     from hermes_cli import db_setup
@@ -162,13 +164,27 @@ async def migrate_store(
             results.append(("hermes_app grants", f"{type(error).__name__}: {error}"))
         else:
             results.append(("hermes_app grants", None))
+        if read_password:
+            from hermes_cli.access import ensure_read_role
+
+            try:
+                # SELECT on every row-ruled table, including ones made above.
+                await ensure_read_role(connection, store.schema, password=read_password)
+            except Exception as error:
+                results.append(("agent_home_app grants", f"{type(error).__name__}: {error}"))
+            else:
+                results.append(("agent_home_app grants", None))
     finally:
         await connection.close()
     return results
 
 
 def migrate(
-    admin_dsn: str = "", *, config: Optional[dict] = None, app_password: str = ""
+    admin_dsn: str = "",
+    *,
+    config: Optional[dict] = None,
+    app_password: str = "",
+    read_password: str = "",
 ) -> List[Tuple[str, str, Optional[str]]]:
     """Migrate the prod and dev schemas; ``[(mode, step, error or None)]``."""
     from hermes_cli.config import load_config_readonly
@@ -183,25 +199,30 @@ def migrate(
         if admin_dsn:
             store = dataclasses.replace(store, dsn=admin_dsn)
         for name, error in asyncio.run(
-            migrate_store(store, config, app_password=app_password)
+            migrate_store(
+                store, config, app_password=app_password,
+                read_password=read_password if mode == "prod" else "",
+            )
         ):
             rows.append((mode, name, error))
     return rows
 
 
 def db_migrate_command(args: argparse.Namespace) -> int:
-    admin_dsn = app_password = ""
+    admin_dsn = app_password = read_password = ""
     if getattr(args, "dsn_stdin", False):
         text = sys.stdin.read()
         admin_dsn = parse_dsn(text)
-        # Same file may carry hermes_app's login password (PR 3 writes it).
-        app_password = parse_env(text).get(APP_PASSWORD_KEY, "")
+        # The same file carries the two limited logins' passwords.
+        values = parse_env(text)
+        app_password = values.get(APP_PASSWORD_KEY, "")
+        read_password = values.get(READ_PASSWORD_KEY, "")
         if not admin_dsn:
             print("No database address on standard input "
                   "(expected HERMES_DB_ADMIN_URL=postgresql://...).", file=sys.stderr)
             return 1
     try:
-        rows = migrate(admin_dsn, app_password=app_password)
+        rows = migrate(admin_dsn, app_password=app_password, read_password=read_password)
     except (RuntimeError, ValueError, OSError) as error:
         print(f"Database migration failed: {error}", file=sys.stderr)
         return 1

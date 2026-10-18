@@ -138,6 +138,7 @@ JWT_SECRET=$(secret JWT_SECRET "$(rand 32)")
 SESSION_SECRET=$(secret AGENT_HOME_SESSION_SECRET "$(rand 32)")
 APP_MCP_SECRET=$(secret APP_MCP_TICKET_SECRET "$(rand 32)")
 READ_DB_PASSWORD=$(secret HERMES_APP_READ_DB_PASSWORD)
+APP_DB_PASSWORD=$(secret HERMES_APP_DB_PASSWORD)
 DASH_AUTH_SECRET=$(secret DASHBOARD_BASIC_AUTH_SECRET "$(rand 32)")
 TENANT=$(secret POOLER_TENANT_ID aquarium)
 jwt() {  # jwt ROLE: HS256 Supabase key, valid 10 years
@@ -266,13 +267,17 @@ for _ in $(seq 1 60); do
   sleep 5
 done
 [ "$db_ok" = 1 ] || die "cannot connect to Postgres through the Supabase pooler"
+# Services, the gateway and the agent's database commands log in as the limited hermes_app
+# role (no table changes, no Supabase auth/storage/vault, no other schemas). The postgres
+# address above is the schema owner's; it only goes into root's db-admin.env (step 6).
+APP_DATABASE_URL="postgresql://hermes_app.$TENANT:$APP_DB_PASSWORD@127.0.0.1:$DB_PORT/postgres"
 
 # ---------------------------------------------------------------- 5. Hermes home + config
 log "Agent home and config.yaml"
 install -d -o hermes -g hermes -m 750 "$HERMES_HOME_DIR" "$HERMES_HOME_DIR/workspaces"
 umask 077
 cat > "$APP_ENV" <<ENV
-DATABASE_URL=$DATABASE_URL
+DATABASE_URL=$APP_DATABASE_URL
 SUPABASE_URL=http://127.0.0.1:8000
 SUPABASE_SERVICE_ROLE_KEY=$SERVICE_KEY
 # Member logins: the dashboard "supabase" auth provider verifies GoTrue tokens with these.
@@ -332,12 +337,12 @@ cd "$APP"
 # gateway and app-mcp each run `CREATE EXTENSION IF NOT EXISTS vector` at the same moment,
 # and all but one fail with a duplicate-key error on pg_extension.
 install -d -m 700 /etc/aquarium
-( umask 077; printf 'HERMES_DB_ADMIN_URL=%s\n' "$DATABASE_URL" > /etc/aquarium/db-admin.env )
+( umask 077; printf 'HERMES_DB_ADMIN_URL=%s\nHERMES_APP_DB_PASSWORD=%s\nHERMES_APP_READ_DB_PASSWORD=%s\n' \
+    "$DATABASE_URL" "$APP_DB_PASSWORD" "$READ_DB_PASSWORD" > /etc/aquarium/db-admin.env )
 chown root:root /etc/aquarium/db-admin.env
 chmod 600 /etc/aquarium/db-admin.env
+# Also makes hermes_app and agent_home_app login roles with the passwords in that file.
 run_env "$APP/.venv/bin/python" -I -m hermes_cli.db_migrate --dsn-stdin < /etc/aquarium/db-admin.env
-sudo -u hermes -H HERMES_APP_READ_DB_PASSWORD="$READ_DB_PASSWORD" \
-  bash -c 'set -a; . "$0"; set +a; exec "$@"' "$APP_ENV" "$APP/.venv/bin/hermes" owner read-role
 # `owner show` exits 0 even when no owner is set, so test its output.
 hermes_db owner show 2>/dev/null | grep -q "^Owner:" || hermes_db owner init "$OWNER_ID" --display "$OWNER_ID"
 hermes_db owner alias "$OWNER_ID" >/dev/null 2>&1 || true
@@ -493,11 +498,10 @@ CADDY
   systemctl enable -q caddy && systemctl restart caddy
 fi
 
-# Services create their tables on first start; the read-only agent-home role only gets
-# SELECT on tables that exist, so grant again now and pick it up.
+# Re-run migrate once the services are up (idempotent): it re-grants the read-only
+# agent-home role on every row-ruled table, then agent-home restarts to pick it up.
 sleep 20
-sudo -u hermes -H HERMES_APP_READ_DB_PASSWORD="$READ_DB_PASSWORD" \
-  bash -c 'set -a; . "$0"; set +a; exec "$@"' "$APP_ENV" "$APP/.venv/bin/hermes" owner read-role >/dev/null
+run_env "$APP/.venv/bin/python" -I -m hermes_cli.db_migrate --dsn-stdin < /etc/aquarium/db-admin.env >/dev/null
 systemctl restart agent-home
 
 # ---------------------------------------------------------------- 11. health checks
