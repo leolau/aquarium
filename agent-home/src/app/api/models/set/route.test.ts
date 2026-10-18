@@ -47,6 +47,31 @@ describe("POST /api/models/set", () => {
     expect(res.status).toBe(401);
   });
 
+  it("returns 403 for a member and changes nothing", async () => {
+    getPrincipal.mockResolvedValue({
+      user_id: "mia",
+      display: "Mia",
+      role: "member",
+      channels: [],
+      is_owner: false,
+    });
+    const res = await post({ scope: "main", provider: "alibaba", model: "glm-5.2" });
+    expect(res.status).toBe(403);
+    expect(setModelAssignment).not.toHaveBeenCalled();
+  });
+
+  it("lets an admin change the model", async () => {
+    getPrincipal.mockResolvedValue({
+      user_id: "mia",
+      display: "Mia",
+      role: "admin",
+      channels: [],
+      is_owner: false,
+    });
+    const res = await post({ scope: "main", provider: "alibaba", model: "glm-5.2" });
+    expect(res.status).toBe(200);
+  });
+
   it("returns 400 on a missing/unknown scope", async () => {
     for (const body of [
       { provider: "alibaba", model: "glm-5.2" },

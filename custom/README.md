@@ -132,17 +132,18 @@ All custom HTTP servers bind `127.0.0.1` by default (security review F1):
 
 | Service | Port | Auth | Override bind |
 |---|---|---|---|
-| Email MCP (`email/email_mcp_server.py`) | 8651 | `Authorization: Bearer $EMAIL_MCP_TOKEN` on everything except `/health`; refuses all calls if unset | `EMAIL_MCP_HOST` |
+| Email MCP (`email/email_mcp_server.py`) | 8651 | `Authorization: Bearer $EMAIL_MCP_TOKEN` on everything except `/health` when set. Unset (boxes from before F1): only local JSON calls with no browser `Origin` and a loopback `Host` | `EMAIL_MCP_HOST` |
 | WhatsApp MCP (`whatsapp/mcp_server.py`) | 8650 | `Authorization: Bearer $WHATSAPP_MCP_TOKEN` (same rules) | `WHATSAPP_MCP_HOST` |
-| Telegram merge callback (`shared/telegram_callback_handler.py`) | 7902 | HMAC-signed `?exp=&sig=` links, 7-day expiry, key from `CALLBACK_SIGNING_SECRET` or `TELEGRAM_BOT_TOKEN` | `CALLBACK_BIND_HOST` |
+| Telegram merge callback (`shared/telegram_callback_handler.py`) | 7902 | HMAC-signed `?exp=&sig=` links, 7-day expiry, key from `CALLBACK_SIGNING_SECRET` or `TELEGRAM_BOT_TOKEN` | `CALLBACK_BIND_HOST` (default 127.0.0.1; 0.0.0.0 when `CALLBACK_SERVER_BASE` is a direct `http://<ip>:7902` link, so existing buttons keep working) |
 | WA batcher health | 7900 | none (status only) | `WA_BATCHER_HEALTH_HOST` |
 | Email poller health | 7901 | none (status only) | `EMAIL_HEALTH_HOST` |
 | Calendar poller health | 7903 | none (status only) | `CALENDAR_HEALTH_HOST` |
 
 No wildcard CORS header is sent, and tools run only from `POST /call` or
 `POST /jsonrpc` (`GET /call?tool=...` now answers 405, so a link or `<img>` can
-never run a tool). Register the MCP servers in Hermes `config.yaml`
-with the token header, e.g.
+never run a tool). To require a token, set it in the service's env and register
+the MCP servers in Hermes `config.yaml` with the token header (an existing
+`config.yaml` entry without `headers` keeps working while no token is set), e.g.
 
 ```yaml
 mcp_servers:

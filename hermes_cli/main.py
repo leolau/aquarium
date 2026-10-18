@@ -13141,6 +13141,10 @@ def main():
 
     register_owner_subparser(subparsers)
 
+    from hermes_cli.first_run import register_setup_link_subparser
+
+    register_setup_link_subparser(subparsers)
+
     # =========================================================================
     # member command — owner/admin management of additional members (C1)
     # =========================================================================

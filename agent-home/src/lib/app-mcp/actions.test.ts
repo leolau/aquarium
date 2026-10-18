@@ -211,3 +211,39 @@ describe("sensitive fields (F4)", () => {
     expect(res.detail).not.toContain("hunter2");
   });
 });
+
+describe("user-only controls (F17/F18)", () => {
+  it("snapshot flags controls inside a data-appmcp-deny region", () => {
+    document.body.innerHTML = `
+      <div data-appmcp-deny="consent"><button>Approve</button></div>
+      <label data-appmcp-deny="consent"><input type="checkbox" /> Trusted for import</label>
+      <button>Filter</button>`;
+    const snap = snapshotElements(document);
+    expect(snap.find((e) => e.name === "Approve")?.denied).toBe(true);
+    expect(snap.find((e) => e.name === "Trusted for import")?.denied).toBe(true);
+    expect(snap.find((e) => e.name === "Filter")?.denied).toBeUndefined();
+  });
+
+  it("refuses to click an approval button or toggle folder trust", () => {
+    document.body.innerHTML = `
+      <div data-appmcp-deny="consent"><button>Always approve</button></div>
+      <label data-appmcp-deny="consent"><input type="checkbox" /> Trusted for import</label>`;
+    const onApprove = vi.fn();
+    document.querySelector("button")!.addEventListener("click", onApprove);
+    const trust = document.querySelector("input")!;
+
+    const a = executeCommand({ type: "click", elementId: idOf("Always approve") });
+    const t = executeCommand({ type: "click", elementId: idOf("Trusted for import") });
+    const f = executeCommand({ type: "focus", elementId: idOf("Trusted for import") });
+    expect([a.ok, t.ok, f.ok]).toEqual([false, false, false]);
+    expect(a.detail).toContain("user-only");
+    expect(onApprove).not.toHaveBeenCalled();
+    expect(trust.checked).toBe(false);
+  });
+
+  it("still allows reading a user-only control", () => {
+    document.body.innerHTML = `<div data-appmcp-deny="consent"><button>Deny</button></div>`;
+    const res = executeCommand({ type: "read", elementId: idOf("Deny") });
+    expect(res.ok).toBe(true);
+  });
+});

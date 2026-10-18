@@ -51,6 +51,7 @@ export function ApprovalCard({ request, busy, onResolve }: ApprovalModalProps) {
             <button
               key={choice}
               type="button"
+              data-appmcp-deny="consent"
               disabled={busy}
               autoFocus={index === 0}
               onClick={() => onResolve(choice)}

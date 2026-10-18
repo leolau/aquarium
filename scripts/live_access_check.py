@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live check of per-user access on a running Hermes box (PRs #520, #521, #522).
+"""Release gate: live check of per-user access on a TEST install (PRs #520, #521, #522, #529).
 
 Creates throwaway users (admin, member, viewer; the owner's checks are opt-in),
 logs each one in through the real dashboard, checks what they can and can't do,
@@ -23,6 +23,20 @@ d. Chat identity (#521, ``--chat-turn``, on by default): one turn ("Reply with
    the stored session belongs to that user and the turn's interaction trace
    names them as the actor.
 
+e. Approvals: the agent's own clicks on Approve / Always approve / Allow /
+   "Trusted for import" are gated in app-mcp (security review F17/F18), and a
+   pending gateway command approval can't be resolved by another user (F22).
+f. Network folders: every VPN folder mounted under ``/opt/data/vpn-files`` is
+   mounted ``ro`` and each terminal user's ``touch`` into it fails (SKIP when
+   none is mounted).
+g. Secrets (F16): for each test user allowed ``terminal`` (admin, owner with
+   ``--include-owner``), one real ``terminal`` call lists the *names* of
+   environment variables, which of ``/etc/aquarium/*``, ``/opt/data/*.env`` and
+   ``agent-home.env`` are readable, and whether the gateway's
+   ``/proc/<pid>/environ`` is readable. FAIL on any secret-looking name
+   (``DATABASE_URL``, ``*SECRET*``, ``*PASSWORD*``, ``*_TOKEN``, ``*API_KEY*``
+   ...), any readable file or environ. Values are never read into the report.
+
 What it creates, all tagged ``zz-accesscheck-<unix ts>``:
 
 - per role: a GoTrue account ``zz-accesscheck-<ts>-<role>@example.invalid``
@@ -43,13 +57,18 @@ the test turns stay, as they do for any deleted user.
 
 It sends no WhatsApp or other channel message and changes no config.
 
-Production (``docs/deployment/PRODUCTION.md``: checkout ``/opt/data/hermes-agent``,
-dashboard on port 9119, ``HERMES_HOME=/opt/data/hermes-home-staging``), as the
-``hermes`` service user with the services' environment::
+TEST install only. It refuses to run (exit 2) when ``--base-url``, a public-URL
+env var or this machine's own name/IP is the production box
+(``home.leolau.ai-and-i.io`` / ``188.245.219.105``); ``--allow-production``
+overrides that for the old pre-gate use. On a TEST box laid out like
+production (checkout ``/opt/data/hermes-agent``, dashboard on port 9119), run
+it as the ``hermes`` service user with the services' environment, so check g
+sees what the agent sees::
 
     cd /opt/data/hermes-agent && sudo -u hermes -H bash -c 'set -a; . /opt/data/hermes-messaging.env; set +a; export HERMES_HOME=/opt/data/hermes-home-staging; .venv/bin/python scripts/live_access_check.py --base-url http://127.0.0.1:9119'
 
-Add ``--dry-run`` to print the plan and policy only, ``--no-chat-turn`` to skip
+Add ``--dry-run`` to print the plan and policy only, ``--skip eg`` to skip
+check groups (reported as SKIP), ``--no-chat-turn`` to skip
 the model calls, ``--include-owner`` for the owner's in-process checks, or
 ``--cleanup zz-accesscheck-<ts>`` / ``--cleanup all-zz-accesscheck`` to remove
 leftovers of an interrupted run.
@@ -65,6 +84,7 @@ import re
 import secrets
 import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -685,6 +705,240 @@ def check_chat_identity(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Release-gate checks (e-g) and the TEST-install guard
+# ---------------------------------------------------------------------------
+
+PRODUCTION_HOSTS = frozenset({"home.leolau.ai-and-i.io", "188.245.219.105"})
+APPROVAL_LABELS = ("Approve", "Approve for this chat", "Always approve", "Allow", "Trusted for import")
+SECRET_FILE_GLOBS = (
+    "/etc/aquarium/*",
+    "/etc/aquarium/*/*",
+    "/opt/data/*.env",
+    "/opt/data/hermes-agent/agent-home/agent-home.env",
+)
+_SECRET_NAME_RE = re.compile(
+    r"(^DATABASE_URL$|_DSN$|^PG(PASSWORD|PASS)$|SECRET|PASSWORD|PASSWD|PRIVATE_KEY|"
+    r"API_KEY|_TOKEN$|^SUPABASE_.*KEY|SERVICE_ROLE)",
+    re.IGNORECASE,
+)
+_PROBE_START = "__zz_gate_begin__"
+_PROBE_END = "__zz_gate_end__"
+
+
+def local_addresses() -> set:
+    """Hostnames and IPs of this machine (best effort, no network calls out)."""
+    import socket
+
+    names = {socket.gethostname(), socket.getfqdn()}
+    addrs = set(names)
+    for name in names:
+        try:
+            addrs.update(i[4][0] for i in socket.getaddrinfo(name, None))
+        except OSError:
+            pass
+    try:
+        out = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=5)
+        addrs.update(out.stdout.split())
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return {a.lower() for a in addrs if a}
+
+
+def production_markers(base_url: str, addrs=None) -> List[str]:
+    """Why this run looks like production (empty list = looks like a TEST install)."""
+    from urllib.parse import urlparse
+
+    found = []
+    host = (urlparse(base_url).hostname or "").lower()
+    if host in PRODUCTION_HOSTS:
+        found.append(f"--base-url host {host}")
+    for env in ("AGENT_HOME_PUBLIC_URL", "HERMES_PUBLIC_URL", "PUBLIC_URL"):
+        h = (urlparse(os.environ.get(env, "")).hostname or "").lower()
+        if h in PRODUCTION_HOSTS:
+            found.append(f"{env} host {h}")
+    hit = (local_addresses() if addrs is None else set(addrs)) & PRODUCTION_HOSTS
+    found += [f"this machine is {a}" for a in sorted(hit)]
+    return found
+
+
+def secret_env_names(names) -> List[str]:
+    return sorted({n for n in names if _SECRET_NAME_RE.search(n)})
+
+
+def read_mounts(path: str = "/proc/mounts") -> List[tuple]:
+    """(mount point, options) for every mount (octal escapes decoded)."""
+    out = []
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return out
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) >= 4:
+            point = re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), parts[1])
+            out.append((point, parts[3].split(",")))
+    return out
+
+
+def network_folder_mounts(mounts, root: str) -> List[tuple]:
+    root = root.rstrip("/") + "/"
+    return [(p, o) for p, o in mounts if p.startswith(root)]
+
+
+def _terminal_output(raw: str) -> str:
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return raw
+    return str(data.get("output", "")) if isinstance(data, dict) else raw
+
+
+def _terminal_users(users: Dict[str, TestUser], policy) -> Dict[str, TestUser]:
+    """Users whose effective policy lets them run ``terminal``."""
+    return {
+        r: u
+        for r, u in users.items()
+        if "terminal" not in ((policy.get(r) or {}).get("deny_tools") or [])
+    }
+
+
+def check_approvals(report: Report, users: Dict[str, TestUser]) -> None:
+    """[e] Approvals can't be given by someone other than the requester or by the agent."""
+    import inspect
+
+    # e1. app-mcp: the agent's own clicks on approval controls must count as gated.
+    try:
+        app_mcp_dir = str(REPO_ROOT / "app-mcp")
+        if app_mcp_dir not in sys.path:
+            sys.path.insert(0, app_mcp_dir)
+        from app_mcp.guard import looks_destructive
+
+        ungated = [label for label in APPROVAL_LABELS if not looks_destructive(label)]
+        report.check(
+            "[e] agent clicks on approval buttons are gated (app_act)",
+            not ungated,
+            "ungated: " + ", ".join(ungated) + " (security review F17/F18)" if ungated else "",
+        )
+    except Exception as exc:  # noqa: BLE001
+        report.check("[e] agent clicks on approval buttons are gated (app_act)", False, _short(exc))
+
+    # e2. Gateway approvals: another user in a shared chat must not approve my command.
+    from tools import approval
+
+    params = inspect.signature(approval.resolve_gateway_approval).parameters
+    approver = next((p for p in ("approver_id", "approver", "principal") if p in params), None)
+    name = "[e] another user can't approve my pending command (gateway)"
+    if approver is None:
+        report.check(
+            name,
+            False,
+            "resolve_gateway_approval() takes no approver, so any participant resolves "
+            "any pending approval (security review F22)",
+        )
+        return
+    roles = [r for r in ("member", "viewer", "admin") if r in users]
+    if len(roles) < 2:
+        report.skip(name, "needs two test users")
+        return
+    requester, other = users[roles[0]], users[roles[1]]
+    key = f"{TAG_PREFIX}approval-{int(time.time())}"
+    entry = approval._ApprovalEntry({"command": "true", "description": "release gate"})
+    for attr in ("requester_id", "requester"):
+        try:
+            setattr(entry, attr, requester.user_id)
+        except AttributeError:
+            pass
+    entry.data.update(requester_id=requester.user_id, user_id=requester.user_id)
+    with approval._lock:
+        approval._gateway_queues.setdefault(key, []).append(entry)
+    try:
+        try:
+            resolved = approval.resolve_gateway_approval(key, "once", **{approver: other.user_id})
+        except (PermissionError, ValueError):
+            resolved = 0
+        report.check(name, not resolved and entry.result is None, f"resolved={resolved}")
+    finally:
+        with approval._lock:
+            approval._gateway_queues.pop(key, None)
+        entry.event.set()
+
+
+def check_terminal_secrets(
+    report: Report, users: Dict[str, TestUser], policy, tag: str
+) -> None:
+    """[g] The agent terminal can't see secrets. Only names/paths are reported, never values."""
+    who = _terminal_users(users, policy)
+    if not who:
+        report.skip("[g] terminal secrets", "no test user has terminal")
+        return
+    script = (
+        f"echo {_PROBE_START}; env | cut -d= -f1 | sed 's/^/ENV /'; "
+        f"for f in {' '.join(SECRET_FILE_GLOBS)}; do "
+        '[ -f "$f" ] && [ -r "$f" ] && echo "FILE $f"; done; '
+        "for p in $(pgrep -f 'gateway run|hermes-gateway|hermes_cli.main gateway' 2>/dev/null); do "
+        '[ "$p" != "$$" ] && [ -r "/proc/$p/environ" ] && echo "PROC $p"; done; '
+        f"echo {_PROBE_END}"
+    )
+    for role, user in who.items():
+        raw = _tool("terminal", {"command": script}, user, f"{tag}-{role}-secrets")
+        text = _terminal_output(raw)
+        if _PROBE_START not in text or _PROBE_END not in text:
+            report.check(f"[g] {role}: terminal probe ran", False, _short(_error_of(raw) or "no output"))
+            continue
+        body = text.split(_PROBE_START, 1)[1].split(_PROBE_END, 1)[0].splitlines()
+        env_names = [ln[4:].strip() for ln in body if ln.startswith("ENV ")]
+        files = [ln[5:].strip() for ln in body if ln.startswith("FILE ")]
+        procs = [ln[5:].strip() for ln in body if ln.startswith("PROC ")]
+        leaked = secret_env_names(env_names)
+        report.check(
+            f"[g] {role}: no secret in the terminal environment",
+            not leaked,
+            "visible: " + ", ".join(leaked) if leaked else f"{len(env_names)} names checked",
+        )
+        report.check(
+            f"[g] {role}: DATABASE_URL not in the terminal environment",
+            "DATABASE_URL" not in env_names,
+        )
+        report.check(
+            f"[g] {role}: secret files not readable (/etc/aquarium, /opt/data/*.env)",
+            not files,
+            "readable: " + ", ".join(files) if files else "",
+        )
+        report.check(
+            f"[g] {role}: gateway process environment not readable",
+            not procs,
+            "readable /proc/<pid>/environ for pid " + ", ".join(procs) if procs else "",
+        )
+
+
+def check_network_folders(
+    report: Report, users: Dict[str, TestUser], policy, tag: str, *, mounts_path: str = "/proc/mounts"
+) -> None:
+    """[f] VPN network folders are mounted read-only and the agent terminal can't write to them."""
+    from hermes_cli import vpn
+
+    mounts = network_folder_mounts(read_mounts(mounts_path), vpn.MOUNT_ROOT)
+    if not mounts:
+        report.skip("[f] network folders read-only", f"nothing mounted under {vpn.MOUNT_ROOT}")
+        return
+    who = _terminal_users(users, policy)
+    for point, opts in mounts:
+        report.check(f"[f] {point} mounted read-only", "ro" in opts, ",".join(opts[:6]))
+        for role, user in who.items():
+            probe = f"{point.rstrip('/')}/.{tag}-{role}"
+            cmd = (
+                f"touch {shlex.quote(probe)} 2>/dev/null && echo WROTE && rm -f {shlex.quote(probe)}; "
+                "echo DONE"
+            )
+            text = _terminal_output(_tool("terminal", {"command": cmd}, user, f"{tag}-{role}-net"))
+            report.check(
+                f"[f] {role}: can't write into {point}",
+                "DONE" in text and "WROTE" not in text,
+                "write succeeded (probe removed)" if "WROTE" in text else "",
+            )
+
+
 def provision(
     report: Report, http: Http, members, owner, tag: str, provider: str
 ) -> Dict[str, TestUser]:
@@ -901,6 +1155,17 @@ def _parse(argv) -> argparse.Namespace:
         metavar="TAG",
         help=f"only delete leftovers of run TAG (zz-accesscheck-<ts>) or {ALL_TAGS}",
     )
+    p.add_argument(
+        "--skip",
+        default="",
+        metavar="LETTERS",
+        help="skip check groups, e.g. --skip eg (reported as SKIP, never as PASS)",
+    )
+    p.add_argument(
+        "--allow-production",
+        action="store_true",
+        help="run even though this looks like the production box (not for release gating)",
+    )
     args = p.parse_args(argv)
     if args.cleanup and args.cleanup != ALL_TAGS and not _TAG_RE.match(args.cleanup):
         p.error(f"--cleanup takes zz-accesscheck-<unix ts> or {ALL_TAGS}")
@@ -922,6 +1187,16 @@ def main(argv=None, *, out: Callable[[str], None] = print) -> int:
     report = Report(out=out)
     summary: Dict[str, Any] = {}
 
+    markers = production_markers(args.base_url)
+    if markers and not args.allow_production and not args.dry_run:
+        out(
+            "REFUSED: this looks like the production box ("
+            + "; ".join(markers)
+            + "). The release gate runs on a TEST install only. "
+            "--allow-production overrides it (old pre-gate behaviour)."
+        )
+        return 2
+
     if args.cleanup:
         prefix = TAG_PREFIX if args.cleanup == ALL_TAGS else args.cleanup + "-"
         summary = {"mode": "cleanup", "run_tag": args.cleanup}
@@ -939,7 +1214,7 @@ def main(argv=None, *, out: Callable[[str], None] = print) -> int:
     out(
         "plan: create "
         + ", ".join(f"{tag}-{r}{EMAIL_DOMAIN} ({r})" for r in TEST_ROLES)
-        + "; redeem invitations; password-login; run checks a-d"
+        + "; redeem invitations; password-login; run checks a-g"
         + ("" if args.chat_turn else " (no chat turn)")
         + "; delete everything tagged"
     )
@@ -983,6 +1258,15 @@ def main(argv=None, *, out: Callable[[str], None] = print) -> int:
             check_chat_identity(report, http, users, members, args.chat_timeout)
         else:
             report.skip("[d] chat identity", "--no-chat-turn")
+        for letter, label, run in (
+            ("e", "approvals", lambda: check_approvals(report, users)),
+            ("f", "network folders", lambda: check_network_folders(report, in_process, policy, tag)),
+            ("g", "terminal secrets", lambda: check_terminal_secrets(report, in_process, policy, tag)),
+        ):
+            if letter in args.skip:
+                report.skip(f"[{letter}] {label}", "--skip")
+            else:
+                run()
     except Exception as exc:  # noqa: BLE001 - always fall through to cleanup
         report.check(
             "run completed", False, f"{type(exc).__name__}: {_short(exc, 300)}"

@@ -100,6 +100,26 @@ describe("GET /api/files/:id/content", () => {
     expect(res.headers.get("content-disposition")).toContain("vid_a719.mp4");
   });
 
+  it("never serves sender-supplied HTML or SVG inline on this origin", async () => {
+    for (const type of ["text/html", "image/svg+xml"]) {
+      fetchMock.mockResolvedValueOnce(
+        new Response("<svg onload=alert(1)>", { status: 200, headers: { "content-type": type } }),
+      );
+      const res = await get("f1");
+      expect(res.headers.get("content-disposition")).toMatch(/^attachment;/);
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(res.headers.get("content-security-policy")).toMatch(/^sandbox;/);
+      expect(res.headers.get("content-security-policy")).toContain("default-src 'none'");
+    }
+  });
+
+  it("sandboxes inline-safe types too", async () => {
+    const res = await get("f1");
+    expect(res.headers.get("content-disposition")).toMatch(/^inline;/);
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toMatch(/^sandbox;/);
+  });
+
   it("502s when the AI layer is unreachable", async () => {
     fileLink.mockRejectedValueOnce(new Error("boom"));
     expect((await get("f1")).status).toBe(502);

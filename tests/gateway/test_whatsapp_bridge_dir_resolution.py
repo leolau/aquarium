@@ -118,3 +118,35 @@ def test_readonly_install_reuses_existing_mirror(tmp_path, monkeypatch):
     assert resolved == mirror
     # Existing node_modules left intact (no destructive re-copy).
     assert (mirror / "node_modules" / "sentinel").read_text() == "keep me\n"
+
+
+def test_readonly_install_with_deps_runs_in_place(tmp_path, monkeypatch):
+    """A root-owned production checkout that already has node_modules is used
+    as is, so bridge code updates from deploys are not hidden by a stale copy."""
+    install_root = tmp_path / "install"
+    install_bridge = install_root / "scripts" / "whatsapp-bridge"
+    _seed_install_tree(install_bridge)
+    (install_bridge / "node_modules").mkdir()
+
+    hermes_home = tmp_path / "hermes_home"
+    hermes_home.mkdir()
+
+    monkeypatch.setattr(
+        whatsapp_common, "__file__",
+        str(install_root / "gateway" / "platforms" / "whatsapp_common.py"),
+    )
+    monkeypatch.setattr(
+        "hermes_constants.get_hermes_home", lambda: hermes_home
+    )
+
+    _real_touch = Path.touch
+
+    def _fake_touch(self, *a, **kw):
+        if self.name == ".write_test" and install_bridge in self.parents:
+            raise PermissionError("read-only install tree")
+        return _real_touch(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "touch", _fake_touch)
+
+    assert whatsapp_common.resolve_whatsapp_bridge_dir() == install_bridge
+    assert not (hermes_home / "scripts" / "whatsapp-bridge").exists()

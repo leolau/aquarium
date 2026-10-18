@@ -57,6 +57,16 @@ describe("GET /api/chat/media/content", () => {
     await expect(res.text()).resolves.toBe("png");
   });
 
+  it("downloads (never renders) an HTML object and sandboxes it", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response("<script>x</script>", { status: 200, headers: { "content-type": "text/html" } }),
+    );
+    const res = await get(OWN);
+    expect(res.headers.get("content-disposition")).toMatch(/^attachment;/);
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toMatch(/^sandbox;/);
+  });
+
   it("403s another principal's object without signing or fetching", async () => {
     expect((await get(OTHER)).status).toBe(403);
     expect(createSignedUrl).not.toHaveBeenCalled();

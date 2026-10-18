@@ -12,8 +12,13 @@
  * Range requests are forwarded and the range headers passed back, because a
  * `<video>`/`<audio>` element seeks with `Range` and a response that answers
  * 200-with-everything makes seeking impossible on some browsers.
+ *
+ * The bytes are untrusted (a stranger's attachment, an agent-written file), so
+ * {@link applyFileSafetyHeaders} decides inline vs download and sandboxes them.
  */
 import "server-only";
+
+import { applyFileSafetyHeaders } from "@/lib/http/file-headers";
 
 /** Conditional/partial-read headers that must reach the storage backend. */
 const FORWARDED_REQUEST_HEADERS = [
@@ -59,21 +64,7 @@ export async function proxyBytes(
   // The bytes are per-principal: a shared cache must never keep them, and the
   // signed URL behind them expires anyway.
   out.set("cache-control", "private, no-store");
-  if (opts.filename) {
-    out.set("content-disposition", disposition(opts.filename, opts.download));
-  }
+  applyFileSafetyHeaders(out, opts);
 
   return new Response(upstream.body, { status: upstream.status, headers: out });
-}
-
-/**
- * `inline` so the browser renders what it can (video, image, PDF, text) and
- * `attachment` only when the user asked to download. The filename is sent both
- * as a quoted ASCII fallback and RFC 5987 `filename*`, so non-Latin names
- * survive without breaking older clients.
- */
-function disposition(filename: string, download?: boolean): string {
-  const kind = download ? "attachment" : "inline";
-  const ascii = filename.replace(/["\\\r\n]/g, "_");
-  return `${kind}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }

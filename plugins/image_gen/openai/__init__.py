@@ -31,10 +31,13 @@ from agent.image_gen_provider import (
     DEFAULT_ASPECT_RATIO,
     ImageGenProvider,
     error_response,
+    fetch_source_image,
     normalize_reference_images,
+    read_local_source_image,
     resolve_aspect_ratio,
     save_b64_image,
     save_url_image,
+    sniff_image_ext,
     success_response,
 )
 
@@ -124,33 +127,26 @@ def _resolve_model() -> Tuple[str, Dict[str, Any]]:
 
 
 def _load_image_bytes(ref: str) -> Tuple[bytes, str]:
-    """Load image bytes from a URL or local file path.
+    """Load a source image from a public URL, a ``data:`` URI or a local file.
 
-    Returns ``(data, filename)``. Raises on any network / IO error so the
-    caller can surface a clean error_response.
+    Returns ``(data, filename)``. Only real images are accepted, and URLs must
+    point at public addresses; raises so the caller can surface a clean
+    error_response.
     """
     ref = ref.strip()
     lower = ref.lower()
     if lower.startswith(("http://", "https://")):
-        import requests
-
-        resp = requests.get(ref, timeout=60)
-        resp.raise_for_status()
-        name = ref.split("?", 1)[0].rsplit("/", 1)[-1] or "image.png"
-        return resp.content, name
+        return fetch_source_image(ref)
     if lower.startswith("data:"):
         import base64
 
-        header, _, b64 = ref.partition(",")
-        ext = "png"
-        if "image/" in header:
-            ext = header.split("image/", 1)[1].split(";", 1)[0] or "png"
-        return base64.b64decode(b64), f"image.{ext}"
-    # Local file path.
-    with open(ref, "rb") as fh:
-        data = fh.read()
-    name = os.path.basename(ref) or "image.png"
-    return data, name
+        _header, _, b64 = ref.partition(",")
+        data = base64.b64decode(b64)
+        ext = sniff_image_ext(data[:16])
+        if ext is None:
+            raise ValueError("data: URI is not a PNG, JPEG, GIF or WebP image")
+        return data, f"image.{ext}"
+    return read_local_source_image(ref)
 
 
 # ---------------------------------------------------------------------------

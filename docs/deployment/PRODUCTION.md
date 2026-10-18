@@ -151,6 +151,20 @@ on the box changes *how the command is carried*, not who may run it.
 Either way, success ends with `deploy OK (<sha>)` and all services `active`; verify
 independently with the §5.7 health check.
 
+#### Root-owned checkout (security review F13/F15)
+The deploy runs as root, so it only runs code root owns. On its first run
+against a hermes-owned checkout it makes the checkout root-owned and not
+group/world-writable by itself. It saves every old owner/mode first to
+`/opt/data/backups/root-owned-checkout-<time>/owners.txt` and prints the undo
+(`bash …/rollback.sh`). These stay hermes's: `agent-home/.next/cache`, and env
+files (`.env`, `.env.*`, `*.env`). It also runs git with hooks/fsmonitor off,
+`python -I`, and `npm ci --ignore-scripts` (then `npm rebuild` of the reviewed
+native packages in `NPM_REBUILD`), and it warns about an untracked `.npmrc`.
+Root timers (`hermes-secret-backup`, reviewed copy in `deploy/`) run `python -I`
+from this root-owned tree. Services running as hermes only read the checkout.
+If something must write there, make that one path hermes-writable rather than
+undoing everything.
+
 ### 5.2 Dashboard update
 ```bash
 # code lives at /opt/data/hermes-agent (Python, uv-managed)

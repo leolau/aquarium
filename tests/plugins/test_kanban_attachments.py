@@ -248,6 +248,20 @@ def test_upload_list_download_delete_roundtrip(client):
     ).json()["attachments"] == []
 
 
+def test_download_never_renders_uploaded_html(client):
+    task_id = _create_task_via_api(client)
+    r = client.post(
+        f"/api/plugins/kanban/tasks/{task_id}/attachments",
+        files={"file": ("x.html", b"<script>alert(1)</script>", "text/html")},
+    )
+    att_id = r.json()["attachment"]["id"]
+    r = client.get(f"/api/plugins/kanban/attachments/{att_id}")
+    assert r.status_code == 200
+    assert r.headers["content-disposition"].startswith("attachment;")
+    assert r.headers["x-content-type-options"] == "nosniff"
+    assert r.headers["content-security-policy"].startswith("sandbox;")
+
+
 def test_upload_sanitizes_traversal_filename(client):
     task_id = _create_task_via_api(client)
     r = client.post(
