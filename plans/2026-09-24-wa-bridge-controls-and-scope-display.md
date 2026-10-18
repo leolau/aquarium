@@ -45,7 +45,10 @@ Two asks bundled:
 
 1. Pull develop (deploy-hermes.sh).
 2. Add sudoers line so `add bridge` works:
-   `hermes ALL=(root) NOPASSWD: /usr/bin/bash /opt/data/hermes-agent/deploy/wa-bridge-add.sh *`
+   superseded (security review F14: the hermes user can edit the checkout, so
+   this rule gave it root): the helper is now `deploy/hermes-wa-bridge-add`,
+   installed root-owned at `/usr/local/sbin/hermes-wa-bridge-add`, rule in
+   `deploy/sudoers.d/hermes-wa-bridge`.
    in `/etc/sudoers.d/hermes-agent`.
 3. No restart needed beyond the dashboard service for the new router.
 
