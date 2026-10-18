@@ -40,8 +40,26 @@ logger = logging.getLogger(__name__)
 
 _REPO = "sheeki03/tirith"
 
-# Cosign provenance verification — pinned to the specific release workflow
-_COSIGN_IDENTITY_REGEXP = f"^https://github.com/{_REPO}/\\.github/workflows/release\\.yml@refs/tags/v"
+# Auto-install downloads exactly this release and only accepts an archive
+# whose SHA-256 matches the digest embedded here. The release's own
+# checksums.txt is checked too, but it is not the trust anchor: whoever can
+# publish a release controls that file. To upgrade, download the new
+# release, verify it (cosign verify-blob on checksums.txt), then update the
+# version and every digest below in one commit.
+_TIRITH_VERSION = "v0.4.2"
+_TIRITH_SHA256 = {
+    "x86_64-unknown-linux-gnu": "efa6bf414a83dba385d4f13137e8677f850ced9102fe74ebb14c72f31df0dc77",
+    "aarch64-unknown-linux-gnu": "c550b1bfb0c8c872ab3421cd6ef756f260f7cf4981a18cedd49f141fa2d77569",
+    "x86_64-apple-darwin": "dda8a14df00a49c4b0f607c15a82259f96c94da91b09718a7ebbc34a831d6f54",
+    "aarch64-apple-darwin": "551f9a6ebf58344e7d0aa06bcc78d7a4f2f7b44b8011be563e0a91976cc9c4df",
+}
+
+# Cosign provenance verification — pinned to the release workflow run for
+# the pinned tag.
+_COSIGN_IDENTITY_REGEXP = (
+    f"^https://github.com/{_REPO}/\\.github/workflows/release\\.yml"
+    f"@refs/tags/{_TIRITH_VERSION.replace('.', '[.]')}$"
+)
 _COSIGN_ISSUER = "https://token.actions.githubusercontent.com"
 
 # ---------------------------------------------------------------------------
@@ -282,10 +300,9 @@ def is_platform_supported() -> bool:
 
 def _download_file(url: str, dest: str, timeout: int = 10):
     """Download a URL to a local file."""
+    # Public release assets: never attach GITHUB_TOKEN (urllib would forward
+    # it to the CDN host on redirect).
     req = urllib.request.Request(url)
-    token = os.getenv("GITHUB_TOKEN")
-    if token:
-        req.add_header("Authorization", f"token {token}")
     with urllib.request.urlopen(req, timeout=timeout) as resp, open(dest, "wb") as f:
         shutil.copyfileobj(resp, f)
 
@@ -329,6 +346,28 @@ def _verify_cosign(checksums_path: str, sig_path: str, cert_path: str) -> bool |
     except (OSError, subprocess.TimeoutExpired) as exc:
         logger.warning("cosign execution failed: %s", exc)
         return None
+
+
+def _sha256_file(path: str) -> str:
+    sha = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            sha.update(chunk)
+    return sha.hexdigest()
+
+
+def _verify_pinned_digest(archive_path: str, target: str) -> bool:
+    """Compare the archive against the SHA-256 embedded in Hermes."""
+    expected = _TIRITH_SHA256.get(target)
+    if not expected:
+        logger.warning("No pinned tirith digest for %s", target)
+        return False
+    actual = _sha256_file(archive_path)
+    if actual != expected:
+        logger.warning("tirith archive does not match pinned digest for %s %s: expected %s, got %s",
+                       _TIRITH_VERSION, target, expected, actual)
+        return False
+    return True
 
 
 def _verify_checksum(archive_path: str, checksums_path: str, archive_name: str) -> bool:
@@ -398,8 +437,12 @@ def _install_tirith(*, log_failures: bool = True) -> tuple[str | None, str]:
                      platform.system(), platform.machine())
         return None, "unsupported_platform"
 
+    if target not in _TIRITH_SHA256:
+        logger.info("tirith auto-install: no pinned digest for %s", target)
+        return None, "unsupported_platform"
+
     archive_name = f"tirith-{target}.tar.gz"
-    base_url = f"https://github.com/{_REPO}/releases/latest/download"
+    base_url = f"https://github.com/{_REPO}/releases/download/{_TIRITH_VERSION}"
 
     try:
         tmpdir = tempfile.mkdtemp(prefix="tirith-install-")
@@ -412,7 +455,7 @@ def _install_tirith(*, log_failures: bool = True) -> tuple[str | None, str]:
         sig_path = os.path.join(tmpdir, "checksums.txt.sig")
         cert_path = os.path.join(tmpdir, "checksums.txt.pem")
 
-        logger.info("tirith not found — downloading latest release for %s...", target)
+        logger.info("tirith not found — downloading %s for %s...", _TIRITH_VERSION, target)
 
         try:
             _download_file(f"{base_url}/{archive_name}", archive_path)
@@ -450,6 +493,9 @@ def _install_tirith(*, log_failures: bool = True) -> tuple[str | None, str]:
             logger.info("cosign not on PATH — installing tirith with SHA-256 verification only "
                         "(install cosign for full supply chain verification)")
 
+        if not _verify_pinned_digest(archive_path, target):
+            log("tirith install aborted: archive does not match the pinned digest")
+            return None, "checksum_failed"
         if not _verify_checksum(archive_path, checksums_path, archive_name):
             return None, "checksum_failed"
 
