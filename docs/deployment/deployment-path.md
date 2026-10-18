@@ -231,7 +231,7 @@ next run:
 ```ini
 # /etc/systemd/system/hermes-drift-check.service.d/10-deploy-state.conf
 [Service]
-ExecStart=/opt/data/hermes-agent/.venv/bin/python \
+ExecStart=/opt/data/hermes-agent/.venv/bin/python -I \
     /opt/data/hermes-agent/scripts/deploy_state.py \
     --state-root /opt/data/hermes-deploy-state check \
     --deployment hermes-systest --notify
@@ -296,15 +296,22 @@ permissions of credential files are a map of what to attack.
 Daily, from its own timer (a backup wants to be fresher than a weekly report):
 
 ```ini
-# /etc/systemd/system/hermes-secret-backup.service — runs as root, needs .env
+# /etc/systemd/system/hermes-secret-backup.service — reviewed copy in
+# deploy/hermes-secret-backup.service (+ .timer). Runs as root to read every
+# credential, but capability-stripped (CAP_DAC_READ_SEARCH only), read-only
+# filesystem except the backup repo, and `python -I` from the root-owned
+# checkout — never code the hermes user can edit (security review F15).
 [Service]
 Type=oneshot
 EnvironmentFile=/opt/data/deploy/backup-recipient.env
-ExecStart=/opt/data/hermes-agent/.venv/bin/python \
+ExecStart=/opt/data/hermes-agent/.venv/bin/python -I \
     /opt/data/hermes-agent/scripts/backup_secrets.py \
     --state-root /opt/data/hermes-deploy-state \
     --repo /opt/data/hermes-deploy-backups \
     backup --deployment hermes-systest --push
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+ProtectSystem=strict
+ReadWritePaths=/opt/data/hermes-deploy-backups
 ```
 
 And `verify` joins the weekly report as a third `ExecStart`, so a timer that
@@ -313,7 +320,7 @@ quietly stopped is reported rather than assumed:
 ```ini
 # /etc/systemd/system/hermes-drift-check.service.d/20-backup-verify.conf
 [Service]
-ExecStart=/opt/data/hermes-agent/.venv/bin/python \
+ExecStart=/opt/data/hermes-agent/.venv/bin/python -I \
     /opt/data/hermes-agent/scripts/backup_secrets.py \
     --state-root /opt/data/hermes-deploy-state \
     --repo /opt/data/hermes-deploy-backups \
