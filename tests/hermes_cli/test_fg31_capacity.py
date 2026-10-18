@@ -700,7 +700,8 @@ def test_history_is_empty_until_the_sampler_has_written(tmp_path):
 
 
 def test_hourly_buckets_hold_one_point_per_hour(tmp_path):
-    now = time.time()
+    # Mid-hour, so the samples a few minutes back stay in the current hour.
+    now = (time.time() // 3600) * 3600 + 1800
     path = tmp_path / "capacity.db"
     # Three samples in the current hour, one in the hour two hours ago.
     _seed_history(
