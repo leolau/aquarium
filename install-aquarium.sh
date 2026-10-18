@@ -446,6 +446,10 @@ UNIT
 done
 install -m 755 deploy/hermes-deploy.sh "$ROOT/deploy-hermes.sh"
 install -m 755 -o root -g root deploy/aquarium.py /usr/local/sbin/aquarium
+# Agent terminal commands as hermes-tools: root-owned helper + sudoers rule (validated first).
+install -m 755 -o root -g root deploy/hermes-tools-exec /usr/local/sbin/hermes-tools-exec
+visudo -cf deploy/sudoers.d/hermes-tools >/dev/null
+install -m 440 -o root -g root deploy/sudoers.d/hermes-tools /etc/sudoers.d/hermes-tools
 systemctl daemon-reload
 systemctl enable -q hermes-embed hermes-dashboard hermes-gateway app-mcp agent-home
 systemctl restart hermes-embed hermes-dashboard hermes-gateway app-mcp agent-home
