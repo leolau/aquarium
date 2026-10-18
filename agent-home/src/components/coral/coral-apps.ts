@@ -155,7 +155,7 @@ registerApp({
   id: "tools",
   name: "Tools",
   glyph: "⚙",
-  hint: "FG-07 registry",
+  hint: "Apps the agent built",
   kind: "next-route",
   route: "/tools",
   category: "system",

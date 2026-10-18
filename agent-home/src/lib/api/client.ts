@@ -491,8 +491,8 @@ export class HermesApiClient {
   }
 
   /**
-   * The FG-07 tool registry for a datastore mode (read-only in this surface).
-   * Enable/config/promote stay on the operator authority paths.
+   * The tool registry (apps the agent built or installed) for a datastore
+   * mode, scoped upstream to the logged-in person. Read-only here.
    */
   async tools(mode?: StoreMode): Promise<ToolsResponse> {
     const qs = mode ? `?mode=${encodeURIComponent(mode)}` : "";
