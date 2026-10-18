@@ -83,6 +83,11 @@ CADDYFILE = "/etc/caddy/Caddyfile"
 LOCK = "/run/aquarium.lock"
 AUDIT_LOG = "/var/log/aquarium.log"
 UV_PYTHON_DIR = "/usr/local/share/uv/python"
+TOOLS_DIR = "/usr/local/lib/aquarium"  # the installer's pinned cosign lives here
+ROOT_HELPERS = [  # root-run copies that must match the release (reported, never auto-installed)
+    ("/usr/local/sbin/hermes-vpn-helper", "deploy/hermes-vpn-helper", "VPN helper"),
+    ("/usr/local/sbin/hermes-wa-bridge-add", "deploy/hermes-wa-bridge-add", "WhatsApp bridge helper"),
+]
 BUILD_CACHE = "/var/cache/aquarium"
 
 VERSION_RE = re.compile(r"^v\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]{0,40})?$")
@@ -100,7 +105,9 @@ DEFAULTS: Dict[str, str] = {
     "REPO": "leolau/aquarium",
     "RELEASE_API": "",  # default https://api.github.com/repos/<REPO>
     "CHANNEL": "stable",
-    "SIGNER_IDENTITY_REGEXP": r"^https://github\.com/leolau/aquarium/\.github/workflows/release\.yml@refs/tags/v.*$",
+    # Same signer rule as install-aquarium.sh (deploy/install/lib.sh aq_release_identity):
+    # this repo's release workflow, running for exactly the tag being installed.
+    "RELEASE_WORKFLOW": "release.yml",
     "SIGNER_ISSUER": "https://token.actions.githubusercontent.com",
     "SERVICE_USER": "hermes",
     "DATA_ROOT": "/opt/data",
@@ -352,6 +359,7 @@ def enabled_units(pattern: str) -> List[str]:
 def service_units() -> List[str]:
     """The long-running units an update restarts (same set as deploy/hermes-deploy.sh)."""
     units = enabled_units("hermes-*.service")
+    units += [u for u in bridge_units() if u not in units]
     for extra in ("app-mcp.service", "agent-home.service"):
         if extra not in units and (enabled_units(extra) or extra == "agent-home.service"):
             units.append(extra)
@@ -359,10 +367,18 @@ def service_units() -> List[str]:
 
 
 def unit_text(unit: str) -> str:
+    """The unit file; for a template instance (name@inst.service), the template with %i filled in."""
     try:
-        return P(f"{SYSTEMD}/{unit}").read_text()
+        return P(f"{SYSTEMD}/{unit}").read_text(encoding="utf-8")
     except OSError:
-        return ""
+        pass
+    m = re.match(r"^(.+@)(.+)(\.service)$", unit)
+    if m:
+        try:
+            return P(f"{SYSTEMD}/{m.group(1)}{m.group(3)}").read_text(encoding="utf-8").replace("%i", m.group(2))
+        except OSError:
+            pass
+    return ""
 
 
 def unit_dropins(unit: str) -> List[Path]:
@@ -392,8 +408,22 @@ def unit_session_dir(unit: str) -> Optional[str]:
 
 
 def unit_port(unit: str) -> Optional[int]:
-    m = re.search(r"--port\s+(\d+)", unit_text(unit))
-    return int(m.group(1)) if m else None
+    text = unit_text(unit)
+    m = re.search(r"--port\s+(\d+)", text)
+    if m:
+        return int(m.group(1))
+    m = re.search(r"--port\s+\$\{?(\w+)\}?", text)  # template: port from its env file
+    if not m:
+        return None
+    env: Dict[str, str] = {}
+    for line in text.splitlines():
+        e = re.match(r"^\s*Environment\s*=\s*(\w+)=(\S*)", line)
+        if e:
+            env[e.group(1)] = e.group(2)
+    for f in unit_env_files(unit):
+        env.update(read_kv(P(f.lstrip("-"))))
+    value = env.get(m.group(1), "")
+    return int(value) if value.isdigit() else None
 
 
 def unit_log_file(unit: str) -> Optional[str]:
@@ -409,7 +439,15 @@ def restart_services(units: Sequence[str]) -> None:
 
 
 def bridge_units() -> List[str]:
-    return [u for u in enabled_units("hermes-wa-bridge-*.service")]
+    """Per-phone WhatsApp bridges: hand-made units and instances of hermes-wa-bridge@.service."""
+    units = enabled_units("hermes-wa-bridge-*.service")
+    proc = systemctl("list-units", "hermes-wa-bridge@*.service", "--all", "--no-legend", "--plain", check=False)
+    for line in proc.stdout.decode().splitlines():
+        parts = line.split()
+        if parts and parts[0].endswith(".service") and "@" in parts[0] and parts[1:2] == ["loaded"]:
+            if parts[0] not in units:
+                units.append(parts[0])
+    return units
 
 
 # --------------------------------------------------------------------------- env
@@ -491,6 +529,16 @@ def health_checks(cfg: Dict[str, str], units: Sequence[str]) -> List[Tuple[str, 
     return checks
 
 
+def running_units(units: Sequence[str]) -> List[str]:
+    """The units that are up right now. A change is judged only on these: a unit that was
+    already down before (e.g. a failed oneshot) must not turn a good update into a rollback."""
+    up = [u for u in units if systemctl("is-active", "-q", u, check=False).returncode == 0]
+    for u in units:
+        if u not in up:
+            say(f"  note: {u} was not running before this change; it is restarted but not required")
+    return up
+
+
 def wait_healthy(cfg: Dict[str, str], units: Sequence[str]) -> List[str]:
     """Retry until every check passes or HEALTH_WAIT_SECONDS runs out; returns failures."""
     deadline = time.monotonic() + float(cfg["HEALTH_WAIT_SECONDS"])
@@ -560,14 +608,25 @@ def download(url: str, dest: Path) -> None:
     os.replace(tmp, dest)
 
 
+def find_cosign() -> Optional[str]:
+    pinned = sorted(P(TOOLS_DIR).glob("cosign-v*"), key=lambda p: version_key(p.name[len("cosign-"):]))
+    pinned = [p for p in pinned if os.access(p, os.X_OK)]
+    if pinned:
+        return str(pinned[-1])
+    return shutil.which("cosign")
+
+
 def verify_release(cfg: Dict[str, str], folder: Path, version: str) -> Path:
     """cosign keyless signature on SHA256SUMS, then the tarball's checksum. Fails closed."""
     sums, sig, pem = folder / "SHA256SUMS", folder / "SHA256SUMS.sig", folder / "SHA256SUMS.pem"
-    if not have("cosign"):
+    cosign = find_cosign()
+    if not cosign:
         raise Fail("cosign is not installed, so the release signature can't be checked",
-                   "Install it (see install-aquarium.sh) and run the update again. Updates never skip this check.")
-    proc = run(["cosign", "verify-blob", "--certificate", str(pem), "--signature", str(sig),
-                "--certificate-identity-regexp", cfg["SIGNER_IDENTITY_REGEXP"],
+                   "Re-run install-aquarium.sh (it installs a pinned cosign) and run the update again. "
+                   "Updates never skip this check.")
+    identity = f"https://github.com/{cfg['REPO']}/.github/workflows/{cfg['RELEASE_WORKFLOW']}@refs/tags/{version}"
+    proc = run([cosign, "verify-blob", "--certificate", str(pem), "--signature", str(sig),
+                "--certificate-identity", identity,
                 "--certificate-oidc-issuer", cfg["SIGNER_ISSUER"], str(sums)], check=False, timeout=180)
     if proc.returncode != 0:
         raise Fail("the release signature is NOT valid — this download was not built by the Aquarium release workflow",
@@ -713,11 +772,36 @@ def refresh_self(rel: Path) -> None:
     say(f"  updated {SELF_INSTALL} from the release")
 
 
-def report_vpn_helper(rel: Path) -> Optional[str]:
-    installed, reviewed = P(VPN_HELPER), rel / "deploy/hermes-vpn-helper"
-    if installed.exists() and reviewed.exists() and installed.read_bytes() != reviewed.read_bytes():
-        return (f"install -m 755 -o root -g root {real(reviewed)} {VPN_HELPER}")
-    return None
+def stale_helpers(rel: Path) -> List[Tuple[str, str]]:
+    """(label, install command) for each installed root helper that differs from the release."""
+    stale = []
+    for installed, source, label in ROOT_HELPERS:
+        have_it, reviewed = P(installed), rel / source
+        if have_it.exists() and reviewed.exists() and have_it.read_bytes() != reviewed.read_bytes():
+            stale.append((label, f"install -m 755 -o root -g root {real(reviewed)} {installed}"))
+    return stale
+
+
+def carry_forward(old: Path, new: Path) -> List[str]:
+    """Env files the units read from inside the code tree (agent-home.env, app-mcp.env on a
+    fresh install) are not part of a release; copy them into the new one, same owner and mode."""
+    carried = []
+    old_root = os.path.realpath(old)
+    for unit in service_units():
+        for f in unit_env_files(unit):
+            src = os.path.realpath(P(f.lstrip("-")))
+            if not src.startswith(old_root + "/") or not os.path.isfile(src):
+                continue
+            dest = new / os.path.relpath(src, old_root)
+            if dest.exists():
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+            st = os.stat(src)
+            if os.geteuid() == 0:
+                os.chown(dest, st.st_uid, st.st_gid)
+            carried.append(os.path.relpath(src, old_root))
+    return carried
 
 
 # --------------------------------------------------------------------------- update
@@ -769,11 +853,14 @@ def cmd_update(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
         partial = P(f"{AQ}/releases/.{version}.partial")
         unpack(tarball, partial)
         build_release(cfg, partial)
+        for name in carry_forward(P(f"{AQ}/releases/{before}"), partial):
+            say(f"  kept settings file {name}")
         if rel.exists():
             shutil.rmtree(rel)
         os.rename(partial, rel)
 
         units = service_units()
+        required = running_units(units)
         config_copies = snapshot_configs(cfg, folder)
         step("Migrating database and settings")
         code, rows = run_probe(cfg, rel, "migrate")
@@ -792,13 +879,13 @@ def cmd_update(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
         save_state(state)
         restart_services(units)
         step("Health check")
-        failed = wait_healthy(cfg, units)
+        failed = wait_healthy(cfg, required)
         if failed:
             step(f"Health check failed ({', '.join(failed)}) — rolling back to {before}")
             symlink_swap(P(f"{AQ}/current"), f"releases/{before}")
             restore_configs(config_copies)
             restart_services(units)
-            back = wait_healthy(cfg, units)
+            back = wait_healthy(cfg, required)
             state.update(current=before, previous=previous_before, failed=version)
             state["history"][-1]["result"] = "rolled back"
             save_state(state)
@@ -813,9 +900,8 @@ def cmd_update(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
         prune_releases(cfg, state)
         audit(f"update {before} -> {version}: ok")
         say(f"\nUpdated to {version}. Previous version {before} is kept for rollback.")
-        hint = report_vpn_helper(rel)
-        if hint:
-            say(f"VPN HELPER STALE: the root VPN helper differs from this release. Install it with:\n    {hint}")
+        for label, hint in stale_helpers(rel):
+            say(f"{label.upper()} STALE: the root-run copy differs from this release. Install it with:\n    {hint}")
         return 0
 
 
@@ -888,12 +974,17 @@ def backup_sources(cfg: Dict[str, str]) -> List[str]:
         if p and p not in paths and P(p).exists():
             paths.append(p)
 
-    units = sorted(set(service_units()) | set(bridge_units()))
-    for unit in units:
+    units = set(service_units()) | set(bridge_units()) | {"agent-home.service", "app-mcp.service"}
+    # every hermes-* unit on disk, timers and oneshots too (their env files hold secrets as well)
+    units |= {p.name for p in P(SYSTEMD).glob("hermes-*") if p.name.endswith((".service", ".timer"))}
+    for unit in sorted(units):
         for f in unit_env_files(unit):
             add(f.lstrip("-"))
         add(f"{SYSTEMD}/{unit}")
         add(f"{SYSTEMD}/{unit}.d")
+    for folder in (cfg["DATA_ROOT"], f"{cfg['DATA_ROOT']}/deploy"):
+        for f in sorted(P(folder).glob("*.env")) if P(folder).is_dir() else []:
+            add(real(f))
     add(ETC)
     add(f"{cfg['DATA_ROOT']}/aquarium-secrets.env")
     add(f"{cfg['SUPABASE_DIR']}/.env")
@@ -1173,6 +1264,7 @@ def _restore_apply(cfg: Dict[str, str], manifest: Dict, staging: Path, args: arg
         step("Safety backup of the current state")
         make_backup(cfg, label="pre-restore")
     units = service_units()
+    required = running_units(units)
     step("Stopping services")
     for unit in reversed(units):
         systemctl("stop", unit, check=False)
@@ -1213,7 +1305,7 @@ def _restore_apply(cfg: Dict[str, str], manifest: Dict, staging: Path, args: arg
         say(f"  note: the backup was made with {rel}, which is not installed; keeping {current_release()}")
     step("Starting services")
     restart_services(units)
-    failed = wait_healthy(cfg, units)
+    failed = wait_healthy(cfg, required)
     audit(f"restore {manifest.get('created')}: {'ok' if not failed else 'health check failed'}")
     if moved:
         say("\nThe replaced files/folders were kept next to the originals:")
@@ -1328,7 +1420,7 @@ def check_whatsapp(cfg: Dict[str, str]) -> List[Tuple[str, str, str]]:
             with contextlib.suppress(urllib.error.URLError, OSError, ValueError):
                 with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=5) as resp:
                     status = json.loads(resp.read().decode()).get("status")
-        name = unit[len("hermes-wa-bridge-"):-len(".service")]
+        name = re.sub(r"^hermes-wa-bridge[-@]", "", unit)[:-len(".service")]
         if status == "connected":
             rows.append((OK, f"WhatsApp {name}: paired and connected", ""))
         elif status is None:
@@ -1341,14 +1433,17 @@ def check_whatsapp(cfg: Dict[str, str]) -> List[Tuple[str, str, str]]:
 
 
 def check_vpn(cfg: Dict[str, str]) -> List[Tuple[str, str, str]]:
-    installed = P(VPN_HELPER)
-    reviewed = code_dir(cfg) / "deploy/hermes-vpn-helper"
-    if not installed.exists():
-        return [(OK, "VPN helper: not installed (only needed for VPN and network folders)", "")]
-    if reviewed.exists() and installed.read_bytes() != reviewed.read_bytes():
-        return [(FAILED, "VPN helper: older than the installed Aquarium version",
-                 f"install -m 755 -o root -g root {real(reviewed)} {VPN_HELPER}")]
-    return [(OK, "VPN helper: matches this version", "")]
+    rows = []
+    stale = dict(stale_helpers(code_dir(cfg)))
+    for installed, _source, label in ROOT_HELPERS:
+        if not P(installed).exists():
+            rows.append((OK, f"{label}: not installed" + (" (only needed for VPN and network folders)"
+                                                            if "VPN" in label else ""), ""))
+        elif label in stale:
+            rows.append((FAILED, f"{label}: older than the installed Aquarium version", stale[label]))
+        else:
+            rows.append((OK, f"{label}: matches this version", ""))
+    return rows
 
 
 def check_self(cfg: Dict[str, str]) -> List[Tuple[str, str, str]]:
@@ -1464,7 +1559,8 @@ def cmd_logs(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
 
 # --------------------------------------------------------------------------- migrate-layout
 
-DROPIN = "10-aquarium-env.conf"
+# Sorts after drop-ins already on a box (e.g. 10-unprivileged.conf), so its reset wins.
+DROPIN = "99-aquarium-env.conf"
 
 
 def git_label(checkout: Path) -> Tuple[str, List[str]]:
@@ -1493,8 +1589,10 @@ def plan_layout(cfg: Dict[str, str]) -> Dict:
         new = []
         for f in files:
             optional, path = f.startswith("-"), f.lstrip("-")
-            if path.startswith(ETC + "/") or any(path.startswith(h.rstrip("/") + "/") for h in homes):
-                new.append(f)  # already in place, or written by the app itself ($HERMES_HOME/.env)
+            if not path.startswith(real(checkout).rstrip("/") + "/"):
+                # Outside the code tree (/opt/data/hermes-*.env, $HERMES_HOME/.env, /etc/aquarium):
+                # left exactly where it is, so scripts that source it keep working.
+                new.append(f)
                 continue
             if path not in env_moves:
                 name = Path(path).name
@@ -1504,8 +1602,9 @@ def plan_layout(cfg: Dict[str, str]) -> Dict:
             new.append(("-" if optional else "") + env_moves[path])
         if new != files:
             dropins[unit] = new
-    inside = [p for p in env_moves if p.startswith(real(checkout).rstrip("/") + "/")]
+    inside = list(env_moves)
     return {"checkout": real(checkout), "label": label, "local_changes": mods, "units": units,
+            "required": running_units(units),
             "env_moves": env_moves, "dropins": dropins, "skip": inside, "homes": homes}
 
 
@@ -1515,7 +1614,8 @@ def print_plan(plan: Dict) -> None:
     say("  1. full backup (database, data folders, settings) — `aquarium backup`")
     say(f"  2. copy {ck} (without .git and without the env files below) to {AQ}/releases/{plan['label']},")
     say("     owned by root and read-only to the service user; agent-home/.next stays writable")
-    say("  3. copy these env files to /etc/aquarium (root, mode 0600); the originals stay where they are:")
+    say("  3. copy the env files that live inside the checkout to /etc/aquarium (root, mode 0600);")
+    say("     the originals stay in the old checkout, other env files are not touched:")
     for src, dst in plan["env_moves"].items():
         say(f"       {src} -> {dst}")
     if not plan["env_moves"]:
@@ -1529,7 +1629,8 @@ def print_plan(plan: Dict) -> None:
         say("\n  Note: the checkout has local changes; they are copied as they are:")
         for m in plan["local_changes"][:30]:
             say(f"       {m}")
-    say(f"\n  After this, /opt/data/deploy-hermes.sh no longer applies (no git checkout); use `aquarium update`.")
+    say("\n  After this, /opt/data/deploy-hermes.sh (and the sudo rule that runs it) no longer deploys:")
+    say("  there is no git checkout any more. Updates come from signed releases with `aquarium update`.")
     say("  Undo later with `aquarium migrate-layout --undo`.")
 
 
@@ -1596,12 +1697,12 @@ def apply_layout(cfg: Dict[str, str], plan: Dict) -> int:
         save_state(state)
         step("6. Restarting and checking")
         restart_services(plan["units"])
-        failed = wait_healthy(cfg, plan["units"])
+        failed = wait_healthy(cfg, plan["required"])
         if failed:
             raise Fail("health check failed after the move: " + ", ".join(failed))
     except Exception as error:
         step("Undoing the move")
-        _undo(cfg, record, plan["units"])
+        _undo(cfg, record, plan["units"], plan["required"])
         state = load_state()
         state.pop("migrate_layout", None)
         save_state(state)
@@ -1618,7 +1719,8 @@ def apply_layout(cfg: Dict[str, str], plan: Dict) -> int:
     return 0
 
 
-def _undo(cfg: Dict[str, str], record: Dict, units: Sequence[str]) -> None:
+def _undo(cfg: Dict[str, str], record: Dict, units: Sequence[str],
+          required: Optional[Sequence[str]] = None) -> None:
     checkout, old = compat_path(cfg), P(record["old_dir"])
     if old.is_dir():
         if checkout.is_symlink():
@@ -1637,7 +1739,7 @@ def _undo(cfg: Dict[str, str], record: Dict, units: Sequence[str]) -> None:
         shutil.rmtree(P(f"{AQ}/releases/{record['label']}"), ignore_errors=True)
         shutil.rmtree(P(f"{AQ}/releases/.{record['label']}.partial"), ignore_errors=True)
     restart_services(units)
-    wait_healthy(cfg, units)
+    wait_healthy(cfg, units if required is None else required)
 
 
 def undo_layout(cfg: Dict[str, str]) -> int:
@@ -1652,7 +1754,8 @@ def undo_layout(cfg: Dict[str, str]) -> int:
     if not P(record["old_dir"]).is_dir():
         raise Fail(f"the old checkout {record['old_dir']} is gone; cannot undo")
     step("Putting the git checkout back")
-    _undo(cfg, record, service_units())
+    units = service_units()
+    _undo(cfg, record, units, running_units(units))
     state.pop("migrate_layout", None)
     state.update(layout="git", current=None)
     save_state(state)

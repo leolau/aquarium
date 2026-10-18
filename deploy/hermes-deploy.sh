@@ -28,6 +28,11 @@ fi
 # deploy that leaves the phone app down must still fail loudly.
 VERIFY_UNITS="$UNITS agent-home.service"
 
+# After `aquarium migrate-layout` the code path is a link to a signed, root-owned release.
+if [ -L "$REPO" ]; then
+  echo "ABORT: $REPO is a release install now; update it with: sudo aquarium update" >&2
+  exit 1
+fi
 cd "$REPO"
 
 echo "== local modifications check =="

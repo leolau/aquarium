@@ -54,6 +54,11 @@ if args[0] == "list-unit-files":
         if fnmatch.fnmatch(unit, args[1]):
             print(unit + " enabled enabled")
     sys.exit(0)
+if args[0] == "list-units":
+    for unit in state.get("instances", []):
+        if fnmatch.fnmatch(unit, args[1]):
+            print(unit + " loaded active running bridge")
+    sys.exit(0)
 if args[0] == "is-active":
     unit = args[-1]
     try:
@@ -221,8 +226,8 @@ class Box:
         f.chmod(mode)
         return f
 
-    def set_systemd(self, down):
-        self.state_file.write_text(json.dumps({"enabled": self.units, "down": down}))
+    def set_systemd(self, down, instances=()):
+        self.state_file.write_text(json.dumps({"enabled": self.units, "down": down, "instances": list(instances)}))
 
     def write_units(self, env_for_agent_home="/etc/aquarium/agent-home.env"):
         for unit in self.units:
@@ -285,8 +290,8 @@ class Box:
         (rel / "app-mcp").mkdir()
         os.symlink(f"releases/{version}", self.p("/opt/aquarium/current"))
         os.symlink(str(self.p("/opt/aquarium/current")), self.p("/opt/data/hermes-agent"))
-        self.write("/opt/data/hermes-agent/app-mcp/app-mcp.env", "APP_MCP_TICKET_SECRET=x\n", mode=0o600) \
-            if False else None
+        # a fresh install writes this env file inside the release (install-aquarium.sh step 8)
+        self.write("/opt/data/hermes-agent/app-mcp/app-mcp.env", "APP_MCP_TICKET_SECRET=x\n", mode=0o600)
         self.write("/etc/aquarium/agent-home.env", "PORT=3100\n", mode=0o600)
         self.write("/usr/local/sbin/aquarium", "# old aquarium\n", mode=0o755)
 
@@ -385,7 +390,7 @@ def test_update_installs_verified_stable_release(box, capsys):
     assert not list(box.p("/opt/aquarium/releases").glob(".*partial"))
     log = box.log()
     assert "cosign verify-blob" in log
-    assert r"--certificate-identity-regexp ^https://github\.com/leolau/aquarium/\.github/workflows/release\.yml@refs/tags/v.*$" in log
+    assert "--certificate-identity https://github.com/leolau/aquarium/.github/workflows/release.yml@refs/tags/v1.1.0 " in log
     assert "--certificate-oidc-issuer https://token.actions.githubusercontent.com" in log
     # app-mcp restarts on every update, or new MCP tools are never registered.
     assert "systemctl restart app-mcp.service" in log
@@ -394,6 +399,9 @@ def test_update_installs_verified_stable_release(box, capsys):
     # backup taken before the switch, migration ran, the command refreshed itself
     assert list(box.p("/var/backups/aquarium").glob("aquarium-backup-*-pre-update-v1.1.0.tar.gz.gpg"))
     assert "migrated: true" in box.p("/opt/data/hermes-home/config.yaml").read_text()
+    # the env file the installer put inside the old release goes along
+    carried = rel / "app-mcp/app-mcp.env"
+    assert carried.read_text() == "APP_MCP_TICKET_SECRET=x\n" and carried.stat().st_mode & 0o777 == 0o600
     assert box.p("/usr/local/sbin/aquarium").read_text() == "# new aquarium\n"
     state = json.loads(box.p("/opt/aquarium/state.json").read_text())
     assert state["current"] == "v1.1.0" and state["previous"] == "v1.0.0"
@@ -663,7 +671,7 @@ def test_doctor_all_good(box, capsys):
     for text in ("disk /", "layout: release", "service app-mcp.service: active", "database: accepting connections",
                  "agent-home: HTTP 200", "dashboard API: HTTP 302", "embedding service: HTTP 200",
                  "model key: openrouter accepts the API key", "google:", "WhatsApp personal: paired and connected",
-                 "VPN helper: not installed", "backups: newest is 0 days old"):
+                 "VPN helper: not installed", "WhatsApp bridge helper: not installed", "backups: newest is 0 days old"):
         assert text in out, text
     assert "TOPSECRETPW" not in out and "sk-or-SECRET" not in out
 
@@ -753,7 +761,7 @@ def test_migrate_layout_dry_run_changes_nothing(box, capsys):
     assert f"/opt/aquarium/releases/{label}" in out
     assert "/opt/data/hermes-agent/agent-home/agent-home.env -> /etc/aquarium/agent-home.env" in out
     assert "/opt/data/hermes-agent/app-mcp/app-mcp.env -> /etc/aquarium/app-mcp.env" in out
-    assert "/etc/systemd/system/agent-home.service.d/10-aquarium-env.conf" in out
+    assert "/etc/systemd/system/agent-home.service.d/99-aquarium-env.conf" in out
     assert "Dry run: nothing changed" in out
     assert ck.is_dir() and not ck.is_symlink()
     assert not box.p("/opt/aquarium").exists()
@@ -774,9 +782,9 @@ def test_migrate_layout_apply_and_undo(box, capsys):
     moved = box.p("/etc/aquarium/agent-home.env")
     assert moved.read_text() == "AGENT_HOME_SESSION_SECRET=s3cret\n"
     assert moved.stat().st_mode & 0o777 == 0o600
-    dropin = box.p("/etc/systemd/system/agent-home.service.d/10-aquarium-env.conf").read_text()
+    dropin = box.p("/etc/systemd/system/agent-home.service.d/99-aquarium-env.conf").read_text()
     assert "EnvironmentFile=\nEnvironmentFile=/etc/aquarium/agent-home.env\n" in dropin
-    gw = box.p("/etc/systemd/system/hermes-gateway.service.d/10-aquarium-env.conf")
+    gw = box.p("/etc/systemd/system/hermes-gateway.service.d/99-aquarium-env.conf")
     assert not gw.exists(), "units already reading /etc/aquarium need no drop-in"
     assert aq.unit_env_files("app-mcp.service") == ["/etc/aquarium/app-mcp.env"]
     old = list(box.p("/opt/data").glob("hermes-agent.pre-release-*"))
@@ -789,7 +797,7 @@ def test_migrate_layout_apply_and_undo(box, capsys):
     assert box.run("migrate-layout", "--undo") == 0
     assert ck.is_dir() and not ck.is_symlink() and (ck / ".git").is_dir()
     assert (ck / "agent-home/agent-home.env").exists()
-    assert not box.p("/etc/systemd/system/agent-home.service.d/10-aquarium-env.conf").exists()
+    assert not box.p("/etc/systemd/system/agent-home.service.d/99-aquarium-env.conf").exists()
     assert not box.p("/etc/aquarium/agent-home.env").exists()
     assert not rel.exists() and not box.p("/opt/aquarium/current").exists()
 
@@ -801,7 +809,7 @@ def test_migrate_layout_undoes_itself_when_health_check_fails(box, capsys, monke
     out = capsys.readouterr().out
     assert "everything was put back as it was" in out
     assert ck.is_dir() and not ck.is_symlink() and (ck / "agent-home/agent-home.env").exists()
-    assert not box.p("/etc/systemd/system/agent-home.service.d/10-aquarium-env.conf").exists()
+    assert not box.p("/etc/systemd/system/agent-home.service.d/99-aquarium-env.conf").exists()
     assert not box.p(f"/opt/aquarium/releases/{label}").exists()
     assert not list(box.p("/opt/data").glob("hermes-agent.pre-release-*"))
 
@@ -837,3 +845,86 @@ def test_uninstall_purge_data(box, capsys):
     assert not box.p("/opt/data/supabase").exists()
     assert "docker compose down -v" in box.log()
     assert list(box.p("/var/backups/aquarium").glob("*.gpg")), "backups always survive"
+
+
+def test_pinned_cosign_from_the_installer_is_used(box, capsys):
+    released_box(box)
+    (box.bin / "cosign").rename(box.tmp / "cosign-real")
+    pinned = box.p("/usr/local/lib/aquarium/cosign-v2.6.5")
+    pinned.parent.mkdir(parents=True)
+    os.symlink(box.tmp / "cosign-real", pinned)
+    assert box.run("update") == 0
+    assert "cosign-v2.6.5 verify-blob" in box.log()
+
+
+def test_template_bridge_instances_are_restarted_and_checked(box, capsys):
+    released_box(box)
+    port = box.server.server_address[1]
+    box.write("/etc/systemd/system/hermes-wa-bridge@.service", (REPO / "deploy/hermes-wa-bridge@.service").read_text())
+    box.write("/etc/aquarium/wa-bridge-shop.env", f"WA_BRIDGE_PORT={port}\n", mode=0o600)
+    box.set_systemd(down=[], instances=["hermes-wa-bridge@shop.service"])
+    assert aq.unit_port("hermes-wa-bridge@shop.service") == port
+    assert "hermes-wa-bridge@shop.service" in aq.service_units()
+    rows = aq.check_whatsapp(aq.load_config())
+    assert (aq.OK, "WhatsApp shop: paired and connected", "") in rows
+    assert box.run("update") == 0
+    assert "systemctl restart hermes-wa-bridge@shop.service" in box.log()
+
+
+def test_stale_whatsapp_bridge_helper_is_reported(box, capsys):
+    released_box(box)
+    box.p("/opt/aquarium/releases/v1.0.0/deploy/hermes-wa-bridge-add").write_text("new\n")
+    box.write("/usr/local/sbin/hermes-wa-bridge-add", "old\n", mode=0o755)
+    rows = aq.check_vpn(aq.load_config())
+    assert any(r[0] == aq.FAILED and "WhatsApp bridge helper" in r[1] and "hermes-wa-bridge-add" in r[2] for r in rows)
+
+
+def test_unit_already_down_before_update_does_not_force_a_rollback(box, capsys):
+    released_box(box)
+    box.set_systemd(down=["hermes-embed.service"])  # e.g. a unit that was failing before
+    assert box.run("update") == 0, capsys.readouterr().out
+    assert os.readlink(box.p("/opt/aquarium/current")) == "releases/v1.1.0"
+
+
+def test_migrate_layout_leaves_env_files_outside_the_checkout_alone(box, capsys):
+    ck, label = git_box(box)
+    staging = box.write("/opt/data/hermes-staging.env", "DATABASE_URL=x\n", mode=0o640)
+    box.write("/etc/systemd/system/hermes-dashboard.service",
+              "[Service]\nEnvironmentFile=/opt/data/hermes-staging.env\n")
+    box.write("/etc/systemd/system/hermes-dashboard.service.d/10-unprivileged.conf", "[Service]\nUser=hermes\n")
+    assert box.run("migrate-layout", "--yes") == 0, capsys.readouterr().out
+    assert staging.read_text() == "DATABASE_URL=x\n" and staging.stat().st_mode & 0o777 == 0o640
+    assert not box.p("/etc/aquarium/hermes-staging.env").exists()
+    assert not box.p("/etc/systemd/system/hermes-dashboard.service.d/99-aquarium-env.conf").exists()
+    assert aq.unit_env_files("hermes-dashboard.service") == ["/opt/data/hermes-staging.env"]
+    assert aq.unit_env_files("agent-home.service") == ["/etc/aquarium/agent-home.env"]
+
+
+def test_backup_covers_data_root_env_files_and_timer_units(box):
+    released_box(box)
+    box.write("/opt/data/hermes-messaging.env", "TELEGRAM_BOT_TOKEN=t\n", mode=0o640)
+    box.write("/opt/data/deploy/backup-recipient.env", "R=x\n", mode=0o600)
+    box.write("/etc/systemd/system/hermes-secret-backup.service",
+              "[Service]\nEnvironmentFile=/opt/data/deploy/backup-recipient.env\n")
+    box.write("/etc/systemd/system/hermes-drift-check.timer", "[Timer]\n")
+    path = _backup(box)
+    dest = box.tmp / "o"
+    dest.mkdir()
+    files = aq.open_backup(path, box.p("/etc/aquarium/backup.key"), dest)["files"]
+    for name in ("root/opt/data/hermes-messaging.env", "root/opt/data/deploy/backup-recipient.env",
+                 "root/etc/systemd/system/hermes-secret-backup.service",
+                 "root/etc/systemd/system/hermes-drift-check.timer"):
+        assert name in files, name
+
+
+def test_old_deploy_script_refuses_a_release_install(tmp_path):
+    text = (REPO / "deploy/hermes-deploy.sh").read_text()
+    guard = text[text.index('if [ -L "$REPO" ]'):text.index('cd "$REPO"')]
+    (tmp_path / "rel").mkdir()
+    os.symlink(tmp_path / "rel", tmp_path / "link")
+    proc = subprocess.run(["bash", "-c", f'REPO={tmp_path}/link\n{guard}\necho reached'],
+                          capture_output=True, text=True)
+    assert proc.returncode == 1 and "sudo aquarium update" in proc.stderr and "reached" not in proc.stdout
+    proc = subprocess.run(["bash", "-c", f'REPO={tmp_path}/rel\n{guard}\necho reached'],
+                          capture_output=True, text=True)
+    assert proc.returncode == 0 and "reached" in proc.stdout
