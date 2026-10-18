@@ -15,6 +15,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/** Snapshot id of the element with this accessible name (what app-mcp sends). */
+function idOf(name: string): number {
+  const entry = snapshotElements(document).find((e) => e.name === name);
+  if (!entry) throw new Error(`no element named ${name}`);
+  return entry.id;
+}
+
 describe("executeCommand snapshot", () => {
   it("returns the interactive elements with fresh ids", () => {
     document.body.innerHTML = `<button>Filter</button><a href="/chat">Chats</a>`;
@@ -39,19 +46,43 @@ describe("executeCommand click", () => {
     expect(onClick).toHaveBeenCalledTimes(1);
   });
 
-  it("clicks by accessible name when no id is known", () => {
-    document.body.innerHTML = `<button type="button">Archive</button>`;
-    const onClick = vi.fn();
-    document.querySelector("button")!.addEventListener("click", onClick);
+  it("never re-resolves a free-form name or CSS selector (F4)", () => {
+    document.body.innerHTML = `<button type="button">Archive</button><button id="del">Delete all</button>`;
+    const onDelete = vi.fn();
+    document.querySelector("#del")!.addEventListener("click", onDelete);
 
-    const res = executeCommand({ type: "click", name: "archive" });
-    expect(res.ok).toBe(true);
-    expect(onClick).toHaveBeenCalled();
+    const byName = executeCommand({ type: "click", name: "archive" } as never);
+    const bySelector = executeCommand({ type: "click", selector: "#del" } as never);
+    expect(byName.ok).toBe(false);
+    expect(bySelector.ok).toBe(false);
+    expect(onDelete).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the element under the id no longer has the name app-mcp checked (F4)", () => {
+    document.body.innerHTML = `<button type="button">Rename</button>`;
+    const id = idOf("Rename");
+    const button = document.querySelector("button")!;
+    const onClick = vi.fn();
+    button.addEventListener("click", onClick);
+    button.textContent = "Delete forever";
+
+    const res = executeCommand({ type: "click", elementId: id, expectName: "Rename" });
+    expect(res.ok).toBe(false);
+    expect(res.detail).toContain("page changed");
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it("refuses hidden elements even by id", () => {
+    document.body.innerHTML = `<button type="button">Later hidden</button>`;
+    const id = idOf("Later hidden");
+    document.querySelector("button")!.setAttribute("hidden", "");
+    const res = executeCommand({ type: "click", elementId: id });
+    expect(res.ok).toBe(false);
   });
 
   it("fails cleanly when nothing matches", () => {
     document.body.innerHTML = `<button>Only</button>`;
-    const res = executeCommand({ type: "click", name: "Missing" });
+    const res = executeCommand({ type: "click", elementId: 999999 });
     expect(res.ok).toBe(false);
     expect(res.detail).toContain("No element matched");
   });
@@ -64,7 +95,7 @@ describe("executeCommand type", () => {
     const onInput = vi.fn();
     input.addEventListener("input", onInput);
 
-    const res = executeCommand({ type: "type", name: "Title", value: "Ship it" });
+    const res = executeCommand({ type: "type", elementId: idOf("Title"), value: "Ship it" });
     expect(res.ok).toBe(true);
     expect(input.value).toBe("Ship it");
     expect(onInput).toHaveBeenCalled();
@@ -72,7 +103,7 @@ describe("executeCommand type", () => {
 
   it("refuses non-text targets", () => {
     document.body.innerHTML = `<button>Send</button>`;
-    const res = executeCommand({ type: "type", name: "Send", value: "x" });
+    const res = executeCommand({ type: "type", elementId: idOf("Send"), value: "x" });
     expect(res.ok).toBe(false);
   });
 });
@@ -88,7 +119,7 @@ describe("executeCommand select/read/focus", () => {
     const onChange = vi.fn();
     select.addEventListener("change", onChange);
 
-    const res = executeCommand({ type: "select", name: "Stage", value: "done" });
+    const res = executeCommand({ type: "select", elementId: idOf("Stage"), value: "done" });
     expect(res.ok).toBe(true);
     expect(select.value).toBe("done");
     expect(onChange).toHaveBeenCalled();
@@ -96,14 +127,14 @@ describe("executeCommand select/read/focus", () => {
 
   it("reads the current value of an input", () => {
     document.body.innerHTML = `<input type="text" aria-label="Query" value="hello" />`;
-    const res = executeCommand({ type: "read", name: "Query" });
+    const res = executeCommand({ type: "read", elementId: idOf("Query") });
     expect(res.ok).toBe(true);
     expect(res.detail).toBe("hello");
   });
 
   it("focuses an element", () => {
     document.body.innerHTML = `<button>Target</button>`;
-    const res = executeCommand({ type: "focus", name: "Target" });
+    const res = executeCommand({ type: "focus", elementId: idOf("Target") });
     expect(res.ok).toBe(true);
     expect(document.activeElement).toBe(document.querySelector("button"));
   });
@@ -146,11 +177,37 @@ describe("executeCommand navigate", () => {
 });
 
 describe("resolveElement", () => {
-  it("prefers id over selector and name", () => {
+  it("resolves only by snapshot id", () => {
     document.body.innerHTML = `<button id="a">One</button><button>Two</button>`;
     const snap = snapshotElements(document);
     const two = snap.find((e) => e.name === "Two")!;
-    const el = resolveElement({ elementId: two.id, selector: "#a", name: "One" });
-    expect(el?.textContent).toBe("Two");
+    expect(resolveElement({ elementId: two.id })?.textContent).toBe("Two");
+    expect(resolveElement({})).toBeNull();
+  });
+});
+
+describe("sensitive fields (F4)", () => {
+  it("snapshots never include password or secret values", () => {
+    document.body.innerHTML = `
+      <input type="password" aria-label="Current" value="hunter2" />
+      <input type="password" value="nolabel-secret" />
+      <input type="text" name="api_key" value="sk-live-123" />
+      <label>Access token <input type="text" value="tok-abc" /></label>
+      <input type="text" autocomplete="one-time-code" value="424242" />
+      <input type="text" aria-label="Title" value="Ship it" />`;
+    const snap = snapshotElements(document);
+    const dump = JSON.stringify(snap);
+    for (const secret of ["hunter2", "nolabel-secret", "sk-live-123", "tok-abc", "424242"]) {
+      expect(dump).not.toContain(secret);
+    }
+    expect(snap.filter((e) => e.sensitive)).toHaveLength(5);
+    expect(snap.find((e) => e.name === "Title")?.value).toBe("Ship it");
+  });
+
+  it("read refuses a password field", () => {
+    document.body.innerHTML = `<input type="password" aria-label="Password" value="hunter2" />`;
+    const res = executeCommand({ type: "read", elementId: idOf("Password") });
+    expect(res.ok).toBe(false);
+    expect(res.detail).not.toContain("hunter2");
   });
 });

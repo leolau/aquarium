@@ -44,9 +44,10 @@ from urllib.parse import parse_qs, urlparse
 
 import websockets
 from mcp.server.fastmcp import FastMCP
+from mcp.server.lowlevel.server import request_ctx
 
 from . import netfolders as nf
-from .guard import looks_destructive
+from .guard import looks_destructive, looks_sensitive
 from .help import help_for
 from .hub import Hub, HubError
 from .pages import PAGES
@@ -71,6 +72,20 @@ SAFE_ACTIONS = {"click", "type", "select", "focus", "read", "scroll", "navigate"
 DESTRUCTIVE_REFUSAL = (
     "That element looks destructive or externally visible. Use app_act_destructive "
     "instead — it goes through the user's approval flow."
+)
+
+# Hermes forwards the chat's user id in the MCP request `_meta` under this
+# key (tools/mcp_tool.py, `forward_principal: true`). Every tool routes to
+# THAT user's browser session only; no key = no browser access.
+PRINCIPAL_META_KEY = "aquarium_principal_user_id"
+
+ELEMENT_ACTIONS = {"click", "type", "select", "focus", "read", "scroll"}
+SENSITIVE_READ_REFUSAL = (
+    "That field holds a password or secret; app-mcp never reads it back."
+)
+UNNAMED_REFUSAL = (
+    "That control has no visible name, so app-mcp cannot tell whether it is "
+    "safe. Use app_act_destructive (the user approves it) instead."
 )
 
 # WS path -> which Hub owns it. A dict makes `_route_for_path` trivially
@@ -112,11 +127,11 @@ async def _ws_handler(conn: websockets.ServerConnection) -> None:
                 continue
             kind = msg.get("type")
             if kind == "state":
-                target.update_state(msg.get("path"), msg.get("element"))
+                target.update_state(conn, msg.get("path"), msg.get("element"))
             elif kind == "progress":
-                target.note_progress(msg.get("id"), msg.get("sent"), msg.get("total"))
+                target.note_progress(conn, msg.get("id"), msg.get("sent"), msg.get("total"))
             elif kind == "result":
-                target.resolve_result(msg.get("id"), msg)
+                target.resolve_result(conn, msg.get("id"), msg)
     finally:
         target.detach(conn)
         log.info("app-mcp: session detached (path=%s user=%s)", parsed.path, user)
@@ -126,33 +141,80 @@ async def _ws_handler(conn: websockets.ServerConnection) -> None:
 # Helpers shared by the tools
 # ---------------------------------------------------------------------------
 
-async def _element_name(
-    element_id: int | None, name: str | None, selector: str | None
-) -> str | None:
-    """Best-effort accessible name of the target, for the destructive guard."""
-    if name:
-        return name
-    if element_id is None and not selector:
-        return None
-    try:
-        snap = await hub.send_command({"type": "snapshot"})
-    except HubError:
-        return None
-    if not snap.get("ok"):
-        return None
-    for entry in snap.get("elements") or []:
-        if element_id is not None and entry.get("id") == element_id:
-            return entry.get("name")
-        if selector and entry.get("selector") == selector:
-            return entry.get("name")
-    return None
+def _caller() -> str | None:
+    """The user this MCP request is for, as forwarded by Hermes in `_meta`."""
+    ctx = request_ctx.get(None)
+    meta = getattr(ctx, "meta", None) if ctx is not None else None
+    extra = getattr(meta, "model_extra", None) or {}
+    user = extra.get(PRINCIPAL_META_KEY)
+    return user if isinstance(user, str) and user else None
+
+
+def _clean_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """Drop the value of password/secret fields before it reaches the agent."""
+    if entry.get("sensitive") or looks_sensitive(entry.get("name")):
+        out = {k: v for k, v in entry.items() if k != "value"}
+        out["sensitive"] = True
+        return out
+    return entry
+
+
+async def _snapshot(user: str | None) -> dict[str, Any]:
+    result = await hub.send_command({"type": "snapshot"}, user)
+    if result.get("ok"):
+        result["elements"] = [
+            _clean_entry(e) for e in result.get("elements") or [] if isinstance(e, dict)
+        ]
+    return result
+
+
+def _pick_target(
+    elements: list[dict[str, Any]],
+    element_id: int | None,
+    name: str | None,
+    selector: str | None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """The ONE snapshot entry the action will hit, or a refusal reason.
+
+    The guard must judge the element the browser will really act on, so the
+    caller's name/selector are only used to find a unique entry in a fresh
+    snapshot; the browser is then sent that entry's id (and its name to
+    double-check), never the caller's free-form locator.
+    """
+    wanted_name = name.strip().lower() if name and name.strip() else None
+    if element_id is not None:
+        entry = next((e for e in elements if e.get("id") == element_id), None)
+        if entry is None:
+            return None, f"No element with id {element_id} on the page. Call app_describe_page again."
+        if wanted_name is not None and str(entry.get("name") or "").lower() != wanted_name:
+            return None, (
+                f"Element {element_id} is named {entry.get('name')!r}, not {name!r}. "
+                "Refusing a mismatched target."
+            )
+        if selector and entry.get("selector") != selector:
+            return None, f"Element {element_id} does not match selector {selector!r}."
+        return entry, None
+    if selector:
+        matches = [e for e in elements if e.get("selector") == selector]
+        if wanted_name is not None:
+            matches = [e for e in matches if str(e.get("name") or "").lower() == wanted_name]
+    elif wanted_name is not None:
+        matches = [e for e in elements if str(e.get("name") or "").lower() == wanted_name]
+        if not matches:
+            matches = [e for e in elements if wanted_name in str(e.get("name") or "").lower()]
+    else:
+        return None, "Name the target: element_id (from app_describe_page), name or selector."
+    if not matches:
+        return None, "No element matched. Call app_describe_page and use an element_id."
+    if len(matches) > 1:
+        options = ", ".join(f"{e.get('id')}={e.get('name')!r}" for e in matches[:8])
+        return None, f"{len(matches)} elements match ({options}). Pass the element_id."
+    return matches[0], None
 
 
 def _build_command(
     action: str,
-    element_id: int | None,
-    name: str | None,
-    selector: str | None,
+    target: dict[str, Any] | None,
     value: str | None,
     path: str | None,
 ) -> dict[str, Any]:
@@ -160,13 +222,12 @@ def _build_command(
         return {"type": "snapshot"}
     if action == "navigate":
         return {"type": "navigate", "path": path or "/"}
-    command: dict[str, Any] = {"type": action}
-    if element_id is not None:
-        command["elementId"] = element_id
-    if name:
-        command["name"] = name
-    if selector:
-        command["selector"] = selector
+    assert target is not None
+    command: dict[str, Any] = {
+        "type": action,
+        "elementId": target.get("id"),
+        "expectName": str(target.get("name") or ""),
+    }
     if action in ("type", "select"):
         command["value"] = value or ""
     return command
@@ -183,14 +244,27 @@ async def _run_action(
 ) -> dict[str, Any]:
     if action not in SAFE_ACTIONS:
         return {"ok": False, "detail": f"Unknown action '{action}'. One of: {sorted(SAFE_ACTIONS)}"}
-    if enforce_guard and action in ("click", "select"):
-        target_name = await _element_name(element_id, name, selector)
-        if looks_destructive(target_name):
-            return {"ok": False, "detail": DESTRUCTIVE_REFUSAL, "element": target_name}
+    user = _caller()
     try:
-        return await hub.send_command(
-            _build_command(action, element_id, name, selector, value, path)
-        )
+        if action == "snapshot":
+            return await _snapshot(user)
+        target: dict[str, Any] | None = None
+        if action in ELEMENT_ACTIONS:
+            snap = await _snapshot(user)
+            if not snap.get("ok"):
+                return snap
+            target, problem = _pick_target(snap.get("elements") or [], element_id, name, selector)
+            if target is None:
+                return {"ok": False, "detail": problem}
+            target_name = str(target.get("name") or "").strip()
+            if action == "read" and target.get("sensitive"):
+                return {"ok": False, "detail": SENSITIVE_READ_REFUSAL, "element": target_name}
+            if enforce_guard and action in ("click", "select"):
+                if not target_name:
+                    return {"ok": False, "detail": UNNAMED_REFUSAL, "element_id": target.get("id")}
+                if looks_destructive(target_name):
+                    return {"ok": False, "detail": DESTRUCTIVE_REFUSAL, "element": target_name}
+        return await hub.send_command(_build_command(action, target, value, path), user)
     except HubError as err:
         return {"ok": False, "detail": str(err)}
 
@@ -204,7 +278,7 @@ async def app_state() -> dict[str, Any]:
     """Which page of agent-home the user is on and which UI element they last
     touched. Use this to resolve references like "this page" or "the button
     I'm on" before acting."""
-    return hub.state_summary()
+    return hub.state_summary(_caller())
 
 
 @mcp.tool()
@@ -212,7 +286,7 @@ async def app_pages() -> dict[str, Any]:
     """The map of agent-home pages (route, name, purpose), with the user's
     current page marked. For what is ON the current page, use app_describe_page;
     for how a page or feature is used, app_page_help."""
-    current = hub.state_summary().get("page")
+    current = hub.state_summary(_caller()).get("page")
     return {
         "current": current,
         "pages": [
@@ -229,7 +303,7 @@ async def app_page_help(path: str | None = None) -> dict[str, Any]:
     and who may do what. Defaults to the page the user is on; pass a path
     (e.g. "/projects") to explain another one. Use this to answer "how do I
     use …", "what does this page do", "what is the difference between …"."""
-    target = path or hub.state_summary().get("page")
+    target = path or hub.state_summary(_caller()).get("page")
     text = help_for(target)
     if text is None:
         return {"ok": False, "path": target, "detail": "No guide for this page."}
@@ -241,14 +315,15 @@ async def app_describe_page() -> dict[str, Any]:
     """Detailed description of every interactive element on the page the user
     is on right now: id, role, accessible name, value/checked/disabled and a
     selector. Use the ids with app_act / app_act_destructive."""
+    user = _caller()
     try:
-        result = await hub.send_command({"type": "snapshot"})
+        result = await _snapshot(user)
     except HubError as err:
         return {"ok": False, "detail": str(err)}
     if not result.get("ok"):
         return result
     elements = result.get("elements") or []
-    page = hub.state_summary().get("page")
+    page = hub.state_summary(user).get("page")
     return {
         "ok": True,
         "page": page,
@@ -269,9 +344,9 @@ async def app_act(
 ) -> dict[str, Any]:
     """Perform a SAFE action on the user's app UI and report the outcome.
     Actions: click, type, select, focus, read, scroll (target one element by
-    element_id from app_describe_page, or by name/selector); navigate (pass
-    path, e.g. "/todos"); snapshot. Refuses elements that look destructive —
-    those need app_act_destructive."""
+    element_id from app_describe_page; a name/selector must match exactly one
+    element); navigate (pass path, e.g. "/todos"); snapshot. Refuses elements
+    that look destructive or have no name — those need app_act_destructive."""
     return await _run_action(action, element_id, name, selector, value, path, enforce_guard=True)
 
 
@@ -308,10 +383,11 @@ NOT_CONNECTED_HINT = (
 
 
 async def _folder_command(command: dict[str, Any]) -> dict[str, Any]:
-    if not folder_hub.connected:
+    user = _caller()
+    if not folder_hub.is_connected(user):
         return {"ok": False, "detail": NOT_CONNECTED_HINT}
     try:
-        return await folder_hub.send_command(command)
+        return await folder_hub.send_command(command, user)
     except HubError as err:
         return {"ok": False, "detail": str(err)}
 
@@ -350,7 +426,7 @@ async def folder_bridge_state() -> dict[str, Any]:
     itself to return. `network_folders` counts the server-side network
     folders (office file shares through a VPN), which work without a
     browser session."""
-    summary = folder_hub.state_summary()
+    summary = folder_hub.state_summary(_caller())
     folders, error = await _network_folders()
     summary["network_folders"] = len(folders)
     summary["network_folders_mounted"] = sum(1 for f in folders if f["mounted"])
@@ -373,7 +449,7 @@ async def folder_bridge_list_folders() -> dict[str, Any]:
     it jams the VPN link. Totals of big shares are unknown."""
     network, net_error = await _network_folders()
     browser: dict[str, Any] = {"ok": False, "detail": NOT_CONNECTED_HINT}
-    if folder_hub.connected:
+    if folder_hub.is_connected(_caller()):
         browser = await _folder_command({"type": "listFolders"})
     if not network and not net_error:
         return browser
