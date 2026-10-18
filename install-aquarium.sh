@@ -125,6 +125,10 @@ fi
 # ---------------------------------------------------------------- 2. service account + secrets
 log "Service account and secrets"
 id hermes >/dev/null 2>&1 || useradd --system --create-home --home-dir /home/hermes --shell /usr/sbin/nologin hermes
+# The agent's terminal commands run as hermes-tools (deploy/hermes-tools-exec): a separate
+# user cannot read the gateway's environment (/proc/<pid>/environ) or hermes's secret files.
+id hermes-tools >/dev/null 2>&1 || useradd --system --create-home --home-dir /home/hermes-tools \
+  --shell /usr/sbin/nologin hermes-tools
 install -d -m 700 -o root -g root "$ROOT/deploy"
 touch "$SECRETS" && chmod 600 "$SECRETS"
 secret() {  # secret NAME [value]: read from the secrets file, else set it once
