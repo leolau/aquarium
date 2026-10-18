@@ -393,7 +393,7 @@ class FileCredentialStore:
 
     def _read_doc(self, path: Path) -> Optional[Dict[str, Any]]:
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            return json.loads(path.read_text())  # noqa: PLW1514 — must match the locale-default writes below
         except (OSError, ValueError):
             return None
 
