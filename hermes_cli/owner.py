@@ -19,6 +19,7 @@ from hermes_cli.datastore import SupabaseAppStore, get_store
 
 #: Env var carrying the serving read role's password (a credential → ``.env``).
 READ_ROLE_PASSWORD_ENV = "HERMES_APP_READ_DB_PASSWORD"
+APP_ROLE_PASSWORD_ENV = "HERMES_APP_DB_PASSWORD"
 
 
 def _prod_store() -> PrincipalStore:
@@ -137,7 +138,16 @@ def owner_db_role_command(args: argparse.Namespace) -> int:
         async def _run() -> str:
             connection = await store.connect()
             try:
-                await ensure_app_role(connection, store.schema)
+                password = os.environ.get(APP_ROLE_PASSWORD_ENV, "")
+                if password:
+                    # A login role is connected to directly, so skip the
+                    # membership grant that crashes self-hosted Supabase.
+                    await ensure_app_role(
+                        connection, store.schema,
+                        grant_membership=False, password=password,
+                    )
+                else:
+                    await ensure_app_role(connection, store.schema)
             finally:
                 await connection.close()
             return store.schema

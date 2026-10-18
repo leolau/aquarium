@@ -34,6 +34,19 @@ def _store(mode: str | None):
     return PgvectorMemoryStore(app_store, config=config)
 
 
+async def _bind_owner(conn, store) -> None:
+    """Read as the owner: the fit and status cover every user's rows.
+
+    Under a login that bypasses row rules (``postgres``) this changes nothing;
+    under ``hermes_app`` an unbound connection would see no rows at all.
+    """
+    from hermes_cli.access import PrincipalStore, bind_principal
+
+    owner = await PrincipalStore(store._store).get_owner(connection=conn)
+    if owner is not None:
+        await bind_principal(conn, owner, session=True)
+
+
 async def fit_projection(
     store, *, algorithm: str = "pca", sample_size: int = 20000
 ) -> None:
@@ -61,6 +74,7 @@ async def fit_projection(
 
     conn = await store.connect()
     try:
+        await _bind_owner(conn, store)
         # Check the table exists.
         exists = await conn.fetchval(
             "SELECT to_regclass(current_schema() || '.memories')"
@@ -70,7 +84,7 @@ async def fit_projection(
             print("  Initialize the schema first (start a session).\n")
             return
 
-        # Load embeddings (bypassing RLS — fit is operator-only CLI), but only
+        # Load every user's embeddings (bound as the owner above), but only
         # those made by the configured model. Two embedding spaces in one PCA
         # produce a map whose distances mean nothing, and stamping the
         # configured model on it would make that map indistinguishable from a
@@ -298,6 +312,7 @@ def cmd_projection_status(args: argparse.Namespace) -> None:
     async def _status() -> None:
         conn = await store.connect()
         try:
+            await _bind_owner(conn, store)
             basis = await conn.fetchrow(
                 f"SELECT algorithm, model, sample_size, fitted_at "
                 f"FROM {PROJECTION_BASIS_TABLE} WHERE id = 1"

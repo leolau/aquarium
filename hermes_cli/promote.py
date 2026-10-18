@@ -128,7 +128,9 @@ async def promote_artifact(
 
         async with connection.transaction():
             if schema_sql is not None:
-                await connection.execute(schema_sql)
+                from hermes_cli.db_setup import execute_schema_change
+
+                await execute_schema_change(connection, schema_sql)
 
             existing = await connection.fetchval(
                 f"""
