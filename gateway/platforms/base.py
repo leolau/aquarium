@@ -989,6 +989,9 @@ MEDIA_DELIVERY_SAFE_ROOTS = (
     _HERMES_HOME / "cache" / "videos",
     _HERMES_HOME / "cache" / "documents",
     _HERMES_HOME / "cache" / "screenshots",
+    # Files agents export for the user (reports, thumbnails). Already used
+    # this way on deployed boxes, so strict mode (F21) must keep them working.
+    _HERMES_HOME / "exports",
 )
 
 # Default recency window for trusting freshly-produced files (seconds).

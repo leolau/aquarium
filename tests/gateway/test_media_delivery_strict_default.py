@@ -66,6 +66,8 @@ def layout(tmp_path):
         "legacy_cache_audio": _write(hh / "audio_cache" / "tts.ogg", age=two_hours),
         "workspace_report": _write(home / "work" / "Q3 report.pdf", age=two_hours),
         "workspace_makefile": _write(home / "work" / "Makefile", age=two_hours),
+        "export_thumbnail": _write(hh / "exports" / "thumbnails" / "t1.jpg", age=two_hours),
+        "export_file": _write(hh / "exports" / "summary.pdf", age=two_hours),
         "member_workspace_file": _write(hh / "workspaces" / "alice" / "notes.docx", age=two_hours),
         "fresh_tmp_pdf": _write(tmp_path / "scratch" / "new.pdf"),
         # must never attach
@@ -78,6 +80,7 @@ def layout(tmp_path):
         "password_store": _write(home / ".password-store" / "bank.gpg"),
         "project_env": _write(tmp_path / "srv" / "app" / ".env"),
         "project_env_prod": _write(home / "work" / ".env.production"),
+        "env_in_exports": _write(hh / "exports" / ".env"),
         "state_db": _write(hh / "state.db"),
         "kanban_db": _write(hh / "kanban" / "kanban.db"),
         "hermes_log": _write(hh / "logs" / "agent.log", age=two_hours),
@@ -95,12 +98,13 @@ def layout(tmp_path):
 
 
 ALLOWED = {
-    "generated_image", "legacy_cache_audio", "workspace_report", "workspace_makefile",
+    "generated_image", "legacy_cache_audio", "export_thumbnail", "export_file",
+    "workspace_report", "workspace_makefile",
     "member_workspace_file", "fresh_tmp_pdf",
 }
 NEVER = {
     "whatsapp_login", "git_credentials", "netrc", "npmrc", "pypirc", "vault_token",
-    "password_store", "project_env", "project_env_prod", "state_db", "kanban_db",
+    "password_store", "project_env", "project_env_prod", "env_in_exports", "state_db", "kanban_db",
     "symlink_to_whatsapp_login", "cache_symlink_to_git_credentials",
 }
 
