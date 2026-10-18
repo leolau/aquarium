@@ -25,6 +25,8 @@ concurrency:
 jobs:
   build:
     name: Build distribution 📦
+    # Upstream-only: Aquarium releases are built by release.yml.
+    if: github.repository == 'NousResearch/hermes-agent'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
