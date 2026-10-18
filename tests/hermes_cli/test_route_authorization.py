@@ -345,14 +345,23 @@ def _route_keys(route):
     return [f"{m} {route.path}" for m in sorted(methods) if m != "HEAD"]
 
 
+def _route_contexts(routes) -> list:
+    """Every effective route. Newer FastAPI keeps included routers nested
+    (``iter_route_contexts`` walks them); older FastAPI copies them flat into
+    ``app.routes`` with the router's dependencies merged in."""
+    try:
+        from fastapi.routing import iter_route_contexts
+    except ImportError:
+        return [r for r in routes if hasattr(r, "path") and hasattr(r, "endpoint")]
+    return list(iter_route_contexts(routes))
+
+
 def undeclared_routes(app) -> list[str]:
     """Routes in ``app`` that declare no role and are in no allowlist."""
-    from fastapi.routing import iter_route_contexts
-
     from hermes_cli.route_roles import declared_role
 
     missing = []
-    for ctx in iter_route_contexts(app.routes):
+    for ctx in _route_contexts(app.routes):
         if declared_role(ctx):
             continue
         for key in _route_keys(ctx):
@@ -374,11 +383,9 @@ def _isolate_hermes_home(tmp_path, monkeypatch):
 
 
 def _contexts():
-    from fastapi.routing import iter_route_contexts
-
     from hermes_cli.web_server import app
 
-    return list(iter_route_contexts(app.routes))
+    return _route_contexts(app.routes)
 
 
 def test_every_route_declares_who_may_call_it():
