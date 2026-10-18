@@ -151,6 +151,26 @@ on the box changes *how the command is carried*, not who may run it.
 Either way, success ends with `deploy OK (<sha>)` and all services `active`; verify
 independently with the §5.7 health check.
 
+#### Root-owned checkout (security review F13/F15)
+The deploy runs as root, so it refuses (`ABORT: … is not root-owned`) a
+checkout the hermes user can edit: hermes may own only
+`agent-home/.next/cache`, `agent-home/agent-home.env`, `app-mcp/app-mcp.env`.
+It runs git with hooks/fsmonitor disabled, `python -I`, `npm ci
+--ignore-scripts` (then `npm rebuild` of the reviewed native packages in
+`NPM_REBUILD`), refuses a project `.npmrc`, and runs the handover check as
+hermes. Root timers (`hermes-secret-backup`, reviewed copy in `deploy/`) run
+`python -I` from this root-owned tree. One-time move from the old hermes-owned
+layout (backup first, rollback restores the saved owners):
+```bash
+B=/opt/data/backups/root-owned-$(date +%F); mkdir -p $B
+find /opt/data/hermes-agent -xdev -printf '%u:%g %m %p\n' > $B/owners.txt
+cd /opt/data/hermes-agent && git status --porcelain --ignored | grep -v node_modules > $B/untracked.txt   # review before step 3
+chown -R root:root /opt/data/hermes-agent && chmod -R go-w /opt/data/hermes-agent
+install -d -o hermes -g hermes agent-home/.next/cache
+chown hermes:hermes agent-home/agent-home.env app-mcp/app-mcp.env
+# rollback: while read -r og m p; do chown -h "$og" "$p"; chmod "$m" "$p" 2>/dev/null; done < $B/owners.txt
+```
+
 ### 5.2 Dashboard update
 ```bash
 # code lives at /opt/data/hermes-agent (Python, uv-managed)

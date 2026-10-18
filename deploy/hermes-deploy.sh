@@ -30,6 +30,41 @@ VERIFY_UNITS="$UNITS agent-home.service"
 
 cd "$REPO"
 
+# F13: this script runs as root, so everything it executes from the checkout
+# (git config + hooks, setup.py, package.json scripts, .npmrc, scripts/*.py)
+# must be root-owned. A hermes-owned checkout lets anything running as hermes
+# (gateway, dashboard, the agent's own terminal) plant code that root then
+# runs. Only the agent-home runtime cache and the two env files (data, read by
+# hermes services, never executed by this script) may belong to hermes.
+HERMES_WRITABLE=(agent-home/.next/cache agent-home/agent-home.env app-mcp/app-mcp.env)
+prune=()
+for w in "${HERMES_WRITABLE[@]}"; do prune+=(-path "$REPO/$w" -prune -o); done
+writable=$(find "$REPO" -xdev "${prune[@]}" \
+  \( ! -user root -o -perm /022 \) ! -type l -print -quit)
+if [ -n "$writable" ]; then
+  echo "ABORT: $writable is not root-owned (or is group/world-writable)." >&2
+  echo "  Root must not run code the hermes user can edit. Review the checkout, then:" >&2
+  echo "    chown -R root:root $REPO && chmod -R go-w $REPO" >&2
+  echo "  (one-time migration: docs/deployment/PRODUCTION.md, root-owned checkout)" >&2
+  exit 1
+fi
+# Never let repository-controlled git config or hooks run as root.
+git() { command git -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"; }
+# hermes-run tools (banner, deploy_state) read this root-owned checkout.
+command git config --system --get-all safe.directory 2>/dev/null | grep -qxF "$REPO" \
+  || command git config --system --add safe.directory "$REPO"
+# npm ci with lifecycle scripts off; only these reviewed, lockfile-pinned
+# runtime packages get their install step (native binaries). No project .npmrc:
+# it can point npm at another registry or set a script shell.
+NPM_REBUILD=(agent-browser esbuild node-pty sharp unicode-animations)
+npm_ci() {
+  for rc in .npmrc web/.npmrc agent-home/.npmrc; do
+    if [ -e "$rc" ]; then echo "ABORT: $REPO/$rc exists; the deploy refuses project npm config." >&2; exit 1; fi
+  done
+  nice -n 15 npm ci --ignore-scripts --no-audit --no-fund --silent
+  nice -n 15 npm rebuild --silent "${NPM_REBUILD[@]}"
+}
+
 echo "== local modifications check =="
 mapfile -t mods < <(git status --porcelain --untracked-files=no | awk '{print $2}')
 for m in "${mods[@]:-}"; do
@@ -109,7 +144,7 @@ echo "$BEFORE -> $AFTER"
 [ "$BEFORE" = "$AFTER" ] && echo "(already up to date)"
 
 echo "== reinstalling package =="
-./.venv/bin/pip install -q -e .
+./.venv/bin/python -I -m pip install -q -e .
 
 # The dashboard runs with --skip-build and serves the prebuilt bundle in
 # hermes_cli/web_dist, which is git-ignored: without this step a deploy ships
@@ -119,11 +154,11 @@ echo "== reinstalling package =="
 if [ "$BEFORE" != "$AFTER" ] && \
    ! git diff --quiet "$BEFORE" "$AFTER" -- web/; then
   echo "== rebuilding dashboard bundle (web/ changed) =="
-  nice -n 15 npm ci --no-audit --no-fund --silent
+  npm_ci
   (cd web && nice -n 15 npm run build)
 elif [ ! -d hermes_cli/web_dist/assets ]; then
   echo "== building dashboard bundle (no bundle present) =="
-  nice -n 15 npm ci --no-audit --no-fund --silent
+  npm_ci
   (cd web && nice -n 15 npm run build)
 fi
 
@@ -136,25 +171,27 @@ fi
 if [ "$BEFORE" != "$AFTER" ] && \
    git diff --name-only "$BEFORE" "$AFTER" | grep -qE '^(agent-home/|package-lock\.json$)'; then
   echo "== rebuilding agent-home bundle (agent-home/ changed) =="
-  nice -n 15 npm ci --no-audit --no-fund --silent
+  npm_ci
+  rm -rf agent-home/.next
   nice -n 15 npm run build --workspace agent-home
   restart_agent_home=1
 elif [ ! -f agent-home/.next/BUILD_ID ]; then
   echo "== building agent-home bundle (no build present) =="
-  nice -n 15 npm ci --no-audit --no-fund --silent
+  npm_ci
+  rm -rf agent-home/.next
   nice -n 15 npm run build --workspace agent-home
   restart_agent_home=1
 fi
 
-# hermes owns the source tree, but NOT .venv: root runs pip from it, so a
-# hermes-writable venv would be a path back to root.
-find "$REPO" -path "$REPO/.venv" -prune -o -print0 | xargs -0 chown hermes:hermes
-chown -R root:root "$REPO/.venv"
+# root owns the whole tree (see the check at the top); `next start` only needs
+# to write its cache. The build above starts from an empty .next, so nothing
+# the hermes user put in the old cache is read by a root build.
+install -d -o hermes -g hermes "$REPO/agent-home/.next/cache"
 
 echo "== restarting services =="
 systemctl daemon-reload
 # agent-home runs as `hermes` and `next start` writes into .next, so it is
-# restarted *after* the chown above — a build leaves root-owned files behind.
+# restarted *after* its cache dir is handed to hermes above.
 if [ "${restart_agent_home:-0}" = 1 ]; then
   systemctl restart agent-home
 fi
@@ -176,7 +213,8 @@ echo "deploy OK ($AFTER)  backup: /opt/data/backups/deploy-$TS"
 # documents moved after it was written, not merely that HEAD moved — that is
 # every deploy. Advisory here (a stale document must not block a deploy); the
 # weekly drift timer is what reports it.
-./.venv/bin/python scripts/deploy_state.py handover || true
+# Read-only, so it runs as hermes; -I keeps cwd/env out of its import path.
+runuser -u hermes -- ./.venv/bin/python -I scripts/deploy_state.py handover || true
 
 # The VPN helper runs as root through sudo, so it must be a root-owned copy —
 # never the hermes-owned checkout. Reported when stale, not auto-installed

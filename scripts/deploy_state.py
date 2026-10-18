@@ -73,8 +73,10 @@ from typing import Any
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+# Appended, not prepended: root runs these, and a stray module at the repo root
+# must never shadow the stdlib or site-packages (F15). Run with `python -I`.
 if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+    sys.path.append(str(REPO_ROOT))
 
 from scripts.check_runtime_drift import (  # noqa: E402  (needs REPO_ROOT on the path)
     SEVERITY_DRIFT,
