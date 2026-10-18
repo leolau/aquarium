@@ -18,7 +18,9 @@ SCANNED = [
     REPO / "install-aquarium.sh",
     REPO / "hermes_cli" / "wa_bridge_api.py",
 ]
-RULE = re.compile(r"\bhermes\s+ALL\s*=\s*\([^)]*\)\s*NOPASSWD:\s*(?P<cmds>[^`|\n]+)")
+RULE = re.compile(
+    r"\bhermes\s+ALL\s*=\s*\([^)]*\)\s*NOPASSWD:\s*(?:[A-Z_]+:\s*)*(?P<cmds>[^`|\n]+)"
+)
 SAFE_PREFIXES = ("/usr/local/sbin/", "/usr/bin/systemctl", "/bin/systemctl")
 INTERPRETERS = re.compile(r"(^|/)(bash|sh|dash|python3?(\.\d+)?|node|perl)$")
 
@@ -37,7 +39,10 @@ def _rules():
 
 
 def test_rules_are_found():
-    assert any(cmd == "/usr/local/sbin/hermes-wa-bridge-add" for _, cmd in _rules())
+    cmds = {cmd for _, cmd in _rules()}
+    assert "/usr/local/sbin/hermes-wa-bridge-add" in cmds
+    # Tags such as SETENV: are skipped, so the command itself is still checked.
+    assert "/usr/local/sbin/hermes-tools-exec" in cmds
 
 
 @pytest.mark.parametrize("where,cmd", list(_rules()))
