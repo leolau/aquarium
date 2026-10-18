@@ -436,6 +436,15 @@ if [ -n "$HOME_DOMAIN$DASH_DOMAIN" ]; then
   log "Caddy + TLS"
   sse='@sse path /api/chat/stream /api/chat/attach /api/sessions/*/chat/stream*'
   {
+    # Admin API only on a unix socket that only caddy/root can open: on 127.0.0.1:2019
+    # any local user (the agent's shell is one) could rewrite every route (review F24).
+    # `systemctl reload caddy` still works: `caddy reload` reads this address from the file.
+    cat <<'CADDY'
+{
+	admin unix//var/lib/caddy/admin.sock|0600
+}
+
+CADDY
     [ -n "$HOME_DOMAIN" ] && cat <<CADDY
 $HOME_DOMAIN {
     $sse
@@ -470,7 +479,8 @@ $DASH_DOMAIN {
 CADDY
   } > /etc/caddy/Caddyfile
   caddy validate --config /etc/caddy/Caddyfile >/dev/null
-  systemctl enable -q caddy && systemctl reload-or-restart caddy
+  # restart, not reload: a running caddy still listens on the old admin address.
+  systemctl enable -q caddy && systemctl restart caddy
 fi
 
 # Services create their tables on first start; the read-only agent-home role only gets

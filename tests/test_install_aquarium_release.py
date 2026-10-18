@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import tarfile
 from pathlib import Path
@@ -499,3 +500,33 @@ def test_whatsapp_bridge_template_unit():
     # fix_paths moves every path the template uses when AQUARIUM_ROOT is not /opt/data.
     for path in re.findall(r"/opt/data/[\w-]+", unit):
         assert path in ("/opt/data/hermes-agent", "/opt/data/hermes-home"), path
+
+
+def _caddyfile(tmp_path, home="home.example.com", dash="dash.example.com"):
+    step = TEXT[TEXT.index("  sse='@sse path"):TEXT.index("  } > /etc/caddy/Caddyfile")]
+    out = tmp_path / "Caddyfile"
+    script = f"HOME_DOMAIN={home}\nDASH_DOMAIN={dash}\n{step}  }} > {out}\n"
+    subprocess.run(["bash", "-c", script], check=True)
+    return out
+
+
+def test_caddy_admin_api_is_a_private_unix_socket(tmp_path):
+    """F24: on 127.0.0.1:2019 any local user, the agent's shell included, could
+    rewrite every route. The socket is 0600 and owned by caddy."""
+    text = _caddyfile(tmp_path).read_text()
+    assert text.startswith("{\n\tadmin unix//var/lib/caddy/admin.sock|0600\n}\n")
+    assert "home.example.com {" in text and "dash.example.com {" in text
+    # A running caddy still listens on its old admin address, so a reload
+    # would miss it: the installer must restart.
+    step = TEXT[TEXT.index("10. Caddy"):]
+    assert "systemctl restart caddy" in step and "reload-or-restart caddy" not in step
+
+
+def test_generated_caddyfile_is_valid(tmp_path):
+    caddy = shutil.which("caddy") or os.environ.get("CADDY_BIN")
+    if not caddy:
+        pytest.skip("caddy binary not installed")
+    out = _caddyfile(tmp_path)
+    result = subprocess.run([caddy, "validate", "--adapter", "caddyfile", "--config", str(out)],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
