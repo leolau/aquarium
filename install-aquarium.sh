@@ -359,8 +359,11 @@ fi
 # ---------------------------------------------------------------- 8. agent-home + app-mcp env
 log "agent-home and app-mcp settings"
 AH_DB_URL="postgresql://agent_home_app.$TENANT:$READ_DB_PASSWORD@127.0.0.1:$DB_PORT/postgres"
+# Secrets stay outside the checkout, root:root 0600: systemd reads them as root
+# for the units, the hermes user (and the agent's shell) can't (review F16).
+install -d -m 700 /etc/aquarium
 umask 077
-cat > "$APP/agent-home/agent-home.env" <<ENV
+cat > /etc/aquarium/agent-home.env <<ENV
 AGENT_HOME_SESSION_SECRET=$SESSION_SECRET
 DATABASE_URL=$AH_DB_URL
 SUPABASE_URL=http://127.0.0.1:8000
@@ -371,9 +374,9 @@ AGENT_HOME_API_URL=http://127.0.0.1:9119
 AGENT_HOME_DATASTORE_MODE=prod
 PORT=3100
 ENV
-sed "s/^APP_MCP_TICKET_SECRET=.*/APP_MCP_TICKET_SECRET=$APP_MCP_SECRET/" app-mcp/deploy/app-mcp.env.example > app-mcp/app-mcp.env
+sed "s/^APP_MCP_TICKET_SECRET=.*/APP_MCP_TICKET_SECRET=$APP_MCP_SECRET/" app-mcp/deploy/app-mcp.env.example > /etc/aquarium/app-mcp.env
 umask 022
-chown hermes:hermes agent-home/agent-home.env app-mcp/app-mcp.env
+chmod 600 /etc/aquarium/agent-home.env /etc/aquarium/app-mcp.env
 if [ "$SOURCE_MODE" = branch ]; then
   find "$APP" -path "$APP/.venv" -prune -o -print0 | xargs -0 chown hermes:hermes
 else
