@@ -20,7 +20,6 @@ import {
 import type { NetworkFolderInput, NetworkFolderView, VpnState, VpnView } from "@/types";
 
 const POLL_MS = 30_000;
-const IPV4_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
 
 const VPN_CHIP: Record<VpnState, string> = {
   connected: "VPN connected",
@@ -34,7 +33,6 @@ export interface NetworkFolderFormValues {
   name: string;
   vpn: string;
   share_path: string;
-  own_login: boolean;
   share_username: string;
   share_password: string;
   share_domain: string;
@@ -52,35 +50,9 @@ type FormState = {
 
 type TestResult = { ok: boolean; text: string };
 
-function ipv4ToInt(ip: string): number | null {
-  const m = IPV4_RE.exec(ip);
-  if (!m) return null;
-  const o = m.slice(1, 5).map(Number);
-  if (o.some((n) => n > 255)) return null;
-  return ((o[0] << 24) | (o[1] << 16) | (o[2] << 8) | o[3]) >>> 0;
-}
-
-/** True/false for an IPv4 server against the VPN's CIDR routes; null when
- *  the server is a host name (Hermes resolves and checks it). */
-export function serverInRoutes(server: string, routes: string[]): boolean | null {
-  const ip = ipv4ToInt(server);
-  if (ip === null) return null;
-  return routes.some((route) => {
-    const [base, bits] = route.split("/");
-    const net = ipv4ToInt(base);
-    const prefix = bits === undefined ? 32 : Number(bits);
-    if (net === null || !Number.isInteger(prefix) || prefix < 0 || prefix > 32) return false;
-    // `>>> 32` is a no-op in JS, so /32 and /0 are special-cased.
-    const mask =
-      prefix === 0 ? 0 : prefix === 32 ? 0xffffffff : (~(0xffffffff >>> prefix)) >>> 0;
-    return ((ip & mask) >>> 0) === ((net & mask) >>> 0);
-  });
-}
-
 /** Validate the form; returns the first problem or null. */
 export function networkFolderFormError(
   values: NetworkFolderFormValues,
-  vpns: VpnView[],
   takenNames: string[],
 ): string | null {
   const name = values.name.trim();
@@ -89,21 +61,16 @@ export function networkFolderFormError(
     return `A network folder called "${name}" already exists — pick another name.`;
   }
   if (!values.vpn) return "Choose the VPN that reaches this file server.";
-  const { path, error } = normalizeSmbPath(values.share_path);
+  const { error } = normalizeSmbPath(values.share_path);
   if (error) return error;
-  const vpn = vpns.find((v) => v.name === values.vpn);
-  const server = path.slice(2).split("/")[0];
-  if (vpn && vpn.routes.length > 0 && serverInRoutes(server, vpn.routes) === false) {
-    return `${server} is outside the ${vpn.name} VPN routes (${vpn.routes.join(", ")}). Add it to the VPN in Settings → In&Out, or pick another VPN.`;
-  }
-  if (values.own_login && !values.share_username.trim()) {
-    return "Enter the share username, or untick “Use a different login for this share”.";
+  if (!values.share_username.trim() && (values.share_password || values.share_domain.trim())) {
+    return "Enter the share username, or clear the share password and domain to use the VPN's login.";
   }
   return null;
 }
 
 /** The POST/PUT body. A blank password is left out so Hermes keeps the
- *  stored one; without a separate login the VPN's share login is used. */
+ *  stored one; a blank share username means the VPN's login is used. */
 export function buildNetworkFolderInput(values: NetworkFolderFormValues): NetworkFolderInput {
   const input: NetworkFolderInput = {
     name: values.name.trim(),
@@ -113,8 +80,9 @@ export function buildNetworkFolderInput(values: NetworkFolderFormValues): Networ
     share_username: null,
     share_domain: null,
   };
-  if (values.own_login) {
-    input.share_username = values.share_username.trim() || null;
+  const username = values.share_username.trim();
+  if (username) {
+    input.share_username = username;
     input.share_domain = values.share_domain.trim() || null;
     if (values.share_password) input.share_password = values.share_password;
   }
@@ -180,7 +148,6 @@ const EMPTY_VALUES: NetworkFolderFormValues = {
   name: "",
   vpn: "",
   share_path: "",
-  own_login: false,
   share_username: "",
   share_password: "",
   share_domain: "",
@@ -317,7 +284,6 @@ export function NetworkFolders() {
         name: folder.name,
         vpn: folder.vpn,
         share_path: displaySmbPath(folder.share_path),
-        own_login: !!folder.share_username || folder.has_share_password,
         share_username: folder.share_username ?? "",
         share_password: "",
         share_domain: folder.share_domain ?? "",
@@ -334,7 +300,7 @@ export function NetworkFolders() {
   const save = async () => {
     if (!form) return;
     const taken = folders.map((f) => f.name).filter((n) => n !== form.original);
-    const problem = networkFolderFormError(form.values, vpns, taken);
+    const problem = networkFolderFormError(form.values, taken);
     if (problem) {
       setFormProblem(problem);
       return;
@@ -596,59 +562,48 @@ export function NetworkFolders() {
               className={inputCls}
             />
             <span className="block">
-              Windows (\\server\share\folder) or smb://server/share/folder. The
-              server must be inside the VPN&apos;s routes
-              {selectedVpn && selectedVpn.routes.length > 0
-                ? ` (${selectedVpn.routes.join(", ")})`
-                : ""}
-              . Uses the VPN&apos;s share login unless you set one below.
+              Windows (\\server\share\folder) or smb://server/share/folder.
+              Only this file server is sent through the VPN.
             </span>
           </label>
-          <label className="mt-3 flex items-center gap-2 text-xs">
-            <input
-              type="checkbox"
-              checked={form.values.own_login}
-              onChange={(e) => setField("own_login", e.target.checked)}
-            />
-            Use a different login for this share
-          </label>
-          {form.values.own_login ? (
-            <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <label className={labelCls}>
-                <span>Share username</span>
-                <input
-                  value={form.values.share_username}
-                  aria-label="Share username"
-                  onChange={(e) => setField("share_username", e.target.value)}
-                  autoComplete="off"
-                  className={inputCls}
-                />
-              </label>
-              <label className={labelCls}>
-                <span>Share password</span>
-                <input
-                  type="password"
-                  value={form.values.share_password}
-                  aria-label="Share password"
-                  onChange={(e) => setField("share_password", e.target.value)}
-                  placeholder={form.mode === "edit" ? "unchanged" : ""}
-                  autoComplete="new-password"
-                  className={inputCls}
-                />
-              </label>
-              <label className={labelCls}>
-                <span>Domain (optional)</span>
-                <input
-                  value={form.values.share_domain}
-                  aria-label="Domain (optional)"
-                  onChange={(e) => setField("share_domain", e.target.value)}
-                  placeholder="OFFICE"
-                  autoComplete="off"
-                  className={inputCls}
-                />
-              </label>
-            </div>
-          ) : null}
+          <p className="mt-3 text-xs text-[var(--color-muted)]">
+            Share login (optional) — leave blank to use the VPN&apos;s login
+          </p>
+          <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <label className={labelCls}>
+              <span>Share username</span>
+              <input
+                value={form.values.share_username}
+                aria-label="Share username"
+                onChange={(e) => setField("share_username", e.target.value)}
+                autoComplete="off"
+                className={inputCls}
+              />
+            </label>
+            <label className={labelCls}>
+              <span>Share password</span>
+              <input
+                type="password"
+                value={form.values.share_password}
+                aria-label="Share password"
+                onChange={(e) => setField("share_password", e.target.value)}
+                placeholder={form.mode === "edit" ? "unchanged" : ""}
+                autoComplete="new-password"
+                className={inputCls}
+              />
+            </label>
+            <label className={labelCls}>
+              <span>Domain (optional)</span>
+              <input
+                value={form.values.share_domain}
+                aria-label="Domain (optional)"
+                onChange={(e) => setField("share_domain", e.target.value)}
+                placeholder="OFFICE"
+                autoComplete="off"
+                className={inputCls}
+              />
+            </label>
+          </div>
           <label className="mt-3 flex items-center gap-2 text-xs">
             <input
               type="checkbox"
@@ -696,7 +651,7 @@ export function NetworkFolders() {
               {result.text}
             </p>
           ) : null}
-          {form.mode === "edit" && form.values.own_login ? (
+          {form.mode === "edit" && form.values.share_username.trim() ? (
             <p className="mt-2 text-xs text-[var(--color-muted)]">
               Leave the password blank to keep the saved one.
             </p>

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   NetworkFolders,
   buildNetworkFolderInput,
-  serverInRoutes,
+  networkFolderFormError,
 } from "@/components/files/NetworkFolders";
 import type { NetworkFolderView, VpnView } from "@/types";
 
@@ -134,24 +134,37 @@ async function openAddForm() {
 }
 
 describe("helpers", () => {
-  it("checks IPv4 servers against the VPN routes, skips host names", () => {
-    expect(serverInRoutes("10.20.3.4", ["10.20.0.0/16"])).toBe(true);
-    expect(serverInRoutes("10.21.0.1", ["10.20.0.0/16", "192.168.1.7"])).toBe(false);
-    expect(serverInRoutes("192.168.1.7", ["10.20.0.0/16", "192.168.1.7"])).toBe(true);
-    expect(serverInRoutes("fs01.office.local", ["10.20.0.0/16"])).toBeNull();
+  const VALUES = {
+    name: " Tenders ",
+    vpn: "Office files",
+    share_path: "\\\\fs01\\Projects\\Tenders",
+    share_username: "",
+    share_password: "",
+    share_domain: "",
+    trusted_for_import: false,
+  };
+
+  it("accepts a file server outside the VPN's routes (Hermes adds its /32)", () => {
+    expect(
+      networkFolderFormError(
+        { ...VALUES, share_path: "\\\\192.168.0.91\\Share-Folder\\Jensen (New)" },
+        [],
+      ),
+    ).toBeNull();
   });
 
-  it("sends no login fields unless a separate login is chosen", () => {
-    const values = {
-      name: " Tenders ",
-      vpn: "Office files",
-      share_path: "\\\\fs01\\Projects\\Tenders",
-      own_login: false,
-      share_username: "ignored",
-      share_password: "ignored",
-      share_domain: "ignored",
-      trusted_for_import: false,
-    };
+  it("needs a share username when a share password or domain is given", () => {
+    expect(networkFolderFormError({ ...VALUES, share_password: "x" }, [])).toMatch(
+      /Enter the share username/,
+    );
+    expect(networkFolderFormError({ ...VALUES, share_domain: "OFFICE" }, [])).toMatch(
+      /Enter the share username/,
+    );
+    expect(networkFolderFormError({ ...VALUES, share_username: "alice" }, [])).toBeNull();
+  });
+
+  it("sends no login fields when the share username is blank", () => {
+    const values = { ...VALUES, share_username: "  " };
     expect(buildNetworkFolderInput(values)).toEqual({
       name: "Tenders",
       vpn: "Office files",
@@ -160,12 +173,15 @@ describe("helpers", () => {
       share_username: null,
       share_domain: null,
     });
-    expect(
-      buildNetworkFolderInput({ ...values, own_login: true, share_password: "" }),
-    ).toMatchObject({ share_username: "ignored", share_domain: "ignored" });
-    expect(
-      buildNetworkFolderInput({ ...values, own_login: true, share_password: "" }),
-    ).not.toHaveProperty("share_password");
+    const own = { ...values, share_username: " alice ", share_domain: "OFFICE" };
+    expect(buildNetworkFolderInput(own)).toMatchObject({
+      share_username: "alice",
+      share_domain: "OFFICE",
+    });
+    expect(buildNetworkFolderInput(own)).not.toHaveProperty("share_password");
+    expect(buildNetworkFolderInput({ ...own, share_password: "s3cret" })).toMatchObject({
+      share_password: "s3cret",
+    });
   });
 });
 
@@ -233,14 +249,17 @@ describe("NetworkFolders", () => {
     expect((within(form).getByLabelText("VPN connection") as HTMLSelectElement).value).toBe(
       "Office files",
     );
-    expect(form.textContent).toContain("inside the VPN's routes (10.20.0.0/16)");
+    expect(form.textContent).toContain("Only this file server is sent through the VPN.");
+    expect(form.textContent).not.toContain("routes");
+    expect(form.textContent).toContain(
+      "Share login (optional) — leave blank to use the VPN's login",
+    );
   });
 
   it.each([
     [{ name: "", path: "\\\\fs01\\Projects" }, /Give the folder a name/],
     [{ name: "Tender documents", path: "\\\\fs01\\Projects" }, /already exists/],
     [{ name: "New", path: "fs01\\Projects" }, /must look like/],
-    [{ name: "New", path: "\\\\10.30.0.5\\Projects" }, /outside the Office files VPN routes/],
   ])("blocks an invalid add %j", async ({ name, path }, msg) => {
     const calls = mockApi({ folders: [folder()], vpns: [vpn()] });
     render(<NetworkFolders />);
@@ -252,13 +271,75 @@ describe("NetworkFolders", () => {
     expect(calls.some((c) => c.method !== "GET")).toBe(false);
   });
 
-  it("requires a username when a separate login is ticked", async () => {
+  it("saves a folder whose server is outside the VPN's routes", async () => {
+    const saved = folder({
+      name: "Jensen",
+      share_path: "//192.168.0.91/Share-Folder/Jensen (New)",
+      status: { mounted: false, vpn_state: "disconnected" },
+    });
+    const calls = mockApi(
+      { folders: [], vpns: [vpn({ routes: [] })] },
+      {
+        "POST /api/vpn/folders": () => ({ status: 201, data: saved }),
+        "POST /api/vpn/folders/Jensen/test": () => ({
+          data: {
+            ...saved,
+            status: {
+              ...saved.status,
+              mounted: true,
+              last_check: {
+                at: new Date().toISOString(),
+                ok: true,
+                file_count: 5000,
+                message: "File server reachable, at least 5000 files (stopped counting after 20 s).",
+              },
+            },
+          },
+        }),
+      },
+    );
+    render(<NetworkFolders />);
+    await openAddForm();
+    fill("Name shown to the agent", "Jensen");
+    fill("SMB path", "\\\\192.168.0.91\\Share-Folder\\Jensen (New)");
+    fireEvent.click(screen.getByText("Save & test"));
+    const result = await screen.findByText(/Test OK:/);
+    expect(result.textContent).toContain(
+      "File server reachable, at least 5000 files (stopped counting after 20 s).",
+    );
+    const post = calls.find((c) => c.method === "POST" && c.url === "/api/vpn/folders")!;
+    expect(post.body).toMatchObject({
+      share_path: "//192.168.0.91/Share-Folder/Jensen (New)",
+      share_username: null,
+      share_domain: null,
+    });
+  });
+
+  it("shows Hermes' failed check message as-is on the row", async () => {
+    const ok = false;
+    const message = "File server is too slow to answer (no reply within 25 s).";
+    const tested = folder({
+      status: {
+        mounted: ok,
+        last_check: { at: new Date().toISOString(), ok, file_count: ok ? 214 : null, message },
+      },
+    });
+    mockApi(
+      { folders: [folder()], vpns: [vpn()] },
+      { "POST /api/vpn/folders/Tender%20documents/test": () => ({ data: tested }) },
+    );
+    render(<NetworkFolders />);
+    fireEvent.click(await screen.findByText("Test"));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain(message));
+  });
+
+  it("requires a username when a share password is entered", async () => {
     mockApi({ folders: [], vpns: [vpn()] });
     render(<NetworkFolders />);
     await openAddForm();
     fill("Name shown to the agent", "Tenders");
     fill("SMB path", "\\\\fs01\\Projects");
-    fireEvent.click(screen.getByLabelText("Use a different login for this share"));
+    fill("Share password", "s3cret");
     fireEvent.click(screen.getByText("Save & test"));
     expect(screen.getByRole("alert").textContent).toMatch(/Enter the share username/);
   });
@@ -276,7 +357,7 @@ describe("NetworkFolders", () => {
                 at: new Date().toISOString(),
                 ok: true,
                 file_count: 214,
-                message: "VPN connected, share mounted read-only, 214 files in the top folder.",
+                message: "File server reachable, 214 files listed.",
               },
             },
           }),
@@ -287,7 +368,6 @@ describe("NetworkFolders", () => {
     await openAddForm();
     fill("Name shown to the agent", "Tender documents");
     fill("SMB path", "\\\\fs01.office.local\\Projects\\Tenders\\");
-    fireEvent.click(screen.getByLabelText("Use a different login for this share"));
     fill("Share username", "alice");
     fill("Share password", "s3cret");
     fill("Domain (optional)", "OFFICE");
@@ -298,7 +378,7 @@ describe("NetworkFolders", () => {
     expect(result.closest("[data-component='NetworkFolderTestResult']")!.getAttribute("data-ok")).toBe(
       "true",
     );
-    expect(result.textContent).toContain("214 files in the top folder");
+    expect(result.textContent).toBe("✓ Test OK: File server reachable, 214 files listed.");
     const post = calls.find((c) => c.method === "POST" && c.url === "/api/vpn/folders")!;
     expect(post.body).toEqual({
       name: "Tender documents",
@@ -370,7 +450,6 @@ describe("NetworkFolders", () => {
     expect((screen.getByLabelText("SMB path") as HTMLInputElement).value).toBe(
       "\\\\fs01.office.local\\Projects\\Tenders",
     );
-    expect((screen.getByLabelText("Use a different login for this share") as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText("Share username") as HTMLInputElement).value).toBe("alice");
     expect(screen.getByLabelText("Share password").getAttribute("placeholder")).toBe("unchanged");
     fill("Name shown to the agent", "Tenders 2026");
