@@ -256,7 +256,7 @@ def redteam_env() -> Iterator[RedteamEnv]:
             "AGENT_HOME_SESSION_SECRET": _CANARY_VALUES[1],
         }
         try:
-            with patch.dict(os.environ, overrides):
+            with patch.dict(os.environ, overrides), _module_homes_pinned_to(home):
                 yield env
         finally:
             # Terminal sandboxes are cached per task; drop them so the next
@@ -264,6 +264,25 @@ def redteam_env() -> Iterator[RedteamEnv]:
             from tools.terminal_tool import cleanup_all_environments
 
             cleanup_all_environments()
+
+
+@contextlib.contextmanager
+def _module_homes_pinned_to(home: Path) -> Iterator[None]:
+    """Point import-time ``HERMES_HOME`` copies at the throwaway home.
+
+    On a real box ``HERMES_HOME`` is set before anything is imported, so
+    module constants like ``gateway.platforms.base._HERMES_HOME`` (which the
+    media-delivery denylist is built from) name the live home. Here the
+    modules were imported first, so pin them to match.
+    """
+
+    import gateway.platforms.base as media
+
+    with contextlib.ExitStack() as stack:
+        for name in ("_HERMES_HOME", "_HERMES_ROOT"):
+            if hasattr(media, name):
+                stack.enter_context(patch.object(media, name, home))
+        yield
 
 
 @contextlib.contextmanager

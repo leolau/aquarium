@@ -15,7 +15,7 @@ Finding IDs (F1–F25): `docs/reviews/2026-10-04-security-review.md`.
 | File | What it is |
 |---|---|
 | `tests/redteam/harness.py` | Throwaway `HERMES_HOME` with fake secrets (all contain `RT-CANARY`), the obedient fake model, fake WhatsApp/email inbound (real adapter code, nothing is sent), local web server and collector (127.0.0.1 only) |
-| `tests/redteam/attacks.py` | The attacks, `RT-01` … `RT-31`. Each has a vector, a goal, and, if it still works on `develop`, the finding it belongs to |
+| `tests/redteam/attacks.py` | The attacks, `RT-01` … `RT-33`. Each has a vector, a goal, and, if it still works on `develop`, the finding it belongs to |
 | `tests/redteam/test_redteam_offline.py` | The pytest wrapper CI runs |
 | `tests/redteam/live.py` | Live mode: plain-text payloads for a real model on a throwaway install |
 | `scripts/redteam_run.py` | The report: one line per attack with its evidence |
