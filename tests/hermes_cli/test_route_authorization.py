@@ -49,6 +49,9 @@ PUBLIC = {
     "POST /auth/password-login",
     "POST /auth/logout",
     "GET /{full_path:path}",
+    # first_run: one-time owner setup link; refuses everything without a token file
+    "POST /api/setup/check",
+    "POST /api/setup/owner",
 }
 
 #: The handler enforces the role itself: route -> (role, check in its source).
@@ -93,6 +96,8 @@ SIGNED_IN = {
     "GET /docs",
     "GET /docs/oauth2-redirect",
     "GET /redoc",
+    # capacity: free space on the upload disk (read)
+    "GET /api/capacity/upload-storage",
     # memory_oauth: memory-provider OAuth status (read)
     "GET /api/memory/providers/{provider}/oauth/status",
     # memory_explorer: memory rows filtered to what the caller may read
