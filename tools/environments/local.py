@@ -290,7 +290,16 @@ def _is_hermes_internal_secret(key: str) -> bool:
         upper.endswith("_SECRET") or upper.endswith("_KEY") or upper.endswith("_TOKEN")
     ):
         return True
+    # app-mcp's shared secrets: with them a shell could call the loopback MCP
+    # endpoint directly and skip the approval gate (security review F19).
+    if upper in _APP_MCP_SECRETS:
+        return True
     return False
+
+
+_APP_MCP_SECRETS = frozenset(
+    {"APP_MCP_HERMES_TOKEN", "APP_MCP_TICKET_SECRET", "AGENT_HOME_APP_MCP_SECRET"}
+)
 
 
 def _apply_profile_secret_scope(env: dict) -> None:

@@ -374,7 +374,8 @@ AGENT_HOME_API_URL=http://127.0.0.1:9119
 AGENT_HOME_DATASTORE_MODE=prod
 PORT=3100
 ENV
-sed "s/^APP_MCP_TICKET_SECRET=.*/APP_MCP_TICKET_SECRET=$APP_MCP_SECRET/" app-mcp/deploy/app-mcp.env.example > /etc/aquarium/app-mcp.env
+sed -e "s/^APP_MCP_TICKET_SECRET=.*/APP_MCP_TICKET_SECRET=$APP_MCP_SECRET/" \
+  -e "s#^HERMES_HOME=.*#HERMES_HOME=$HERMES_HOME_DIR#" app-mcp/deploy/app-mcp.env.example > /etc/aquarium/app-mcp.env
 umask 022
 chmod 600 /etc/aquarium/agent-home.env /etc/aquarium/app-mcp.env
 # Code is root's (deploy-hermes.sh runs as root and refuses a checkout hermes

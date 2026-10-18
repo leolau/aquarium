@@ -151,6 +151,34 @@ on the box changes *how the command is carried*, not who may run it.
 Either way, success ends with `deploy OK (<sha>)` and all services `active`; verify
 independently with the §5.7 health check.
 
+**One-time post-deploy step: app-mcp MCP endpoint token (security review F19).**
+After the first deploy that contains it, the gateway/dashboard create
+`/opt/data/hermes-home-staging/auth/app-mcp-token` (hermes, 0600) and send it to
+app-mcp. app-mcp only checks it once its `app-mcp.env` names the Hermes home;
+until then `127.0.0.1:9220/mcp` stays open exactly as before and nothing breaks.
+`install-aquarium.sh` writes the line on new installs; on this box add it once:
+
+```bash
+# 0. both must print HERMES_HOME=/opt/data/hermes-home-staging; if one differs, stop
+for u in hermes-gateway hermes-dashboard; do
+  tr '\0' '\n' < /proc/$(systemctl show -p MainPID --value $u)/environ | grep '^HERMES_HOME='
+done
+# 1. tell app-mcp where the token is, 2. restart it
+F=$(systemctl show -p EnvironmentFiles --value app-mcp | cut -d' ' -f1); echo "$F"
+echo HERMES_HOME=/opt/data/hermes-home-staging >> "$F"   # as root; owner and mode stay as they are
+systemctl restart app-mcp
+# 3. check: 401 = protection on; 400 or 406 = still open (no line, or no token file yet)
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:9220/mcp
+```
+
+`F` is the env file app-mcp actually reads: `/opt/data/hermes-agent/app-mcp/app-mcp.env`
+in the git-checkout layout (still hermes-owned after the F13 root-owned deploy), or
+`/etc/aquarium/app-mcp.env` after `aquarium migrate-layout`. If you add the line
+before migrating, `migrate-layout` copies it along.
+
+Then ask the agent in agent-home "what page am I on?": it must still answer.
+Undo: delete the `HERMES_HOME` line from `$F` and `systemctl restart app-mcp`.
+
 #### Root-owned checkout (security review F13/F15)
 The deploy runs as root, so it only runs code root owns. On its first run
 against a hermes-owned checkout it makes the checkout root-owned and not
@@ -354,6 +382,10 @@ Without `APP_MCP_HERMES_TOKEN` (≥ 32 chars) the internal routes answer 401 and
 propagate into its mount namespace — and never needs sudo. Mobile apps are
 unaffected. Rollback: reinstall the backed-up helper; the old helper ignores
 folder mounts (unmount them first with `hermes-vpn-helper umount <slug>`).
+
+app-mcp MCP endpoint token (F19): see the one-time post-deploy step in §5.1.
+The token is `$HERMES_HOME/auth/app-mcp-token`; the agent's app tools work with
+or without it.
 
 Operate: `systemctl list-units 'hermes-vpn-*'`,
 `cat /run/hermes-vpn/<slug>/openfortivpn.log`,
