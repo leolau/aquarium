@@ -88,28 +88,57 @@ function tool(over: Partial<Tool>): Tool {
 }
 
 describe("ToolsRegistry", () => {
-  it("splits tools into enabled/disabled with mode + count", () => {
-    const data: ToolsResponse = {
-      configured: true,
-      mode: "prod",
-      tools: [
-        tool({ id: "t1", name: "terminal", enabled: true }),
-        tool({ id: "t2", name: "spotify", enabled: false, status: "disabled" }),
-      ],
-    };
+  const data: ToolsResponse = {
+    configured: true,
+    mode: "prod",
+    tools: [
+      tool({ id: "t1", name: "notes_app", kind: "in_house", enabled: true }),
+      tool({
+        id: "t2",
+        name: "spotify",
+        kind: "remote",
+        visibility: "private:leo_owner",
+        enabled: false,
+        status: "disabled",
+      }),
+    ],
+  };
+
+  it("explains the page in plain words and links to chat tools", () => {
     const html = renderToStaticMarkup(<ToolsRegistry data={data} />);
     expect(html).toContain('data-component="ToolsRegistry"');
-    expect(html).toContain("2 tools");
-    expect(html).toContain("terminal");
-    expect(html).toContain("Enabled (1)");
-    expect(html).toContain("Disabled (1)");
-    expect(html).toContain("spotify");
+    expect(html).toContain("Apps the agent has built or installed");
+    expect(html).toContain('href="/settings/tools"');
+    expect(html).toContain("Tools &amp; Integrations");
   });
 
-  it("shows the unconfigured state", () => {
-    const html = renderToStaticMarkup(
+  it("shows on apps and tucks turned-off ones into a collapsed section", () => {
+    const html = renderToStaticMarkup(<ToolsRegistry data={data} />);
+    expect(html).toContain("notes_app");
+    expect(html).toContain("Built by the agent · Shared with everyone");
+    expect(html).toMatch(/<details data-component="ToolsDisabled">/);
+    expect(html).not.toMatch(/<details[^>]*open/);
+    expect(html).toContain("Turned off (1)");
+    expect(html).toContain("spotify");
+    expect(html).toContain("External service · Private");
+  });
+
+  it("shows no internal jargon or datastore mode", () => {
+    const html = renderToStaticMarkup(<ToolsRegistry data={data} />);
+    for (const word of ["FG-07", "C2", "operator authority", "Read-only", ">prod<", ">dev<", "private:"]) {
+      expect(html).not.toContain(word);
+    }
+  });
+
+  it("shows the unconfigured and empty states in plain words", () => {
+    const off = renderToStaticMarkup(
       <ToolsRegistry data={{ configured: false, mode: "prod", tools: [] }} />,
     );
-    expect(html).toContain("Tool registry not configured");
+    expect(off).toContain("isn&#x27;t set up on this installation");
+    expect(off).not.toContain("datastore");
+    const empty = renderToStaticMarkup(
+      <ToolsRegistry data={{ configured: true, mode: "prod", tools: [] }} />,
+    );
+    expect(empty).toContain("built or installed any apps yet");
   });
 });

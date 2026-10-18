@@ -12874,18 +12874,17 @@ def _resolve_tool_mode(mode: Optional[str]):
 
 
 @app.get("/api/tools")
-async def list_tools(mode: Optional[str] = None):
-    """List tools visible to the operator (C2-scoped) for a datastore mode."""
+async def list_tools(request: Request, mode: Optional[str] = None):
+    """List tools visible to the calling person (C2-scoped) for a datastore mode."""
     from hermes_cli.datastore import get_store
     from hermes_cli.tools_registry import ToolRegistry
 
     resolved_mode = _resolve_tool_mode(mode)
     try:
-        prod_store = get_store("supabase-app", "prod")
-        operator = await _resolve_tool_operator(prod_store)
+        viewer = await _comms_resolve_principal(request)
         registry = ToolRegistry(get_store("supabase-app", resolved_mode))
         await registry.initialize()
-        tools = await registry.list_for_principal(operator)
+        tools = await registry.list_for_principal(viewer)
     except HTTPException:
         raise
     except RuntimeError as exc:
@@ -13001,18 +13000,17 @@ async def promote_tool_route(name: str, body: ToolPromoteRequest):
 
 
 @app.get("/api/tools/{name}/health")
-async def tool_health(name: str, mode: Optional[str] = None):
+async def tool_health(request: Request, name: str, mode: Optional[str] = None):
     """Best-effort health probe for a tool's own web process."""
     from hermes_cli.datastore import get_store
     from hermes_cli.tools_registry import ToolRegistry
 
     resolved_mode = _resolve_tool_mode(mode)
     try:
-        prod_store = get_store("supabase-app", "prod")
-        operator = await _resolve_tool_operator(prod_store)
+        viewer = await _comms_resolve_principal(request)
         registry = ToolRegistry(get_store("supabase-app", resolved_mode))
         await registry.initialize()
-        tools = {t.name: t for t in await registry.list_for_principal(operator)}
+        tools = {t.name: t for t in await registry.list_for_principal(viewer)}
     except HTTPException:
         raise
     except RuntimeError as exc:
@@ -13042,20 +13040,22 @@ async def tool_health(name: str, mode: Optional[str] = None):
 
 
 @app.get("/api/tools/changes")
-async def list_tool_changes(mode: Optional[str] = None, limit: int = 50):
-    """Render the C5/FG-12 change log entries visible to the operator (C2)."""
+async def list_tool_changes(
+    request: Request, mode: Optional[str] = None, limit: int = 50
+):
+    """Render the C5/FG-12 change log entries visible to the caller (C2)."""
     from hermes_cli.changes import ChangeLog, initialize_changes
     from hermes_cli.datastore import get_store
 
     try:
+        viewer = await _comms_resolve_principal(request)
         prod_store = get_store("supabase-app", "prod")
-        operator = await _resolve_tool_operator(prod_store)
         connection = await prod_store.connect()
         try:
             await initialize_changes(connection)
         finally:
             await connection.close()
-        changes = await ChangeLog(prod_store).list_changes(operator, limit=limit)
+        changes = await ChangeLog(prod_store).list_changes(viewer, limit=limit)
     except HTTPException:
         raise
     except RuntimeError as exc:

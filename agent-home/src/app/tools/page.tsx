@@ -7,11 +7,9 @@ import type { ToolsResponse } from "@/types";
 export const dynamic = "force-dynamic";
 
 /**
- * FG-20 Wave B3 — tool registry. BFF: resolves the principal and reads the
- * FG-07 registry (`/api/tools`, C2-scoped upstream) for agent-home's own
- * datastore mode (C3), so the mobile view matches the deploy's `app_prod`
- * scope rather than the dashboard's default mode. Read-only — enable/config/
- * promote stay on the operator authority paths. Reached from Home.
+ * Home → Tools: apps the agent has built or installed (the tool registry),
+ * read-only. Reads `/api/tools` as the logged-in person for agent-home's own
+ * datastore mode, so each person sees their own entries plus shared ones.
  */
 export default async function Page() {
   await requirePrincipal();
@@ -33,7 +31,7 @@ export default async function Page() {
           data-component="ToolsError"
           className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
         >
-          Couldn&apos;t load the tool registry ({error}).
+          Couldn&apos;t load the list of apps ({error}).
         </div>
       ) : (
         <ToolsRegistry data={data} />
