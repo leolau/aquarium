@@ -159,3 +159,6 @@ state-secrets.env
 *.tar.gz.age
 backup-recipient.env
 .qoder/
+
+# Release tarballs from scripts/build-release.sh
+/dist/
