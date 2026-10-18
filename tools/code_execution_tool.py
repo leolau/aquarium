@@ -1616,7 +1616,7 @@ def _kill_process_group(proc, escalate: bool = False):
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             if run_as:
-                signal_group(run_as, proc.pid, signal.SIGKILL)
+                signal_group(run_as, proc.pid, signal.SIGKILL)  # windows-footgun: ok — run_as is POSIX-only
             try:
                 parent = psutil.Process(proc.pid)
                 for child in parent.children(recursive=True):
