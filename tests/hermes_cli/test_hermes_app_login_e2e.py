@@ -281,3 +281,32 @@ def test_migrate_input_carries_the_app_password() -> None:
     text = "HERMES_DB_ADMIN_URL=postgresql://o@h/d\nHERMES_APP_DB_PASSWORD='s3cret'\n"
     assert db_migrate.parse_dsn(text) == "postgresql://o@h/d"
     assert db_migrate.parse_env(text)[db_migrate.APP_PASSWORD_KEY] == "s3cret"
+
+
+def test_migrate_refreshes_the_agent_home_read_login(owner_dsn: str, app_store) -> None:
+    db_setup._setup_allowed.clear()
+    rows = db_migrate.migrate(
+        owner_dsn, config=_config("${DATABASE_URL}"),
+        app_password=APP_PASSWORD, read_password="read-pw",
+    )
+    assert ("prod", "agent_home_app grants", None) in rows
+
+    async def run() -> int:
+        reader = owner_dsn.replace("postgres:hermes-test@", "agent_home_app:read-pw@")
+        conn = await asyncpg.connect(reader, ssl=False)
+        try:
+            return await conn.fetchval("SELECT count(*) FROM app_prod.file_assets")
+        finally:
+            await conn.close()
+
+    assert asyncio.run(run()) == 0
+
+
+def test_installer_runs_services_as_hermes_app() -> None:
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parents[2] / "install-aquarium.sh").read_text()
+    assert 'APP_DATABASE_URL="postgresql://hermes_app.$TENANT:$APP_DB_PASSWORD@' in text
+    assert 'cat > "$APP_ENV" <<ENV\nDATABASE_URL=$APP_DATABASE_URL\n' in text
+    assert "HERMES_APP_DB_PASSWORD=%s" in text and "HERMES_APP_READ_DB_PASSWORD=%s" in text
+    assert "owner read-role" not in text

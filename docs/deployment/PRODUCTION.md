@@ -206,9 +206,23 @@ deploy runs every table setup once as the owner, before restarting anything:
 `hermes db migrate --dsn-stdin < /etc/aquarium/db-admin.env`. That file
 (root, 0600, `HERMES_DB_ADMIN_URL=postgresql://postgres...`) is the only place
 the owner address lives once services run as `hermes_app`; the installer
-writes it. While it does not exist (this box today) the deploy uses the
+writes it, together with `HERMES_APP_DB_PASSWORD` and
+`HERMES_APP_READ_DB_PASSWORD` (migrate makes `hermes_app` / `agent_home_app`
+login roles with them and refreshes their grants). New installs point every
+service's `DATABASE_URL` at `postgresql://hermes_app.<tenant>:...`. While the
+file does not exist (this box until the switch-over below) the deploy uses the
 gateway's own `DATABASE_URL` instead and a failure is only a warning, because
 the services still log in as the owner and set their tables up themselves.
+
+What `hermes_app` protects: no turning row rules off, no changing or dropping
+tables, no Supabase auth/storage/vault or other schemas. What it does not:
+inside the app schema anyone holding its password can claim to be the owner
+(the principal binding is a client setting), and the agent's terminal runs as
+the same Linux user as the gateway.
+
+Switch-over for this box (once, after #578/#579/this change are deployed with
+a refreshed /opt/data/deploy-hermes.sh): see the "Existing Hetzner box" section
+of the hermes_app 3/3 PR for the numbered steps, checks and rollback.
 
 ### 5.2 Dashboard update
 ```bash

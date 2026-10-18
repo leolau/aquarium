@@ -741,6 +741,8 @@ def run_probe(cfg: Dict[str, str], rel: Path, check: str, timeout: float = 600) 
 
 def read_role_refresh(cfg: Dict[str, str], rel: Path) -> None:
     """Re-grant the read-only agent-home role on tables new code created (installer does the same)."""
+    if P(f"{ETC}/db-admin.env").is_file():
+        return  # the migrate probe got the owner address and did it (hermes_cli/db_migrate.py)
     password = ""
     for f in (P(f"{ETC}/aquarium-secrets.env"), P(f"{cfg['DATA_ROOT']}/aquarium-secrets.env")):
         password = read_kv(f).get("HERMES_APP_READ_DB_PASSWORD", "") or password
