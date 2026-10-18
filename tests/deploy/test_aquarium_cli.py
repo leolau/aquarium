@@ -928,3 +928,27 @@ def test_old_deploy_script_refuses_a_release_install(tmp_path):
     proc = subprocess.run(["bash", "-c", f'REPO={tmp_path}/rel\n{guard}\necho reached'],
                           capture_output=True, text=True)
     assert proc.returncode == 0 and "reached" in proc.stdout
+
+
+def test_migrate_probe_gets_the_owner_address_on_stdin(box, monkeypatch, tmp_path):
+    rel = tmp_path / "rel"
+    (rel / ".venv/bin").mkdir(parents=True)
+    (rel / ".venv/bin/python").write_text("")
+    calls = []
+
+    def fake_run(argv, **kw):
+        calls.append((list(argv), kw.get("input")))
+        return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+    monkeypatch.setattr(aq, "run", fake_run)
+    cfg = aq.load_config()
+    aq.run_probe(cfg, rel, "migrate")
+    assert calls[-1][0][-1] == "migrate" and calls[-1][1] is None
+    admin = aq.P(f"{aq.ETC}/db-admin.env")
+    admin.parent.mkdir(parents=True, exist_ok=True)
+    admin.write_text("HERMES_DB_ADMIN_URL=postgresql://owner@db/x\n")
+    aq.run_probe(cfg, rel, "migrate")
+    assert calls[-1][0][-2:] == ["migrate", "--dsn-stdin"]
+    assert calls[-1][1] == b"HERMES_DB_ADMIN_URL=postgresql://owner@db/x\n"
+    aq.run_probe(cfg, rel, "google")
+    assert calls[-1][0][-1] == "google" and calls[-1][1] is None

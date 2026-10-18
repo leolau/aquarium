@@ -134,3 +134,13 @@ def test_migrate_without_database_only_migrates_config(tmp_path, monkeypatch, ca
     rows = _rows(capsys)
     assert [r["check"] for r in rows] == ["config", "database"]
     assert all(r["status"] == "ok" for r in rows)
+
+
+def test_migrate_reads_the_owner_address_from_stdin(monkeypatch):
+    import io
+
+    seen = []
+    monkeypatch.setattr(probe, "migrate", lambda admin_dsn="": seen.append(admin_dsn) or 0)
+    monkeypatch.setattr("sys.stdin", io.StringIO("HERMES_DB_ADMIN_URL=postgresql://owner@db/x\n"))
+    assert probe.main(["migrate", "--dsn-stdin"]) == 0
+    assert seen == ["postgresql://owner@db/x"]

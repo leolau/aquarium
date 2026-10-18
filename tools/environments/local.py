@@ -239,6 +239,8 @@ _HERMES_DEPLOY_SECRET_ENV_VARS = frozenset({
     "HERMES_DASHBOARD_SUPABASE_JWT_SECRET",
     "JWT_SECRET",
     "POSTGRES_PASSWORD",
+    # Schema-owner DSN for `hermes db migrate` (/etc/aquarium/db-admin.env).
+    "HERMES_DB_ADMIN_URL",
 })
 
 

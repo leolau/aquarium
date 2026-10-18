@@ -13212,6 +13212,11 @@ def main():
 
     register_datastore_subparser(subparsers)
 
+    # db command — table setup as the schema owner (`hermes db migrate`)
+    from hermes_cli.db_migrate import register_db_subparser
+
+    register_db_subparser(subparsers)
+
     # =========================================================================
     # login command  (parser built in hermes_cli/subcommands/login.py)
     # =========================================================================

@@ -198,6 +198,18 @@ from this root-owned tree. Services running as hermes only read the checkout.
 If something must write there, make that one path hermes-writable rather than
 undoing everything.
 
+#### Database table setup (`hermes db migrate`)
+Each store creates its own tables on first use, but Postgres only lets the
+schema owner do that. A least-privilege login (`hermes_app`) skips those
+statements instead of failing on them (`hermes_cli/db_setup.py`), so the
+deploy runs every table setup once as the owner, before restarting anything:
+`hermes db migrate --dsn-stdin < /etc/aquarium/db-admin.env`. That file
+(root, 0600, `HERMES_DB_ADMIN_URL=postgresql://postgres...`) is the only place
+the owner address lives once services run as `hermes_app`; the installer
+writes it. While it does not exist (this box today) the deploy uses the
+gateway's own `DATABASE_URL` instead and a failure is only a warning, because
+the services still log in as the owner and set their tables up themselves.
+
 ### 5.2 Dashboard update
 ```bash
 # code lives at /opt/data/hermes-agent (Python, uv-managed)

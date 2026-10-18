@@ -33,8 +33,12 @@ def _emit(check: str, status: str, message: str, fix: str = "") -> Dict[str, str
     return row
 
 
-def migrate() -> int:
-    """Idempotent upgrade steps; safe to run on every update."""
+def migrate(admin_dsn: str = "") -> int:
+    """Idempotent upgrade steps; safe to run on every update.
+
+    ``admin_dsn`` is the schema owner's address from /etc/aquarium/db-admin.env
+    (given on stdin with ``--dsn-stdin``); without it the configured one is used.
+    """
     from hermes_cli.config import migrate_config
 
     migrate_config(interactive=False, quiet=True)
@@ -46,21 +50,13 @@ def migrate() -> int:
         _emit("database", "ok", "no Supabase datastore configured; nothing to migrate")
         return 0
 
-    from hermes_cli.access import ensure_app_role, initialize_access
-    from hermes_cli.owner import _prod_app_store
+    from hermes_cli.db_migrate import migrate as migrate_db
 
-    async def run() -> None:
-        store = _prod_app_store()
-        connection = await store.connect()
-        try:
-            await initialize_access(connection)
-            # Membership is skipped on purpose: `GRANT hermes_app TO CURRENT_USER`
-            # kills the backend on self-hosted Supabase (see ensure_app_role).
-            await ensure_app_role(connection, store.schema, grant_membership=False)
-        finally:
-            await connection.close()
-
-    asyncio.run(run())
+    failed = [f"{mode} {name}: {error}" for mode, name, error in migrate_db(admin_dsn) if error]
+    if failed:
+        _emit("database", "fail", "; ".join(failed)[:500],
+              "Run `hermes db migrate` with the schema owner's address for details.")
+        return 1
     _emit("database", "ok", "database schema and roles are up to date")
     return 0
 
@@ -164,7 +160,13 @@ CHECKS = {"migrate": migrate, "model-key": model_key, "google": google}
 def main(argv: List[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m hermes_cli.aquarium_probe")
     parser.add_argument("check", choices=sorted(CHECKS))
+    parser.add_argument("--dsn-stdin", action="store_true",
+                        help="migrate: read the schema owner's address from stdin")
     args = parser.parse_args(argv)
+    if args.check == "migrate" and args.dsn_stdin:
+        from hermes_cli.db_migrate import parse_dsn
+
+        return migrate(parse_dsn(sys.stdin.read()))
     return CHECKS[args.check]()
 
 

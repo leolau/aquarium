@@ -118,11 +118,15 @@ class SupabaseAppStore:
 
         import asyncpg
 
+        from hermes_cli import db_setup
+
         connection = await asyncpg.connect(
             self.dsn,
             server_settings={"search_path": self.schema},
+            connection_class=db_setup.connection_class(),
         )
         try:
+            await db_setup.bind(connection, self.schema)
             await verify_schema_owner(connection, schema=self.schema, dsn=self.dsn)
         except BaseException:
             await connection.close()
@@ -460,10 +464,15 @@ async def connect_for_publish(
 
     import asyncpg as _asyncpg
 
+    from hermes_cli import db_setup
+
     connection = await _asyncpg.connect(
-        store.dsn, server_settings={"search_path": target}
+        store.dsn,
+        server_settings={"search_path": target},
+        connection_class=db_setup.connection_class(),
     )
     try:
+        await db_setup.bind(connection, target)
         marker = await connection.fetchval(
             "SELECT to_regclass($1)", f"{target}.schema_owner"
         )

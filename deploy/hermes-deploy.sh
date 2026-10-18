@@ -221,6 +221,37 @@ for cfg in ${HERMES_HOME_GLOB:-/opt/data/hermes-home*/config.yaml}; do
     || echo "WARNING: could not check security.terminal_database_credentials in $cfg" >&2
 done
 
+# Table setup as the schema owner (`hermes db migrate`). With
+# /etc/aquarium/db-admin.env (root, 0600) the owner address comes from there and
+# a failure stops the deploy before any restart: services on a least-privilege
+# login cannot create tables themselves. Without that file (boxes set up before
+# it existed) the gateway's own DATABASE_URL is used and a failure is only a
+# warning: those services still own the schema and set up their tables on first
+# use, exactly as before. The address goes over stdin, never into the
+# environment of a process running as hermes.
+DB_ADMIN_ENV=${DB_ADMIN_ENV:-/etc/aquarium/db-admin.env}
+gateway_db_env() {
+  local f
+  for f in $(systemctl show -P EnvironmentFiles hermes-gateway.service 2>/dev/null | awk '{print $1}'); do
+    [ -r "$f" ] && grep -h '^DATABASE_URL=' "$f" || true
+  done | tail -n 1
+}
+for cfg in ${HERMES_HOME_GLOB:-/opt/data/hermes-home*/config.yaml}; do
+  [ -f "$cfg" ] || continue
+  migrate=(runuser -u hermes -- env HERMES_HOME="$(dirname "$cfg")"
+           ./.venv/bin/python -I -m hermes_cli.db_migrate --dsn-stdin)
+  if [ -f "$DB_ADMIN_ENV" ]; then
+    "${migrate[@]}" < "$DB_ADMIN_ENV" || {
+      echo "ABORT: hermes db migrate failed for $cfg; services were not restarted" >&2
+      exit 1
+    }
+  elif dsn=$(gateway_db_env) && [ -n "$dsn" ]; then
+    printf '%s\n' "$dsn" | "${migrate[@]}" \
+      || echo "WARNING: hermes db migrate failed for $cfg; services still set up their own tables" >&2
+  fi
+done
+unset dsn
+
 echo "== restarting services =="
 systemctl daemon-reload
 # agent-home runs as `hermes` and `next start` writes into .next, so it is

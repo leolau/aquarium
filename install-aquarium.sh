@@ -322,29 +322,20 @@ log "Database roles and first owner"
 run_env() { sudo -u hermes -H bash -c 'set -a; . "$0"; set +a; exec "$@"' "$APP_ENV" "$@"; }
 hermes_db() { run_env "$APP/.venv/bin/hermes" "$@"; }
 cd "$APP"
-# A fresh database has no app schema yet; create it and the principal tables, then the
-# non-BYPASSRLS hermes_app role. Membership is skipped: `GRANT hermes_app TO CURRENT_USER`
-# kills the backend on self-hosted Supabase (see ensure_app_role), so agent-home reads
-# through the separate agent_home_app LOGIN role below instead.
+# A fresh database has no app schema yet. `hermes db migrate` creates the schemas, every
+# table and row rule, pgvector and the non-BYPASSRLS hermes_app role's grants, as the
+# schema owner. That owner address lives only in root's /etc/aquarium/db-admin.env and
+# reaches the migrate process over stdin; deploy/hermes-deploy.sh re-runs it on each deploy.
+# Membership is skipped: `GRANT hermes_app TO CURRENT_USER` kills the backend on self-hosted
+# Supabase (see ensure_app_role), so agent-home reads through the agent_home_app LOGIN role.
 # pgvector is created here, once, before any service starts: on first boot the dashboard,
 # gateway and app-mcp each run `CREATE EXTENSION IF NOT EXISTS vector` at the same moment,
 # and all but one fail with a duplicate-key error on pg_extension.
-run_env "$APP/.venv/bin/python" - <<'PY'
-import asyncio
-from hermes_cli.access import ensure_app_role, initialize_access
-from hermes_cli.owner import _prod_app_store
-async def main():
-    store = _prod_app_store()
-    connection = await store.connect()
-    try:
-        await initialize_access(connection)
-        await ensure_app_role(connection, store.schema, grant_membership=False)
-        # After initialize_access: it creates the app schema the extension is created in.
-        await connection.execute("CREATE EXTENSION IF NOT EXISTS vector")
-    finally:
-        await connection.close()
-asyncio.run(main())
-PY
+install -d -m 700 /etc/aquarium
+( umask 077; printf 'HERMES_DB_ADMIN_URL=%s\n' "$DATABASE_URL" > /etc/aquarium/db-admin.env )
+chown root:root /etc/aquarium/db-admin.env
+chmod 600 /etc/aquarium/db-admin.env
+run_env "$APP/.venv/bin/python" -I -m hermes_cli.db_migrate --dsn-stdin < /etc/aquarium/db-admin.env
 sudo -u hermes -H HERMES_APP_READ_DB_PASSWORD="$READ_DB_PASSWORD" \
   bash -c 'set -a; . "$0"; set +a; exec "$@"' "$APP_ENV" "$APP/.venv/bin/hermes" owner read-role
 # `owner show` exits 0 even when no owner is set, so test its output.
