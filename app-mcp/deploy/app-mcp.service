@@ -14,7 +14,8 @@
 #   sudo cp app-mcp/deploy/app-mcp.service /etc/systemd/system/
 #   sudo cp app-mcp/deploy/app-mcp.env.example /opt/data/hermes-agent/app-mcp/app-mcp.env
 #   # fill APP_MCP_TICKET_SECRET (same value as AGENT_HOME_APP_MCP_SECRET in
-#   # agent-home/agent-home.env), then: sudo chmod 0600 that env file
+#   # agent-home/agent-home.env) and HERMES_HOME (the gateway's Hermes home,
+#   # where Hermes writes the MCP bearer token), then: sudo chmod 0600 that env file
 #   sudo systemctl daemon-reload && sudo systemctl enable --now app-mcp.service
 
 [Unit]
@@ -27,7 +28,12 @@ Type=simple
 User=hermes
 Group=hermes
 WorkingDirectory=/opt/data/hermes-agent/app-mcp
-EnvironmentFile=/opt/data/hermes-agent/app-mcp/app-mcp.env
+# Secrets live in /etc/aquarium/app-mcp.env (root:root 0600; systemd reads it
+# as root, so the hermes user and the agent's shell can't). The old in-checkout
+# file is still read first so a box that hasn't moved it keeps working; the
+# /etc one wins for any key in both (security review F16).
+EnvironmentFile=-/opt/data/hermes-agent/app-mcp/app-mcp.env
+EnvironmentFile=-/etc/aquarium/app-mcp.env
 ExecStart=/opt/data/hermes-agent/.venv/bin/python -m app_mcp.server
 Restart=on-failure
 RestartSec=5

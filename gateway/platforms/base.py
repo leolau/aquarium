@@ -1187,6 +1187,8 @@ def _media_delivery_denied_paths() -> List[Path]:
         "google_token.json",
         "google_oauth_pending.json",
         os.path.join("auth", "google_oauth.json"),
+        # app-mcp MCP endpoint bearer token (tools/mcp_tool.py, F19).
+        os.path.join("auth", "app-mcp-token"),
         # Webhook subscription HMAC secrets.
         "webhook_subscriptions.json",
         # Bitwarden Secrets Manager plaintext disk cache.

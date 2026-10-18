@@ -89,6 +89,7 @@ import json
 import logging
 import math
 import os
+from pathlib import Path
 import re
 import shutil
 import sys
@@ -2081,6 +2082,7 @@ class MCPServerTask:
 
         url = config["url"]
         headers = dict(config.get("headers") or {})
+        _add_app_mcp_token(self.name, config, headers)
         # Some MCP servers require MCP-Protocol-Version on the initial
         # initialize request and reject session-less POSTs otherwise.
         # Seed it as a client-level default, but treat user overrides as
@@ -3393,6 +3395,68 @@ def _forward_principal_setting(name: str, config: dict) -> bool:
     """``forward_principal`` for one server: explicit value, else on for app-mcp."""
     default = _is_app_mcp_server(name, config)
     return _parse_boolish(config.get("forward_principal", default), default=default)
+
+
+APP_MCP_TOKEN_RELPATH = Path("auth") / "app-mcp-token"
+
+
+def _app_mcp_token_file() -> Path:
+    """``$HERMES_HOME/auth/app-mcp-token``, the file app-mcp reads.
+
+    Uses the process's ``HERMES_HOME`` (what app-mcp.env names), not a
+    per-profile override, so every profile sends the same token.
+    """
+    home = os.environ.get("HERMES_HOME", "").strip()
+    if not home:
+        from hermes_constants import get_hermes_home
+
+        home = str(get_hermes_home())
+    return Path(home) / APP_MCP_TOKEN_RELPATH
+
+
+def _app_mcp_token(path: Path | None = None) -> str:
+    """app-mcp's bearer token, created (0600, dir 0700) on first use.
+
+    app-mcp (``app-mcp/app_mcp/mcp_auth.py``) only reads it. If it cannot be
+    created this returns "" and app-mcp stays open, the behaviour before the
+    token existed.
+    """
+    path = path or _app_mcp_token_file()
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return ""
+    import secrets
+
+    token = secrets.token_hex(32)
+    try:
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return _app_mcp_token(path)
+    except OSError as exc:
+        logger.warning("MCP server 'app': cannot create %s (%s)", path, exc)
+        return ""
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(token)
+    return token
+
+
+def _add_app_mcp_token(name: str, config: dict, headers: dict) -> None:
+    """Send app-mcp's bearer token (security review F19) unless one is configured.
+
+    The live ``mcp_servers.app`` entry has no headers, so this keeps it working
+    without a config edit.
+    """
+    if not _is_app_mcp_server(name, config):
+        return
+    if any(key.lower() == "authorization" for key in headers):
+        return
+    token = _app_mcp_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
 
 
 def _is_app_mcp_server(name: str, config: dict) -> bool:
