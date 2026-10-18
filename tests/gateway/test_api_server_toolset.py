@@ -48,9 +48,11 @@ class TestHermesApiServerToolset:
         tools = resolve_toolset("hermes-api-server")
         assert "clarify" not in tools
 
-    def test_toolset_excludes_send_message(self):
+    def test_toolset_includes_approval_gated_send_message(self):
+        # Exposed to agent-home sessions on purpose (121c4e074); sends are
+        # gated by approvals.tools. Other toolsets: tests/test_toolsets.py.
         tools = resolve_toolset("hermes-api-server")
-        assert "send_message" not in tools
+        assert "send_message" in tools
 
     def test_toolset_excludes_text_to_speech(self):
         tools = resolve_toolset("hermes-api-server")

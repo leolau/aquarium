@@ -87,8 +87,13 @@ therefore routes the SSE paths (`/api/chat/stream`, `/api/chat/attach` on
 `home.`, `/api/sessions/*/chat/stream*` on the dashboard host) through a
 separate `handle` block with **no** `encode` and `flush_interval -1`. If you
 add a new SSE endpoint, add its path to the `@sse` matcher or it will look
-"frozen until the answer lands". Reload with `caddy validate` +
-`caddy reload` (admin API on :2019, no root needed).
+"frozen until the answer lands". Reload with `sudo caddy validate --config
+/etc/caddy/Caddyfile && sudo systemctl reload caddy`. The admin API is a unix
+socket only caddy/root can open (`admin unix//var/lib/caddy/admin.sock|0600` in
+the global block, security review F24), not `127.0.0.1:2019`, where any local
+user, including the agent's shell, could rewrite routes. After adding or changing
+that global line, use `systemctl restart caddy` once, because a reload would look
+for the new address.
 
 **Side-effect rule**: pollers/bridges/batchers/escalation/digest act on the outside world. **Never run them simultaneously on more than one host** (double-processing + WA session fights).
 
