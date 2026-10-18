@@ -2488,7 +2488,19 @@ export interface StatusSummary {
   cron_enabled: number;
   /** Server bundle's build SHA (NEXT_PUBLIC_HERMES_BUILD); absent on older builds. */
   build?: string | null;
+  /** Upload-disk free space — owners/admins only, null for everyone else. */
+  upload_storage?: UploadStorageStatus | null;
   collected_at: number;
+}
+
+/** `GET /api/capacity/upload-storage` — free space on the disk holding uploads. */
+export interface UploadStorageStatus {
+  path: string | null;
+  free_bytes: number | null;
+  total_bytes: number | null;
+  /** Warn below this many free bytes (config.yaml `capacity.upload_min_free_*`). */
+  min_free_bytes: number | null;
+  low: boolean;
 }
 
 /** Seminar survey answers, as `validate_answers` in `hermes_cli/seminar_survey.py` accepts them. */

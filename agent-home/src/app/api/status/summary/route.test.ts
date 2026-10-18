@@ -16,6 +16,7 @@ const usageAnalytics = vi.fn();
 const capacity = vi.fn();
 const cronJobs = vi.fn();
 const projects = vi.fn();
+const uploadStorage = vi.fn();
 
 vi.mock("@/lib/auth/principal", () => ({
   getPrincipal: () => getPrincipal(),
@@ -25,6 +26,7 @@ vi.mock("@/lib/auth/principal", () => ({
     capacity,
     cronJobs,
     projects,
+    uploadStorage,
   }),
 }));
 
@@ -89,6 +91,33 @@ describe("GET /api/status/summary", () => {
     expect(body.cron_total).toBe(3);
     expect(body.cron_enabled).toBe(2);
     expect(body.collected_at).toBeTypeOf("number");
+  });
+
+  it("passes the upload-storage reading to owners/admins", async () => {
+    const reading = {
+      path: "/opt/data/supabase/docker/volumes/storage",
+      free_bytes: 1,
+      total_bytes: 100,
+      min_free_bytes: 10,
+      low: true,
+    };
+    uploadStorage.mockResolvedValue(reading);
+    const body = await (await get()).json();
+    expect(body.upload_storage).toEqual(reading);
+  });
+
+  it("hides the upload-storage reading from members", async () => {
+    getPrincipal.mockResolvedValue({
+      user_id: "mia",
+      display: "Mia",
+      role: "member",
+      channels: [],
+      is_owner: false,
+    });
+    uploadStorage.mockResolvedValue({ low: true });
+    const body = await (await get()).json();
+    expect(body.upload_storage).toBeNull();
+    expect(uploadStorage).not.toHaveBeenCalled();
   });
 
   it("degrades to null fields when a leg fails", async () => {

@@ -19,6 +19,7 @@ import { NextResponse } from "next/server";
 
 import { apiClientForRequest, getPrincipal } from "@/lib/auth/principal";
 import { uploadMaxBytes, uploadTooLargeDetail } from "@/lib/chat/upload-limit";
+import { MULTIPART_SLACK_BYTES, uploadSpaceRefusal } from "@/lib/chat/upload-space";
 import { mediaBucket } from "@/lib/env";
 import { storageAvailable, uploadChatMedia } from "@/lib/supabase/storage";
 import { invalidRequest, withPrincipal } from "../../../hermes-bridge";
@@ -102,6 +103,13 @@ async function handleUpload(
   principal: NonNullable<Awaited<ReturnType<typeof getPrincipal>>>,
   slug: string,
 ): Promise<NextResponse> {
+  // Refuse before reading the body: formData() buffers the whole upload.
+  const length = Number(request.headers.get("content-length") ?? "0");
+  if (Number.isFinite(length) && length > MULTIPART_SLACK_BYTES) {
+    const early = await uploadSpaceRefusal(length - MULTIPART_SLACK_BYTES);
+    if (early) return early;
+  }
+
   let form: FormData;
   try {
     form = await request.formData();
@@ -119,6 +127,8 @@ async function handleUpload(
       { status: 413 },
     );
   }
+  const noSpace = await uploadSpaceRefusal(file.size);
+  if (noSpace) return noSpace;
 
   const kind = String(form.get("kind") ?? "file").trim() || "file";
   if (!UPLOAD_LINK_KINDS.has(kind)) {

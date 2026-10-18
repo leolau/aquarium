@@ -41,6 +41,10 @@ function fmtTokens(n: number): string {
   return `${n}`;
 }
 
+function fmtGb(bytes: number | null): string {
+  return bytes === null ? "—" : `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+}
+
 /**
  * The ambient status strip under the header: CPU, storage, 30-day token
  * burn, live background work, and scheduled jobs. Polls while the tab is
@@ -137,6 +141,8 @@ export function StatusStrip() {
   const tasks =
     (summary?.active_conversations ?? 0) + (summary?.running_cards ?? 0);
 
+  const lowStorage = summary?.upload_storage?.low ? summary.upload_storage : null;
+
   const chip =
     "inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-[var(--color-surface-2)] px-2 py-0.5";
 
@@ -148,6 +154,17 @@ export function StatusStrip() {
         stale ? "opacity-60" : ""
       }`}
     >
+      {lowStorage ? (
+        <div
+          role="alert"
+          data-component="LowStorageWarning"
+          className="mx-auto mb-1.5 w-full max-w-2xl rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-[12px] text-amber-700 dark:text-amber-300 lg:max-w-5xl"
+        >
+          Upload storage is running low: {fmtGb(lowStorage.free_bytes)} free of{" "}
+          {fmtGb(lowStorage.total_bytes)}. Free up space or add disk before large uploads
+          start failing.
+        </div>
+      ) : null}
       <div className="mx-auto flex w-full max-w-2xl items-center gap-2 lg:max-w-5xl">
         <Link href="/capacity" className={chip} title="CPU busy — tap for the capacity page">
           <span className="font-medium text-[var(--color-fg)]">CPU</span>
