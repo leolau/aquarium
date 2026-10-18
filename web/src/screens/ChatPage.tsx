@@ -315,12 +315,11 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
   }, []);
 
   useEffect(() => {
-    // When hidden (non-chat tab) we must not register the header button —
-    // another page owns the header's end slot at that point.
-    if (!isActive) {
-      setEnd(null);
-      return;
-    }
+    // When hidden (non-chat tab) leave the header's end slot alone: another
+    // page owns it, and the hidden host can mount late (after the role check),
+    // so clearing here would wipe that page's button. Leaving /chat is cleaned
+    // up by the return below.
+    if (!isActive) return;
     if (!narrow) {
       setEnd(null);
       return;
