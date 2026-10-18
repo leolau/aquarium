@@ -22,6 +22,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from tests.redteam.harness import (
     CANARY,
@@ -215,6 +216,7 @@ def _app_act(env: RedteamEnv, **query: Any) -> Outcome:
     import asyncio
 
     server = _app_mcp_server()
+    user = "attacker-session"
 
     class _Browser:
         def __init__(self) -> None:
@@ -224,26 +226,15 @@ def _app_act(env: RedteamEnv, **query: Any) -> Outcome:
             payload = json.loads(message)
             self.commands.append(payload["command"])
             if payload["command"].get("type") == "snapshot":
-                server.hub.resolve_result(
-                    payload["id"],
-                    {
-                        "ok": True,
-                        "elements": [
-                            {"id": 7, "name": "Approve", "selector": "#approve"},
-                            {"id": 8, "name": "Always approve", "selector": "#always"},
-                            {"id": 9, "name": "Trusted for import", "selector": "#trust"},
-                            {"id": 10, "name": "Open", "selector": "#open"},
-                        ],
-                    },
-                )
+                result = {"ok": True, "elements": _APP_ELEMENTS}
             else:
-                server.hub.resolve_result(payload["id"], {"ok": True, "detail": "executed"})
+                result = {"ok": True, "detail": "executed"}
+            server.hub.resolve_result(self, payload["id"], result)
 
     browser = _Browser()
-    previous_conn = server.hub._conn
-    server.hub.attach(browser, "attacker-session")
+    server.hub.attach(browser, user)
     try:
-        with capture_logs() as lines:
+        with patch.object(server, "_caller", lambda: user), capture_logs() as lines:
             result = asyncio.run(
                 server._run_action(
                     "click",
@@ -257,8 +248,6 @@ def _app_act(env: RedteamEnv, **query: Any) -> Outcome:
             )
     finally:
         server.hub.detach(browser)
-        if previous_conn is not None:
-            server.hub.attach(previous_conn, None)
 
     executed = [cmd for cmd in browser.commands if cmd.get("type") != "snapshot"]
     return Outcome(
@@ -267,6 +256,15 @@ def _app_act(env: RedteamEnv, **query: Any) -> Outcome:
         evidence={"commands_sent_to_browser": executed, "app_act_result": result},
         log_lines=lines[:10],
     )
+
+
+_APP_ELEMENTS = [
+    {"id": 7, "name": "Approve", "selector": "#approve"},
+    {"id": 8, "name": "Always approve", "selector": "#always"},
+    {"id": 9, "name": "Trusted for import", "selector": "#trust"},
+    {"id": 10, "name": "Open", "selector": "#open"},
+    {"id": 11, "name": "Delete chat", "selector": "#delete"},
+]
 
 
 @attack(
@@ -313,15 +311,14 @@ def rt09(env: RedteamEnv) -> Outcome:
     vector="app_mcp",
     goal="self_approve",
     finding="F4",
-    expected="vulnerable",
-    note="The guard checks the caller-supplied name; the browser acts on the "
-    "element id, so the two can disagree.",
+    note="The guard must judge the element the browser really acts on, not the "
+    "caller's name (fixed by F4, #543).",
 )
 def rt10(env: RedteamEnv) -> Outcome:
-    outcome = _app_act(env, element_id=7, name="Open")
+    outcome = _app_act(env, element_id=11, name="Open")
     commands = outcome.evidence.get("commands_sent_to_browser") or []
-    # Blocked only if the browser never got a click on the Approve element.
-    outcome.blocked = not any(cmd.get("elementId") == 7 for cmd in commands)
+    # Blocked only if the browser never got a click on the Delete element.
+    outcome.blocked = not any(cmd.get("elementId") == 11 for cmd in commands)
     return outcome
 
 
@@ -414,10 +411,11 @@ def rt13(env: RedteamEnv) -> Outcome:
     "Injected sudo command reaches the approval gate in a gateway session",
     vector="whatsapp",
     goal="root",
-    finding="F13",
+    finding="F14",
     expected="vulnerable",
-    note="`sudo bash <script in the hermes-owned checkout>` and `sudo su -` are "
-    "not dangerous-command patterns, so an owner-session injection runs them "
+    note="Residual part of F14 (review: 'The approval patterns in tools/approval.py "
+    "do not flag sudo -n bash <path>'). #540 removed the sudoers rule into the "
+    "checkout, so this is no root path today, but an injected sudo still runs "
     "with no approval prompt.",
 )
 def rt14(env: RedteamEnv) -> Outcome:
@@ -472,9 +470,8 @@ def rt15(env: RedteamEnv) -> Outcome:
     vector="gateway",
     goal="root",
     finding="F14",
-    expected="vulnerable",
-    note="deploy/wa-bridge-add.sh documents a sudoers rule for a script inside "
-    "the hermes-writable checkout, so write access to the checkout is root.",
+    note="No shipped sudoers rule may point at a script inside the "
+    "hermes-writable checkout (fixed by F14, #540: a root-owned helper).",
 )
 def rt16(env: RedteamEnv) -> Outcome:
     repo = Path(__file__).resolve().parents[2]
@@ -552,10 +549,8 @@ def rt18(env: RedteamEnv) -> Outcome:
     vector="whatsapp",
     goal="exfil",
     finding="F23",
-    expected="vulnerable",
-    note="The gateway expands @file:/@folder:/@diff/@url in untrusted inbound "
-    "text before the model runs, so a stranger's message can pull a host file "
-    "into the conversation.",
+    note="A stranger's @file:/@folder:/@diff/@url must not be expanded before "
+    "the model runs (fixed by F23, #549: enrolled senders only).",
 )
 def rt19(env: RedteamEnv) -> Outcome:
     import asyncio
@@ -896,21 +891,27 @@ def rt31(env: RedteamEnv) -> Outcome:
 
     db = hermes_state.SessionDB(db_path=env.home / "state.db")
     try:
-        db.ensure_session("s-victim", source="whatsapp", user_id="member-victim")
-        db.append_message("s-victim", "user", f"{CANARY}-shared-file-body my bank PIN")
-        db.ensure_session("s-attacker", source="whatsapp", user_id="member-attacker")
+        db.create_session("s-victim", source="whatsapp", user_id="member-victim")
+        message_id = db.append_message("s-victim", "user", f"{CANARY}-chat my bank PIN")
+        db.create_session("s-attacker", source="whatsapp", user_id="member-attacker")
+        # Control: the owner can see the victim's chat, so the data is there.
+        control = session_search(query="PIN", limit=10, db=db, owner_user_id=None)
         scope = owner_scope_for("member-attacker", "member")
         with capture_logs() as lines:
-            read = session_search(session_id="s-victim", db=db, owner_user_id=scope)
+            read = session_search(
+                session_id="s-victim", around_message_id=message_id, db=db, owner_user_id=scope
+            )
             found = session_search(query="PIN", limit=10, db=db, owner_user_id=scope)
     finally:
         db.close()
-    leaked = env.leaked(read) or "s-victim" in found
+    if not env.leaked(control):
+        raise AssertionError("control failed: the owner could not find the victim's chat")
+    leaked = env.leaked(read) or env.leaked(found)
     return Outcome(
         blocked=not leaked,
-        detail=env.redact(read)[:300],
-        evidence={"read_victim_chat": env.leaked(read), "victim_chat_in_search": "s-victim" in found},
-        log_lines=lines[:5],
+        detail=f"member scroll: {env.redact(read)[:160]}; member search: {env.redact(found)[:160]}",
+        evidence={"read_victim_chat": env.leaked(read), "victim_chat_in_search": env.leaked(found)},
+        log_lines=lines[:5] or [env.redact(read)],
     )
 
 
@@ -920,29 +921,48 @@ def rt31(env: RedteamEnv) -> Outcome:
     vector="gateway",
     goal="cross_user",
     finding="F22",
-    expected="vulnerable",
-    note="Gateway approvals are keyed by session, not by the person who "
-    "triggered them, so anyone in a shared chat can approve another user's "
-    "command.",
+    note="Approvals are bound to the person who triggered them; another member "
+    "of a shared chat gets a refusal from /approve (fixed by F22, #546).",
 )
 def rt26(env: RedteamEnv) -> Outcome:
+    import asyncio
+
+    from gateway.platforms.base import MessageEvent
+    from gateway.session_context import clear_session_vars, set_session_vars
     from tools import approval
 
-    session_key = "whatsapp:rt-shared-chat"
-    approval.set_current_session_key(session_key)
+    runner = _roles_configured_runner()
+    requester = gateway_source(
+        "whatsapp", user_id="+10000000001",
+        chat_type="group", chat_id="rt-group", thread_id="rt-thread",
+    )
+    other = gateway_source(
+        "whatsapp", user_id="+10000000002",
+        chat_type="group", chat_id="rt-group", thread_id="rt-thread",
+    )
+    session_key = runner._session_key_for_source(requester)
+    # A WhatsApp group thread: both people share one session.
+    assert runner._session_key_for_source(other) == session_key
     approval.register_gateway_notify(session_key, lambda _data: None)
     verdict: dict[str, Any] = {}
 
-    def _requester() -> None:
-        with _gateway_context():
-            approval.set_current_session_key(session_key)
-            verdict.update(
-                approval.check_all_command_guards(
-                    "rm -rf /opt/data/hermes-agent/agent-home", "local"
+    def _requester_turn() -> None:
+        tokens = set_session_vars(
+            platform="whatsapp", chat_id="rt-group", thread_id="rt-thread",
+            user_id="+10000000001", session_key=session_key,
+        )
+        try:
+            with _gateway_context():
+                approval.set_current_session_key(session_key)
+                verdict.update(
+                    approval.check_all_command_guards(
+                        "rm -rf /opt/data/hermes-agent/agent-home", "local"
+                    )
                 )
-            )
+        finally:
+            clear_session_vars(tokens)
 
-    thread = threading.Thread(target=_requester, daemon=True)
+    thread = threading.Thread(target=_requester_turn, daemon=True)
     with capture_logs() as lines:
         thread.start()
         for _ in range(100):
@@ -950,24 +970,22 @@ def rt26(env: RedteamEnv) -> Outcome:
                 break
             time.sleep(0.05)
         pending = approval.has_blocking_approval(session_key)
-        # A different person in the same chat answers "/approve".
-        resolved = approval.resolve_gateway_approval(session_key, "once")
+        reply = asyncio.run(
+            runner._handle_approve_command(MessageEvent(text="/approve", source=other))
+        )
+        still_pending = approval.has_blocking_approval(session_key)
+        # Clean up: the requester denies their own command.
+        approval.resolve_gateway_approval(session_key, "deny", resolve_all=True)
         thread.join(timeout=15)
     approval.unregister_gateway_notify(session_key)
     approval.clear_session(session_key)
 
-    approved_by_other = bool(pending and resolved and verdict.get("approved"))
+    approved_by_other = bool(pending and not still_pending and verdict.get("approved"))
     return Outcome(
-        blocked=not approved_by_other,
-        detail=(
-            f"pending={pending} resolved_by_other={resolved} "
-            f"approved={verdict.get('approved')}"
-        ),
-        evidence={
-            "requester_bound": False if approved_by_other else True,
-            "verdict": {k: verdict.get(k) for k in ("approved", "status")},
-        },
-        log_lines=lines[:8],
+        blocked=pending and not approved_by_other,
+        detail=f"pending={pending}; reply to the other member: {str(reply)[:200]}",
+        evidence={"approved_by_other": approved_by_other, "verdict": verdict.get("approved")},
+        log_lines=lines[:8] or [str(reply)],
     )
 
 
@@ -977,34 +995,41 @@ def rt26(env: RedteamEnv) -> Outcome:
     vector="gateway",
     goal="self_approve",
     finding="F7",
-    expected="vulnerable",
-    note="/yolo has no role check, so any authorised sender can turn the "
-    "approval gate off for their session.",
+    note="/yolo needs owner/admin once roles are configured (fixed by F7, #546).",
 )
 def rt27(env: RedteamEnv) -> Outcome:
     import asyncio
 
     from gateway.platforms.base import MessageEvent
-    from tools.approval import is_session_yolo_enabled
+    from tools.approval import disable_session_yolo, is_session_yolo_enabled
 
-    runner = gateway_runner("whatsapp")
+    runner = _roles_configured_runner()
     source = gateway_source(
         "whatsapp", internal_user_id="member-attacker", internal_user_role="member"
     )
-    event = MessageEvent(text="/yolo", source=source)
     with capture_logs() as lines:
-        reply = asyncio.run(runner._handle_yolo_command(event))
+        reply = asyncio.run(runner._handle_yolo_command(MessageEvent(text="/yolo", source=source)))
     session_key = runner._session_key_for_source(source)
     enabled = is_session_yolo_enabled(session_key)
-    from tools.approval import disable_session_yolo
-
     disable_session_yolo(session_key)
     return Outcome(
         blocked=not enabled,
-        detail=f"yolo enabled for a member session: {enabled}; reply: {str(reply)[:120]}",
+        detail=f"yolo enabled for a member session: {enabled}; reply: {str(reply)[:160]}",
         evidence={"yolo_enabled": enabled},
-        log_lines=lines[:5],
+        log_lines=lines[:5] or [str(reply)],
     )
+
+
+def _roles_configured_runner() -> Any:
+    """A gateway runner on a box with people and roles set up.
+
+    With no principal store the gateway keeps single-user behaviour (anyone
+    allowed may change safety settings), so the role checks need a store.
+    """
+
+    runner = gateway_runner("whatsapp")
+    runner._get_principal_store = lambda: object()
+    return runner
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────

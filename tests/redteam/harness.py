@@ -614,6 +614,7 @@ def gateway_runner(platform_name: str = "whatsapp") -> Any:
         platforms={Platform(platform_name): PlatformConfig(enabled=True, token="fake")}
     )
     runner.adapters = {}
+    runner._pending_approvals = {}
     runner._model = "openai/gpt-4.1-mini"
     runner._base_url = None
     return runner
