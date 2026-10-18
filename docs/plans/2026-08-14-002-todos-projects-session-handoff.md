@@ -187,7 +187,7 @@ Settled in ed.2/ed.2a (#206, #221) and upheld by the implementation:
 
 Region `cn-hongkong`, instance `i-j6c81aisv2dd8mg17yle`, reached with Alibaba Cloud MCP
 `OOS_RunCommand`. Checkout `/opt/data/hermes-agent`, `HERMES_HOME=/opt/data/hermes-home-staging`,
-service user `hermes`, agent-home at `https://home.leolau.ai-and-i.io` (loopback `127.0.0.1:3100`;
+service user `hermes`, agent-home at `https://<agent-home-host>` (loopback `127.0.0.1:3100`;
 dashboard `127.0.0.1:9119`). Deploy with `/opt/data/deploy-hermes.sh develop` and trust its own
 `deploy OK (<sha>)` line. The agent-home build overruns the OOS request window — that is not a
 failure, poll for the verdict. Afterwards check every enabled long-running unit is active, that

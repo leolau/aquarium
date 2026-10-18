@@ -2,7 +2,7 @@
 
 > **⚠️ SUPERSEDED 2026-08-20 — production no longer lives here.**
 > The live production environment is now the Hetzner box `hermes` (CX43, nbg1,
-> `188.245.219.105`). The authoritative ops document for it is
+> `<prod-host>`). The authoritative ops document for it is
 > [`PRODUCTION.md`](./PRODUCTION.md); the migration history is
 > [`hetzner-migration-runbook.md`](./hetzner-migration-runbook.md).
 > The `hermes-systest` (Alibaba cn-hongkong) box described below was stopped at
@@ -140,7 +140,7 @@ glob could not see. Now:
 ```
 unit         agent-home.service   User=hermes, ProtectSystem=strict, ProtectHome=yes
 WorkingDir   /opt/data/hermes-agent/agent-home     the main checkout
-public       https://home.leolau.ai-and-i.io → Caddy → 127.0.0.1:3100
+public       https://<agent-home-host> → Caddy → 127.0.0.1:3100
 build        deploy rebuilds it when agent-home/ or package-lock.json moves
 capture      DEFAULT_UNIT_GLOBS = ("hermes-*", "agent-home*")
 ```

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 
 import httpx
@@ -142,8 +143,9 @@ class TestAnswers:
 
 class TestCopy:
     def test_invite_carries_the_link_in_both_languages(self) -> None:
-        link = survey_link(SETTINGS, "tok")
-        assert link == "https://home.leolau.ai-and-i.io/survey/tok"
+        settings = dataclasses.replace(SETTINGS, public_base_url="https://home.example.com")
+        link = survey_link(settings, "tok")
+        assert link == "https://home.example.com/survey/tok"
         text = invite_message(link)
         assert text.count(link) == 2
         assert "問卷" in text and "survey" in text

@@ -6,7 +6,7 @@ An installed iOS PWA, left open (or backgrounded) across three
 production deploys in one session, threw:
 
 > Application error: a client-side exception has occurred while loading
-> home.leolau.ai-and-i.io (see the browser console for more information).
+> <agent-home-host> (see the browser console for more information).
 
 Root cause: Next.js content-hashes every JS file per build. A tab that's
 been open since before a deploy still holds references to the OLD

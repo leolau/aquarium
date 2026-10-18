@@ -1,7 +1,7 @@
 # Session hand-off — chat/projects perf, blocked-card UX, kanban auto-retry, release + deploy
 
 For whichever agent/human picks this up next. Everything below shipped and
-is **live on production** (Hetzner box, `188.245.219.105`) as of this
+is **live on production** (Hetzner box, `<prod-host>`) as of this
 writing, except one explicitly flagged open item at the bottom.
 
 ## What happened, in order
@@ -99,7 +99,7 @@ directly so it self-resolves without a manual click — but the user's
 session ended (environment/IDE context switched) before they answered.
 **Whoever picks this up: ask the user which they want, or just check
 `hermes kanban show <card id>` on the Hetzner box (SSH:
-`ssh -i ~/.ssh/hetzner_hermes_ed25519 root@188.245.219.105`, box details
+`ssh root@<prod-host>`, box details
 in `docs/deployment/PRODUCTION.md`) and use judgement** — if the quota has
 visibly reset (a day has passed since the block), unblocking it outright
 is probably just correct; if unsure, ask first per this repo's own norms

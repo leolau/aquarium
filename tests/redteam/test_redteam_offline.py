@@ -52,13 +52,20 @@ def test_attack_ids_are_unique():
     assert len(ids) == len(set(ids))
 
 
-def test_live_mode_refuses_production():
+def test_live_mode_refuses_production(monkeypatch):
+    import tests.redteam.live as live
     from tests.redteam.live import check_target
 
+    assert live.PRODUCTION_HOSTS
+    monkeypatch.setattr(
+        live,
+        "PRODUCTION_HOSTS",
+        frozenset({"203.0.113.10", "home.example.com", "example.com"}),
+    )
     for url in (
-        "http://188.245.219.105:8642",
-        "https://home.leolau.ai-and-i.io",
-        "https://leolau.ai-and-i.io/v1",
+        "http://203.0.113.10:8642",
+        "https://home.example.com",
+        "https://example.com/v1",
     ):
         with pytest.raises(ValueError, match="production"):
             check_target(url)

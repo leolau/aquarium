@@ -18,10 +18,10 @@
 
 - **agent-home is BUILT and LIVE.** The new mobile-first Next.js PWA
   (**FG-20**) is deployed on the prod box and reachable at
-  **<https://home.leolau.ai-and-i.io>** (HTTPS via Caddy/Let's Encrypt → Next on
+  **<https://<agent-home-host>>** (HTTPS via Caddy/Let's Encrypt → Next on
   `127.0.0.1:3100`). All of Wave A/B/C landed and merged to `develop`.
 - **Two front-ends coexist** (Decision 3A): `agent-home` = the user/mobile face
-  (all Phase-2 user panels); `web/` (served at `leolau.ai-and-i.io`) stays the
+  (all Phase-2 user panels); `web/` (served at `<dashboard-host>`) stays the
   operator/admin console. Both hit the **same** Python API + Supabase.
 - **Repo renamed** `leolau/hermes-agent` → **`leolau/aquarium`** (old
   URLs auto-redirect). Local checkout is still `/home/ubuntu/repos/hermes-agent`.
@@ -117,11 +117,11 @@ browser never gets a service-role key or bypasses C1/C2/C6/C8.
 
 ## 3. agent-home deployment (live) — how it's served
 
-- **Subdomain:** `home.leolau.ai-and-i.io` → Cloudflare A record `47.83.199.25`
+- **Subdomain:** `<agent-home-host>` → Cloudflare A record `47.83.199.25`
   (DNS-only/unproxied, matching the dashboard record). Caddy fetches the LE cert.
 - **Caddy** (`/etc/caddy/Caddyfile`) has a second site block:
   ```caddy
-  home.leolau.ai-and-i.io {
+  <agent-home-host> {
       encode zstd gzip
       reverse_proxy 127.0.0.1:3100
   }
@@ -189,7 +189,7 @@ recreate/commit if needed in future sessions.
   (scrypt `password_hash` in the box `config.yaml` under `dashboard.basic_auth`;
   the token-signing `secret` was rotated too, invalidating old sessions).
   Config backup: `/opt/data/hermes-home-staging/config.yaml.bak-20260721-235219`.
-- **PWA install:** open `https://home.leolau.ai-and-i.io` → iOS Safari
+- **PWA install:** open `https://<agent-home-host>` → iOS Safari
   Share → *Add to Home Screen*; Android Chrome ⋮ → *Install app*.
 
 ---

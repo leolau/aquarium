@@ -80,7 +80,7 @@ the real guard with a fake browser), real model refusals (that is live mode).
 Live mode sends the same injections as plain text (no `RT-OBEY` markers)
 to a running install through its OpenAI-compatible API server, then checks
 whether the planted canary came back. It refuses the production names
-(`188.245.219.105`, `home.leolau.ai-and-i.io`, `leolau.ai-and-i.io`).
+(`<prod-host>`, `<agent-home-host>`, `<dashboard-host>`).
 
 **Never run it against production.** It writes fake values into the test
 box's secret files.

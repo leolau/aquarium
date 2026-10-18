@@ -45,7 +45,7 @@ protection. Narrow it to loopback.
 
 | Thing | Where | Note |
 |---|---|---|
-| Dashboard server | `hermes_cli/web_server.py` (FastAPI, ~16k lines) | `hermes dashboard --host 0.0.0.0 --port 9119`, fronted by Caddy at `https://leolau.ai-and-i.io` |
+| Dashboard server | `hermes_cli/web_server.py` (FastAPI, ~16k lines) | `hermes dashboard --host 0.0.0.0 --port 9119`, fronted by Caddy at `https://<dashboard-host>` |
 | Router seam | `app.include_router(_memory_oauth_router)` (`web_server.py:266`), router defined in `hermes_cli/memory_oauth.py` | the precedent for adding endpoints **without** growing the god-file |
 | Principal resolution | `_comms_resolve_principal(request, allow_as=True)` (`web_server.py:3072`) | already implements C1 identity binding, the owner/admin-only `?as=` narrowing, and 409 on an unenrolled subject |
 | Frontend | `web/` — React + React Router, screens in `web/src/screens/`, routes in `web/src/App.tsx` (`BUILTIN_ROUTES_CORE`, `BUILTIN_NAV_REST`) | `AnalyticsPage.tsx` is the closest existing analogue |

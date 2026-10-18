@@ -6,7 +6,7 @@ this up cold and execute §4 → §5 in order without re-surveying the box or
 asking anything.
 **Depends on:** FG-20 (`agent-home` BFF), FG-21 (layer-4 semantic memory),
 FG-22 (the visualizer + `/api/memory/explorer/*`, shipped, deployed, and
-confirmed working by the owner at `https://leolau.ai-and-i.io/memory` on
+confirmed working by the owner at `https://<dashboard-host>/memory` on
 2026-08-05).
 **Written after surveying the live `hermes-systest` box**, not from the repo
 alone. Every fact in §2 was read from the box; several are not visible in git
@@ -17,8 +17,8 @@ and they are the reason the phases are ordered the way they are.
 ## 1. Why this exists
 
 FG-22 put the memory visualizer in `web/` — the desktop operator console at
-`https://leolau.ai-and-i.io/memory`. The owner wants it on **`agent-home`**, the
-mobile-first face at `https://home.leolau.ai-and-i.io` (FG-20), which is what he
+`https://<dashboard-host>/memory`. The owner wants it on **`agent-home`**, the
+mobile-first face at `https://<agent-home-host>` (FG-20), which is what he
 actually opens.
 
 Nothing about the data layer changes. FG-22's endpoints are already the right
@@ -39,7 +39,7 @@ one transaction, and audit every elevated read. **This plan adds a second
 ## 2. Ground truth: what is on the box (verified 2026-08-05)
 
 ```
-public url     https://home.leolau.ai-and-i.io   → Caddy → 127.0.0.1:3100
+public url     https://<agent-home-host>   → Caddy → 127.0.0.1:3100
 unit           agent-home.service   active (running) since 2026-07-29, User=root
                WorkingDirectory=/opt/data/agent-home-app/agent-home
                EnvironmentFile=/opt/data/agent-home-app/agent-home/agent-home.env
@@ -272,7 +272,7 @@ breaks the phone, the cause should be unambiguous.
 ### A0 acceptance
 
 A commit to `develop` touching only `agent-home/src` is visible at
-`https://home.leolau.ai-and-i.io` after one deploy run, with no manual build,
+`https://<agent-home-host>` after one deploy run, with no manual build,
 and `python3 scripts/deploy_state.py check` is clean afterwards.
 
 ## 5. Phases A1–A5 — the feature

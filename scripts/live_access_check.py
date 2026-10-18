@@ -59,7 +59,7 @@ It sends no WhatsApp or other channel message and changes no config.
 
 TEST install only. It refuses to run (exit 2) when ``--base-url``, a public-URL
 env var or this machine's own name/IP is the production box
-(``home.leolau.ai-and-i.io`` / ``188.245.219.105``); ``--allow-production``
+(``PRODUCTION_HOSTS`` below); ``--allow-production``
 overrides that for the old pre-gate use. On a TEST box laid out like
 production (checkout ``/opt/data/hermes-agent``, dashboard on port 9119), run
 it as the ``hermes`` service user with the services' environment, so check g
