@@ -262,9 +262,11 @@ def test_pgvector_is_created_once_before_any_service_starts():
     # On a fresh database the dashboard, gateway and app-mcp all create the extension on
     # their first connection at the same moment; all but one hit a duplicate-key error.
     step6 = _step(6)
-    create = step6.find('CREATE EXTENSION IF NOT EXISTS vector')
+    create = step6.find('await connection.execute("CREATE EXTENSION IF NOT EXISTS vector")')
     assert create != -1, "step 6 must create the vector extension"
-    assert create < step6.find("initialize_access(connection)")
+    # The app schema it lands in is created by initialize_access; before that, Postgres
+    # fails with "no schema has been selected to create in".
+    assert step6.find("await initialize_access(connection)") < create
     assert TEXT.find(step6) < TEXT.find("systemctl restart hermes-embed")
 
 

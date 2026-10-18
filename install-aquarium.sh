@@ -334,9 +334,10 @@ async def main():
     store = _prod_app_store()
     connection = await store.connect()
     try:
-        await connection.execute("CREATE EXTENSION IF NOT EXISTS vector")
         await initialize_access(connection)
         await ensure_app_role(connection, store.schema, grant_membership=False)
+        # After initialize_access: it creates the app schema the extension is created in.
+        await connection.execute("CREATE EXTENSION IF NOT EXISTS vector")
     finally:
         await connection.close()
 asyncio.run(main())
