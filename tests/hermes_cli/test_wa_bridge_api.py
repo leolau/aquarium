@@ -132,3 +132,39 @@ def test_add_bridge_rejects_existing(wa_home, monkeypatch):
     with pytest.raises(HTTPException) as exc:
         asyncio.run(api.add_bridge(_FakeRequest({"name": "personal"})))
     assert exc.value.status_code == 409
+
+
+def test_add_bridge_sudo_runs_root_owned_helper_not_checkout(wa_home, monkeypatch):
+    """F14: the hermes user can write the checkout, so sudo must only ever run
+    the fixed root-owned copy — never a path derived from this module's file."""
+    import asyncio
+    from pathlib import Path
+
+    calls = []
+    monkeypatch.setattr(api, "_bridge_names", lambda: [])
+    monkeypatch.setattr(api, "_add_helper_installed", lambda: True)
+    monkeypatch.setattr(api, "_is_active", lambda n: "active")
+    monkeypatch.setattr(
+        api.subprocess, "run", lambda cmd, **kw: calls.append(cmd) or _Proc()
+    )
+
+    asyncio.run(api.add_bridge(_FakeRequest({"name": "newphone"})))
+
+    assert calls == [["sudo", "-n", "/usr/local/sbin/hermes-wa-bridge-add", "newphone"]]
+    checkout = str(Path(api.__file__).resolve().parent.parent)
+    assert not any(checkout in part for part in calls[0])
+
+
+def test_add_bridge_reports_missing_root_helper(wa_home, monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr(api, "_bridge_names", lambda: [])
+    monkeypatch.setattr(api, "_add_helper_installed", lambda: False)
+    monkeypatch.setattr(
+        api.subprocess, "run",
+        lambda *a, **k: pytest.fail("must not fall back to another helper"),
+    )
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(api.add_bridge(_FakeRequest({"name": "newphone"})))
+    assert exc.value.status_code == 501
+    assert "/usr/local/sbin/hermes-wa-bridge-add" in exc.value.detail

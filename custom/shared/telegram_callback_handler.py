@@ -3,24 +3,53 @@
 Telegram Callback Handler for Hermes Agent
 
 HTTP server that processes merge/reject actions triggered by
-Telegram inline keyboard URL buttons. Runs on port 7902.
+Telegram inline keyboard URL buttons. Runs on 127.0.0.1:7902 by default;
+links must carry a valid HMAC signature + expiry (see verify_callback).
 
 When a user taps a button in Telegram, their browser opens a URL
 on this server. The server processes the action, updates the
 Telegram message, and returns a confirmation page.
 """
 
+import hashlib
+import hmac
 import json
 import os
 import sqlite3
+import time
 from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request, urlopen
 
 DB_PATH = os.environ.get('MESSAGING_DB_PATH', '/opt/data/whatsapp-messages/messaging_data.db')
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_USER_ID = os.environ.get('TELEGRAM_USER_ID', '')
 PORT = int(os.environ.get('CALLBACK_PORT', '7902'))
+# Loopback by default. The Merge/Keep buttons open in the owner's phone
+# browser, so a deployment exposes this through an HTTPS reverse proxy
+# (CALLBACK_SERVER_BASE) or sets CALLBACK_BIND_HOST deliberately; links are
+# HMAC-signed with an expiry either way.
+BIND_HOST = os.environ.get('CALLBACK_BIND_HOST', '127.0.0.1')
+
+
+def _callback_signing_key():
+    secret = os.environ.get('CALLBACK_SIGNING_SECRET') or TELEGRAM_BOT_TOKEN
+    return hmac.new(secret.encode(), b'contact-merge-callback', hashlib.sha256).digest()
+
+
+def verify_callback(action, suggestion_id, query, now=None):
+    """True when ``query`` carries an unexpired signature for this action."""
+    params = parse_qs(query)
+    exp = params.get('exp', [''])[0]
+    sig = params.get('sig', [''])[0]
+    if not (exp.isdigit() and sig) or not (TELEGRAM_BOT_TOKEN or os.environ.get('CALLBACK_SIGNING_SECRET')):
+        return False
+    if int(exp) < (now if now is not None else time.time()):
+        return False
+    expected = hmac.new(_callback_signing_key(), f"{action}:{suggestion_id}:{exp}".encode(),
+                        hashlib.sha256).hexdigest()
+    return hmac.compare_digest(sig, expected)
 
 
 def get_db():
@@ -219,11 +248,21 @@ def html_response(title, message, success=True):
 
 class CallbackHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        parts = self.path.strip('/').split('/')
+        url = urlsplit(self.path)
+        parts = url.path.strip('/').split('/')
 
         if len(parts) == 3 and parts[0] == 'action':
             action = parts[1]
             suggestion_id = parts[2]
+
+            if action in ('merge', 'reject') and not verify_callback(action, suggestion_id, url.query):
+                html = html_response("Link Expired or Invalid",
+                                     "This link is not valid. Use the latest Telegram suggestion.", False)
+                self.send_response(403)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
+                self.end_headers()
+                self.wfile.write(html.encode())
+                return
 
             if action == 'merge':
                 success, message = handle_merge(suggestion_id)
@@ -241,7 +280,7 @@ class CallbackHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(html.encode())
 
-        elif self.path == '/health':
+        elif url.path == '/health':
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
@@ -265,8 +304,8 @@ def main():
         print("[callback] ERROR: TELEGRAM_USER_ID not set")
         return
 
-    server = HTTPServer(('0.0.0.0', PORT), CallbackHandler)
-    print(f"[callback] Starting HTTP callback server on port {PORT}")
+    server = HTTPServer((BIND_HOST, PORT), CallbackHandler)
+    print(f"[callback] Starting HTTP callback server on {BIND_HOST}:{PORT}")
     print(f"[callback] Health check: http://localhost:{PORT}/health")
 
     try:

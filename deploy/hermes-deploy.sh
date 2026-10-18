@@ -186,6 +186,11 @@ if [ -e "$VPN_HELPER" ] && ! cmp -s "$VPN_HELPER" "$REPO/deploy/hermes-vpn-helpe
   echo "VPN HELPER STALE: $VPN_HELPER differs from the reviewed copy at $AFTER. Install it with:"
   echo "    sudo install -m 755 -o root -g root $REPO/deploy/hermes-vpn-helper $VPN_HELPER"
 fi
+WA_HELPER=/usr/local/sbin/hermes-wa-bridge-add
+if [ -e "$WA_HELPER" ] && ! cmp -s "$WA_HELPER" "$REPO/deploy/hermes-wa-bridge-add"; then
+  echo "WA BRIDGE HELPER STALE: $WA_HELPER differs from the reviewed copy at $AFTER. Install it with:"
+  echo "    sudo install -m 755 -o root -g root $REPO/deploy/hermes-wa-bridge-add $WA_HELPER"
+fi
 
 # The deploy tool does not deploy itself: /opt/data/deploy-hermes.sh is a copy
 # installed by hand, so a merged fix to this script changes nothing on the box
