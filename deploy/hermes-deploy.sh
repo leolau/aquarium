@@ -293,6 +293,11 @@ if [ -e "$WA_HELPER" ] && ! cmp -s "$WA_HELPER" "$REPO/deploy/hermes-wa-bridge-a
   echo "WA BRIDGE HELPER STALE: $WA_HELPER differs from the reviewed copy at $AFTER. Install it with:"
   echo "    sudo install -m 755 -o root -g root $REPO/deploy/hermes-wa-bridge-add $WA_HELPER"
 fi
+TOOLS_HELPER=/usr/local/sbin/hermes-tools-exec
+if [ -e "$TOOLS_HELPER" ] && ! cmp -s "$TOOLS_HELPER" "$REPO/deploy/hermes-tools-exec"; then
+  echo "TOOLS HELPER STALE: $TOOLS_HELPER differs from the reviewed copy at $AFTER. Install it with:"
+  echo "    sudo install -m 755 -o root -g root $REPO/deploy/hermes-tools-exec $TOOLS_HELPER"
+fi
 
 # The deploy tool does not deploy itself: /opt/data/deploy-hermes.sh is a copy
 # installed by hand, so a merged fix to this script changes nothing on the box
