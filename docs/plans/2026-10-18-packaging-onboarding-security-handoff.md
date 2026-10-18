@@ -13,7 +13,7 @@ Every PR must keep the existing Hetzner box working (Leo, 2026-10-18) and has an
 | Phase 0: git-history secret scan | **done, nothing to rotate** (gitleaks v8.21.2 over 13,622 commits: only upstream fixtures/placeholders) | |
 | Phase 0: move production/handoff/security docs to a private repo | **waiting on Leo**: new `leolau/aquarium-ops` or `docs/` in `leolau/aquarium-deploy-state` | |
 | Phase 0: GitHub secret scanning + push protection + Dependabot | **waiting on Leo** (repo admin): https://github.com/leolau/aquarium/settings/security_analysis | |
-| GitHub Actions | **done**: Actions was on; `ci.yml` only ran on `main`. Now runs on PRs/pushes to `develop` and `main`; upstream-only jobs guarded. develop has 19 pre-existing test failures + a docs MDX error (fix PR in progress) | #548 |
+| GitHub Actions | **done**: Actions was on; `ci.yml` only ran on `main`. Now runs on PRs/pushes to `develop` and `main`; upstream-only jobs guarded. the 19 pre-existing develop failures + docs MDX error are fixed in #569 (MCP structured-content ones by #560/#563) | #548, #569 |
 | Release pipeline (`vX.Y.Z` tag → tested, signed tarball + `SHA256SUMS` + cosign + `channels.json`) | **done, never run for real** (first tag `v0.1.0-rc.1` waits on Leo) | #550 |
 | Installer: verified release installs, pins, VPN/WhatsApp components | **done** | #544 |
 | Installer: one-time first-run link (replaces owner password in a file) | PR open; page itself is P2 | #555 |
