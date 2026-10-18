@@ -30,7 +30,21 @@ PORT = int(os.environ.get('CALLBACK_PORT', '7902'))
 # browser, so a deployment exposes this through an HTTPS reverse proxy
 # (CALLBACK_SERVER_BASE) or sets CALLBACK_BIND_HOST deliberately; links are
 # HMAC-signed with an expiry either way.
-BIND_HOST = os.environ.get('CALLBACK_BIND_HOST', '127.0.0.1')
+
+
+def _default_bind_host():
+    """127.0.0.1, unless CALLBACK_SERVER_BASE points phones straight at this
+    port (e.g. http://<public-ip>:7902, the pre-F1 setup): then keep listening
+    on all interfaces so existing buttons keep working; the links are signed."""
+    base = urlsplit(os.environ.get("CALLBACK_SERVER_BASE", ""))
+    try:
+        direct = base.port == PORT and base.hostname not in (None, '127.0.0.1', 'localhost', '::1')
+    except ValueError:
+        direct = False
+    return '0.0.0.0' if direct else '127.0.0.1'
+
+
+BIND_HOST = os.environ.get('CALLBACK_BIND_HOST') or _default_bind_host()
 
 
 def _callback_signing_key():
