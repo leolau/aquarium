@@ -153,13 +153,18 @@ jobs:
           vm 'set -a; . /opt/data/hermes.env; set +a; sudo -u hermes -E /opt/data/hermes-agent/.venv/bin/hermes owner show' \
             | grep '^Owner:'
           # The first owner can sign in to agent-home with the generated password; a wrong one is refused.
+          # (Installs that hand out a one-time setup link instead of a password skip the 200 check.)
           vm 'set -e; . /opt/data/aquarium-secrets.env
               login() { curl -s -o /dev/null -w "%{http_code}" -H "Content-Type: application/json" \
                 -d "{\"provider\":\"basic\",\"username\":\"admin\",\"password\":\"$1\"}" \
                 http://127.0.0.1:3100/api/session/login; }
-              [ "$(login "$OWNER_PASSWORD")" = 200 ] || { echo "owner login failed"; exit 1; }
               [ "$(login wrong-password)" = 401 ] || { echo "wrong password was not refused"; exit 1; }
-              echo "owner login ok"'
+              if [ -n "${OWNER_PASSWORD:-}" ]; then
+                [ "$(login "$OWNER_PASSWORD")" = 200 ] || { echo "owner login failed"; exit 1; }
+                echo "owner login ok"
+              else
+                echo "no OWNER_PASSWORD in the secrets file (setup-link install); owner login not tried"
+              fi'
           # Services started together must not race each other creating pgvector.
           if vm 'journalctl --no-pager -u hermes-dashboard -u hermes-gateway -u app-mcp | grep -q pg_extension_name_index'; then
             echo "::error::duplicate pgvector extension error in the service logs"; exit 1
