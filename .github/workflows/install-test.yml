@@ -150,7 +150,7 @@ jobs:
         run: |
           vm() { ssh -i "$RUNNER_TEMP/id_vm" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             -o LogLevel=ERROR "root@$IP" "$@"; }
-          vm 'set -a; . /opt/data/hermes.env; set +a; sudo -u hermes -E /opt/data/hermes-agent/.venv/bin/hermes owner show' \
+          vm "sudo -u hermes -H bash -c 'set -a; . /opt/data/hermes.env; set +a; exec /opt/data/hermes-agent/.venv/bin/hermes owner show'" \
             | grep '^Owner:'
           # The first owner can sign in to agent-home with the generated password; a wrong one is refused.
           # (Installs that hand out a one-time setup link instead of a password skip the 200 check.)
