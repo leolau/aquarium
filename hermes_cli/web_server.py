@@ -92,6 +92,10 @@ from hermes_cli.memory_providers import (
     get_memory_provider,
 )
 from hermes_cli.goal_management import RESOURCE_KINDS, ResourceKind
+from hermes_cli import route_roles as _route_roles
+
+#: Owner/admin-only routes (security review F2).
+_ADMIN = _route_roles.ADMIN
 from hermes_cli.invitations import RedeemThrottle as _SeminarThrottle
 from hermes_cli.seminar_survey import (
     SurveyError,
@@ -1694,7 +1698,7 @@ def _decode_data_url(data_url: str) -> tuple[bytes, str]:
     return data, mime_type
 
 
-@app.get("/api/files")
+@app.get("/api/files", dependencies=_ADMIN)
 async def list_managed_files(request: Request, path: Optional[str] = None):
     policy, target, display_path = _resolve_managed_path(path, request)
     if not target.exists():
@@ -1722,7 +1726,7 @@ async def list_managed_files(request: Request, path: Optional[str] = None):
     }
 
 
-@app.get("/api/files/read")
+@app.get("/api/files/read", dependencies=_ADMIN)
 async def read_managed_file(request: Request, path: str):
     policy, target, display_path = _resolve_managed_path(path, request)
     if not target.exists():
@@ -1755,7 +1759,7 @@ async def read_managed_file(request: Request, path: str):
     }
 
 
-@app.get("/api/files/download")
+@app.get("/api/files/download", dependencies=_ADMIN)
 async def download_managed_file(request: Request, path: str):
     """Stream a managed file as an attachment download.
 
@@ -1789,7 +1793,7 @@ async def download_managed_file(request: Request, path: str):
     )
 
 
-@app.post("/api/files/upload")
+@app.post("/api/files/upload", dependencies=_ADMIN)
 async def upload_managed_file(payload: ManagedFileUpload, request: Request):
     policy, target, display_path = _resolve_managed_path(payload.path, request, for_write=True)
     if target.exists() and target.is_dir():
@@ -1824,7 +1828,7 @@ async def upload_managed_file(payload: ManagedFileUpload, request: Request):
 _UPLOAD_CHUNK_BYTES = 1024 * 1024
 
 
-@app.post("/api/files/upload-stream")
+@app.post("/api/files/upload-stream", dependencies=_ADMIN)
 async def upload_managed_file_stream(
     request: Request,
     file: UploadFile = File(...),
@@ -1888,7 +1892,7 @@ async def upload_managed_file_stream(
     }
 
 
-@app.post("/api/files/mkdir")
+@app.post("/api/files/mkdir", dependencies=_ADMIN)
 async def create_managed_directory(payload: ManagedDirectoryCreate, request: Request):
     policy, target, display_path = _resolve_managed_path(payload.path, request, for_write=True)
     if target.exists() and not target.is_dir():
@@ -1909,7 +1913,7 @@ async def create_managed_directory(payload: ManagedDirectoryCreate, request: Req
     }
 
 
-@app.delete("/api/files")
+@app.delete("/api/files", dependencies=_ADMIN)
 async def delete_managed_file(payload: ManagedFileDelete, request: Request):
     policy, target, display_path = _resolve_managed_path(payload.path, request)
     if policy.locked_root is not None and target == policy.locked_root:
@@ -1934,7 +1938,7 @@ async def delete_managed_file(payload: ManagedFileDelete, request: Request):
     return {"ok": True, "path": display_path, **_managed_response_meta(policy)}
 
 
-@app.get("/api/fs/list")
+@app.get("/api/fs/list", dependencies=_ADMIN)
 async def fs_list(path: str):
     target = _fs_path(path)
     try:
@@ -1960,7 +1964,7 @@ async def fs_list(path: str):
         return {"entries": [], "error": getattr(exc, "strerror", None) or "read-error"}
 
 
-@app.get("/api/fs/read-text")
+@app.get("/api/fs/read-text", dependencies=_ADMIN)
 async def fs_read_text(path: str):
     target, st = _fs_regular_file(_fs_path(path))
     if st.st_size > _FS_TEXT_SOURCE_MAX_BYTES:
@@ -1989,7 +1993,7 @@ class FsWriteText(BaseModel):
     content: str
 
 
-@app.post("/api/fs/write-text")
+@app.post("/api/fs/write-text", dependencies=_ADMIN)
 async def fs_write_text(payload: FsWriteText):
     """Overwrite (or create) a UTF-8 text file for the in-app spot editor.
 
@@ -2036,7 +2040,7 @@ async def fs_write_text(payload: FsWriteText):
     return {"ok": True, "path": str(target), "byteSize": len(text.encode("utf-8"))}
 
 
-@app.get("/api/fs/read-data-url")
+@app.get("/api/fs/read-data-url", dependencies=_ADMIN)
 async def fs_read_data_url(path: str):
     target, st = _fs_regular_file(_fs_path(path))
     if st.st_size > _FS_DATA_URL_MAX_BYTES:
@@ -2050,7 +2054,7 @@ async def fs_read_data_url(path: str):
     return {"dataUrl": f"data:{_fs_mime_type(target)};base64,{encoded}"}
 
 
-@app.get("/api/fs/git-root")
+@app.get("/api/fs/git-root", dependencies=_ADMIN)
 async def fs_git_root(path: str):
     target = _fs_path(path)
     try:
@@ -2061,7 +2065,7 @@ async def fs_git_root(path: str):
     return {"root": _fs_find_git_root(start)}
 
 
-@app.get("/api/fs/default-cwd")
+@app.get("/api/fs/default-cwd", dependencies=_ADMIN)
 async def fs_default_cwd():
     cwd = _fs_default_cwd()
     return {"cwd": cwd, "branch": _fs_git_branch(cwd)}
@@ -2126,84 +2130,84 @@ class GitBranchSwitchBody(BaseModel):
     branch: str
 
 
-@app.get("/api/git/status")
+@app.get("/api/git/status", dependencies=_ADMIN)
 async def git_status_route(path: str):
     return await _git_op(_web_git.repo_status, _git_path(path))
 
 
-@app.get("/api/git/worktrees")
+@app.get("/api/git/worktrees", dependencies=_ADMIN)
 async def git_worktrees_route(path: str):
     return {"worktrees": await _git_op(_web_git.worktree_list, _git_path(path))}
 
 
-@app.get("/api/git/branches")
+@app.get("/api/git/branches", dependencies=_ADMIN)
 async def git_branches_route(path: str):
     return {"branches": await _git_op(_web_git.branch_list, _git_path(path))}
 
 
-@app.get("/api/git/review/list")
+@app.get("/api/git/review/list", dependencies=_ADMIN)
 async def git_review_list_route(path: str, scope: str = "uncommitted", base: Optional[str] = None):
     return await _git_op(_web_git.review_list, _git_path(path), scope, base)
 
 
-@app.get("/api/git/review/diff")
+@app.get("/api/git/review/diff", dependencies=_ADMIN)
 async def git_review_diff_route(
     path: str, file: str, scope: str = "uncommitted", base: Optional[str] = None, staged: bool = False
 ):
     return {"diff": await _git_op(_web_git.review_diff, _git_path(path), file, scope, base, staged)}
 
 
-@app.get("/api/git/file-diff")
+@app.get("/api/git/file-diff", dependencies=_ADMIN)
 async def git_file_diff_route(path: str, file: str):
     return {"diff": await _git_op(_web_git.file_diff_vs_head, _git_path(path), file)}
 
 
-@app.get("/api/git/review/commit-context")
+@app.get("/api/git/review/commit-context", dependencies=_ADMIN)
 async def git_commit_context_route(path: str):
     return await _git_op(_web_git.review_commit_context, _git_path(path))
 
 
-@app.get("/api/git/review/rev-parse")
+@app.get("/api/git/review/rev-parse", dependencies=_ADMIN)
 async def git_rev_parse_route(path: str, ref: Optional[str] = None):
     return {"sha": await _git_op(_web_git.review_rev_parse, _git_path(path), ref)}
 
 
-@app.get("/api/git/review/ship-info")
+@app.get("/api/git/review/ship-info", dependencies=_ADMIN)
 async def git_ship_info_route(path: str):
     return await _git_op(_web_git.review_ship_info, _git_path(path))
 
 
-@app.post("/api/git/review/stage")
+@app.post("/api/git/review/stage", dependencies=_ADMIN)
 async def git_stage_route(body: GitFileBody):
     return await _git_op(_web_git.review_stage, _git_path(body.path), body.file)
 
 
-@app.post("/api/git/review/unstage")
+@app.post("/api/git/review/unstage", dependencies=_ADMIN)
 async def git_unstage_route(body: GitFileBody):
     return await _git_op(_web_git.review_unstage, _git_path(body.path), body.file)
 
 
-@app.post("/api/git/review/revert")
+@app.post("/api/git/review/revert", dependencies=_ADMIN)
 async def git_revert_route(body: GitFileBody):
     return await _git_op(_web_git.review_revert, _git_path(body.path), body.file)
 
 
-@app.post("/api/git/review/commit")
+@app.post("/api/git/review/commit", dependencies=_ADMIN)
 async def git_commit_route(body: GitCommitBody):
     return await _git_op(_web_git.review_commit, _git_path(body.path), body.message, body.push)
 
 
-@app.post("/api/git/review/push")
+@app.post("/api/git/review/push", dependencies=_ADMIN)
 async def git_push_route(body: GitPathBody):
     return await _git_op(_web_git.review_push, _git_path(body.path))
 
 
-@app.post("/api/git/review/create-pr")
+@app.post("/api/git/review/create-pr", dependencies=_ADMIN)
 async def git_create_pr_route(body: GitPathBody):
     return await _git_op(_web_git.review_create_pr, _git_path(body.path))
 
 
-@app.post("/api/git/worktree/add")
+@app.post("/api/git/worktree/add", dependencies=_ADMIN)
 async def git_worktree_add_route(body: GitWorktreeAddBody):
     options = {
         key: value
@@ -2218,14 +2222,14 @@ async def git_worktree_add_route(body: GitWorktreeAddBody):
     return await _git_op(_web_git.worktree_add, _git_path(body.path), options)
 
 
-@app.post("/api/git/worktree/remove")
+@app.post("/api/git/worktree/remove", dependencies=_ADMIN)
 async def git_worktree_remove_route(body: GitWorktreeRemoveBody):
     return await _git_op(
         _web_git.worktree_remove, _git_path(body.path), _git_path(body.worktreePath), body.force
     )
 
 
-@app.post("/api/git/branch/switch")
+@app.post("/api/git/branch/switch", dependencies=_ADMIN)
 async def git_branch_switch_route(body: GitBranchSwitchBody):
     return await _git_op(_web_git.branch_switch, _git_path(body.path), body.branch)
 
@@ -2590,7 +2594,7 @@ class CuratorPause(BaseModel):
     paused: bool
 
 
-@app.put("/api/curator/paused")
+@app.put("/api/curator/paused", dependencies=_ADMIN)
 async def set_curator_paused(body: CuratorPause):
     from agent import curator
 
@@ -2598,7 +2602,7 @@ async def set_curator_paused(body: CuratorPause):
     return {"ok": True, "paused": bool(body.paused)}
 
 
-@app.post("/api/curator/run")
+@app.post("/api/curator/run", dependencies=_ADMIN)
 async def run_curator():
     """Trigger a curator review now (backgrounded; tail via action status)."""
     try:
@@ -2648,7 +2652,7 @@ async def get_learning_node(id: str, profile: Optional[str] = None):
     return res
 
 
-@app.delete("/api/learning/node")
+@app.delete("/api/learning/node", dependencies=_ADMIN)
 async def delete_learning_node(body: LearningNodeRef):
     """Delete a journey node — skills are archived (restorable), memories removed."""
     from agent.learning_mutations import delete_node
@@ -2660,7 +2664,7 @@ async def delete_learning_node(body: LearningNodeRef):
     return res
 
 
-@app.put("/api/learning/node")
+@app.put("/api/learning/node", dependencies=_ADMIN)
 async def update_learning_node(body: LearningNodeEdit):
     """Rewrite a journey node's content (SKILL.md or memory chunk)."""
     from agent.learning_mutations import edit_node
@@ -2733,7 +2737,7 @@ async def get_portal_status():
 # ---------------------------------------------------------------------------
 
 
-@app.post("/api/ops/prompt-size")
+@app.post("/api/ops/prompt-size", dependencies=_ADMIN)
 async def run_prompt_size():
     try:
         proc = _spawn_hermes_action(["prompt-size"], "prompt-size")
@@ -2742,7 +2746,7 @@ async def run_prompt_size():
     return {"ok": True, "pid": proc.pid, "name": "prompt-size"}
 
 
-@app.post("/api/ops/dump")
+@app.post("/api/ops/dump", dependencies=_ADMIN)
 async def run_dump():
     try:
         proc = _spawn_hermes_action(["dump"], "dump")
@@ -2751,7 +2755,7 @@ async def run_dump():
     return {"ok": True, "pid": proc.pid, "name": "dump"}
 
 
-@app.post("/api/ops/config-migrate")
+@app.post("/api/ops/config-migrate", dependencies=_ADMIN)
 async def run_config_migrate():
     try:
         proc = _spawn_hermes_action(["config", "migrate"], "config-migrate")
@@ -2769,7 +2773,7 @@ class DebugShareRequest(BaseModel):
     lines: int = 200
 
 
-@app.post("/api/ops/debug-share")
+@app.post("/api/ops/debug-share", dependencies=_ADMIN)
 async def run_debug_share_endpoint(body: DebugShareRequest | None = None):
     """Upload a redacted debug report + full logs and return the paste URLs.
 
@@ -3018,7 +3022,7 @@ def _restart_gateway_after_webhook_enable(profile: Optional[str] = None) -> dict
     }
 
 
-@app.post("/api/gateway/restart")
+@app.post("/api/gateway/restart", dependencies=_ADMIN)
 async def restart_gateway(profile: Optional[str] = None):
     """Kick off a ``hermes gateway restart`` in the background."""
     try:
@@ -3035,7 +3039,7 @@ async def restart_gateway(profile: Optional[str] = None):
     }
 
 
-@app.post("/api/gateway/drain")
+@app.post("/api/gateway/drain", dependencies=_ADMIN)
 async def gateway_drain(request: Request):
     """Begin or cancel an external (NAS-driven) gateway drain.
 
@@ -3295,30 +3299,12 @@ def _require_all_chats(scope: Optional[str]) -> None:
         )
 
 
-#: Roles allowed to change the profile's tools and integrations (MCP servers,
-#: toolsets, tool registry rows). Everyone else may only look.
-_TOOLS_MANAGER_ROLES = ("owner", "admin")
+#: Tools & Integrations writes (MCP servers, toolsets, tool registry rows) are
+#: owner/admin only; everyone else may only look. Same gate as every other
+#: admin-grade route (``hermes_cli.route_roles``), with a tools-specific message.
+_TOOLS_MANAGER_ROLES = _route_roles.ADMIN_ROLES
 _TOOLS_MANAGE_DENIED = "Only the owner or an admin can change tools and integrations."
-
-
-async def _require_tools_manager(request: Request) -> None:
-    """Dependency: 403 unless the logged-in person is an owner or admin.
-
-    Tool and MCP settings apply to every user of the profile, so a member or
-    viewer may read them but not change them. A caller with no interactive
-    login (operator token, CLI, desktop app) and a single-user install with no
-    multi-user datastore keep full access, as before.
-    """
-    if not _comms_session_subject(request):
-        return
-    try:
-        principal = await _comms_resolve_principal(request)
-    except _CommsNotConfigured:
-        return
-    if getattr(principal, "role", None) not in _TOOLS_MANAGER_ROLES:
-        raise HTTPException(status_code=403, detail=_TOOLS_MANAGE_DENIED)
-
-
+_require_tools_manager = _route_roles.role_dependency("admin", _TOOLS_MANAGE_DENIED)
 _TOOLS_MANAGER = [Depends(_require_tools_manager)]
 
 
@@ -5158,7 +5144,7 @@ async def comms_list_memory(request: Request):
     return {"configured": True, "principal": principal.user_id, "memories": memories}
 
 
-@app.post("/api/hermes/update")
+@app.post("/api/hermes/update", dependencies=_ADMIN)
 async def update_hermes():
     """Kick off ``hermes update`` in the background."""
     if _dashboard_local_update_managed_externally():
@@ -5580,7 +5566,7 @@ async def speak_text(payload: TTSSpeakRequest):
     }
 
 
-@app.get("/api/actions/{name}/status")
+@app.get("/api/actions/{name}/status", dependencies=_ADMIN)
 async def get_action_status(name: str, lines: int = 200):
     """Tail an action log and report whether the process is still running."""
     log_file_name = _ACTION_LOG_FILES.get(name)
@@ -6153,7 +6139,7 @@ def _coerce_field_value(field: ProviderField, raw: str) -> str:
     return value or field.default
 
 
-@app.get("/api/memory/providers/{name}/config")
+@app.get("/api/memory/providers/{name}/config", dependencies=_ADMIN)
 async def get_memory_provider_config(name: str):
     provider = get_memory_provider(name)
     if provider is None:
@@ -6163,7 +6149,7 @@ async def get_memory_provider_config(name: str):
     return _memory_provider_payload(provider)
 
 
-@app.put("/api/memory/providers/{name}/config")
+@app.put("/api/memory/providers/{name}/config", dependencies=_ADMIN)
 async def update_memory_provider_config(name: str, body: MemoryProviderConfigUpdate):
     provider = get_memory_provider(name)
     if provider is None:
@@ -6560,7 +6546,7 @@ def get_moa_models(profile: Optional[str] = None):
         raise HTTPException(status_code=500, detail="Failed to read MoA config")
 
 
-@app.put("/api/model/moa")
+@app.put("/api/model/moa", dependencies=_ADMIN)
 def set_moa_models(body: MoaConfigPayload, profile: Optional[str] = None):
     """Persist the Mixture-of-Agents provider/model slots."""
     try:
@@ -6604,7 +6590,7 @@ def set_moa_models(body: MoaConfigPayload, profile: Optional[str] = None):
         raise HTTPException(status_code=500, detail="Failed to save MoA config")
 
 
-@app.post("/api/model/set")
+@app.post("/api/model/set", dependencies=_ADMIN)
 async def set_model_assignment(body: ModelAssignment, profile: Optional[str] = None):
     """Assign a model to the main slot or an auxiliary task slot.
 
@@ -6971,7 +6957,7 @@ class ModelTestRequest(BaseModel):
     profile: Optional[str] = None
 
 
-@app.post("/api/model/test")
+@app.post("/api/model/test", dependencies=_ADMIN)
 async def test_model_call(body: ModelTestRequest):
     """Round-trip the configured model: one "say OK" completion, timed.
 
@@ -7086,7 +7072,7 @@ def _run_model_test_sync(
         return _fail(exc, type(exc).__name__)
 
 
-@app.put("/api/config")
+@app.put("/api/config", dependencies=_ADMIN)
 async def update_config(body: ConfigUpdate, profile: Optional[str] = None):
     try:
         with _profile_scope(body.profile or profile):
@@ -7214,7 +7200,7 @@ def _catalog_provider_env_metadata() -> dict:
     return meta
 
 
-@app.get("/api/env")
+@app.get("/api/env", dependencies=_ADMIN)
 async def get_env_vars(profile: Optional[str] = None):
     with _profile_scope(profile):
         env_on_disk = load_env()
@@ -7277,7 +7263,7 @@ async def get_env_vars(profile: Optional[str] = None):
     return result
 
 
-@app.put("/api/env")
+@app.put("/api/env", dependencies=_ADMIN)
 async def set_env_var(body: EnvVarUpdate, profile: Optional[str] = None):
     try:
         with _profile_scope(body.profile or profile):
@@ -7334,7 +7320,7 @@ def _parse_model_ids(resp: "Any") -> List[str]:
     return ids
 
 
-@app.post("/api/providers/validate")
+@app.post("/api/providers/validate", dependencies=_ADMIN)
 async def validate_provider_credential(body: EnvVarUpdate, request: Request):
     """Live-probe a provider credential before it's saved.
 
@@ -7396,7 +7382,7 @@ async def validate_provider_credential(body: EnvVarUpdate, request: Request):
     return {"ok": False, "reachable": True, "message": f"Provider returned HTTP {resp.status_code} for this key."}
 
 
-@app.delete("/api/env")
+@app.delete("/api/env", dependencies=_ADMIN)
 async def remove_env_var(body: EnvVarDelete, profile: Optional[str] = None):
     try:
         with _profile_scope(body.profile or profile):
@@ -7416,7 +7402,7 @@ async def remove_env_var(body: EnvVarDelete, profile: Optional[str] = None):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.post("/api/env/reveal")
+@app.post("/api/env/reveal", dependencies=_ADMIN)
 async def reveal_env_var(
     body: EnvVarReveal, request: Request, profile: Optional[str] = None
 ):
@@ -8276,7 +8262,7 @@ async def _telegram_onboarding_request(
     )
 
 
-@app.post("/api/messaging/telegram/onboarding/start")
+@app.post("/api/messaging/telegram/onboarding/start", dependencies=_ADMIN)
 async def start_telegram_onboarding(body: TelegramOnboardingStart):
     bot_name = (body.bot_name or "Hermes Agent").strip() or "Hermes Agent"
     payload = await _telegram_onboarding_request(
@@ -8314,7 +8300,7 @@ async def start_telegram_onboarding(body: TelegramOnboardingStart):
     }
 
 
-@app.get("/api/messaging/telegram/onboarding/{pairing_id}")
+@app.get("/api/messaging/telegram/onboarding/{pairing_id}", dependencies=_ADMIN)
 async def get_telegram_onboarding_status(pairing_id: str):
     with _telegram_onboarding_lock:
         _prune_telegram_onboarding_pairings()
@@ -8416,7 +8402,7 @@ def _restart_gateway_after_telegram_onboarding(profile: Optional[str] = None) ->
     }
 
 
-@app.post("/api/messaging/telegram/onboarding/{pairing_id}/apply")
+@app.post("/api/messaging/telegram/onboarding/{pairing_id}/apply", dependencies=_ADMIN)
 async def apply_telegram_onboarding(
     pairing_id: str, body: TelegramOnboardingApply, profile: Optional[str] = None
 ):
@@ -8485,14 +8471,14 @@ async def apply_telegram_onboarding(
     }
 
 
-@app.delete("/api/messaging/telegram/onboarding/{pairing_id}")
+@app.delete("/api/messaging/telegram/onboarding/{pairing_id}", dependencies=_ADMIN)
 async def cancel_telegram_onboarding(pairing_id: str):
     with _telegram_onboarding_lock:
         _telegram_onboarding_pairings.pop(pairing_id, None)
     return {"ok": True}
 
 
-@app.get("/api/messaging/platforms")
+@app.get("/api/messaging/platforms", dependencies=_ADMIN)
 async def get_messaging_platforms(profile: Optional[str] = None):
     # Profile-scoped so the dashboard's global profile switcher shows the
     # TARGET profile's channel credentials/state, not the root install's.
@@ -8513,7 +8499,7 @@ async def get_messaging_platforms(profile: Optional[str] = None):
         }
 
 
-@app.put("/api/messaging/platforms/{platform_id}")
+@app.put("/api/messaging/platforms/{platform_id}", dependencies=_ADMIN)
 async def update_messaging_platform(
     platform_id: str, body: MessagingPlatformUpdate, profile: Optional[str] = None
 ):
@@ -8556,7 +8542,7 @@ async def update_messaging_platform(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.post("/api/messaging/platforms/{platform_id}/test")
+@app.post("/api/messaging/platforms/{platform_id}/test", dependencies=_ADMIN)
 async def test_messaging_platform(platform_id: str, profile: Optional[str] = None):
     entry = _catalog_lookup(platform_id)
     if not entry:
@@ -9035,7 +9021,7 @@ def _build_oauth_catalog() -> list[Dict[str, Any]]:
     return rows
 
 
-@app.get("/api/providers/oauth")
+@app.get("/api/providers/oauth", dependencies=_ADMIN)
 async def list_oauth_providers(profile: Optional[str] = None):
     """Enumerate every OAuth-capable LLM provider with current status.
 
@@ -9078,7 +9064,7 @@ async def list_oauth_providers(profile: Optional[str] = None):
         return {"providers": providers}
 
 
-@app.delete("/api/providers/oauth/{provider_id}")
+@app.delete("/api/providers/oauth/{provider_id}", dependencies=_ADMIN)
 async def disconnect_oauth_provider(
     provider_id: str,
     request: Request,
@@ -10103,7 +10089,7 @@ def _codex_full_login_worker(session_id: str) -> None:
                 s["error_message"] = str(e)
 
 
-@app.post("/api/providers/oauth/{provider_id}/start")
+@app.post("/api/providers/oauth/{provider_id}/start", dependencies=_ADMIN)
 async def start_oauth_login(
     provider_id: str,
     request: Request,
@@ -10150,7 +10136,7 @@ class OAuthSubmitBody(BaseModel):
     code: str
 
 
-@app.post("/api/providers/oauth/{provider_id}/submit")
+@app.post("/api/providers/oauth/{provider_id}/submit", dependencies=_ADMIN)
 async def submit_oauth_code(
     provider_id: str,
     body: OAuthSubmitBody,
@@ -10166,7 +10152,7 @@ async def submit_oauth_code(
     raise HTTPException(status_code=400, detail=f"submit not supported for {provider_id}")
 
 
-@app.get("/api/providers/oauth/{provider_id}/poll/{session_id}")
+@app.get("/api/providers/oauth/{provider_id}/poll/{session_id}", dependencies=_ADMIN)
 async def poll_oauth_session(
     provider_id: str,
     session_id: str,
@@ -10193,7 +10179,7 @@ async def poll_oauth_session(
     }
 
 
-@app.delete("/api/providers/oauth/sessions/{session_id}")
+@app.delete("/api/providers/oauth/sessions/{session_id}", dependencies=_ADMIN)
 async def cancel_oauth_session(
     session_id: str,
     request: Request,
@@ -11830,7 +11816,7 @@ async def prune_sessions_endpoint(
 # ---------------------------------------------------------------------------
 
 
-@app.get("/api/logs")
+@app.get("/api/logs", dependencies=_ADMIN)
 async def get_logs(
     file: str = "agent",
     lines: int = 100,
@@ -12128,7 +12114,7 @@ async def list_cron_jobs(profile: str = "all"):
     return jobs
 
 
-@app.get("/api/cron/jobs/{job_id}")
+@app.get("/api/cron/jobs/{job_id}", dependencies=_ADMIN)
 async def get_cron_job(job_id: str, profile: Optional[str] = None):
     selected = profile or _find_cron_job_profile(job_id)
     if not selected:
@@ -12139,7 +12125,7 @@ async def get_cron_job(job_id: str, profile: Optional[str] = None):
     return job
 
 
-@app.get("/api/cron/jobs/{job_id}/runs")
+@app.get("/api/cron/jobs/{job_id}/runs", dependencies=_ADMIN)
 async def list_cron_job_runs(job_id: str, profile: Optional[str] = None, limit: int = 20):
     """Run sessions produced by a cron job, newest first.
 
@@ -12185,7 +12171,7 @@ async def list_cron_job_runs(job_id: str, profile: Optional[str] = None, limit: 
         db.close()
 
 
-@app.post("/api/cron/jobs")
+@app.post("/api/cron/jobs", dependencies=_ADMIN)
 async def create_cron_job(body: CronJobCreate, profile: str = "default"):
     try:
         profile_name, profile_home = _cron_profile_home(profile)
@@ -12224,7 +12210,7 @@ async def create_cron_job(body: CronJobCreate, profile: str = "default"):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@app.get("/api/cron/delivery-targets")
+@app.get("/api/cron/delivery-targets", dependencies=_ADMIN)
 async def get_cron_delivery_targets():
     """Delivery targets the cron dropdown should offer.
 
@@ -12252,7 +12238,7 @@ async def get_cron_delivery_targets():
     return {"targets": targets}
 
 
-@app.put("/api/cron/jobs/{job_id}")
+@app.put("/api/cron/jobs/{job_id}", dependencies=_ADMIN)
 async def update_cron_job(job_id: str, body: CronJobUpdate, profile: Optional[str] = None):
     selected = profile or _find_cron_job_profile(job_id)
     if not selected:
@@ -12287,7 +12273,7 @@ async def update_cron_job(job_id: str, body: CronJobUpdate, profile: Optional[st
     return job
 
 
-@app.post("/api/cron/jobs/{job_id}/pause")
+@app.post("/api/cron/jobs/{job_id}/pause", dependencies=_ADMIN)
 async def pause_cron_job(job_id: str, profile: Optional[str] = None):
     selected = profile or _find_cron_job_profile(job_id)
     if not selected:
@@ -12298,7 +12284,7 @@ async def pause_cron_job(job_id: str, profile: Optional[str] = None):
     return job
 
 
-@app.post("/api/cron/jobs/{job_id}/resume")
+@app.post("/api/cron/jobs/{job_id}/resume", dependencies=_ADMIN)
 async def resume_cron_job(job_id: str, profile: Optional[str] = None):
     selected = profile or _find_cron_job_profile(job_id)
     if not selected:
@@ -12309,7 +12295,7 @@ async def resume_cron_job(job_id: str, profile: Optional[str] = None):
     return job
 
 
-@app.post("/api/cron/jobs/{job_id}/trigger")
+@app.post("/api/cron/jobs/{job_id}/trigger", dependencies=_ADMIN)
 async def trigger_cron_job(job_id: str, profile: Optional[str] = None):
     selected = profile or _find_cron_job_profile(job_id)
     if not selected:
@@ -12320,7 +12306,7 @@ async def trigger_cron_job(job_id: str, profile: Optional[str] = None):
     return job
 
 
-@app.delete("/api/cron/jobs/{job_id}")
+@app.delete("/api/cron/jobs/{job_id}", dependencies=_ADMIN)
 async def delete_cron_job(job_id: str, profile: Optional[str] = None):
     selected = profile or _find_cron_job_profile(job_id)
     if not selected:
@@ -12431,7 +12417,7 @@ class AutomationBlueprintInstantiate(BaseModel):
     values: Dict[str, Any] = {}      # filled slot values from the form
 
 
-@app.get("/api/cron/blueprints")
+@app.get("/api/cron/blueprints", dependencies=_ADMIN)
 async def list_cron_blueprints():
     """Return the blueprint catalog as form schemas for the dashboard gallery.
 
@@ -12465,7 +12451,7 @@ async def list_cron_blueprints():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/cron/blueprints/instantiate")
+@app.post("/api/cron/blueprints/instantiate", dependencies=_ADMIN)
 async def instantiate_blueprint(body: AutomationBlueprintInstantiate, profile: str = "default"):
     """Fill a blueprint's slots and create the cron job (form-submit path)."""
     try:
@@ -13350,7 +13336,7 @@ def _pairing_store():
     return PairingStore()
 
 
-@app.get("/api/pairing")
+@app.get("/api/pairing", dependencies=_ADMIN)
 async def list_pairing():
     store = _pairing_store()
     return {
@@ -13359,7 +13345,7 @@ async def list_pairing():
     }
 
 
-@app.post("/api/pairing/approve")
+@app.post("/api/pairing/approve", dependencies=_ADMIN)
 async def approve_pairing(body: PairingApprove):
     store = _pairing_store()
     platform = (body.platform or "").lower().strip()
@@ -13381,7 +13367,7 @@ async def approve_pairing(body: PairingApprove):
     )
 
 
-@app.post("/api/pairing/revoke")
+@app.post("/api/pairing/revoke", dependencies=_ADMIN)
 async def revoke_pairing(body: PairingRevoke):
     store = _pairing_store()
     platform = (body.platform or "").lower().strip()
@@ -13395,7 +13381,7 @@ async def revoke_pairing(body: PairingRevoke):
     )
 
 
-@app.post("/api/pairing/clear-pending")
+@app.post("/api/pairing/clear-pending", dependencies=_ADMIN)
 async def clear_pending_pairing():
     store = _pairing_store()
     count = store.clear_pending()
@@ -13442,7 +13428,7 @@ def _webhook_route_summary(name: str, route: Dict[str, Any], base_url: str) -> D
     }
 
 
-@app.get("/api/webhooks")
+@app.get("/api/webhooks", dependencies=_ADMIN)
 async def list_webhooks():
     import hermes_cli.webhook as wh
 
@@ -13458,7 +13444,7 @@ async def list_webhooks():
     }
 
 
-@app.post("/api/webhooks/enable")
+@app.post("/api/webhooks/enable", dependencies=_ADMIN)
 async def enable_webhooks():
     try:
         _write_platform_enabled("webhook", True)
@@ -13479,7 +13465,7 @@ async def enable_webhooks():
     }
 
 
-@app.post("/api/webhooks")
+@app.post("/api/webhooks", dependencies=_ADMIN)
 async def create_webhook(body: WebhookCreate):
     import re as _re
     import secrets as _secrets
@@ -13531,7 +13517,7 @@ async def create_webhook(body: WebhookCreate):
     return summary
 
 
-@app.delete("/api/webhooks/{name}")
+@app.delete("/api/webhooks/{name}", dependencies=_ADMIN)
 async def delete_webhook(name: str):
     import hermes_cli.webhook as wh
 
@@ -13548,7 +13534,7 @@ class WebhookEnabledToggle(BaseModel):
     enabled: bool
 
 
-@app.put("/api/webhooks/{name}/enabled")
+@app.put("/api/webhooks/{name}/enabled", dependencies=_ADMIN)
 async def set_webhook_enabled(name: str, body: WebhookEnabledToggle):
     """Enable or disable a webhook route.
 
@@ -13578,7 +13564,7 @@ async def set_webhook_enabled(name: str, body: WebhookEnabledToggle):
 # ---------------------------------------------------------------------------
 
 
-@app.post("/api/gateway/start")
+@app.post("/api/gateway/start", dependencies=_ADMIN)
 async def start_gateway(profile: Optional[str] = None):
     try:
         proc = _spawn_hermes_action(_gateway_subcommand(profile, "start"), "gateway-start")
@@ -13590,7 +13576,7 @@ async def start_gateway(profile: Optional[str] = None):
     return {"ok": True, "pid": proc.pid, "name": "gateway-start"}
 
 
-@app.post("/api/gateway/stop")
+@app.post("/api/gateway/stop", dependencies=_ADMIN)
 async def stop_gateway(profile: Optional[str] = None):
     try:
         proc = _spawn_hermes_action(_gateway_subcommand(profile, "stop"), "gateway-stop")
@@ -13639,7 +13625,7 @@ def _pool_entry_summary(entry: Any, index: int) -> Dict[str, Any]:
     }
 
 
-@app.get("/api/credentials/pool")
+@app.get("/api/credentials/pool", dependencies=_ADMIN)
 async def list_credential_pool():
     from agent.credential_pool import load_pool
     from hermes_cli.auth import read_credential_pool
@@ -13666,7 +13652,7 @@ async def list_credential_pool():
     return {"providers": providers}
 
 
-@app.post("/api/credentials/pool")
+@app.post("/api/credentials/pool", dependencies=_ADMIN)
 async def add_credential_pool_entry(body: CredentialPoolAdd):
     import uuid as _uuid
     from agent.credential_pool import (
@@ -13700,7 +13686,7 @@ async def add_credential_pool_entry(body: CredentialPoolAdd):
     return {"ok": True, "provider": provider, "count": len(pool.entries())}
 
 
-@app.delete("/api/credentials/pool/{provider}/{index}")
+@app.delete("/api/credentials/pool/{provider}/{index}", dependencies=_ADMIN)
 async def remove_credential_pool_entry(provider: str, index: int):
     """Remove a pool entry.  ``index`` is 1-based (matches the list response)."""
     from agent.credential_pool import load_pool
@@ -13773,7 +13759,7 @@ async def get_memory_status():
     }
 
 
-@app.put("/api/memory/provider")
+@app.put("/api/memory/provider", dependencies=_ADMIN)
 async def set_memory_provider(body: MemoryProviderSelect):
     provider = (body.provider or "").strip()
     if provider.lower() in {"built-in", "builtin", "none"}:
@@ -13797,7 +13783,7 @@ async def set_memory_provider(body: MemoryProviderSelect):
     return {"ok": True, "active": provider}
 
 
-@app.post("/api/memory/reset")
+@app.post("/api/memory/reset", dependencies=_ADMIN)
 async def reset_memory(body: MemoryReset, request: Request):
     """Erase the acting principal's curated memory (FG-24 layout).
 
@@ -13858,7 +13844,7 @@ async def reset_memory(body: MemoryReset, request: Request):
 # ---------------------------------------------------------------------------
 
 
-@app.post("/api/ops/doctor")
+@app.post("/api/ops/doctor", dependencies=_ADMIN)
 async def run_doctor():
     try:
         proc = _spawn_hermes_action(["doctor"], "doctor")
@@ -13868,7 +13854,7 @@ async def run_doctor():
     return {"ok": True, "pid": proc.pid, "name": "doctor"}
 
 
-@app.post("/api/ops/security-audit")
+@app.post("/api/ops/security-audit", dependencies=_ADMIN)
 async def run_security_audit():
     try:
         proc = _spawn_hermes_action(["security", "audit"], "security-audit")
@@ -13892,7 +13878,7 @@ def _new_dashboard_backup_path() -> Path:
     return _dashboard_backup_dir() / f"hermes-backup-{stamp}-{secrets.token_hex(4)}.zip"
 
 
-@app.post("/api/ops/backup")
+@app.post("/api/ops/backup", dependencies=_ADMIN)
 async def run_backup(body: BackupRequest):
     args = ["backup"]
     archive: Optional[Path] = None
@@ -13919,7 +13905,7 @@ async def run_backup(body: BackupRequest):
     return response
 
 
-@app.get("/api/ops/backup/download")
+@app.get("/api/ops/backup/download", dependencies=_ADMIN)
 async def download_dashboard_backup(archive: str):
     try:
         backup_dir = _dashboard_backup_dir().expanduser().resolve(strict=False)
@@ -13954,7 +13940,7 @@ class ImportRequest(BaseModel):
     force: bool = False
 
 
-@app.post("/api/ops/import")
+@app.post("/api/ops/import", dependencies=_ADMIN)
 async def run_import(body: ImportRequest):
     archive = (body.archive or "").strip()
     if not archive:
@@ -13982,7 +13968,7 @@ def _safe_backup_upload_name(filename: str | None) -> str:
     return name
 
 
-@app.post("/api/ops/import-upload")
+@app.post("/api/ops/import-upload", dependencies=_ADMIN)
 async def run_import_upload(
     file: UploadFile = File(...),
     force: bool = Form(False),
@@ -14060,7 +14046,7 @@ async def run_import_upload(
     }
 
 
-@app.get("/api/ops/hooks")
+@app.get("/api/ops/hooks", dependencies=_ADMIN)
 async def list_hooks():
     """List configured shell hooks from config.yaml with consent + health.
 
@@ -14119,7 +14105,7 @@ class HookCreate(BaseModel):
     approve: bool = True
 
 
-@app.post("/api/ops/hooks")
+@app.post("/api/ops/hooks", dependencies=_ADMIN)
 async def create_hook(body: HookCreate):
     """Add a shell hook to config.yaml (and optionally approve it).
 
@@ -14181,7 +14167,7 @@ class HookDelete(BaseModel):
     command: str
 
 
-@app.delete("/api/ops/hooks")
+@app.delete("/api/ops/hooks", dependencies=_ADMIN)
 async def delete_hook(body: HookDelete):
     """Remove a hook from config.yaml and revoke its consent allowlist entry."""
     from agent import shell_hooks
@@ -14218,7 +14204,7 @@ async def delete_hook(body: HookDelete):
     return {"ok": True}
 
 
-@app.get("/api/ops/checkpoints")
+@app.get("/api/ops/checkpoints", dependencies=_ADMIN)
 async def list_checkpoints():
     """List the /rollback shadow store checkpoints (read-only)."""
     # Checkpoints live under <hermes_home>/checkpoints/.  Surface a count +
@@ -14250,7 +14236,7 @@ async def list_checkpoints():
     return {"sessions": sessions, "total_bytes": total_bytes}
 
 
-@app.post("/api/ops/checkpoints/prune")
+@app.post("/api/ops/checkpoints/prune", dependencies=_ADMIN)
 async def prune_checkpoints():
     try:
         proc = _spawn_hermes_action(["checkpoints", "prune"], "checkpoints-prune")
@@ -14292,7 +14278,7 @@ def _profile_cli_args(profile: Optional[str]) -> List[str]:
     return ["-p", profiles_mod.normalize_profile_name(requested)]
 
 
-@app.post("/api/skills/hub/install")
+@app.post("/api/skills/hub/install", dependencies=_ADMIN)
 async def install_skill_hub(body: SkillInstallRequest, profile: Optional[str] = None):
     identifier = (body.identifier or "").strip()
     if not identifier:
@@ -14316,7 +14302,7 @@ class SkillUninstallRequest(BaseModel):
     profile: Optional[str] = None
 
 
-@app.post("/api/skills/hub/uninstall")
+@app.post("/api/skills/hub/uninstall", dependencies=_ADMIN)
 async def uninstall_skill_hub(body: SkillUninstallRequest, profile: Optional[str] = None):
     name = (body.name or "").strip()
     if not name:
@@ -14338,7 +14324,7 @@ class SkillsUpdateRequest(BaseModel):
     profile: Optional[str] = None
 
 
-@app.post("/api/skills/hub/update")
+@app.post("/api/skills/hub/update", dependencies=_ADMIN)
 async def update_skills_hub(
     body: Optional[SkillsUpdateRequest] = None, profile: Optional[str] = None
 ):
@@ -14959,7 +14945,7 @@ async def list_profiles_endpoint():
         return {"profiles": _fallback_profile_dicts(profiles_mod)}
 
 
-@app.post("/api/profiles")
+@app.post("/api/profiles", dependencies=_ADMIN)
 async def create_profile_endpoint(body: ProfileCreate):
     from hermes_cli import profiles as profiles_mod
     from hermes_cli.datastore import SchemaOwnershipError
@@ -15099,7 +15085,7 @@ async def get_active_profile_endpoint():
     return {"active": active, "current": current}
 
 
-@app.post("/api/profiles/active")
+@app.post("/api/profiles/active", dependencies=_ADMIN)
 async def set_active_profile_endpoint(body: ProfileActiveUpdate):
     """Set the sticky active profile (mirrors ``hermes profile use``).
 
@@ -15119,12 +15105,12 @@ async def set_active_profile_endpoint(body: ProfileActiveUpdate):
     return {"ok": True, "active": profiles_mod.normalize_profile_name(body.name)}
 
 
-@app.get("/api/profiles/{name}/setup-command")
+@app.get("/api/profiles/{name}/setup-command", dependencies=_ADMIN)
 async def get_profile_setup_command(name: str):
     return {"command": _profile_setup_command(name)}
 
 
-@app.post("/api/profiles/{name}/open-terminal")
+@app.post("/api/profiles/{name}/open-terminal", dependencies=_ADMIN)
 async def open_profile_terminal_endpoint(name: str):
     try:
         command = _profile_setup_command(name)
@@ -15178,7 +15164,7 @@ async def open_profile_terminal_endpoint(name: str):
     return {"ok": True, "command": command}
 
 
-@app.patch("/api/profiles/{name}")
+@app.patch("/api/profiles/{name}", dependencies=_ADMIN)
 async def rename_profile_endpoint(name: str, body: ProfileRename):
     from hermes_cli import profiles as profiles_mod
     try:
@@ -15193,7 +15179,7 @@ async def rename_profile_endpoint(name: str, body: ProfileRename):
     return {"ok": True, "name": body.new_name, "path": str(path)}
 
 
-@app.delete("/api/profiles/{name}")
+@app.delete("/api/profiles/{name}", dependencies=_ADMIN)
 async def delete_profile_endpoint(name: str):
     """Delete a profile. The dashboard collects the user's confirmation in
     its own dialog before this request, so we always pass ``yes=True`` to
@@ -15222,7 +15208,7 @@ async def get_profile_soul(name: str):
     return {"content": "", "exists": False}
 
 
-@app.put("/api/profiles/{name}/soul")
+@app.put("/api/profiles/{name}/soul", dependencies=_ADMIN)
 async def update_profile_soul(name: str, body: ProfileSoulUpdate):
     soul_path = _resolve_profile_dir(name) / "SOUL.md"
     try:
@@ -15233,7 +15219,7 @@ async def update_profile_soul(name: str, body: ProfileSoulUpdate):
     return {"ok": True}
 
 
-@app.put("/api/profiles/{name}/description")
+@app.put("/api/profiles/{name}/description", dependencies=_ADMIN)
 async def update_profile_description_endpoint(name: str, body: ProfileDescriptionUpdate):
     """Set or clear a profile's role description (kanban routing signal).
 
@@ -15256,7 +15242,7 @@ async def update_profile_description_endpoint(name: str, body: ProfileDescriptio
     return {"ok": True, "description": text, "description_auto": False}
 
 
-@app.put("/api/profiles/{name}/model")
+@app.put("/api/profiles/{name}/model", dependencies=_ADMIN)
 async def update_profile_model_endpoint(name: str, body: ProfileModelUpdate):
     """Set the main model (``model.default`` + ``model.provider``) for a
     specific profile's config.yaml, without touching the dashboard's own
@@ -15276,7 +15262,7 @@ async def update_profile_model_endpoint(name: str, body: ProfileModelUpdate):
     return {"ok": True, "provider": provider, "model": model}
 
 
-@app.post("/api/profiles/{name}/describe-auto")
+@app.post("/api/profiles/{name}/describe-auto", dependencies=_ADMIN)
 async def describe_profile_auto_endpoint(name: str, body: ProfileDescribeAuto):
     """Auto-generate a profile's description via the auxiliary LLM
     (``auxiliary.profile_describer``). Mirrors ``hermes profile describe
@@ -15562,7 +15548,7 @@ async def get_skills(profile: Optional[str] = None):
     return skills
 
 
-@app.put("/api/skills/toggle")
+@app.put("/api/skills/toggle", dependencies=_ADMIN)
 async def toggle_skill(body: SkillToggle, profile: Optional[str] = None):
     from hermes_cli.skills_config import get_disabled_skills, save_disabled_skills
     with _profile_scope(body.profile or profile):
@@ -15621,7 +15607,7 @@ async def get_skill_content(name: str, profile: Optional[str] = None):
         return {"name": name, "content": content, "path": str(skill_md)}
 
 
-@app.post("/api/skills")
+@app.post("/api/skills", dependencies=_ADMIN)
 async def create_skill(body: SkillCreate):
     """Create a new custom skill (SKILL.md) from the dashboard editor.
 
@@ -15640,7 +15626,7 @@ async def create_skill(body: SkillCreate):
     return result
 
 
-@app.put("/api/skills/content")
+@app.put("/api/skills/content", dependencies=_ADMIN)
 async def update_skill_content(body: SkillContentUpdate):
     """Replace the SKILL.md of an existing skill (full rewrite) from the editor."""
     from tools.skill_manager_tool import _edit_skill
@@ -16118,7 +16104,7 @@ class RawConfigUpdate(BaseModel):
     profile: Optional[str] = None
 
 
-@app.get("/api/config/raw")
+@app.get("/api/config/raw", dependencies=_ADMIN)
 async def get_config_raw(profile: Optional[str] = None):
     """Raw config.yaml text plus its resolved path.
 
@@ -16134,7 +16120,7 @@ async def get_config_raw(profile: Optional[str] = None):
     return {"yaml": path.read_text(encoding="utf-8"), "path": str(path)}
 
 
-@app.put("/api/config/raw")
+@app.put("/api/config/raw", dependencies=_ADMIN)
 async def update_config_raw(body: RawConfigUpdate, profile: Optional[str] = None):
     try:
         parsed = yaml.safe_load(body.yaml_text)
@@ -16888,7 +16874,10 @@ def _ws_auth_reason(ws: "WebSocket") -> tuple[Optional[str], str]:
             return "no_credential", "none"
 
         try:
-            consume_ticket(ticket)
+            info = consume_ticket(ticket)
+            state = getattr(ws, "state", None)
+            if state is not None:
+                state.ws_ticket = info
             return None, "ticket"
         except TicketInvalid as exc:
             audit_log(
@@ -16910,6 +16899,17 @@ def _ws_auth_reason(ws: "WebSocket") -> tuple[Optional[str], str]:
 def _ws_auth_ok(ws: "WebSocket") -> bool:
     """True when the WS-upgrade credential is accepted. See _ws_auth_reason."""
     return _ws_auth_reason(ws)[0] is None
+
+
+async def _ws_ticket_is_admin(ws: "WebSocket") -> bool:
+    """False when a browser ticket's user is signed in but not an owner/admin.
+
+    The embedded terminal and TUI gateway sockets reach the host with the
+    operator's full power, so they are owner/admin only (security review F2).
+    Token, internal-credential and single-user callers keep access.
+    """
+    ticket = getattr(getattr(ws, "state", None), "ws_ticket", None) or {}
+    return await _route_roles.subject_has_role(ticket.get("user_id", ""), "admin")
 
 # Per-channel subscriber registry used by /api/pub (PTY-side gateway → dashboard)
 # and /api/events (dashboard → browser sidebar).  Keyed by an opaque channel id
@@ -17214,6 +17214,11 @@ async def pty_ws(ws: WebSocket) -> None:
         await ws.close(code=4408, reason=_ws_close_reason(client_reason))
         return
 
+    if not await _ws_ticket_is_admin(ws):
+        _log.warning("pty refused: role peer=%s", peer)
+        await ws.close(code=4403, reason=_ws_close_reason("owner or admin only"))
+        return
+
     await ws.accept()
     _log.info("pty accepted peer=%s mode=%s cred=%s", peer, mode, cred)
 
@@ -17390,6 +17395,10 @@ async def gateway_ws(ws: WebSocket) -> None:
         await ws.close(code=4403)
         return
 
+    if not await _ws_ticket_is_admin(ws):
+        await ws.close(code=4403)
+        return
+
     from tui_gateway.ws import handle_ws
 
     await handle_ws(ws)
@@ -17417,7 +17426,7 @@ async def pub_ws(ws: WebSocket) -> None:
         await ws.close(code=4401)
         return
 
-    if not _ws_request_is_allowed(ws):
+    if not _ws_request_is_allowed(ws) or not await _ws_ticket_is_admin(ws):
         await ws.close(code=4403)
         return
 
@@ -17945,7 +17954,7 @@ class ThemeSetBody(BaseModel):
     name: str
 
 
-@app.put("/api/dashboard/theme")
+@app.put("/api/dashboard/theme", dependencies=_ADMIN)
 async def set_dashboard_theme(body: ThemeSetBody):
     """Set the active dashboard theme (persists to config.yaml)."""
     config = load_config()
@@ -17984,7 +17993,7 @@ class FontSetBody(BaseModel):
     font: str
 
 
-@app.put("/api/dashboard/font")
+@app.put("/api/dashboard/font", dependencies=_ADMIN)
 async def set_dashboard_font(body: FontSetBody):
     """Set the dashboard font override (persists to config.yaml).
 
@@ -18201,7 +18210,7 @@ async def get_dashboard_plugins():
     ]
 
 
-@app.get("/api/dashboard/plugins/rescan")
+@app.get("/api/dashboard/plugins/rescan", dependencies=_ADMIN)
 async def rescan_dashboard_plugins():
     """Force re-scan of dashboard plugins."""
     plugins = _get_dashboard_plugins(force_rescan=True)
@@ -18339,7 +18348,7 @@ def _merged_plugins_hub() -> Dict[str, Any]:
     }
 
 
-@app.get("/api/dashboard/plugins/hub")
+@app.get("/api/dashboard/plugins/hub", dependencies=_ADMIN)
 async def get_plugins_hub(request: Request):
     """Unified agent plugins + dashboard extension metadata (session protected)."""
     _require_token(request)
@@ -18350,7 +18359,7 @@ async def get_plugins_hub(request: Request):
         raise HTTPException(status_code=500, detail="Failed to build plugins hub.") from exc
 
 
-@app.post("/api/dashboard/agent-plugins/install")
+@app.post("/api/dashboard/agent-plugins/install", dependencies=_ADMIN)
 async def post_agent_plugin_install(request: Request, body: _AgentPluginInstallBody):
     _require_token(request)
     from hermes_cli.plugins_cmd import dashboard_install_plugin
@@ -18379,7 +18388,7 @@ def _validate_plugin_name(name: str) -> str:
     return name
 
 
-@app.post("/api/dashboard/agent-plugins/{name:path}/enable")
+@app.post("/api/dashboard/agent-plugins/{name:path}/enable", dependencies=_ADMIN)
 async def post_agent_plugin_enable(request: Request, name: str):
     _require_token(request)
     name = _validate_plugin_name(name)
@@ -18391,7 +18400,7 @@ async def post_agent_plugin_enable(request: Request, name: str):
     return result
 
 
-@app.post("/api/dashboard/agent-plugins/{name:path}/disable")
+@app.post("/api/dashboard/agent-plugins/{name:path}/disable", dependencies=_ADMIN)
 async def post_agent_plugin_disable(request: Request, name: str):
     _require_token(request)
     name = _validate_plugin_name(name)
@@ -18403,7 +18412,7 @@ async def post_agent_plugin_disable(request: Request, name: str):
     return result
 
 
-@app.post("/api/dashboard/agent-plugins/{name:path}/update")
+@app.post("/api/dashboard/agent-plugins/{name:path}/update", dependencies=_ADMIN)
 async def post_agent_plugin_update(request: Request, name: str):
     _require_token(request)
     name = _validate_plugin_name(name)
@@ -18416,7 +18425,7 @@ async def post_agent_plugin_update(request: Request, name: str):
     return result
 
 
-@app.delete("/api/dashboard/agent-plugins/{name:path}")
+@app.delete("/api/dashboard/agent-plugins/{name:path}", dependencies=_ADMIN)
 async def delete_agent_plugin(request: Request, name: str):
     _require_token(request)
     name = _validate_plugin_name(name)
@@ -18434,7 +18443,7 @@ class _PluginProvidersPutBody(BaseModel):
     context_engine: Optional[str] = None
 
 
-@app.put("/api/dashboard/plugin-providers")
+@app.put("/api/dashboard/plugin-providers", dependencies=_ADMIN)
 async def put_plugin_providers(request: Request, body: _PluginProvidersPutBody):
     """Persist memory provider / context engine selection (writes config.yaml)."""
     _require_token(request)
@@ -18454,7 +18463,7 @@ class _PluginVisibilityBody(BaseModel):
     hidden: bool
 
 
-@app.post("/api/dashboard/plugins/{name:path}/visibility")
+@app.post("/api/dashboard/plugins/{name:path}/visibility", dependencies=_ADMIN)
 async def post_plugin_visibility(request: Request, name: str, body: _PluginVisibilityBody):
     """Toggle a plugin's sidebar visibility (persists to config.yaml dashboard.hidden_plugins)."""
     _require_token(request)
@@ -18673,7 +18682,11 @@ def _mount_plugin_api_routes():
             if router is None:
                 _log.warning("Plugin %s api file has no 'router' attribute", plugin["name"])
                 continue
-            app.include_router(router, prefix=f"/api/plugins/{plugin['name']}")
+            # Dashboard plugins run with the operator console's full reach, so
+            # a signed-in member/viewer may not call them (security review F2).
+            app.include_router(
+                router, prefix=f"/api/plugins/{plugin['name']}", dependencies=_ADMIN
+            )
             _log.info("Mounted plugin API routes: /api/plugins/%s/", plugin["name"])
         except Exception as exc:
             _log.warning("Failed to load plugin %s API routes: %s", plugin["name"], exc)
