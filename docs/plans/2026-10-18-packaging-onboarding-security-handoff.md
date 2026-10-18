@@ -1,30 +1,70 @@
 # Aquarium: packaging, getting-ready guide, security — plan and handoff
 
 
-Status: **paused 2026-10-18 (HKT)** because the Devin org ran out of quota. This doc holds the whole plan, Leo's decisions, what is done, and what the next agent should pick up. Start here, then `git log origin/develop` for anything merged after this date.
+Status: **resumed 2026-10-18** with 16 parallel sub-agents (one per track, coordinator https://app.devin.ai/sessions/a7006e16318c4047b9b432fc8348091e). Nothing is deployed to production yet. Start here, then `git log origin/develop` for anything merged after this date.
 
-## Progress (as of 2026-10-18)
+Every PR must keep the existing Hetzner box working (Leo, 2026-10-18) and has an "Existing Hetzner box: what changes" section, checked against a read-only inventory of the box (services, ports, sudoers, env-file names, Caddy, MCP config, `MEDIA:` history).
 
-| Item | State | Evidence |
+## Progress (as of 2026-10-18, second run)
+
+| Item | State | PRs |
 |---|---|---|
 | Plan + 7 decisions | done | sections below |
-| Phase 0: git-history secret scan | **done, nothing to rotate** | gitleaks v8.21.2 (`docker run ghcr.io/gitleaks/gitleaks:v8.21.2 git /repo --log-opts=--all --redact`) over 13,622 commits: 745 hits, all upstream Hermes test fixtures/examples/placeholders (`sk-your…`, `xoxb-your…`, fake PEMs in tests). Extra regex scan of docs/deploy/plans/scripts/custom/agent-home history for DSN passwords, AKIA, sk-, ghp_, github_pat_, xox, AIza, JWTs: only placeholders and test DSNs. No `.env`/key/credential file was ever added. |
-| Phase 0: move `docs/deployment/PRODUCTION.md`, handoff docs (`HANDOFF.md`, `MULTI_USER_HANDOFF.md`, `docs/**/*HANDOFF*`, `docs/*handoff*.md`, `plans/*session-handoff*.md`) and `docs/reviews/2026-10-04-security-*.md`, `docs/TODO-security-and-review.md` to a private repo, leaving stubs | **not started — waiting on Leo**: choose new private `leolau/aquarium-ops` (Leo creates it) or a `docs/` folder in private `leolau/aquarium-deploy-state`. 22 files reference `PRODUCTION.md` (incl. AGENTS.md, deploy/hermes-deploy.sh, app-mcp/app_mcp/netfolders.py, scripts/live_access_check.py) — update them to point at the private location. Old versions stay in public git history; history rewrite only if Leo asks. | |
-| Phase 0: GitHub secret scanning + push protection + Dependabot | **waiting on Leo** (needs repo admin): https://github.com/leolau/aquarium/settings/security_analysis | |
-| GitHub Actions | workflows exist (`.github/workflows/tests.yml`, lint, typecheck, osv-scanner, supply-chain-audit, …) but the repo shows **no workflow runs** — find out why (Actions disabled?) | |
-| S1a security fixes (web/app) | F9 **done**: https://github.com/leolau/aquarium/pull/535 (merged, not deployed). F2 rest, F3, F4, F17, F18, F19 **not started** | session https://app.devin.ai/sessions/f6f43ffcede647cf91e055effc0ce23a (suspended, out of quota) |
-| S1b security fixes (gateway/custom/bridge/skills) | **not started** (F1, F5–F8, F10, F12 cheap items, F21–F23, F25; F11 desktop out of scope) | session https://app.devin.ai/sessions/7e04faaddaae4c0eb46c1dae52dd24c2 (suspended) |
-| P1 packaging + deploy-side security | **design only**, no PRs. Its design: root-owned releases in `/opt/aquarium/releases/<v>`, keep `/opt/data/hermes-agent` as a symlink for compatibility, env files in `/etc/aquarium` mode 0600, keyless cosign signatures, hardened deploy, `aquarium` CLI | session https://app.devin.ai/sessions/8a8123cc0b7b4dd59cbc04231ff10263 (suspended; it had split work into 6 helper sessions, all stopped) |
-| P2 mockups (first-run page, Get ready checklist, Google step-A panel, 繁中 checklist) | **done, awaiting Leo's approval** (8 PNGs, 390 px + 1280 px) | session https://app.devin.ai/sessions/f678183ff18944bbad62cd53f7c43abc (attachments there). New pieces it identified: 2-factor login (none in repo), i18n in agent-home (none yet), one-time setup token + `POST /api/setup/*`, model-key save + live test, backup and domain-check APIs. |
-| G1 written guide (EN + 繁中) | not started (after P2 screens are built) | |
-| S2 security automation + red-team on a throwaway Hetzner VM | not started | |
+| Phase 0: git-history secret scan | **done, nothing to rotate** (gitleaks v8.21.2 over 13,622 commits: only upstream fixtures/placeholders) | |
+| Phase 0: move production/handoff/security docs to a private repo | **waiting on Leo**: new `leolau/aquarium-ops` or `docs/` in `leolau/aquarium-deploy-state` | |
+| Phase 0: GitHub secret scanning + push protection + Dependabot | **waiting on Leo** (repo admin): https://github.com/leolau/aquarium/settings/security_analysis | |
+| GitHub Actions | **done**: Actions was on; `ci.yml` only ran on `main`. Now runs on PRs/pushes to `develop` and `main`; upstream-only jobs guarded. develop has 19 pre-existing test failures + a docs MDX error (fix PR in progress) | #548 |
+| Release pipeline (`vX.Y.Z` tag → tested, signed tarball + `SHA256SUMS` + cosign + `channels.json`) | **done, never run for real** (first tag `v0.1.0-rc.1` waits on Leo) | #550 |
+| Installer: verified release installs, pins, VPN/WhatsApp components | **done** | #544 |
+| Installer: one-time first-run link (replaces owner password in a file) | PR open; page itself is P2 | #555 |
+| Installer E2E on a throwaway Hetzner VM | **passes** after 2 fixes (pgvector race, gateway stop timeout); CI install test needs `HCLOUD_TOKEN` secret | #566, #567 |
+| `aquarium` admin command (status/update/backup/restore/doctor/logs/migrate-layout/uninstall) | PR open. Production stays on `deploy-hermes.sh` until Leo decides when to run `migrate-layout` (suggested: after the first v1.x release passed on a throwaway VM) | #561 |
+| F1 custom servers | merged + compatibility follow-up for the box | #538, #553 |
+| F2 role checks + route authz test (480 dashboard + 201 agent-home routes) | PR open | #556 |
+| F3 file-response XSS + agent-home security headers | PR open | #554 |
+| F4 app-mcp | merged (+ #551 keeps live `app` config working), test fix #560 | #543, #551, #560 |
+| F5, F9 | merged earlier | #536, #535 |
+| F6 inbox facts out of shared MEMORY.md | PR open | #557 |
+| F7 + F22 `/yolo` owner/admin, approvals bound to requester | merged | #546 |
+| F8 WhatsApp bridge shell/media path | merged | #541 |
+| F10 skill scanner | merged | #539 |
+| F12 low items (Telegram escaping, image plugin, …) | PR open; upload cap waits on Leo | #552 |
+| F13 + F15 root-owned deploy, safe root jobs | PR open; deploy migrates ownership itself and writes `rollback.sh` | #545 |
+| F14 WhatsApp bridge helper | merged | #540 |
+| F16 secrets out of the agent's terminal, env files to `/etc/aquarium` | PR open; `DATABASE_URL` A/B/C waits on Leo | #562 |
+| F17 + F18 app-mcp self-approval / trusted-import | PR open | #547 |
+| F19 app-mcp token on `127.0.0.1:9220` | PR open (token in `$HERMES_HOME/auth/`) | #563 |
+| F20 | fixed earlier | #520, #521 |
+| F21 strict media delivery (keeps `cache/images`, `exports/**` working) | PR open | #558 |
+| F23 untrusted `@file` expansion | merged | #549 |
+| F24 Caddy admin API off TCP | PR open | #564 |
+| F25 tirith pin | merged | #542 |
+| F11 Electron desktop | out of scope (not shipped to customers) | |
+| S2 security scans in CI + release gate | release gate PR open; scans workflow blocked: Devin's git proxy can't push `.github/workflows/` (waits on Leo) | #559 |
+| S2 prompt-injection red-team suite (31 attacks, fake model) | PR open; 9 expected-fail for still-open findings | #565 |
+| P2 mockups | **awaiting Leo's approval** (session https://app.devin.ai/sessions/f678183ff18944bbad62cd53f7c43abc) | |
+| G1 written guide (EN + 繁中) | not started (after P2 screens) | |
+
+### Open decisions for Leo
+1. Private docs repo choice; P2 mockup approval; GitHub security settings.
+2. Upload cap in agent-home (unlimited / 5 GiB / 1 GiB, reject before reading) — #552.
+3. #555: merge now (fresh installs get a link to a page not built yet) or hold until P2.
+4. Push `v0.1.0-rc.1` to test signing/publishing.
+5. F16: keep `DATABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` in the agent terminal for now (B, recommended), remove (A), or remove + config opt-in (C).
+6. Workflow-file pushes: GH_TOKEN directly, give the Devin GitHub app `workflow` permission, or Leo adds them.
+7. RT-14: require approval for every agent-typed `sudo`, or log as F26.
+8. Old Telegram merge/keep buttons sent before #538 return 403 — OK?
+9. Follow-ups: hide admin buttons for members in `web/`; bind Feishu/Teams/QQ/WhatsApp Cloud approval buttons to the requester.
+10. `HCLOUD_TOKEN` repo secret (separate Hetzner project) for the install test.
+
+### Existing Hetzner box notes (read-only inventory, 2026-10-18)
+- Deploy entry point is the hand-installed `/opt/data/deploy-hermes.sh` (differs from `deploy/hermes-deploy.sh`); repo changes to the deploy script reach the box only when it is recopied.
+- `hermes-secret-backup.service` is failed; Supabase Docker ports 5432/6543/8000/8443 are published on `0.0.0.0` and UFW is inactive. Not changed (needs Leo's OK).
+- Email/WhatsApp MCP servers and the Telegram callback server (7902, 8650, 8651) don't run on the box; health ports 7900/7901/7903 listen on `0.0.0.0`.
 
 ### Picking it up
-1. Ask Leo the two open items: private-repo choice and mockup approval. Remind him about the GitHub security settings link.
-2. Re-launch the tracks with the prompts in the appendix. **Tell each sub-agent not to create helper sessions** (the first run fanned out into 12 and burned quota). One sub-agent per track, or run them one at a time.
-3. Production rules (unchanged): read `docs/deployment/PRODUCTION.md` first; backup before any deploy; Leo merges PRs and approves production deploys; deploy fixes one at a time; no real WhatsApp messages without Leo's OK.
-
-
+1. Production rules (unchanged): read `docs/deployment/PRODUCTION.md` first; backup before any deploy; Leo merges PRs and approves production deploys; deploy fixes one at a time; no real WhatsApp messages without Leo's OK.
+2. Sub-agents must not create helper sessions and must not merge.
 
 ## Decisions (Leo, 2026-10-18)
 1. Repo stays public. `docs/deployment/PRODUCTION.md`, handoff docs and the security reviews move to a private repo; scan the full git history for leaked keys and ask before rotating any.
