@@ -27,7 +27,6 @@
 #                              only SSH is reachable from outside (useful for a test VM).
 #   AQUARIUM_DASHBOARD_DOMAIN  public hostname for the operator dashboard.
 #   AQUARIUM_OWNER_ID          login name of the first owner            (default: admin)
-#   AQUARIUM_OWNER_PASSWORD    owner password; generated when unset and saved in the secrets file
 #   AQUARIUM_REPO / AQUARIUM_BRANCH   source for --from-branch (default: leolau/aquarium, develop);
 #                              setting AQUARIUM_BRANCH alone also selects a branch install
 #   AQUARIUM_ROOT              install root                              (default: /opt/data)
@@ -136,7 +135,6 @@ secret() {  # secret NAME [value]: read from the secrets file, else set it once
 }
 PG_PASSWORD=$(secret POSTGRES_PASSWORD)
 JWT_SECRET=$(secret JWT_SECRET "$(rand 32)")
-OWNER_PASSWORD=$(secret OWNER_PASSWORD "${AQUARIUM_OWNER_PASSWORD:-$(rand 12)}")
 SESSION_SECRET=$(secret AGENT_HOME_SESSION_SECRET "$(rand 32)")
 APP_MCP_SECRET=$(secret APP_MCP_TICKET_SECRET "$(rand 32)")
 READ_DB_PASSWORD=$(secret HERMES_APP_READ_DB_PASSWORD)
@@ -287,12 +285,12 @@ chown root:hermes "$APP_ENV" && chmod 640 "$APP_ENV"
 # Model/provider API keys go in $HERMES_HOME/.env (secrets only), added by the operator.
 [ -f "$HERMES_HOME_DIR/.env" ] || install -o hermes -g hermes -m 600 /dev/null "$HERMES_HOME_DIR/.env"
 
-as_hermes "$APP/.venv/bin/python" - "$OWNER_ID" "$OWNER_PASSWORD" "$DASH_AUTH_SECRET" <<'PY'
-import os, sys
+as_hermes "$APP/.venv/bin/python" - "$OWNER_ID" "$DASH_AUTH_SECRET" <<'PY'
+import os, secrets, sys
 from pathlib import Path
 import yaml
 from plugins.dashboard_auth.basic import hash_password
-owner, password, secret = sys.argv[1:]
+owner, secret = sys.argv[1:]
 path = Path(os.environ["HERMES_HOME"]) / "config.yaml"
 cfg = yaml.safe_load(path.read_text()) if path.exists() else {}
 cfg = cfg or {}
@@ -307,7 +305,9 @@ mem.setdefault("embedding", {"provider": "local_http", "endpoint": "http://127.0
 mem.setdefault("rag", {"enabled": True})
 basic = default(default(cfg, "dashboard", {}), "basic_auth", {})
 if not basic.get("password_hash"):
-    basic.update(username=owner, password_hash=hash_password(password), secret=secret)
+    # Random placeholder nobody knows; the owner sets the real password from the
+    # one-time setup link printed at the end (hermes_cli/first_run.py).
+    basic.update(username=owner, password_hash=hash_password(secrets.token_urlsafe(32)), secret=secret)
 path.write_text(yaml.safe_dump(cfg, sort_keys=False))
 path.chmod(0o600)
 PY
@@ -373,13 +373,16 @@ PORT=3100
 ENV
 sed "s/^APP_MCP_TICKET_SECRET=.*/APP_MCP_TICKET_SECRET=$APP_MCP_SECRET/" app-mcp/deploy/app-mcp.env.example > app-mcp/app-mcp.env
 umask 022
-chown hermes:hermes agent-home/agent-home.env app-mcp/app-mcp.env
+# Code is root's (deploy-hermes.sh runs as root and refuses a checkout hermes
+# can edit, F13); hermes gets only the agent-home cache and its env files.
 if [ "$SOURCE_MODE" = branch ]; then
-  find "$APP" -path "$APP/.venv" -prune -o -print0 | xargs -0 chown hermes:hermes
+  chown -R root:root "$APP" && chmod -R go-w "$APP"
+  install -d -o hermes -g hermes "$APP/agent-home/.next/cache"
 else
   aq_release_writable_dirs "$APP"
+  chown -R root:root "$APP/.venv"
 fi
-chown -R root:root "$APP/.venv"
+chown hermes:hermes agent-home/agent-home.env app-mcp/app-mcp.env
 
 # ---------------------------------------------------------------- 9. systemd
 log "systemd units"
@@ -427,6 +430,7 @@ WantedBy=multi-user.target
 UNIT
 done
 install -m 755 deploy/hermes-deploy.sh "$ROOT/deploy-hermes.sh"
+install -m 755 -o root -g root deploy/aquarium.py /usr/local/sbin/aquarium
 systemctl daemon-reload
 systemctl enable -q hermes-embed hermes-dashboard hermes-gateway app-mcp agent-home
 systemctl restart hermes-embed hermes-dashboard hermes-gateway app-mcp agent-home
@@ -500,10 +504,15 @@ if [ "${AQUARIUM_SKIP_EMBED_MODEL:-0}" != 1 ]; then
 fi
 [ -n "$HOME_DOMAIN" ] && check "https://$HOME_DOMAIN/login" "curl -sf -o /dev/null https://$HOME_DOMAIN/login"
 
+ORIGIN=${HOME_DOMAIN:+https://$HOME_DOMAIN}
+ORIGIN=${ORIGIN:-http://127.0.0.1:3100}
+SETUP_LINK=$(hermes_db setup-link --origin "$ORIGIN" 2>/dev/null) || SETUP_LINK="(could not create one; run the command below)"
 cat <<DONE
 
 Aquarium installed (${HOME_DOMAIN:-http://127.0.0.1:3100}).
-  Owner login : $OWNER_ID   (password in $SECRETS, key OWNER_PASSWORD)
+  Owner setup : open this one-time link within 24 hours to set the owner's email and password:
+                $SETUP_LINK
+                New link (cancels the old one): sudo -u hermes -H bash -c 'set -a; . $APP_ENV; set +a; $APP/.venv/bin/hermes setup-link --origin $ORIGIN'
   Secrets     : $SECRETS (root only)
   Next        : add your model API key(s) to $HERMES_HOME_DIR/.env, then
                 systemctl restart hermes-gateway hermes-dashboard

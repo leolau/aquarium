@@ -965,12 +965,11 @@ _HERMES_ROOT = get_default_hermes_root()
 MEDIA_DELIVERY_ALLOW_DIRS_ENV = "HERMES_MEDIA_ALLOW_DIRS"
 MEDIA_DELIVERY_TRUST_RECENT_ENV = "HERMES_MEDIA_TRUST_RECENT_FILES"
 MEDIA_DELIVERY_TRUST_RECENT_SECONDS_ENV = "HERMES_MEDIA_TRUST_RECENT_SECONDS"
-# Strict mode toggles the original allowlist+recency path-validation behavior.
-# Off by default — symmetric with inbound (we accept any document type the
-# user uploads), and with the denylist still blocking obvious credential /
-# system paths. Operators running public-facing gateways where prompt
-# injection from one user could exfiltrate the host's secrets to that same
-# user should set this to true.
+# Strict mode (on by default, security review F21): a file attaches to a chat
+# reply only when it sits in a Hermes cache, an operator allow dir, the
+# agent's working folder (TERMINAL_CWD), or was written in the last few
+# minutes. ``gateway.strict: false`` in config.yaml is the single-user
+# opt-out, where any file not on the denylist attaches.
 MEDIA_DELIVERY_STRICT_ENV = "HERMES_MEDIA_DELIVERY_STRICT"
 MEDIA_DELIVERY_SAFE_ROOTS = (
     IMAGE_CACHE_DIR,
@@ -990,6 +989,9 @@ MEDIA_DELIVERY_SAFE_ROOTS = (
     _HERMES_HOME / "cache" / "videos",
     _HERMES_HOME / "cache" / "documents",
     _HERMES_HOME / "cache" / "screenshots",
+    # Files agents export for the user (reports, thumbnails). Already used
+    # this way on deployed boxes, so strict mode (F21) must keep them working.
+    _HERMES_HOME / "exports",
 )
 
 # Default recency window for trusting freshly-produced files (seconds).
@@ -1032,6 +1034,28 @@ _MEDIA_DELIVERY_DENIED_HOME_SUBPATHS = (
     ".azure",
     ".gcloud",
     "Library/Keychains",  # macOS
+    ".password-store",
+)
+
+# Credential files never attached anywhere on disk, in any mode. Pairs with
+# the read guard (agent/file_safety.py _BLOCKED_PROJECT_ENV_BASENAMES).
+_MEDIA_DELIVERY_DENIED_BASENAMES = frozenset({
+    ".git-credentials",
+    ".netrc",
+    "_netrc",
+    ".npmrc",
+    ".pypirc",
+    ".pgpass",
+    ".vault-token",
+})
+_MEDIA_DELIVERY_DENIED_DIR_NAMES = frozenset({".password-store"})
+# ``.env.example`` and friends are documented templates, not secrets.
+_ENV_TEMPLATE_SUFFIXES = (".example", ".sample", ".template", ".dist")
+# Session / kanban / memory SQLite stores under the Hermes home.
+_HERMES_STATE_DB_SUFFIXES = (
+    ".db", ".sqlite", ".sqlite3",
+    ".db-wal", ".db-shm", ".db-journal",
+    ".sqlite-wal", ".sqlite-shm", ".sqlite-journal",
 )
 
 
@@ -1109,16 +1133,25 @@ def _media_delivery_recency_seconds() -> float:
 def _media_delivery_strict_mode() -> bool:
     """Return True when path validation should require allowlist/recency match.
 
-    Off by default. In non-strict mode, ``validate_media_delivery_path``
-    accepts any existing regular file that isn't under the credential /
-    system-path denylist — restoring the pre-#29523 behavior for the
-    single-user case. Strict mode preserves the original
-    allowlist+recency-window logic for operators running public-facing
-    gateways where prompt injection from one user shouldn't be able to
-    exfiltrate the host's secrets to that same user.
+    On unless explicitly turned off (``gateway.strict: false`` /
+    ``HERMES_MEDIA_DELIVERY_STRICT=0``), see security review F21. Off means
+    ``validate_media_delivery_path`` accepts any existing regular file that
+    isn't on the credential / system-path denylist (single-user opt-out).
     """
-    raw = os.environ.get(MEDIA_DELIVERY_STRICT_ENV, "0").strip().lower()
-    return raw in ("1", "true", "yes", "on")
+    raw = os.environ.get(MEDIA_DELIVERY_STRICT_ENV, "").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def _strict_media_hint() -> str:
+    """Log hint so an operator can tell a strict-mode drop from a denylist hit."""
+    if not _media_delivery_strict_mode():
+        return ""
+    return (
+        " (strict media delivery: only Hermes caches, the working folder,"
+        " gateway.media_delivery_allow_dirs and files written in the last few"
+        " minutes attach; add the folder to gateway.media_delivery_allow_dirs"
+        " in config.yaml if it should)"
+    )
 
 
 def _media_delivery_denied_paths() -> List[Path]:
@@ -1178,6 +1211,8 @@ def _media_delivery_denied_paths() -> List[Path]:
         "google-workspace",
         "google-workspace-materialized",
         "mcp-oauth-pending",
+        # WhatsApp bridge logins (session-*/creds.json) and its media folder.
+        "whatsapp",
     )
     for hermes_root in (_HERMES_HOME, _HERMES_ROOT):
         for rel in _ROOT_CREDENTIAL_FILES:
@@ -1185,6 +1220,90 @@ def _media_delivery_denied_paths() -> List[Path]:
         for rel in _ROOT_CREDENTIAL_DIRS:
             denied.append(hermes_root / rel)
     return denied
+
+
+def _is_credential_file(resolved: Path) -> bool:
+    """True for credential files that never attach, wherever they live."""
+    from agent.file_safety import _BLOCKED_PROJECT_ENV_BASENAMES
+
+    name = resolved.name
+    if name in _BLOCKED_PROJECT_ENV_BASENAMES or name in _MEDIA_DELIVERY_DENIED_BASENAMES:
+        return True
+    if name.startswith(".env.") and not name.endswith(_ENV_TEMPLATE_SUFFIXES):
+        return True
+    return any(part in _MEDIA_DELIVERY_DENIED_DIR_NAMES for part in resolved.parts)
+
+
+def _is_hermes_state_db(resolved: Path) -> bool:
+    """True for SQLite stores (state.db, kanban.db, ...) under the Hermes home."""
+    if not resolved.name.lower().endswith(_HERMES_STATE_DB_SUFFIXES):
+        return False
+    for hermes_root in (_HERMES_HOME, _HERMES_ROOT):
+        try:
+            if _path_is_within(resolved, hermes_root.resolve(strict=False)):
+                return True
+        except (OSError, RuntimeError, ValueError):
+            continue
+    return False
+
+
+def _member_workspace_root() -> Path:
+    """Folder holding each person's own files (tools/access_policy.files_root)."""
+    try:
+        from tools.access_policy import current_files_root
+
+        own = current_files_root()
+    except Exception:
+        own = None
+    return Path(own) if own is not None else _HERMES_HOME / "workspaces"
+
+
+def _in_media_workspace(resolved: Path) -> bool:
+    """True when *resolved* is a plain file in a folder the agent works in.
+
+    Two kinds of folder count:
+    - the agent's working folder, ``terminal.cwd`` (bridged to TERMINAL_CWD;
+      the gateway defaults it to $HOME), minus anything inside the Hermes
+      home;
+    - the per-person folders ``$HERMES_HOME/workspaces/<user>/`` that member
+      and viewer file tools are confined to (only the bound person's own
+      folder when a person is bound).
+    Hidden folders inside either (``.git``, ``.hermes``, ``.cache`` ...)
+    don't count; the denylist is still applied by the caller.
+    """
+    def _plain_file_under(root: Path) -> bool:
+        try:
+            rel = resolved.relative_to(root)
+        except ValueError:
+            return False
+        return bool(rel.parts) and not any(part.startswith(".") for part in rel.parts)
+
+    try:
+        member_root = _member_workspace_root().resolve(strict=False)
+    except (OSError, RuntimeError, ValueError):
+        member_root = None
+    if member_root is not None and _plain_file_under(member_root):
+        return True
+
+    raw = os.environ.get("TERMINAL_CWD", "").strip()
+    if not raw:
+        return False
+    try:
+        root = Path(os.path.expanduser(raw))
+        if not root.is_absolute():
+            return False
+        root = root.resolve(strict=False)
+    except (OSError, RuntimeError, ValueError):
+        return False
+    if root == Path(root.anchor) or not _plain_file_under(root):
+        return False
+    for hermes_root in (_HERMES_HOME, _HERMES_ROOT):
+        try:
+            if _path_is_within(resolved, hermes_root.resolve(strict=False)):
+                return False
+        except (OSError, RuntimeError, ValueError):
+            continue
+    return True
 
 
 def _path_under_denied_prefix(resolved: Path) -> bool:
@@ -1200,7 +1319,12 @@ def _path_under_denied_prefix(resolved: Path) -> bool:
     denied paths, so they stay blocked regardless of this exception — it can
     only un-block a plain file sitting in the running user's home tree, never a
     credential location or another user's home.
+
+    Credential files anywhere (``.env``, ``.git-credentials``, ``.netrc`` ...)
+    and Hermes SQLite stores also count as denied.
     """
+    if _is_credential_file(resolved) or _is_hermes_state_db(resolved):
+        return True
     try:
         home = Path(os.path.expanduser("~")).resolve(strict=False)
     except (OSError, RuntimeError, ValueError):
@@ -1248,20 +1372,20 @@ def _path_is_within(path: Path, root: Path) -> bool:
 def validate_media_delivery_path(path: str) -> Optional[str]:
     """Return a safe absolute file path for native media delivery, else None.
 
-    Default mode (single-user / private gateway): accept any existing regular
-    file that isn't under the credential / system-path denylist
-    (``_MEDIA_DELIVERY_DENIED_PREFIXES`` + ``~/.ssh``, ``~/.aws``, etc.).
-    This matches the symmetry of inbound delivery — Telegram/Discord/Slack
-    will hand the agent any file the user uploads, and the agent can hand
-    back any file that isn't a credential.
-
-    Strict mode (opt-in via ``gateway.strict`` in ``config.yaml`` or
-    ``HERMES_MEDIA_DELIVERY_STRICT=1``): the file MUST live under a
+    Strict mode (default, security review F21): the file MUST live under a
     Hermes-managed cache, under an operator-allowlisted root
-    (``HERMES_MEDIA_ALLOW_DIRS``), or be freshly produced inside the
-    configured recency window. Suitable for public-facing bots where
-    prompt injection from one user shouldn't be able to exfiltrate the
-    host's secrets to that same user.
+    (``HERMES_MEDIA_ALLOW_DIRS``), in the agent's working folder
+    (``terminal.cwd``, hidden folders excluded), or be freshly produced
+    inside the configured recency window. Outside the cache / allow dirs
+    the denylist still applies.
+
+    Opt-out (``gateway.strict: false``, single-user / private gateway):
+    accept any existing regular file that isn't on the denylist.
+
+    In every mode: credential files (``.env``, ``.git-credentials``,
+    ``.netrc`` ...) never attach; dotfiles attach only from the cache /
+    allow dirs; files without an extension attach only from the cache /
+    allow dirs or the working folder.
 
     Symlinks are resolved before any containment / denylist check.
     """
@@ -1291,6 +1415,9 @@ def validate_media_delivery_path(path: str) -> Optional[str]:
     if not resolved.is_file():
         return None
 
+    if _is_credential_file(resolved):
+        return None
+
     # Cache / operator allowlist is always honored — these are unconditionally
     # trusted regardless of mode.
     for root in _media_delivery_allowed_roots():
@@ -1301,7 +1428,17 @@ def validate_media_delivery_path(path: str) -> Optional[str]:
         if _path_is_within(resolved, resolved_root):
             return str(resolved)
 
-    # Non-strict mode (default): accept anything not on the denylist.
+    # Dotfiles (``.bash_history``, ``.pgpass`` ...) and extensionless files
+    # (``creds``, ``id_ed25519``) dodge the media-extension checks, so they
+    # only attach from the roots above (extensionless also from the working
+    # folder, e.g. a Makefile the agent wrote there).
+    if resolved.name.startswith("."):
+        return None
+    in_workspace = _in_media_workspace(resolved)
+    if not resolved.suffix and not in_workspace:
+        return None
+
+    # Non-strict mode (explicit opt-out): accept anything not on the denylist.
     # The denylist still blocks /etc, /proc, ~/.ssh, ~/.aws, and the
     # credential/secret stores under the Hermes root (~/.hermes/.env,
     # auth.json, .anthropic_oauth.json, google_token.json, pairing/, ...) —
@@ -1313,11 +1450,12 @@ def validate_media_delivery_path(path: str) -> Optional[str]:
             return None
         return str(resolved)
 
-    # Strict mode: fall back to recency-based trust for freshly-produced
-    # files (e.g. ``pandoc -o /tmp/report.pdf`` or
-    # ``write_file("/home/user/report.pdf", ...)``). System paths and
-    # credential locations remain blocked even when "recent" — see
-    # ``_MEDIA_DELIVERY_DENIED_PREFIXES`` for the denylist.
+    # Strict mode: files in the agent's working folder, then recency-based
+    # trust for freshly-produced files (e.g. ``pandoc -o /tmp/report.pdf``).
+    # System paths and credential locations remain blocked in both cases —
+    # see ``_MEDIA_DELIVERY_DENIED_PREFIXES`` for the denylist.
+    if in_workspace and not _path_under_denied_prefix(resolved):
+        return str(resolved)
     window = _media_delivery_recency_seconds()
     if window > 0 and not _path_under_denied_prefix(resolved):
         if _file_is_recently_produced(resolved, window):
@@ -3487,7 +3625,7 @@ class BasePlatformAdapter(ABC):
             if safe_path:
                 safe_media.append((safe_path, bool(is_voice)))
             else:
-                logger.warning("Skipping unsafe MEDIA directive path: %s", _log_safe_path(raw))
+                logger.warning("Skipping unsafe MEDIA directive path: %s%s", _log_safe_path(raw), _strict_media_hint())
         return safe_media
 
     @staticmethod
@@ -3500,7 +3638,7 @@ class BasePlatformAdapter(ABC):
             if safe_path:
                 safe_paths.append(safe_path)
             else:
-                logger.warning("Skipping unsafe local file path: %s", _log_safe_path(raw))
+                logger.warning("Skipping unsafe local file path: %s%s", _log_safe_path(raw), _strict_media_hint())
         return safe_paths
 
 

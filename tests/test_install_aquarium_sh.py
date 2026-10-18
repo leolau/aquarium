@@ -202,10 +202,10 @@ def _config_merge_program() -> str:
     return body.split("\nPY\n", 1)[0]
 
 
-def _run_config_merge(home: Path, owner="admin", password="pw-123456", secret="sek"):
+def _run_config_merge(home: Path, owner="admin", secret="sek"):
     prog = _config_merge_program()
     return subprocess.run(
-        [sys.executable, "-", owner, password, secret], input=prog, capture_output=True, text=True,
+        [sys.executable, "-", owner, secret], input=prog, capture_output=True, text=True,
         env={**os.environ, "HERMES_HOME": str(home), "PYTHONPATH": str(REPO_ROOT)}, cwd=REPO_ROOT, timeout=60,
     )
 
@@ -218,7 +218,12 @@ def test_config_merge_on_fresh_home(tmp_path):
     assert cfg["memory"]["embedding"]["endpoint"] == "http://127.0.0.1:8791"
     basic = cfg["dashboard"]["basic_auth"]
     assert basic["username"] == "admin" and basic["secret"] == "sek"
-    assert basic["password_hash"] and "pw-123456" not in basic["password_hash"]
+    assert basic["password_hash"].startswith("scrypt$")
+    # The placeholder is random per run: nobody knows it until the setup link sets one.
+    other = tmp_path / "other"
+    other.mkdir()
+    assert _run_config_merge(other).returncode == 0
+    assert yaml.safe_load((other / "config.yaml").read_text())["dashboard"]["basic_auth"]["password_hash"] != basic["password_hash"]
     assert (tmp_path / "config.yaml").stat().st_mode & 0o777 == 0o600
 
 
@@ -247,3 +252,10 @@ def test_config_merge_never_overwrites_existing_settings(tmp_path):
 
 def test_existing_model_keys_file_is_kept():
     assert '[ -f "$HERMES_HOME_DIR/.env" ] || install' in TEXT
+
+
+def test_no_owner_password_in_a_file_and_a_setup_link_at_the_end():
+    code = "\n".join(line for line in TEXT.splitlines() if not line.lstrip().startswith("#"))
+    assert "OWNER_PASSWORD" not in code
+    assert 'hermes_db setup-link --origin "$ORIGIN"' in code
+    assert code.index("hermes_db owner init") < code.index("hermes_db setup-link")

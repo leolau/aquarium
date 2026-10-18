@@ -64,6 +64,12 @@ PUBLIC_API_PATHS: frozenset[str] = frozenset({
     # `{"ok": true}`.
     "/api/auth/invitations/redeem",
     "/api/auth/invitations/request",
+    # First-run owner setup (hermes_cli/first_run.py). Unauthenticated because
+    # the owner has no login yet; the boundary is a one-time 256-bit token from
+    # `hermes setup-link` (stored hashed, 24 h, rate-limited, neutral errors).
+    # With no token minted both refuse everything.
+    "/api/setup/check",
+    "/api/setup/owner",
     # Seminar survey (hermes_cli/seminar_survey.py). Unauthenticated by
     # definition: attendees have no account. Both are keyed by a 192-bit token
     # that was only ever sent into the attendee's own WhatsApp chat, and are

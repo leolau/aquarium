@@ -7,6 +7,7 @@ import { NextResponse } from "next/server";
 
 import { HermesApiError } from "@/lib/api/client";
 import { apiClientForRequest, getPrincipal } from "@/lib/auth/principal";
+import { canAdminister } from "@/lib/auth/roles";
 
 type Body = { deny_tools?: unknown; reset?: unknown };
 
@@ -18,7 +19,7 @@ export async function PUT(
   if (!principal) {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   }
-  if (principal.role !== "owner" && principal.role !== "admin") {
+  if (!canAdminister(principal)) {
     return NextResponse.json(
       {
         error: "forbidden",

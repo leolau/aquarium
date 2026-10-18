@@ -10,6 +10,7 @@ import json
 import os
 import sqlite3
 import time
+from html import escape as _esc
 import uuid
 from datetime import datetime, timezone, timedelta
 from urllib.request import Request, urlopen
@@ -296,11 +297,11 @@ def generate_digest():
     digest_msg = (
         f"\U0001f4cb <b>Hourly Digest</b>\n"
         f"<i>{now.strftime('%H:%M UTC')} | WA: {wa_msg_count} msgs, Email: {email_count} emails</i>\n\n"
-        f"{summary}"
+        f"{_esc(summary)}"
     )
 
     if todo_lines:
-        joined = "\n".join(f"  \u2022 {line}" for line in todo_lines)
+        joined = "\n".join(f"  \u2022 {_esc(line)}" for line in todo_lines)
         digest_msg += f"\n\n\u2705 <b>Open to-dos</b>\n{joined}"
 
     if pending_merges > 0:

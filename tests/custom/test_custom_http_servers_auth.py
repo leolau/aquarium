@@ -95,11 +95,44 @@ def test_mcp_server_requires_bearer_token_and_sends_no_wildcard_cors(rel, token_
 
 
 @pytest.mark.parametrize("rel,token_env,_host_env", MCP_SERVERS)
-def test_mcp_server_fails_closed_without_configured_token(rel, token_env, _host_env, serve, monkeypatch):
+def test_mcp_server_without_token_serves_local_programs_but_not_browsers(rel, token_env, _host_env, serve, monkeypatch):
+    """Boxes set up before F1 have no token: local JSON clients keep working,
+    anything a web page could send (Origin, simple text/plain POST, rebinding
+    Host) is refused and runs nothing."""
     module = _load(rel)
+    tool = next(iter(module.TOOLS))
+    calls = []
+    monkeypatch.setitem(module.TOOLS, tool, {**module.TOOLS[tool], "fn": lambda p: calls.append(p) or {"ok": 1}})
     monkeypatch.delenv(token_env, raising=False)
     base = serve(module.MCPHandler)
-    assert _request(f"{base}/tools", None, {"Authorization": "Bearer "})[0] == 401
+    body = {"tool": tool, "params": {}}
+    json_ct = {"Content-Type": "application/json"}
+
+    for headers in [
+        {**json_ct, "Origin": "https://evil.example"},
+        {**json_ct, "Sec-Fetch-Site": "cross-site"},
+        {"Content-Type": "text/plain"},
+        {**json_ct, "Host": "evil.example:8651"},
+    ]:
+        status, resp_headers, _ = _request(f"{base}/call", body, headers)
+        assert status == 401, headers
+        assert "Access-Control-Allow-Origin" not in resp_headers
+    assert _request(f"{base}/tools", None, {"Origin": "https://evil.example"})[0] == 401
+    assert calls == []
+
+    assert _request(f"{base}/call", body, json_ct)[0] == 200
+    assert _request(f"{base}/tools")[0] == 200
+    assert _request(f"{base}/call?tool={tool}")[0] == 405
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("rel,token_env,_host_env", MCP_SERVERS)
+def test_mcp_server_with_token_ignores_local_fallback(rel, token_env, _host_env, serve, monkeypatch):
+    module = _load(rel)
+    monkeypatch.setenv(token_env, "s3cret-token")
+    base = serve(module.MCPHandler)
+    assert _request(f"{base}/tools")[0] == 401
+    assert _request(f"{base}/call", {"tool": "x", "params": {}}, {"Content-Type": "application/json"})[0] == 401
 
 
 @pytest.mark.parametrize("rel,_token_env,host_env", MCP_SERVERS)
@@ -179,6 +212,8 @@ def test_contact_manager_has_no_hardcoded_callback_host(cm_rel, monkeypatch):
 
 @pytest.mark.parametrize("handler_rel", CALLBACK_HANDLERS)
 def test_callback_server_binds_loopback_by_default(handler_rel, monkeypatch):
+    monkeypatch.delenv("CALLBACK_BIND_HOST", raising=False)
+    monkeypatch.delenv("CALLBACK_SERVER_BASE", raising=False)
     handler = _load(handler_rel)
     monkeypatch.setattr(handler, "TELEGRAM_BOT_TOKEN", "t")
     monkeypatch.setattr(handler, "TELEGRAM_USER_ID", "1")
@@ -196,6 +231,24 @@ def test_callback_server_binds_loopback_by_default(handler_rel, monkeypatch):
     assert bound == [("127.0.0.1", handler.PORT)]
 
 
+@pytest.mark.parametrize("base,expected", [
+    ("http://188.245.219.105:7902", "0.0.0.0"),
+    ("https://home.example/contact-callback", "127.0.0.1"),
+    ("http://127.0.0.1:7902", "127.0.0.1"),
+    ("", "127.0.0.1"),
+])
+@pytest.mark.parametrize("handler_rel", CALLBACK_HANDLERS)
+def test_callback_server_keeps_direct_public_link_working(handler_rel, base, expected, monkeypatch):
+    """A box whose buttons already point straight at <ip>:7902 keeps
+    listening publicly (links are signed); proxied or unset stays loopback."""
+    monkeypatch.delenv("CALLBACK_BIND_HOST", raising=False)
+    monkeypatch.delenv("CALLBACK_PORT", raising=False)
+    monkeypatch.setenv("CALLBACK_SERVER_BASE", base)
+    assert _load(handler_rel).BIND_HOST == expected
+    monkeypatch.setenv("CALLBACK_BIND_HOST", "127.0.0.1")
+    assert _load(handler_rel).BIND_HOST == "127.0.0.1"
+
+
 @pytest.mark.parametrize("rel,needle", [
     ("custom/email/email_poller.py", "EMAIL_HEALTH_HOST', '127.0.0.1'"),
     ("custom/calendar/calendar_poller.py", "CALENDAR_HEALTH_HOST', '127.0.0.1'"),
@@ -208,23 +261,26 @@ def test_health_servers_default_to_loopback(rel, needle):
     assert needle in src
 
 
+@pytest.mark.parametrize("with_token", [True, False])
 @pytest.mark.parametrize("rel,token_env,_host_env", MCP_SERVERS)
-def test_hermes_mcp_client_still_connects_with_token_header(rel, token_env, _host_env, serve, monkeypatch, tmp_path):
-    """The legit client (Hermes' own MCP client, config.yaml ``headers`` with
-    ``${TOKEN}`` interpolation) still lists the tools through the new gate."""
+def test_hermes_mcp_client_still_connects(rel, token_env, _host_env, with_token, serve, monkeypatch, tmp_path):
+    """The legit client (Hermes' own MCP client) still lists the tools: with a
+    token via config.yaml ``headers`` + ``${TOKEN}`` interpolation, and on an
+    existing box that has no token and no headers yet."""
     import asyncio
 
     from tools import mcp_tool
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    monkeypatch.setenv(token_env, "s3cret-token")
     module = _load(rel)
     base = serve(module.MCPHandler)
-    cfg = mcp_tool._interpolate_env_vars({
-        "url": f"{base}/jsonrpc",
-        "headers": {"Authorization": "Bearer ${%s}" % token_env},
-        "connect_timeout": 8,
-    })
+    raw = {"url": f"{base}/jsonrpc", "connect_timeout": 8}
+    if with_token:
+        monkeypatch.setenv(token_env, "s3cret-token")
+        raw["headers"] = {"Authorization": "Bearer ${%s}" % token_env}
+    else:
+        monkeypatch.delenv(token_env, raising=False)
+    cfg = mcp_tool._interpolate_env_vars(raw)
 
     async def _connect():
         server = await asyncio.wait_for(mcp_tool._connect_server("custom", cfg), 20)
