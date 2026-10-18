@@ -5,8 +5,10 @@ A ``smb-folder`` credential (provider ``fortinet``) names one of its owner's
 readable ``fortinet-vpn`` entries plus an SMB path and, optionally, its own
 share login. :func:`ensure` connects that VPN when needed and asks the root
 helper (``hermes-vpn-helper mount``) to mount the share read-only at
-``/opt/data/vpn-files/net-<slug>``; ``down``/idle disconnect of the VPN
-unmounts it again. The bridge folder id is ``net-<slug>``.
+``/opt/data/vpn-files/net-<slug>``, routing the file server through the
+tunnel as a ``/32`` when the VPN doesn't reach it yet (the VPN itself has no
+routes to configure); ``down``/idle disconnect of the VPN unmounts it again.
+The bridge folder id is ``net-<slug>``.
 
 Ownership: only the owner sees/edits a folder through ``/api/vpn/folders``.
 While mounted, any agent on the box may read it (box-level, like a VPN's own

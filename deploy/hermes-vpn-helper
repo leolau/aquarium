@@ -20,7 +20,10 @@ local/docker networks are never touched.
 
 Network folders (Folder Bridge) mount at ``MOUNT_ROOT/net-<folder_slug>``; a
 VPN slug may therefore never start with ``net-``. A folder mount belongs to
-the VPN it was mounted through: ``down``/idle disconnect unmount it too.
+the VPN it was mounted through: ``down``/idle disconnect unmount it too. A VPN
+needs no routes or share of its own: mounting a folder whose file server the
+tunnel doesn't reach yet adds ``<server_ip>/32`` on the tunnel (recorded in
+the VPN state as ``folder_routes``) and the last folder using it removes it.
 
 Output is one JSON object on stdout. Exit 0 = handled (a failed connection is
 ``state: error``, not an exit code), 2 = rejected input, 1 = internal failure.
@@ -63,6 +66,8 @@ UP_TIMEOUT = 60.0
 CERT_TIMEOUT = 10.0
 MOUNT_TIMEOUT = 45.0
 CHECK_TIMEOUT = 20.0
+#: Extra wait for a walker blocked inside one directory listing.
+CHECK_GRACE = 5.0
 CHECK_MAX_ENTRIES = 200_000
 IDLE_CHECK_SECONDS = 60
 #: Bytes per idle-check interval that still count as "no traffic": SMB echo
@@ -830,6 +835,8 @@ def lookup_share_ip(server, info, iface):
 
 
 SMB_DIALECTS = ("default", "2.0")
+NO_UTF8_MESSAGE = ("The server is missing the kernel's UTF-8 file name support "
+                   "(install linux-modules-extra-$(uname -r))")
 
 
 def _dialect_refused(detail):
@@ -847,8 +854,8 @@ def mount_cifs(share, target, creds_path, share_ip):
     for vers in SMB_DIALECTS:
         options = ",".join([
             "ro", "nosuid", "nodev", "noexec", f"uid={MOUNT_USER}", f"gid={MOUNT_USER}",
-            "file_mode=0440", "dir_mode=0550", f"credentials={creds_path}",
-            f"vers={vers}", f"ip={share_ip}",
+            "file_mode=0440", "dir_mode=0550", "iocharset=utf8",
+            f"credentials={creds_path}", f"vers={vers}", f"ip={share_ip}",
         ])
         try:
             proc = run([bin_path("mount"), "-t", "cifs", unc, target, "-o", options],
@@ -863,6 +870,8 @@ def mount_cifs(share, target, creds_path, share_ip):
     else:
         return (f"File server {server} only offers SMB 1.0, which is not used because it is "
                 "insecure; ask IT to turn on SMB 2 or 3 on it")
+    if "error(79)" in detail or "iocharset" in detail or "shared library" in detail:
+        return NO_UTF8_MESSAGE
     if "permission denied" in detail or "error(13)" in detail:
         return "File share login failed: check the file share username and password"
     if "no such file" in detail or "error(2)" in detail:
@@ -978,6 +987,77 @@ def mount_vpn_share(slug, spec, target, share_ip):
         remove(p["creds"])
 
 
+def _covered(ip, routes):
+    try:
+        return any(ipaddress.IPv4Address(ip) in ipaddress.IPv4Network(r) for r in routes)
+    except ValueError:
+        return False
+
+
+def add_tunnel_route(state, cidr, iface):
+    """Add ``cidr`` on the tunnel after the box-overlap checks; error or None."""
+    try:
+        check_route(cidr)
+        gateways = [g for g in state.get("gateway_ips") or [] if isinstance(g, str)]
+        check_routes_against_box([cidr], gateways, exclude_iface=iface)
+    except InputError as exc:
+        return str(exc)
+    if run([bin_path("ip"), "-4", "route", "replace", cidr, "dev", iface]).returncode != 0:
+        return f"Could not add route {cidr}"
+    routes = state.setdefault("routes", [])
+    if cidr not in routes:
+        routes.append(cidr)
+    return None
+
+
+def claim_folder_route(state, folder, share_ip, iface):
+    """Make the tunnel reach ``share_ip`` for ``folder``; error or None.
+
+    Covered by the VPN's own routes: nothing to do. Otherwise ``<ip>/32`` is
+    added (or shared with other folders) and ``folder`` recorded as a user.
+    """
+    cidr = f"{share_ip}/32"
+    owned = state.setdefault("folder_routes", {})
+    if cidr in owned:
+        users = [u for u in owned[cidr] if isinstance(u, str)]
+        owned[cidr] = sorted(set(users) | {folder})
+        return None
+    if _covered(share_ip, [r for r in state.get("routes") or [] if isinstance(r, str)]):
+        return None
+    error = add_tunnel_route(state, cidr, iface)
+    if error:
+        return error
+    owned[cidr] = [folder]
+    return None
+
+
+def release_folder_routes(state, folder, iface, *, keep=None):
+    """Drop ``folder`` from every folder route but ``keep``; a route no
+    folder uses any more comes off the tunnel. Returns True if state changed."""
+    owned = state.get("folder_routes")
+    if not isinstance(owned, dict):
+        return False
+    changed = False
+    for cidr, users in list(owned.items()):
+        if cidr == keep or not isinstance(users, list) or folder not in users:
+            continue
+        changed = True
+        rest = [u for u in users if u != folder]
+        if rest:
+            owned[cidr] = rest
+            continue
+        del owned[cidr]
+        state["routes"] = [r for r in state.get("routes") or [] if r != cidr]
+        try:
+            net = ipaddress.IPv4Network(cidr)
+        except ValueError:
+            continue
+        if net.prefixlen == 32 and IFACE_RE.fullmatch(iface or ""):
+            with contextlib.suppress(HelperError):
+                run([bin_path("ip"), "-4", "route", "del", str(net), "dev", iface], timeout=10)
+    return changed
+
+
 def retry_vpn_share(slug, spec, state):
     """Mount the VPN's own share again on a live tunnel; the error or None."""
     iface = state.get("iface") or ""
@@ -988,12 +1068,12 @@ def retry_vpn_share(slug, spec, state):
     if not share_ip:
         return f"Can't find the file server {server} (not in public or VPN DNS)"
     routes = [r for r in state.get("routes") or [] if isinstance(r, str)]
-    try:
-        inside = any(ipaddress.IPv4Address(share_ip) in ipaddress.IPv4Network(r) for r in routes)
-    except ValueError:
-        inside = False
-    if not inside:
-        return f"File server {server} ({share_ip}) is outside the VPN routes {', '.join(routes) or '(none)'}"
+    if not _covered(share_ip, routes):
+        if spec["routes"]:
+            return f"File server {server} ({share_ip}) is outside the VPN routes {', '.join(routes)}"
+        error = add_tunnel_route(state, f"{share_ip}/32", iface)
+        if error:
+            return error
     try:
         target = secure_mount_point(slug)
     except HelperError as exc:
@@ -1059,7 +1139,8 @@ def cmd_up(spec_path):
         iface = info["iface"]
         if not IFACE_RE.fullmatch(iface or ""):
             return _fail(slug, "VPN client reported an unexpected interface")
-        state = {"phase": "connecting", "iface": iface, "routes": [], "fingerprint": fp}
+        state = {"phase": "connecting", "iface": iface, "routes": [], "fingerprint": fp,
+                 "gateway_ips": gateway_ips}
         save_state(slug, state)
         routes = list(spec["routes"])
         share_ip = None
@@ -1125,18 +1206,21 @@ def cmd_status(slug):
 
 
 def count_files(root, deadline):
+    """(count, stop) — stop is None, ``"time"`` or ``"entries"``."""
     count = 0
     stack = [root]
     while stack:
-        if time.monotonic() > deadline or count >= CHECK_MAX_ENTRIES:
-            return count, True
+        if time.monotonic() > deadline:
+            return count, "time"
+        if count >= CHECK_MAX_ENTRIES:
+            return count, "entries"
         with os.scandir(stack.pop()) as entries:
             for entry in entries:
                 if entry.is_dir(follow_symlinks=False):
                     stack.append(entry.path)
                 else:
                     count += 1
-    return count, False
+    return count, None
 
 
 def cmd_check(slug):
@@ -1177,18 +1261,28 @@ def walk_check(root):
 
     worker = threading.Thread(target=walk, daemon=True)
     worker.start()
-    worker.join(CHECK_TIMEOUT + 5)
+    worker.join(CHECK_TIMEOUT + CHECK_GRACE)
     if worker.is_alive():
-        check = {"ok": False, "file_count": None, "message": "File server is not responding."}
+        check = {"ok": False, "file_count": None, "message": slow_message()}
     elif "error" in result:
         check = {"ok": False, "file_count": None,
                  "message": f"File server error: {result['error'][:120]}"}
     else:
         n = result["count"]
-        more = "at least " if result["partial"] else ""
-        check = {"ok": True, "file_count": n,
-                 "message": f"File server reachable, {more}{n:,} files listed."}
+        if result["partial"] == "time":
+            message = (f"File server reachable, at least {n:,} files "
+                       f"(stopped counting after {CHECK_TIMEOUT:g} s).")
+        elif result["partial"]:
+            message = f"File server reachable, at least {n:,} files (stopped counting)."
+        else:
+            message = f"File server reachable, {n:,} files listed."
+        check = {"ok": True, "file_count": n, "message": message}
     return check
+
+
+def slow_message():
+    return (f"File server is too slow to answer "
+            f"(no reply within {CHECK_TIMEOUT + CHECK_GRACE:g} s).")
 
 
 def cmd_idle_check(slug):
@@ -1249,6 +1343,13 @@ def _folder_fail(folder_slug, vpn_slug, message):
     return folder_doc(folder_slug)
 
 
+def _folder_drop_route(state, vpn_slug, folder, iface, message):
+    """A failed mount gives back the folder's tunnel route."""
+    if release_folder_routes(state, folder, iface):
+        save_state(vpn_slug, state)
+    return _folder_fail(folder, vpn_slug, message)
+
+
 def cmd_mount(spec_path):
     spec = validate_mount_spec(read_spec_file(spec_path))
     vpn_slug, folder = spec["vpn_slug"], spec["folder_slug"]
@@ -1261,8 +1362,11 @@ def cmd_mount(spec_path):
         with slug_lock(old_vpn):
             unmount(fp["mount"])
             old = load_state(old_vpn)
+            changed = release_folder_routes(old, folder, old.get("iface"))
             if folder in (old.get("folders") or {}):
                 old["folders"].pop(folder, None)
+                changed = True
+            if changed:
                 save_state(old_vpn, old)
     with slug_lock(vpn_slug):
         vpn = status_doc(vpn_slug)
@@ -1283,21 +1387,20 @@ def cmd_mount(spec_path):
         server = spec["share"][0]
         share_ip = lookup_share_ip(server, parse_log(read_log(vpn_slug)), iface)
         if not share_ip:
-            return _folder_fail(folder, vpn_slug, f"Can't find the file server {server} (not in public or VPN DNS)")
-        routes = [r for r in state.get("routes") or [] if isinstance(r, str)]
-        try:
-            inside = any(ipaddress.IPv4Address(share_ip) in ipaddress.IPv4Network(r) for r in routes)
-        except ValueError:
-            inside = False
-        if not inside:
-            return _folder_fail(
-                folder, vpn_slug,
-                f"File server {server} ({share_ip}) is outside the VPN routes {', '.join(routes) or '(none)'}",
+            return _folder_drop_route(
+                state, vpn_slug, folder, iface,
+                f"Can't find the file server {server} (not in public or VPN DNS)",
             )
+        state.get("folders", {}).pop(folder, None)
+        release_folder_routes(state, folder, iface, keep=f"{share_ip}/32")
+        error = claim_folder_route(state, folder, share_ip, iface)
+        save_state(vpn_slug, state)
+        if error:
+            return _folder_drop_route(state, vpn_slug, folder, iface, error)
         try:
             target = secure_mount_point(fp["name"])
         except HelperError as exc:
-            return _folder_fail(folder, vpn_slug, str(exc))
+            return _folder_drop_route(state, vpn_slug, folder, iface, str(exc))
         creds = os.path.join(paths(vpn_slug)["dir"], f"{fp['name']}.cred")
         write_private(creds, render_folder_credentials(spec))
         try:
@@ -1305,7 +1408,7 @@ def cmd_mount(spec_path):
         finally:
             remove(creds)
         if message:
-            return _folder_fail(folder, vpn_slug, message)
+            return _folder_drop_route(state, vpn_slug, folder, iface, message)
         at = now_iso()
         state.setdefault("folders", {})[folder] = {"since": at}
         state["last_activity"] = at
@@ -1322,8 +1425,11 @@ def cmd_umount(folder_slug):
         with slug_lock(vpn_slug):
             unmount(fp["mount"])
             state = load_state(vpn_slug)
+            changed = release_folder_routes(state, folder_slug, state.get("iface"))
             if folder_slug in (state.get("folders") or {}):
                 state["folders"].pop(folder_slug, None)
+                changed = True
+            if changed:
                 save_state(vpn_slug, state)
     else:
         unmount(fp["mount"])

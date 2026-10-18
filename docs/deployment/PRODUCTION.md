@@ -238,14 +238,18 @@ for the UI. Both drive one root helper:
 | sudoers | `/etc/sudoers.d/hermes-vpn` (root:root 0440) | `hermes ALL=(root) NOPASSWD: /usr/local/sbin/hermes-vpn-helper` |
 | Tunnel | transient unit `hermes-vpn-<slug>.service` | `openfortivpn -c /run/hermes-vpn/<slug>/openfortivpn.conf` (0600 root, deleted once the tunnel is up) |
 | Idle watchdog | transient timer `hermes-vpn-idle-<slug>.timer` | every 60 s; disconnects after `idle_minutes` with < 4 KiB/min of ppp traffic |
-| Mount | `/opt/data/vpn-files/<slug>` | `cifs` `ro,nosuid,nodev,noexec,uid=hermes,gid=hermes,file_mode=0440,dir_mode=0550,vers=3.0` |
+| Mount | `/opt/data/vpn-files/net-<folder>` (network folders); legacy VPN share at `/opt/data/vpn-files/<slug>` | `cifs` `ro,nosuid,nodev,noexec,uid=hermes,gid=hermes,file_mode=0440,dir_mode=0550,iocharset=utf8,vers=default` (SMB 3.x/2.1, then 2.0; never 1.0) |
 | Runtime state | `/run/hermes-vpn/<slug>/` (root 0700) | `state.json`, `openfortivpn.log` (no passwords) |
 | UI bookkeeping | `$HERMES_HOME/vpn/state.json` | slug map, last_used, last_check, last error; no secrets |
 
 Routing: split tunnel only. openfortivpn always runs with `set-routes = 0`,
-`set-dns = 0`, `pppd-use-peerdns = 0`, `half-internet-routes = 0`; the helper
-adds just the VPN's validated `routes` (or a `/32` to the file server when
-none are given) on `pppN`. Routes that are broader than /8, reserved, or
+`set-dns = 0`, `pppd-use-peerdns = 0`, `half-internet-routes = 0`. A VPN entry
+is only the connection and comes up with no routes; mounting a network folder
+adds a `/32` to that folder's file server on `pppN` (kept in
+`/run/hermes-vpn/<slug>/state.json` → `folder_routes`, removed with the last
+folder using it or on disconnect). Legacy entries still get their validated
+`routes` (or a `/32` to their own file server) until
+`hermes vpn migrate-shares` moves their share into a network folder. Routes that are broader than /8, reserved, or
 overlap any of the box's addresses/routes (eth0, `172.31.1.1`, docker
 `172.17/16` + `172.18/16`, other VPNs), its DNS servers or the VPN gateway
 itself are refused. The box's DNS is never changed: a file-server name that
@@ -263,9 +267,11 @@ supported.
 ```bash
 # 0. backup of what this touches
 mkdir -p /opt/data/backups/vpn-install-$(date +%F) && cp -a /etc/sudoers.d /opt/data/backups/vpn-install-$(date +%F)/
-# 1. packages
-apt-get update && apt-get install -y openfortivpn cifs-utils
+# 1. packages (linux-modules-extra has nls_utf8: without it iocharset=utf8
+#    mounts fail with error 79 and non-ASCII names would show as "?????")
+apt-get update && apt-get install -y openfortivpn cifs-utils linux-modules-extra-$(uname -r)
 ls -l /dev/ppp /dev/net/tun            # both must exist
+modprobe nls_utf8 && echo utf8-ok
 # 2. the mount root must sit on a root-only path (the helper refuses otherwise)
 stat -c '%U:%G %a %n' / /opt /opt/data # each root-owned, no group/other write
 install -d -m 0755 -o root -g root /opt/data/vpn-files
@@ -276,6 +282,17 @@ visudo -cf /root/hermes-vpn.sudoers && mv /root/hermes-vpn.sudoers /etc/sudoers.
 # 4. smoke test (expect {"slug": "smoke-test", "state": "disconnected", ...})
 sudo -u hermes sudo -n /usr/local/sbin/hermes-vpn-helper status smoke-test
 ```
+
+`linux-modules-extra-*` is per kernel and `linux-image-virtual` doesn't pull
+it in: after every kernel upgrade, install the package for the new kernel
+(`apt-get install -y linux-modules-extra-$(uname -r)` after the reboot) or
+network folders stop mounting with "The server is missing the kernel's UTF-8
+file name support".
+
+Moving legacy VPN shares into network folders (after the deploy, once):
+`sudo -u hermes hermes vpn migrate-shares --dry-run`, then without
+`--dry-run`. It prints one line per VPN, never a password, and is safe to
+re-run. The VPN's old share mount goes away the next time it reconnects.
 
 No service restart is needed for the helper; the `/api/vpn` routes and
 `hermes vpn` arrive with the normal code deploy. `hermes-deploy.sh` prints
