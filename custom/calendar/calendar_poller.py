@@ -480,7 +480,7 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 def start_health_server():
     """Start health check HTTP server in a background thread."""
-    server = HTTPServer(('0.0.0.0', HEALTH_PORT), HealthHandler)
+    server = HTTPServer((os.environ.get('CALENDAR_HEALTH_HOST', '127.0.0.1'), HEALTH_PORT), HealthHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     print(f"[calendar] Health check: http://localhost:{HEALTH_PORT}/health")

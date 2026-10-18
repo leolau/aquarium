@@ -1077,34 +1077,44 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
         try:
             import aiohttp
 
+            from plugins.platforms.whatsapp.outbound_media import (
+                bridge_outbound_media_dir,
+                staged_for_bridge,
+            )
+
             if not os.path.exists(file_path):
                 return SendResult(success=False, error=f"File not found: {file_path}")
 
-            payload: Dict[str, Any] = {
-                "chatId": to_whatsapp_jid(chat_id),
-                "filePath": file_path,
-                "mediaType": media_type,
-            }
-            if caption:
-                payload["caption"] = caption
-            if file_name:
-                payload["fileName"] = file_name
+            base_url = f"http://127.0.0.1:{self._bridge_port}"
+            media_dir = await bridge_outbound_media_dir(self._http_session, base_url)
+            if media_type == "document" and not file_name:
+                file_name = os.path.basename(file_path)
+            with staged_for_bridge(file_path, media_dir) as bridge_path:
+                payload: Dict[str, Any] = {
+                    "chatId": to_whatsapp_jid(chat_id),
+                    "filePath": bridge_path,
+                    "mediaType": media_type,
+                }
+                if caption:
+                    payload["caption"] = caption
+                if file_name:
+                    payload["fileName"] = file_name
 
-            async with self._http_session.post(
-                f"http://127.0.0.1:{self._bridge_port}/send-media",
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=120),
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    return SendResult(
-                        success=True,
-                        message_id=data.get("messageId"),
-                        raw_response=data,
-                    )
-                else:
-                    error = await resp.text()
-                    return SendResult(success=False, error=error)
+                async with self._http_session.post(
+                    f"{base_url}/send-media",
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=120),
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return SendResult(
+                            success=True,
+                            message_id=data.get("messageId"),
+                            raw_response=data,
+                        )
+                    else:
+                        error = await resp.text()
+                        return SendResult(success=False, error=error)
 
         except Exception as e:
             return SendResult(success=False, error=str(e))
@@ -1575,27 +1585,38 @@ async def _standalone_send(
             # bridge maps mediaType -> image/video/audio/document message kinds
             # so PNG/JPEG/WebP/GIF arrive as inline images, MP4 as a video
             # bubble, and ogg/opus as a voice note — not a file/document.
+            from plugins.platforms.whatsapp.outbound_media import (
+                bridge_outbound_media_dir,
+                staged_for_bridge,
+            )
+
+            media_dir = None
+            if media:
+                media_dir = await bridge_outbound_media_dir(
+                    session, f"http://localhost:{bridge_port}"
+                )
             for media_path, is_voice in media:
                 if not os.path.exists(media_path):
                     return {"error": f"WhatsApp media file not found: {media_path}"}
                 media_type = _bridge_media_type(media_path, is_voice, force_document)
-                payload: Dict[str, Any] = {
-                    "chatId": normalized_chat_id,
-                    "filePath": media_path,
-                    "mediaType": media_type,
-                }
-                if media_type == "document":
-                    payload["fileName"] = os.path.basename(media_path)
-                async with session.post(
-                    f"http://localhost:{bridge_port}/send-media",
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=120),
-                ) as resp:
-                    if resp.status != 200:
-                        body = await resp.text()
-                        return {"error": f"WhatsApp media error ({resp.status}): {body}"}
-                    data = await resp.json()
-                    last_message_id = data.get("messageId") or last_message_id
+                with staged_for_bridge(media_path, media_dir) as bridge_path:
+                    payload: Dict[str, Any] = {
+                        "chatId": normalized_chat_id,
+                        "filePath": bridge_path,
+                        "mediaType": media_type,
+                    }
+                    if media_type == "document":
+                        payload["fileName"] = os.path.basename(media_path)
+                    async with session.post(
+                        f"http://localhost:{bridge_port}/send-media",
+                        json=payload,
+                        timeout=aiohttp.ClientTimeout(total=120),
+                    ) as resp:
+                        if resp.status != 200:
+                            body = await resp.text()
+                            return {"error": f"WhatsApp media error ({resp.status}): {body}"}
+                        data = await resp.json()
+                        last_message_id = data.get("messageId") or last_message_id
 
         return {
             "success": True,

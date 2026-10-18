@@ -185,12 +185,15 @@ def test_mixed_search_without_browser_returns_network_matches(world):
     assert out["warnings"] == [server.NOT_CONNECTED_HINT]
 
 
-def test_mixed_search_with_browser(world):
+def test_mixed_search_with_browser(world, monkeypatch):
+    # The request is for alice (Hermes forwards the chat's user in _meta).
+    monkeypatch.setattr(server, "_caller", lambda: "alice")
+
     class Conn:
         async def send(self, message: str) -> None:
             msg = json.loads(message)
             assert msg["command"]["folderIds"] == ["local-1"]
-            server.folder_hub.resolve_result(msg["id"], {
+            server.folder_hub.resolve_result(self, msg["id"], {
                 "ok": True, "matches": [{"folderId": "local-1", "folderLabel": "Mac",
                                          "path": "readme.md", "size": 1,
                                          "modifiedAt": "2026-01-01T00:00:00.000Z"}]})
