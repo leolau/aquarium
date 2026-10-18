@@ -373,13 +373,16 @@ PORT=3100
 ENV
 sed "s/^APP_MCP_TICKET_SECRET=.*/APP_MCP_TICKET_SECRET=$APP_MCP_SECRET/" app-mcp/deploy/app-mcp.env.example > app-mcp/app-mcp.env
 umask 022
-chown hermes:hermes agent-home/agent-home.env app-mcp/app-mcp.env
+# Code is root's (deploy-hermes.sh runs as root and refuses a checkout hermes
+# can edit, F13); hermes gets only the agent-home cache and its env files.
 if [ "$SOURCE_MODE" = branch ]; then
-  find "$APP" -path "$APP/.venv" -prune -o -print0 | xargs -0 chown hermes:hermes
+  chown -R root:root "$APP" && chmod -R go-w "$APP"
+  install -d -o hermes -g hermes "$APP/agent-home/.next/cache"
 else
   aq_release_writable_dirs "$APP"
+  chown -R root:root "$APP/.venv"
 fi
-chown -R root:root "$APP/.venv"
+chown hermes:hermes agent-home/agent-home.env app-mcp/app-mcp.env
 
 # ---------------------------------------------------------------- 9. systemd
 log "systemd units"

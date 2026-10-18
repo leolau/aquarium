@@ -182,6 +182,7 @@ export function FolderBridgeView() {
           {status === "disconnected" || status === "reconnecting" ? (
             <button
               type="button"
+              data-appmcp-deny="consent"
               onClick={() => connectFolderBridge()}
               className="rounded-xl bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent-fg)]"
             >
@@ -243,6 +244,7 @@ export function FolderBridgeView() {
           </h2>
           <button
             type="button"
+            data-appmcp-deny="consent"
             onClick={() => void handleAddFolder()}
             disabled={busy}
             className="rounded-xl border border-[var(--color-border)] px-3 py-1.5 text-xs disabled:opacity-50"
@@ -273,6 +275,7 @@ export function FolderBridgeView() {
               >
                 <span className="min-w-0 flex-1 truncate">{folder.label}</span>
                 <label
+                  data-appmcp-deny="consent"
                   className="flex items-center gap-1 text-xs text-[var(--color-muted)]"
                   title="Let the agent copy files from this folder into Files without asking for each one. Resets when you reload this page."
                 >
@@ -288,6 +291,7 @@ export function FolderBridgeView() {
                 {folder.permission !== "granted" ? (
                   <button
                     type="button"
+                    data-appmcp-deny="consent"
                     onClick={() => void handleReapprove(folder.id)}
                     className="rounded-lg border border-amber-400/50 px-2 py-1 text-xs text-[var(--color-warn-text)]"
                   >
