@@ -137,6 +137,7 @@ class ProcessSession:
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _reader_thread: Optional[threading.Thread] = field(default=None, repr=False)
     _pty: Any = field(default=None, repr=False)  # ptyprocess handle (when use_pty=True)
+    _run_as: str = field(default="", repr=False)  # terminal.run_as user, "" = ours
 
 
 class ProcessRegistry:
@@ -707,6 +708,10 @@ class ProcessRegistry:
             started_at=time.time(),
         )
 
+        from tools import terminal_user
+
+        run_as = terminal_user.configured_user()
+        session._run_as = run_as
         if use_pty:
             # Try PTY mode for interactive CLI tools
             try:
@@ -717,8 +722,11 @@ class ProcessRegistry:
                 user_shell = _find_shell()
                 pty_env = _sanitize_subprocess_env(os.environ, env_vars)
                 pty_env["PYTHONUNBUFFERED"] = "1"
+                pty_argv = [user_shell, "-lic", f"set +m; {command}"]
+                if run_as:
+                    pty_argv = terminal_user.wrap_bash(pty_argv, run_as)
                 pty_proc = _PtyProcessCls.spawn(
-                    [user_shell, "-lic", f"set +m; {command}"],
+                    pty_argv,
                     cwd=session.cwd,
                     env=pty_env,
                     dimensions=(30, 120),
@@ -761,8 +769,11 @@ class ProcessRegistry:
         bg_env["PYTHONUNBUFFERED"] = "1"
         _popen_kwargs = {"creationflags": windows_hide_flags()} if _IS_WINDOWS else {}
 
+        bg_argv = [user_shell, "-lic", f"set +m; {command}"]
+        if run_as:
+            bg_argv = terminal_user.wrap_bash(bg_argv, run_as)
         proc = subprocess.Popen(
-            [user_shell, "-lic", f"set +m; {command}"],
+            bg_argv,
             text=True,
             cwd=session.cwd,
             env=bg_env,
@@ -1425,6 +1436,14 @@ class ProcessRegistry:
 
         # Kill via PTY, Popen (local), or env execute (non-local)
         try:
+            run_as = getattr(session, "_run_as", "")
+            if run_as and session.pid and not _IS_WINDOWS:
+                # Another user's process group: only that user can signal it.
+                from tools.terminal_user import signal_group
+
+                signal_group(run_as, session.pid, signal.SIGTERM)
+                time.sleep(0.5)
+                signal_group(run_as, session.pid, signal.SIGKILL)
             if session._pty:
                 # PTY process -- terminate via ptyprocess
                 try:

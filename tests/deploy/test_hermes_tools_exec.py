@@ -68,3 +68,12 @@ def test_command_runs_as_hermes_tools_and_cannot_read_the_gateway():
         capture_output=True, text=True, check=True,
     ).stdout.split()
     assert out == ["hermes-tools", "env=kept", "parent-blocked", "home-blocked"]
+
+
+def test_rule_keeps_path_and_process_group():
+    text = RULE.read_text()
+    assert "Defaults!/usr/local/sbin/hermes-tools-exec !use_pty, !secure_path" in text
+    deploy = (REPO / "deploy/hermes-deploy.sh").read_text()
+    assert "TOOLS SUDOERS RULE STALE" in deploy
+    install = (REPO / "install-aquarium.sh").read_text()
+    assert "usermod -aG hermes-tools hermes" in install

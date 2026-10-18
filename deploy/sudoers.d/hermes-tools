@@ -1,3 +1,6 @@
 # Agent terminal commands run as hermes-tools (never root); see deploy/hermes-tools-exec.
-# SETENV keeps the gateway's already-filtered terminal environment (sudo -E).
+# SETENV keeps the gateway's already-filtered terminal environment (sudo -E);
+# !secure_path keeps its PATH (venv, node, user tools); !use_pty keeps the
+# command in the caller's process group so timeouts and kills still reach it.
+Defaults!/usr/local/sbin/hermes-tools-exec !use_pty, !secure_path
 hermes ALL=(hermes-tools) NOPASSWD:SETENV: /usr/local/sbin/hermes-tools-exec

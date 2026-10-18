@@ -1147,6 +1147,10 @@ DEFAULT_CONFIG = {
     
     "terminal": {
         "backend": "local",
+        # Linux user the local backend runs the agent's commands as, through
+        # the root-owned /usr/local/sbin/hermes-tools-exec helper. Empty = the
+        # gateway's own user. Fresh Aquarium installs set "hermes-tools".
+        "run_as": "",
         "modal_mode": "auto",
         "cwd": ".",  # Use current directory
         "timeout": 180,
