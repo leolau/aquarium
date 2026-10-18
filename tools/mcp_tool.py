@@ -2314,9 +2314,7 @@ class MCPServerTask:
         self._config = config
         self.tool_timeout = config.get("timeout", _DEFAULT_TOOL_TIMEOUT)
         self.max_result_chars = _coerce_max_result_chars(config.get("max_result_chars"))
-        self.forward_principal = _parse_boolish(
-            config.get("forward_principal", False), default=False
-        )
+        self.forward_principal = _forward_principal_setting(self.name, config)
         self._auth_type = (config.get("auth") or "").lower().strip()
 
         # Set up sampling handler if enabled and SDK types are available
@@ -3388,6 +3386,33 @@ def _clip_result(text: str, limit: int) -> str:
         text[:limit]
         + f"\n…[truncated {dropped:,} chars — result capped at {limit:,}; "
         "narrow the query or request fewer fields rather than re-running as is]"
+    )
+
+
+def _forward_principal_setting(name: str, config: dict) -> bool:
+    """``forward_principal`` for one server: explicit value, else on for app-mcp."""
+    default = _is_app_mcp_server(name, config)
+    return _parse_boolish(config.get("forward_principal", default), default=default)
+
+
+def _is_app_mcp_server(name: str, config: dict) -> bool:
+    """Aquarium's own app-mcp (UI + Folder Bridge) server.
+
+    app-mcp refuses calls without the chat's user, so forwarding is on by
+    default for it: existing ``mcp_servers.app`` entries keep working without
+    a config edit. ``forward_principal: false`` still turns it off.
+    """
+    if name == "app":
+        return True
+    url = str(config.get("url") or "")
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    return (
+        parsed.hostname in {"127.0.0.1", "localhost"}
+        and parsed.port == 9220
+        and parsed.path.rstrip("/") == "/mcp"
     )
 
 

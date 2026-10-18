@@ -4911,7 +4911,7 @@ async def webview_action(request: Request):
     session = _get_webview_registry().get(principal.user_id)
     if session is None:
         # Default-deny: no opt-in, nothing to act on.
-        raise HTTPException(status_code=403, detail="no webview session open (default-deny)")
+        raise HTTPException(status_code=403, detail="no webview session open (default-deny)")  # windows-footgun: ok — Linux-server-only code
 
     body = await request.json()
     kind = body.get("kind")
@@ -4971,7 +4971,7 @@ async def webview_resolve_approval(approval_id: str, request: Request):
         raise HTTPException(status_code=409, detail="multi-user datastore not configured")
     session = _get_webview_registry().get(principal.user_id)
     if session is None:
-        raise HTTPException(status_code=403, detail="no webview session open (default-deny)")
+        raise HTTPException(status_code=403, detail="no webview session open (default-deny)")  # windows-footgun: ok — Linux-server-only code
     approval = session.pending.get(approval_id)
     if approval is None:
         raise HTTPException(status_code=404, detail="no such pending approval")
