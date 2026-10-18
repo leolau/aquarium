@@ -200,7 +200,7 @@ class TestSlackApprovalAction:
             await adapter._handle_approval_action(ack, body, action)
 
         ack.assert_called_once()
-        mock_resolve.assert_called_once_with("agent:main:slack:group:C1:1111", "once")
+        mock_resolve.assert_called_once_with("agent:main:slack:group:C1:1111", "once", approver_id="U_NORBERT")
 
         # Message should be updated with decision
         mock_client.chat_update.assert_called_once()
@@ -253,7 +253,7 @@ class TestSlackApprovalAction:
         with patch("tools.approval.resolve_gateway_approval", return_value=1) as mock_resolve:
             await adapter._handle_approval_action(ack, body, action)
 
-        mock_resolve.assert_called_once_with("session-key", "deny")
+        mock_resolve.assert_called_once_with("session-key", "deny", approver_id="U_ALICE")
         update_kwargs = mock_client.chat_update.call_args[1]
         assert "Denied by alice" in update_kwargs["text"]
 
@@ -715,3 +715,40 @@ class TestThreadEngagement:
                 for t in to_remove:
                     adapter._mentioned_threads.discard(t)
         assert len(adapter._mentioned_threads) <= 10
+
+
+class TestSlackApprovalRequesterBinding:
+    """F22: a click by someone other than the requester must not resolve."""
+
+    @pytest.mark.asyncio
+    async def test_other_users_click_leaves_approval_pending(self):
+        from tools import approval as mod
+
+        key = "agent:main:slack:group:C1:thread1"
+        entry = mod._ApprovalEntry({"command": "rm -rf /tmp/x"}, requester_id="U_ALICE")
+        mod._gateway_queues[key] = [entry]
+        try:
+            adapter = _make_adapter()
+            _attach_auth_runner(adapter)
+            adapter._approval_resolved["1234.5678"] = False
+            client = adapter._team_clients["T1"]
+            client.chat_update = AsyncMock()
+            client.chat_postEphemeral = AsyncMock()
+
+            def body(uid):
+                return {
+                    "message": {"ts": "1234.5678", "blocks": []},
+                    "channel": {"id": "C1"},
+                    "user": {"name": uid, "id": uid},
+                }
+
+            action = {"action_id": "hermes_approve_once", "value": key}
+            await adapter._handle_approval_action(AsyncMock(), body("U_BOB"), action)
+            assert not entry.event.is_set()
+            client.chat_update.assert_not_called()
+            client.chat_postEphemeral.assert_awaited()
+
+            await adapter._handle_approval_action(AsyncMock(), body("U_ALICE"), action)
+            assert entry.event.is_set() and entry.result == "once"
+        finally:
+            mod._gateway_queues.pop(key, None)
