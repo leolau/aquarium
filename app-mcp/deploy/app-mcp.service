@@ -28,7 +28,12 @@ Type=simple
 User=hermes
 Group=hermes
 WorkingDirectory=/opt/data/hermes-agent/app-mcp
-EnvironmentFile=/opt/data/hermes-agent/app-mcp/app-mcp.env
+# Secrets live in /etc/aquarium/app-mcp.env (root:root 0600; systemd reads it
+# as root, so the hermes user and the agent's shell can't). The old in-checkout
+# file is still read first so a box that hasn't moved it keeps working; the
+# /etc one wins for any key in both (security review F16).
+EnvironmentFile=-/opt/data/hermes-agent/app-mcp/app-mcp.env
+EnvironmentFile=-/etc/aquarium/app-mcp.env
 ExecStart=/opt/data/hermes-agent/.venv/bin/python -m app_mcp.server
 Restart=on-failure
 RestartSec=5

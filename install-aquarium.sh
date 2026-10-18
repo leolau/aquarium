@@ -359,8 +359,11 @@ fi
 # ---------------------------------------------------------------- 8. agent-home + app-mcp env
 log "agent-home and app-mcp settings"
 AH_DB_URL="postgresql://agent_home_app.$TENANT:$READ_DB_PASSWORD@127.0.0.1:$DB_PORT/postgres"
+# Secrets stay outside the checkout, root:root 0600: systemd reads them as root
+# for the units, the hermes user (and the agent's shell) can't (review F16).
+install -d -m 700 /etc/aquarium
 umask 077
-cat > "$APP/agent-home/agent-home.env" <<ENV
+cat > /etc/aquarium/agent-home.env <<ENV
 AGENT_HOME_SESSION_SECRET=$SESSION_SECRET
 DATABASE_URL=$AH_DB_URL
 SUPABASE_URL=http://127.0.0.1:8000
@@ -372,10 +375,11 @@ AGENT_HOME_DATASTORE_MODE=prod
 PORT=3100
 ENV
 sed -e "s/^APP_MCP_TICKET_SECRET=.*/APP_MCP_TICKET_SECRET=$APP_MCP_SECRET/" \
-  -e "s#^HERMES_HOME=.*#HERMES_HOME=$HERMES_HOME_DIR#" app-mcp/deploy/app-mcp.env.example > app-mcp/app-mcp.env
+  -e "s#^HERMES_HOME=.*#HERMES_HOME=$HERMES_HOME_DIR#" app-mcp/deploy/app-mcp.env.example > /etc/aquarium/app-mcp.env
 umask 022
+chmod 600 /etc/aquarium/agent-home.env /etc/aquarium/app-mcp.env
 # Code is root's (deploy-hermes.sh runs as root and refuses a checkout hermes
-# can edit, F13); hermes gets only the agent-home cache and its env files.
+# can edit, F13); hermes gets only the agent-home cache.
 if [ "$SOURCE_MODE" = branch ]; then
   chown -R root:root "$APP" && chmod -R go-w "$APP"
   install -d -o hermes -g hermes "$APP/agent-home/.next/cache"
@@ -383,7 +387,6 @@ else
   aq_release_writable_dirs "$APP"
   chown -R root:root "$APP/.venv"
 fi
-chown hermes:hermes agent-home/agent-home.env app-mcp/app-mcp.env
 
 # ---------------------------------------------------------------- 9. systemd
 log "systemd units"
