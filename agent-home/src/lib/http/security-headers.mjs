@@ -12,7 +12,8 @@
  * host). If the browser ever talks to Supabase directly (realtime is off
  * today, see `lib/supabase/realtime.ts`), add that origin to `connect-src`.
  *
- * Chat may show images from absolute https URLs, hence `img-src https:`.
+ * Chat and markdown may show images from any web URL, so `img-src` allows
+ * http(s): an image cannot run script, and blocking them would break chats.
  *
  * The CSP is NOT applied under `/api/`: a `next.config` header overrides the
  * same header set by a route handler, and the file proxies there send their
@@ -28,7 +29,7 @@ const PAGE_CSP_DIRECTIVES = {
   "default-src": ["'self'"],
   "script-src": ["'self'", "'unsafe-inline'"],
   "style-src": ["'self'", "'unsafe-inline'"],
-  "img-src": ["'self'", "data:", "blob:", "https:"],
+  "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
   "media-src": ["'self'", "data:", "blob:"],
   "font-src": ["'self'", "data:"],
   "connect-src": ["'self'"],

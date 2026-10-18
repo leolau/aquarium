@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import nextConfig from "../../../next.config.mjs";
+// @ts-expect-error -- Next ships its route matcher without type declarations.
 import { pathToRegexp } from "next/dist/compiled/path-to-regexp";
 
 import {
