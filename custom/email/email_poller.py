@@ -449,7 +449,7 @@ class HealthHandler(BaseHTTPRequestHandler):
         pass
 
 def start_health_server():
-    server = HTTPServer(('0.0.0.0', HEALTH_PORT), HealthHandler)
+    server = HTTPServer((os.environ.get('EMAIL_HEALTH_HOST', '127.0.0.1'), HEALTH_PORT), HealthHandler)
     server.serve_forever()
 
 

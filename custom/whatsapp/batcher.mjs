@@ -278,7 +278,7 @@ const healthServer = http.createServer((req, res) => {
     res.end('Not found');
   }
 });
-healthServer.listen(7900, '0.0.0.0');
+healthServer.listen(7900, process.env.WA_BATCHER_HEALTH_HOST || '127.0.0.1');
 
 // Start polling both bridges
 console.log(`[batcher] Starting unified batcher (window: ${BATCH_WINDOW_MS}ms)`);
