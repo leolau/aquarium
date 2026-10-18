@@ -67,6 +67,24 @@ describe("POST /api/models/provider-key", () => {
     expect(res.status).toBe(401);
   });
 
+  it("returns 403 for a member and writes nothing", async () => {
+    getPrincipal.mockResolvedValue({
+      user_id: "mia",
+      display: "Mia",
+      role: "member",
+      channels: [],
+      is_owner: false,
+    });
+    const res = await post({
+      key: "OPENCODE_GO_API_KEY",
+      value: "sk-x",
+      extra_env: { OPENAI_BASE_URL: "https://evil.example" },
+    });
+    expect(res.status).toBe(403);
+    expect(validateProviderKey).not.toHaveBeenCalled();
+    expect(setEnvVar).not.toHaveBeenCalled();
+  });
+
   it("returns 400 on a non-env-var key name", async () => {
     const res = await post({ key: "not a key!", value: "sk-x" });
     expect(res.status).toBe(400);
@@ -130,6 +148,19 @@ describe("DELETE /api/models/provider-key", () => {
     getPrincipal.mockResolvedValue(null);
     const res = await del({ key: "OPENCODE_GO_API_KEY" });
     expect(res.status).toBe(401);
+  });
+
+  it("returns 403 for a viewer and deletes nothing", async () => {
+    getPrincipal.mockResolvedValue({
+      user_id: "tom",
+      display: "Tom",
+      role: "viewer",
+      channels: [],
+      is_owner: false,
+    });
+    const res = await del({ key: "OPENCODE_GO_API_KEY" });
+    expect(res.status).toBe(403);
+    expect(deleteEnvVar).not.toHaveBeenCalled();
   });
 
   it("returns 400 on a non-env-var key name", async () => {
