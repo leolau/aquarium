@@ -60,6 +60,7 @@ Every PR must keep the existing Hetzner box working (Leo, 2026-10-18) and has an
 ### Existing Hetzner box notes (read-only inventory, 2026-10-18)
 - Deploy entry point is the hand-installed `/opt/data/deploy-hermes.sh` (differs from `deploy/hermes-deploy.sh`); repo changes to the deploy script reach the box only when it is recopied.
 - `hermes-secret-backup.service` is failed; Supabase Docker ports 5432/6543/8000/8443 are published on `0.0.0.0` and UFW is inactive. Not changed (needs Leo's OK).
+- F19 (#563) stays off on the box after deploy until `HERMES_HOME=/opt/data/hermes-home-staging` is added to `/opt/data/hermes-agent/app-mcp/app-mcp.env` and app-mcp is restarted (manual on purpose; check: `curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:9220/mcp` gives 401 when on).
 - Email/WhatsApp MCP servers and the Telegram callback server (7902, 8650, 8651) don't run on the box; health ports 7900/7901/7903 listen on `0.0.0.0`.
 
 ### Picking it up
