@@ -74,4 +74,13 @@ describe("next.config headers()", () => {
     const activate = await headersFor("/activate/:path*");
     expect(activate.find((h) => h.key === "Referrer-Policy")?.value).toBe("no-referrer");
   });
+
+  it("keeps the first-run /setup page out of referrers, caches and search indexes", async () => {
+    const rules = (await nextConfig.headers!()) as { source: string }[];
+    const sources = rules.map((r) => r.source);
+    expect(sources.indexOf("/:path*")).toBeLessThan(sources.indexOf("/setup"));
+    const setup = await headersFor("/setup");
+    expect(setup.find((h) => h.key === "Referrer-Policy")?.value).toBe("no-referrer");
+    expect(setup.find((h) => h.key === "Cache-Control")?.value).toContain("no-store");
+  });
 });

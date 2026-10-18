@@ -4,6 +4,8 @@
   "POST /api/app-mcp/ticket": "signed-in",
   "POST /api/auth/invitations/redeem": "public",
   "POST /api/auth/invitations/request": "public",
+  "POST /api/auth/setup/check": "public",
+  "POST /api/auth/setup/owner": "public",
   "GET /api/chat/active": "signed-in",
   "POST /api/chat/approval": "signed-in",
   "POST /api/chat/attach": "signed-in",

@@ -1137,6 +1137,27 @@ export class HermesApiClient {
     });
   }
 
+  /** First-run owner setup (hermes_cli/first_run.py): is this link usable? */
+  async setupCheck(token: string, clientIp = ""): Promise<{ ok: boolean }> {
+    return this.request("/api/setup/check", {
+      method: "POST",
+      json: { token },
+      headers: forwardedFor(clientIp),
+    });
+  }
+
+  /** First-run owner setup: create the owner's login from the one-time link. */
+  async setupOwner(
+    input: { token: string; email: string; password: string },
+    clientIp = "",
+  ): Promise<{ ok: boolean }> {
+    return this.request("/api/setup/owner", {
+      method: "POST",
+      json: input,
+      headers: forwardedFor(clientIp),
+    });
+  }
+
   /** Ask an administrator for a reset link. Always answers `{ok: true}`. */
   async requestInvitation(
     email: string,
