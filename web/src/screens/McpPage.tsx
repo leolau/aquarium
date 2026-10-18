@@ -21,6 +21,7 @@ import { Toast } from "@nous-research/ui/ui/components/toast";
 import { Card, CardContent } from "@nous-research/ui/ui/components/card";
 import { Input } from "@nous-research/ui/ui/components/input";
 import { Label } from "@nous-research/ui/ui/components/label";
+import { useIsAdmin } from "@/contexts/useAdminRole";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { cn, themedBody } from "@/lib/utils";
 
@@ -64,6 +65,7 @@ const TRANSPORT_TONE: Record<string, "success" | "warning" | "secondary"> = {
 };
 
 export default function McpPage() {
+  const isAdmin = useIsAdmin();
   const [servers, setServers] = useState<McpServer[]>([]);
   const [catalog, setCatalog] = useState<McpCatalogEntry[]>([]);
   const [diagnostics, setDiagnostics] = useState<McpCatalogDiagnostic[]>([]);
@@ -286,6 +288,7 @@ export default function McpPage() {
 
   // Put "Add Server" button in page header
   useLayoutEffect(() => {
+    if (!isAdmin) return;
     setEnd(
       <Button
         className="uppercase"
@@ -298,7 +301,7 @@ export default function McpPage() {
     return () => {
       setEnd(null);
     };
-  }, [setEnd, loading]);
+  }, [setEnd, loading, isAdmin]);
 
   if (loading) {
     return (
@@ -622,6 +625,7 @@ export default function McpPage() {
                   )}
                 </div>
 
+                {isAdmin && (
                 <div className="flex items-center gap-1 shrink-0">
                   <Button
                     ghost
@@ -664,6 +668,7 @@ export default function McpPage() {
                     <Trash2 />
                   </Button>
                 </div>
+                )}
               </CardContent>
             </Card>
           );
@@ -812,7 +817,7 @@ export default function McpPage() {
                 <div className="flex items-center gap-1 shrink-0">
                   {entry.installed ? (
                     <Badge tone="success">Installed</Badge>
-                  ) : (
+                  ) : isAdmin ? (
                     <Button
                       className="uppercase"
                       size="sm"
@@ -822,7 +827,7 @@ export default function McpPage() {
                     >
                       {isInstalling ? "Installing..." : "Install"}
                     </Button>
-                  )}
+                  ) : null}
                 </div>
               </CardContent>
             </Card>
