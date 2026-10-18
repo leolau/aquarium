@@ -583,3 +583,30 @@ def test_pure_helpers():
         ("https://e.com/f.pdf", None)
     ]
     assert m.paths_in_text("wrote /w/a.md, then /w/b.md.") == ["/w/a.md", "/w/b.md"]
+
+
+def test_agent_written_html_downloads_sandboxed_and_pdf_stays_inline(env):
+    """F3: an agent can write HTML; it must never render inline on the origin."""
+    client, _state, tmp = env
+    project = _project(env)
+    ws = tmp / "ws" / "xss"
+    ws.mkdir(parents=True)
+    (ws / "report.html").write_text("<script>alert(document.cookie)</script>")
+    (ws / "logo.svg").write_text("<svg xmlns='http://www.w3.org/2000/svg' onload='alert(1)'/>")
+    (ws / "mou.pdf").write_bytes(b"%PDF-1.4")
+    _done_card(project, title="xss", workspace=ws, metadata={"artifacts": [
+        str(ws / "report.html"), str(ws / "logo.svg"), str(ws / "mou.pdf"),
+    ]})
+    by_title = {a["title"]: a for a in _artifacts(env, project["slug"])}
+    slug = project["slug"]
+
+    for name in ("report.html", "logo.svg"):
+        resp = client.get(f"/api/registry/projects/{slug}/artifacts/{by_title[name]['id']}/content")
+        assert resp.status_code == 200
+        assert resp.headers["content-disposition"].startswith("attachment;")
+        assert resp.headers["x-content-type-options"] == "nosniff"
+        assert resp.headers["content-security-policy"].startswith("sandbox;")
+
+    resp = client.get(f"/api/registry/projects/{slug}/artifacts/{by_title['mou.pdf']['id']}/content")
+    assert resp.headers["content-disposition"].startswith("inline;")
+    assert resp.headers["content-security-policy"].startswith("sandbox;")

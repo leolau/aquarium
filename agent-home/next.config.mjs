@@ -1,5 +1,11 @@
 import { execSync } from "node:child_process";
 
+import {
+  baselineSecurityHeaders,
+  PAGE_HEADERS_SOURCE,
+  pageSecurityHeaders,
+} from "./src/lib/http/security-headers.mjs";
+
 /** Short git SHA of the checkout being built — what the deploy script
  *  reports as `deploy OK (<sha>)`. Baked into the bundle so the UI can show
  *  it and compare it against the server build (stale-bundle detection).
@@ -44,6 +50,12 @@ const nextConfig = {
   // fetch of the page itself.
   async headers() {
     return [
+      // Baseline for every response; listed first so the entries below (the
+      // later entry wins per key) can tighten Referrer-Policy. The page CSP
+      // skips /api/ so the file proxies keep their own sandbox CSP
+      // (src/lib/http/file-headers.ts).
+      { source: "/:path*", headers: baselineSecurityHeaders() },
+      { source: PAGE_HEADERS_SOURCE, headers: pageSecurityHeaders() },
       {
         source: "/activate/:path*",
         headers: [
