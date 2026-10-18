@@ -121,3 +121,19 @@ def connection_key(connection: Any) -> Tuple[str, str, str]:
         return (str(addr), str(params.user), str(params.database))
     except AttributeError:
         return ("", "", "")
+
+
+async def execute_schema_change(connection: Any, sql: str) -> str:
+    """Run DDL that must not be skipped (e.g. a promoted schema migration).
+
+    On a login that does not own the schema this raises instead of silently
+    skipping, so the caller cannot report a change that never happened.
+    """
+    if getattr(connection, "_hermes_skip_setup", False):
+        raise PermissionError(
+            "This changes the database schema, which only the schema owner may "
+            "do; the agent's database login (hermes_app) cannot. Run it as the "
+            "owner, e.g. on the server with the address in "
+            "/etc/aquarium/db-admin.env."
+        )
+    return await connection.execute(sql)
