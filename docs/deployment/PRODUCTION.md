@@ -198,6 +198,24 @@ from this root-owned tree. Services running as hermes only read the checkout.
 If something must write there, make that one path hermes-writable rather than
 undoing everything.
 
+#### Agent terminal as its own user (`hermes-tools`)
+The gateway runs as `hermes`, so a command the agent runs as `hermes` can read
+the gateway's secrets (`/proc/<pid>/environ`, `$HERMES_HOME/.env`). The helper
+`/usr/local/sbin/hermes-tools-exec` (root-owned copy of `deploy/hermes-tools-exec`)
+plus `/etc/sudoers.d/hermes-tools` let `hermes` start a shell as the
+unprivileged `hermes-tools` user, never root. Fresh installs create the user
+and install both. One-time install on this box (does nothing until the
+terminal is switched to it in a later change):
+```bash
+id hermes-tools || useradd --system --create-home --home-dir /home/hermes-tools --shell /usr/sbin/nologin hermes-tools
+install -m 755 -o root -g root /opt/data/hermes-agent/deploy/hermes-tools-exec /usr/local/sbin/hermes-tools-exec
+visudo -cf /opt/data/hermes-agent/deploy/sudoers.d/hermes-tools && \
+  install -m 440 -o root -g root /opt/data/hermes-agent/deploy/sudoers.d/hermes-tools /etc/sudoers.d/hermes-tools
+# check: prints hermes-tools
+sudo -u hermes sudo -n -u hermes-tools /usr/local/sbin/hermes-tools-exec bash -c 'id -un'
+```
+Undo: `rm /etc/sudoers.d/hermes-tools /usr/local/sbin/hermes-tools-exec; userdel -r hermes-tools`.
+
 #### Database table setup (`hermes db migrate`)
 Each store creates its own tables on first use, but Postgres only lets the
 schema owner do that. A least-privilege login (`hermes_app`) skips those
