@@ -6,6 +6,7 @@ Exposes email data and unified contact management as MCP tools.
 Runs on port 8651.
 """
 
+import hmac
 import json
 import sqlite3
 import os
@@ -578,9 +579,33 @@ TOOLS = {
 }
 
 
+
+def _bind_host():
+    """Loopback by default; set EMAIL_MCP_HOST to expose deliberately."""
+    return os.environ.get('EMAIL_MCP_HOST', '127.0.0.1')
+
+
+def _authorized(headers):
+    """Bearer token from EMAIL_MCP_TOKEN. Fails closed when no token is set."""
+    token = os.environ.get('EMAIL_MCP_TOKEN', '')
+    if not token:
+        return False
+    auth = headers.get('Authorization', '')
+    supplied = auth[7:] if auth.lower().startswith('bearer ') else headers.get('X-MCP-Token', '')
+    return hmac.compare_digest(supplied.encode(), token.encode())
+
+
 class MCPHandler(BaseHTTPRequestHandler):
+    def _check_auth(self):
+        if _authorized(self.headers):
+            return True
+        self._respond(401, {'error': 'Unauthorized: send Authorization: Bearer $EMAIL_MCP_TOKEN'})
+        return False
+
     def do_GET(self):
         parsed = urlparse(self.path)
+        if parsed.path != '/health' and not self._check_auth():
+            return
 
         if parsed.path == '/health':
             self._respond(200, {'status': 'running', 'tools': list(TOOLS.keys()), 'tool_count': len(TOOLS)})
@@ -604,6 +629,8 @@ class MCPHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
+        if not self._check_auth():
+            return
 
         if parsed.path == '/call':
             content_len = int(self.headers.get('Content-Length', 0))
@@ -683,7 +710,6 @@ class MCPHandler(BaseHTTPRequestHandler):
     def _respond(self, code, data):
         self.send_response(code)
         self.send_header('Content-Type', 'application/json')
-        self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
         self.wfile.write(json.dumps(data, default=str).encode())
 
@@ -694,8 +720,11 @@ class MCPHandler(BaseHTTPRequestHandler):
 def main():
     print(f"[email-mcp] Email + Contact MCP Server starting on port {PORT}")
     print(f"[email-mcp] Tools available: {len(TOOLS)} ({list(TOOLS.keys())})")
-    server = HTTPServer(('0.0.0.0', PORT), MCPHandler)
-    print(f"[email-mcp] Listening on 0.0.0.0:{PORT}")
+    host = _bind_host()
+    if not os.environ.get('EMAIL_MCP_TOKEN'):
+        print('[email-mcp] WARNING: EMAIL_MCP_TOKEN not set; every tool call will be refused (401)')
+    server = HTTPServer((host, PORT), MCPHandler)
+    print(f"[email-mcp] Listening on {host}:{PORT}")
     server.serve_forever()
 
 

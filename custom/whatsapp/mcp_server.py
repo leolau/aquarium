@@ -6,6 +6,7 @@ Exposes WhatsApp data from SQLite as MCP tools accessible by the Hermes Agent.
 Runs as an SSE server on port 8650.
 """
 
+import hmac
 import json
 import sqlite3
 import os
@@ -345,11 +346,35 @@ TOOLS = {
 }
 
 
+
+def _bind_host():
+    """Loopback by default; set WHATSAPP_MCP_HOST to expose deliberately."""
+    return os.environ.get('WHATSAPP_MCP_HOST', '127.0.0.1')
+
+
+def _authorized(headers):
+    """Bearer token from WHATSAPP_MCP_TOKEN. Fails closed when no token is set."""
+    token = os.environ.get('WHATSAPP_MCP_TOKEN', '')
+    if not token:
+        return False
+    auth = headers.get('Authorization', '')
+    supplied = auth[7:] if auth.lower().startswith('bearer ') else headers.get('X-MCP-Token', '')
+    return hmac.compare_digest(supplied.encode(), token.encode())
+
+
 class MCPHandler(BaseHTTPRequestHandler):
     """Simple JSON-RPC style MCP server over HTTP."""
 
+    def _check_auth(self):
+        if _authorized(self.headers):
+            return True
+        self._respond(401, {'error': 'Unauthorized: send Authorization: Bearer $WHATSAPP_MCP_TOKEN'})
+        return False
+
     def do_GET(self):
         parsed = urlparse(self.path)
+        if parsed.path != '/health' and not self._check_auth():
+            return
 
         if parsed.path == '/health':
             self._respond(200, {'status': 'running', 'tools': list(TOOLS.keys())})
@@ -380,6 +405,8 @@ class MCPHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
+        if not self._check_auth():
+            return
 
         if parsed.path == '/call':
             content_len = int(self.headers.get('Content-Length', 0))
@@ -460,7 +487,6 @@ class MCPHandler(BaseHTTPRequestHandler):
     def _respond(self, code, data):
         self.send_response(code)
         self.send_header('Content-Type', 'application/json')
-        self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
         self.wfile.write(json.dumps(data, default=str).encode())
 
@@ -471,8 +497,11 @@ class MCPHandler(BaseHTTPRequestHandler):
 def main():
     print(f"[mcp] WhatsApp MCP Server starting on port {PORT}")
     print(f"[mcp] Tools available: {list(TOOLS.keys())}")
-    server = HTTPServer(('0.0.0.0', PORT), MCPHandler)
-    print(f"[mcp] Listening on 0.0.0.0:{PORT}")
+    host = _bind_host()
+    if not os.environ.get('WHATSAPP_MCP_TOKEN'):
+        print('[mcp] WARNING: WHATSAPP_MCP_TOKEN not set; every tool call will be refused (401)')
+    server = HTTPServer((host, PORT), MCPHandler)
+    print(f"[mcp] Listening on {host}:{PORT}")
     server.serve_forever()
 
 

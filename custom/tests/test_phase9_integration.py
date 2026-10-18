@@ -40,8 +40,10 @@ def mcp_call(base, tool, params=None):
         url = f"{base}/call?tool={tool}&{qs}"
     else:
         url = f"{base}/call?tool={tool}"
+    token = os.environ.get("EMAIL_MCP_TOKEN" if base == EMAIL_MCP else "WHATSAPP_MCP_TOKEN", "")
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
     try:
-        resp = urllib.request.urlopen(url, timeout=10)
+        resp = urllib.request.urlopen(req, timeout=10)
         return json.loads(resp.read().decode())
     except Exception as e:
         return {"error": str(e)}

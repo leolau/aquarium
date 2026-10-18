@@ -7,8 +7,11 @@ auto-merges high-confidence matches, and sends Telegram confirmations
 for medium-confidence merge suggestions.
 """
 
+import hashlib
+import hmac
 import json
 import sqlite3
+import time
 import os
 import uuid
 import re
@@ -23,6 +26,21 @@ EMAIL_DB_PATH = os.environ.get('EMAIL_DB_PATH', '/opt/data/email-messages/email_
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_USER_ID = os.environ.get('TELEGRAM_USER_ID', '')
 CALLBACK_SERVER_BASE = os.environ.get('CALLBACK_SERVER_BASE', 'http://8.217.86.90:7902')
+CALLBACK_LINK_TTL_SECONDS = 7 * 24 * 3600
+
+
+def _callback_signing_key():
+    """Shared with telegram_callback_handler: CALLBACK_SIGNING_SECRET, else
+    derived from the bot token both processes already have."""
+    secret = os.environ.get('CALLBACK_SIGNING_SECRET') or TELEGRAM_BOT_TOKEN
+    return hmac.new(secret.encode(), b'contact-merge-callback', hashlib.sha256).digest()
+
+
+def sign_callback_url(action, suggestion_id, now=None):
+    exp = int((now if now is not None else time.time()) + CALLBACK_LINK_TTL_SECONDS)
+    msg = f"{action}:{suggestion_id}:{exp}".encode()
+    sig = hmac.new(_callback_signing_key(), msg, hashlib.sha256).hexdigest()
+    return f"{CALLBACK_SERVER_BASE}/action/{action}/{suggestion_id}?exp={exp}&sig={sig}"
 
 
 def get_db():
@@ -197,8 +215,8 @@ def send_merge_confirmation(db, suggestion_id, new_handle, new_name,
     text += f"\n{handles_text}\n"
     text += f"Reason: {reason}"
 
-    merge_url = f"{CALLBACK_SERVER_BASE}/action/merge/{suggestion_id}"
-    reject_url = f"{CALLBACK_SERVER_BASE}/action/reject/{suggestion_id}"
+    merge_url = sign_callback_url('merge', suggestion_id)
+    reject_url = sign_callback_url('reject', suggestion_id)
 
     reply_markup = {
         "inline_keyboard": [[
