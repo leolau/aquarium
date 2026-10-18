@@ -160,6 +160,8 @@ def test_git_hooks_and_fsmonitor_are_disabled_before_any_git_call() -> None:
 
 def test_root_runs_python_isolated() -> None:
     assert "./.venv/bin/python -I -m pip install" in TEXT
+    # hermes can't write __pycache__ in the root-owned tree: root compiles it.
+    assert "./.venv/bin/python -I -m compileall" in TEXT
     assert "pip install -q -e ." not in TEXT.replace("-m pip install -q -e .", "")
     assert "./.venv/bin/python -I scripts/deploy_state.py handover" in TEXT
     code = "\n".join(line for line in TEXT.splitlines() if not line.lstrip().startswith("#"))

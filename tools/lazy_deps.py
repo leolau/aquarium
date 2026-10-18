@@ -347,13 +347,24 @@ def _python_abi_tag() -> str:
 def _lazy_install_target() -> Optional[Path]:
     """Return the durable install-target dir, or None for venv-scoped mode.
 
-    Returns a path only when :data:`_LAZY_TARGET_ENV` is set to a non-empty
-    value. The directory is created on demand by :func:`_ensure_target_ready`.
+    Returns :data:`_LAZY_TARGET_ENV` when set, else ``$HERMES_HOME/lazy-packages``
+    when the venv's site-packages is not writable by this user (and installs
+    are not sealed off). The directory is created on demand by
+    :func:`_ensure_target_ready`.
     """
     raw = os.environ.get(_LAZY_TARGET_ENV, "").strip()
-    if not raw:
+    if raw:
+        return Path(raw)
+    if os.environ.get("HERMES_DISABLE_LAZY_INSTALLS") == "1" or _venv_site_writable():
         return None
-    return Path(raw)
+    # The venv is root-owned (production deploy, security review F13) but the
+    # service user may still lazy-install: use a dir in HERMES_HOME instead.
+    from hermes_constants import get_hermes_home
+    return get_hermes_home() / "lazy-packages"
+
+
+def _venv_site_writable() -> bool:
+    return os.access(sysconfig.get_paths()["purelib"], os.W_OK)
 
 
 def _ensure_target_ready(target: Path) -> Optional[str]:

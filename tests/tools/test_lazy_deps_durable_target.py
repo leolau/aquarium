@@ -45,6 +45,59 @@ class TestTargetResolution:
         assert ld._lazy_install_target() == tmp_path / "lazy"
 
 
+class TestRootOwnedVenvFallback:
+    """Production deploys make the venv root-owned (security review F13); the
+    hermes service user must still be able to lazy-install, into HERMES_HOME."""
+
+    def test_unwritable_venv_falls_back_to_hermes_home(self, monkeypatch, tmp_path):
+        monkeypatch.delenv(ld._LAZY_TARGET_ENV, raising=False)
+        monkeypatch.delenv("HERMES_DISABLE_LAZY_INSTALLS", raising=False)
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        monkeypatch.setattr(ld, "_venv_site_writable", lambda: False)
+        assert ld._lazy_install_target() == tmp_path / "lazy-packages"
+
+    def test_writable_venv_keeps_venv_scoped_installs(self, monkeypatch, tmp_path):
+        monkeypatch.delenv(ld._LAZY_TARGET_ENV, raising=False)
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        monkeypatch.setattr(ld, "_venv_site_writable", lambda: True)
+        assert ld._lazy_install_target() is None
+
+    def test_sealed_venv_stays_sealed(self, monkeypatch, tmp_path):
+        monkeypatch.delenv(ld._LAZY_TARGET_ENV, raising=False)
+        monkeypatch.setenv("HERMES_DISABLE_LAZY_INSTALLS", "1")
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        monkeypatch.setattr(ld, "_venv_site_writable", lambda: False)
+        assert ld._lazy_install_target() is None
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permission bits")
+    def test_real_readonly_site_packages_detected(self, monkeypatch, tmp_path):
+        site_dir = tmp_path / "site-packages"
+        site_dir.mkdir()
+        site_dir.chmod(0o555)
+        monkeypatch.setattr(sysconfig, "get_paths", lambda *a, **k: {"purelib": str(site_dir)})
+        try:
+            assert ld._venv_site_writable() is False
+        finally:
+            site_dir.chmod(0o755)
+
+    def test_bootstrap_activates_fallback_dir_on_next_start(self, tmp_path):
+        """Packages installed into the fallback dir import in a new process."""
+        home = tmp_path / "home"
+        pkg = home / "lazy-packages" / "lazy_fallback_probe"
+        pkg.mkdir(parents=True)
+        (pkg / "__init__.py").write_text("OK = 1\n")
+        repo = Path(__file__).resolve().parents[2]
+        code = (
+            "import tools.lazy_deps as ld; ld._venv_site_writable = lambda: False; "
+            "import hermes_bootstrap; hermes_bootstrap.activate_durable_lazy_target(); "
+            "import lazy_fallback_probe; print(lazy_fallback_probe.OK)"
+        )
+        env = {k: v for k, v in os.environ.items() if k not in (ld._LAZY_TARGET_ENV, "HERMES_DISABLE_LAZY_INSTALLS")}
+        env["HERMES_HOME"] = str(home)
+        r = subprocess.run([sys.executable, "-c", code], cwd=repo, env=env, capture_output=True, text=True)
+        assert r.stdout.strip() == "1", r.stderr
+
+
 class TestGatingWithTarget:
     """``HERMES_DISABLE_LAZY_INSTALLS=1`` must STOP blocking once a durable
     target is configured — the redirect is the safe path — but the config

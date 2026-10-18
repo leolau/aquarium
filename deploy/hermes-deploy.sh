@@ -157,6 +157,10 @@ echo "$BEFORE -> $AFTER"
 
 echo "== reinstalling package =="
 ./.venv/bin/python -I -m pip install -q -e .
+# The services run as hermes and can't write __pycache__ in this root-owned
+# tree, so compile here; otherwise every start recompiles in memory.
+nice -n 15 ./.venv/bin/python -I -m compileall -q -j 0 \
+  -x '/(node_modules|\.venv|\.git|web_dist|\.next)/' . >/dev/null 2>&1 || true
 
 # The dashboard runs with --skip-build and serves the prebuilt bundle in
 # hermes_cli/web_dist, which is git-ignored: without this step a deploy ships
