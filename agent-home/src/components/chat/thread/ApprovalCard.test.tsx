@@ -38,6 +38,13 @@ describe("ApprovalCard", () => {
     ]);
   });
 
+  it("marks every choice as user-only for app-mcp (F17)", () => {
+    render(<ApprovalCard request={request} busy={false} onResolve={() => {}} />);
+    for (const button of screen.getAllByRole("button")) {
+      expect(button.closest("[data-appmcp-deny]")).not.toBeNull();
+    }
+  });
+
   it("focuses the first choice and scrolls itself into view on mount", () => {
     const scroll = vi.fn();
     Element.prototype.scrollIntoView = scroll;

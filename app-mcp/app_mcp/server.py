@@ -47,9 +47,10 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.lowlevel.server import request_ctx
 
 from . import netfolders as nf
-from .guard import looks_destructive, looks_sensitive
+from .guard import is_user_only, looks_destructive, looks_sensitive
 from .help import help_for
 from .hub import Hub, HubError
+from .mcp_auth import BearerTokenMiddleware, read_token, token_file
 from .pages import PAGES
 from .ticket import verify_ticket
 
@@ -83,6 +84,13 @@ ELEMENT_ACTIONS = {"click", "type", "select", "focus", "read", "scroll"}
 SENSITIVE_READ_REFUSAL = (
     "That field holds a password or secret; app-mcp never reads it back."
 )
+USER_ONLY_REFUSAL = (
+    "That is an approval or consent control (Approve / Always approve / Deny, "
+    "Folder Bridge trust). Only the user may press it; neither app_act nor "
+    "app_act_destructive will. Ask the user to decide."
+)
+# Actions that would change a user-only control; read/scroll stay allowed.
+USER_ONLY_BLOCKED = {"click", "type", "select", "focus"}
 UNNAMED_REFUSAL = (
     "That control has no visible name, so app-mcp cannot tell whether it is "
     "safe. Use app_act_destructive (the user approves it) instead."
@@ -257,6 +265,8 @@ async def _run_action(
             if target is None:
                 return {"ok": False, "detail": problem}
             target_name = str(target.get("name") or "").strip()
+            if action in USER_ONLY_BLOCKED and is_user_only(target):
+                return {"ok": False, "detail": USER_ONLY_REFUSAL, "element": target_name}
             if action == "read" and target.get("sensitive"):
                 return {"ok": False, "detail": SENSITIVE_READ_REFUSAL, "element": target_name}
             if enforce_guard and action in ("click", "select"):
@@ -346,7 +356,8 @@ async def app_act(
     Actions: click, type, select, focus, read, scroll (target one element by
     element_id from app_describe_page; a name/selector must match exactly one
     element); navigate (pass path, e.g. "/todos"); snapshot. Refuses elements
-    that look destructive or have no name — those need app_act_destructive."""
+    that look destructive or have no name — those need app_act_destructive.
+    Never operates approval/consent controls (Approve, Deny, folder trust)."""
     return await _run_action(action, element_id, name, selector, value, path, enforce_guard=True)
 
 
@@ -362,7 +373,9 @@ async def app_act_destructive(
     """Perform a DESTRUCTIVE or externally-visible action on the user's app UI
     (delete, archive, send, submit…). This tool is gated by the user's
     approval flow — the user sees exactly what will happen and approves or
-    denies before anything runs. Same parameters as app_act."""
+    denies before anything runs. Same parameters as app_act. Approval and
+    consent controls (Approve / Always approve / Deny, Folder Bridge trust)
+    are refused here too — only the user presses those."""
     return await _run_action(action, element_id, name, selector, value, path, enforce_guard=False)
 
 
@@ -620,9 +633,38 @@ async def _main() -> None:
             "app-mcp: APP_MCP_TICKET_SECRET is not set — refusing to start "
             "(the browser bridge would be unauthenticated)."
         )
+    path = token_file()
+    if path is None:
+        log.warning(
+            "app-mcp: HERMES_HOME is not set — the MCP endpoint accepts any local "
+            "caller. Add HERMES_HOME=<the gateway's Hermes home> to app-mcp.env."
+        )
+    elif not read_token(path):
+        log.warning(
+            "app-mcp: no %s yet — the MCP endpoint accepts any local caller "
+            "until Hermes connects and creates it.",
+            path,
+        )
     async with websockets.serve(_ws_handler, "127.0.0.1", WS_PORT):
         log.info("app-mcp: WS hub on 127.0.0.1:%s, MCP on 127.0.0.1:%s/mcp", WS_PORT, MCP_PORT)
-        await mcp.run_streamable_http_async()
+        await _serve_mcp()
+
+
+def mcp_http_app(path=None):
+    """The streamable-HTTP MCP app behind the bearer-token check (F19)."""
+    return BearerTokenMiddleware(mcp.streamable_http_app(), path or token_file())
+
+
+async def _serve_mcp() -> None:  # pragma: no cover - runs the real server
+    import uvicorn
+
+    config = uvicorn.Config(
+        mcp_http_app(),
+        host=mcp.settings.host,
+        port=mcp.settings.port,
+        log_level=mcp.settings.log_level.lower(),
+    )
+    await uvicorn.Server(config).serve()
 
 
 def main() -> None:

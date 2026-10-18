@@ -463,7 +463,9 @@ def resolve_whatsapp_bridge_dir() -> Path:
     except (OSError, PermissionError):
         install_writable = False
 
-    if install_writable:
+    # A read-only tree whose dependencies are already installed (root-owned
+    # production checkout) runs as is; a mirror would never get code updates.
+    if install_writable or (install_bridge / "node_modules").is_dir():
         return install_bridge
 
     # Install dir is read-only, mirror to HERMES_HOME if needed

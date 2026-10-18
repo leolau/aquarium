@@ -892,12 +892,12 @@ class TestMediaDeliveryPathValidation:
 
 
 class TestMediaDeliveryDefaultMode:
-    """Default (non-strict) mode — denylist gates delivery, nothing else.
+    """Opt-out (``gateway.strict: false``) mode — the denylist gates delivery.
 
     Symmetric with inbound delivery: Telegram/Discord/Slack accept any
     document type the user uploads, and the agent can hand back any file
-    that isn't a credential. Strict mode is opt-in for operators running
-    public-facing gateways.
+    that isn't a credential. Strict mode is the default since security
+    review F21 (see test_media_delivery_strict_default.py).
     """
 
     def _patch_roots(self, monkeypatch, *roots):
@@ -908,9 +908,9 @@ class TestMediaDeliveryDefaultMode:
             "gateway.platforms.base.MEDIA_DELIVERY_SAFE_ROOTS",
             tuple(roots),
         )
-        # Pin strict OFF — the public default. Tests that exercise the
+        # Pin strict OFF — the single-user opt-out. Tests that exercise the
         # strict path live in TestMediaDeliveryPathValidation.
-        monkeypatch.delenv("HERMES_MEDIA_DELIVERY_STRICT", raising=False)
+        monkeypatch.setenv("HERMES_MEDIA_DELIVERY_STRICT", "0")
         monkeypatch.delenv("HERMES_MEDIA_ALLOW_DIRS", raising=False)
 
     def test_accepts_stale_file_outside_allowlist(self, tmp_path, monkeypatch):
@@ -1178,15 +1178,17 @@ class TestMediaDeliveryDefaultMode:
         assert BasePlatformAdapter.validate_media_delivery_path(str(stale)) is None
 
     def test_strict_mode_truthy_aliases(self, monkeypatch, tmp_path):
-        """``HERMES_MEDIA_DELIVERY_STRICT=true|yes|on|1`` all enable strict mode."""
+        """Strict unless ``HERMES_MEDIA_DELIVERY_STRICT`` is 0/false/no/off."""
         self._patch_roots(monkeypatch)
         from gateway.platforms.base import _media_delivery_strict_mode
 
-        for raw in ("1", "true", "TRUE", "yes", "on"):
+        for raw in ("1", "true", "TRUE", "yes", "on", ""):
             monkeypatch.setenv("HERMES_MEDIA_DELIVERY_STRICT", raw)
             assert _media_delivery_strict_mode() is True
+        monkeypatch.delenv("HERMES_MEDIA_DELIVERY_STRICT")
+        assert _media_delivery_strict_mode() is True
 
-        for raw in ("0", "false", "no", "off", ""):
+        for raw in ("0", "false", "OFF", "no", "off"):
             monkeypatch.setenv("HERMES_MEDIA_DELIVERY_STRICT", raw)
             assert _media_delivery_strict_mode() is False
 

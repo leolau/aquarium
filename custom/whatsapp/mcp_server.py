@@ -352,11 +352,34 @@ def _bind_host():
     return os.environ.get('WHATSAPP_MCP_HOST', '127.0.0.1')
 
 
-def _authorized(headers):
-    """Bearer token from WHATSAPP_MCP_TOKEN. Fails closed when no token is set."""
+_LOOPBACK_HOSTS = {'127.0.0.1', 'localhost', '::1', '[::1]'}
+
+
+def _local_unauthenticated_ok(handler):
+    """No WHATSAPP_MCP_TOKEN set (installs from before F1): keep working for programs on
+    this machine, but refuse anything a browser page could send. Browsers add
+    an Origin header to cross-site POSTs, cannot send application/json
+    cross-site without a CORS preflight (which we never allow), and a DNS
+    rebinding page arrives with a non-loopback Host header."""
+    if handler.client_address[0] not in ('127.0.0.1', '::1'):
+        return False
+    if handler.headers.get('Origin') or handler.headers.get('Sec-Fetch-Site') not in (None, 'none'):
+        return False
+    host = handler.headers.get('Host', '')
+    host = host.rsplit(':', 1)[0] if not host.endswith(']') else host
+    if host not in _LOOPBACK_HOSTS:
+        return False
+    if handler.command == 'POST':
+        return handler.headers.get('Content-Type', '').split(';')[0].strip().lower() == 'application/json'
+    return True
+
+
+def _authorized(handler):
+    """Bearer token from WHATSAPP_MCP_TOKEN when set; without one, local callers only."""
     token = os.environ.get('WHATSAPP_MCP_TOKEN', '')
     if not token:
-        return False
+        return _local_unauthenticated_ok(handler)
+    headers = handler.headers
     auth = headers.get('Authorization', '')
     supplied = auth[7:] if auth.lower().startswith('bearer ') else headers.get('X-MCP-Token', '')
     return hmac.compare_digest(supplied.encode(), token.encode())
@@ -366,7 +389,7 @@ class MCPHandler(BaseHTTPRequestHandler):
     """Simple JSON-RPC style MCP server over HTTP."""
 
     def _check_auth(self):
-        if _authorized(self.headers):
+        if _authorized(self):
             return True
         self._respond(401, {'error': 'Unauthorized: send Authorization: Bearer $WHATSAPP_MCP_TOKEN'})
         return False
@@ -490,7 +513,7 @@ def main():
     print(f"[mcp] Tools available: {list(TOOLS.keys())}")
     host = _bind_host()
     if not os.environ.get('WHATSAPP_MCP_TOKEN'):
-        print('[mcp] WARNING: WHATSAPP_MCP_TOKEN not set; every tool call will be refused (401)')
+        print('[mcp] WARNING: WHATSAPP_MCP_TOKEN not set; only local JSON calls without a browser Origin are accepted. Set it (and send Authorization: Bearer) to require a token.')
     server = HTTPServer((host, PORT), MCPHandler)
     print(f"[mcp] Listening on {host}:{PORT}")
     server.serve_forever()

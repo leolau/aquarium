@@ -8,11 +8,16 @@ import type { Principal } from "@/types";
 export const TOOLS_MANAGE_DENIED =
   "Only the owner or an admin can change tools and integrations.";
 
+/** Shown when a member/viewer tries an owner/admin-only change. */
+export const ADMIN_ONLY_DENIED =
+  "Only the owner or an admin can change this setting.";
+
 /**
- * Tool and MCP settings apply to everyone in the profile, so only the owner
- * and admins may change them; members and viewers can only look.
+ * Settings that apply to everyone in the profile (models, provider keys,
+ * tools) or reach the host are owner/admin only; members and viewers can only
+ * look. Mirrors `hermes_cli/route_roles.py` on the Python side.
  */
-export function canManageTools(
+export function canAdminister(
   principal: Pick<Principal, "role" | "is_owner">,
 ): boolean {
   return (
@@ -21,3 +26,6 @@ export function canManageTools(
     principal.role === "admin"
   );
 }
+
+/** Tool and MCP settings follow the same owner/admin rule. */
+export const canManageTools = canAdminister;

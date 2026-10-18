@@ -173,7 +173,10 @@ def activate_durable_lazy_target() -> None:
     security rationale). Never raises; a missing/empty target is a no-op.
     """
     if not os.environ.get("HERMES_LAZY_INSTALL_TARGET", "").strip():
-        return
+        home = os.environ.get("HERMES_HOME") or os.path.join(os.path.expanduser("~"), ".hermes")
+        # Fallback target used when the venv is root-owned (see tools.lazy_deps).
+        if not os.path.isdir(os.path.join(home, "lazy-packages")):
+            return
     try:
         from tools import lazy_deps
         lazy_deps.activate_durable_lazy_target()

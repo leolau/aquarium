@@ -38,7 +38,7 @@ export function PendingApprovals({ pending, busy, onResolve }: PendingApprovalsP
                 ) : null}
               </div>
               <span className="text-sm text-[var(--color-muted)]">{p.reason}</span>
-              <div className="flex gap-2">
+              <div className="flex gap-2" data-appmcp-deny="consent">
                 <button
                   type="button"
                   disabled={busy}

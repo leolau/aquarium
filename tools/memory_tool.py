@@ -15,6 +15,9 @@ CTO and CFO at once):
   - shared      $HERMES_HOME/memories/MEMORY.md            profile-wide, owner/admin writes
   - memory      $HERMES_HOME/memories/users/<uid>/MEMORY.md participation (person x profile)
   - user        <root>/persons/<uid>/USER.md                person, shared across profiles
+  - inbox       $HERMES_HOME/memories/INBOX_FACTS.md       untrusted facts from incoming
+                                                           messages; owner's prompt only
+                                                           (tools/inbox_memory.py, F6)
 
 With no principal (local CLI) the two original files are used exactly as
 before and no shared block is rendered, so the prompt is byte-identical.
@@ -167,6 +170,13 @@ def curated_memory_files(
         files.append(
             CuratedFile(base / "MEMORY.md", "agent notes shared by this profile", "shared")
         )
+        files.append(
+            CuratedFile(
+                inbox_path(base),
+                "facts picked out of incoming messages (untrusted)",
+                "shared",
+            )
+        )
     if include_shared and want_user:
         # Pre-FG-24 profile-wide user profile. Migrated to persons/<uid>/ and
         # normally absent; still listed so an un-migrated box is not silently
@@ -284,6 +294,14 @@ MEMORY_AUDIT_LOG = "memory_authority.jsonl"
 # ---------------------------------------------------------------------------
 
 from tools.threat_patterns import first_threat_message as _first_threat_message
+from tools.inbox_memory import (
+    INBOX_HEADER,
+    defang as _defang_inbox_entry,
+    inbox_path,
+    may_read_inbox,
+    split_bridged,
+    wrap_entries as _wrap_inbox_entries,
+)
 
 
 def _scan_memory_content(content: str) -> Optional[str]:
@@ -453,6 +471,7 @@ class MemoryStore:
             "memory": "",
             "user": "",
             "shared": "",
+            "inbox": "",
         }
         # Per-turn counter of failed at-capacity consolidation attempts; reset
         # at each turn boundary by reset_consolidation_failures() (#42405).
@@ -519,14 +538,39 @@ class MemoryStore:
         self.user_entries = list(dict.fromkeys(self.user_entries))
         self.shared_entries = list(dict.fromkeys(self.shared_entries))
 
+        # F6: facts the triage bridge took from other people's messages never
+        # render as shared memory.  Entries still in the profile-wide file
+        # (unscoped, ``memory`` IS that file) are routed to the inbox block,
+        # which only the owner sees and which is quoted as data.
+        shared_notes, legacy_shared = split_bridged(self.shared_entries)
+        if self._user_id is None:
+            memory_notes, legacy_memory = split_bridged(self.memory_entries)
+        else:
+            memory_notes, legacy_memory = self.memory_entries, []
+        inbox_entries: List[str] = []
+        if may_read_inbox(
+            self._user_id, self._role, unresolved_principal=self._unresolved_principal
+        ):
+            inbox_entries = list(
+                dict.fromkeys(
+                    legacy_shared
+                    + legacy_memory
+                    + self._read_file(inbox_path(get_memory_dir()))
+                )
+            )
+
         # Sanitize entries for the system-prompt snapshot only.  Live state
         # (memory_entries / user_entries) keeps the raw text so the user
         # can see + remove poisoned entries via the memory tool.
-        sanitized_memory = self._sanitize_entries_for_snapshot(self.memory_entries, "MEMORY.md")
+        sanitized_memory = self._sanitize_entries_for_snapshot(memory_notes, "MEMORY.md")
         sanitized_user = self._sanitize_entries_for_snapshot(self.user_entries, "USER.md")
         sanitized_shared = self._sanitize_entries_for_snapshot(
-            self.shared_entries, "MEMORY.md (shared)"
+            shared_notes, "MEMORY.md (shared)"
         )
+        sanitized_inbox = [
+            _defang_inbox_entry(e)
+            for e in self._sanitize_entries_for_snapshot(inbox_entries, "INBOX_FACTS.md")
+        ]
 
         # Capture frozen snapshot for system prompt injection.  ``shared`` is
         # empty for an unscoped store, so the rendered prompt is byte-identical
@@ -535,6 +579,7 @@ class MemoryStore:
             "memory": self._render_block("memory", sanitized_memory),
             "user": self._render_block("user", sanitized_user),
             "shared": self._render_block("shared", sanitized_shared),
+            "inbox": self._render_block("inbox", sanitized_inbox),
         }
 
     def _migrate_owner_profile(self) -> None:
@@ -725,7 +770,7 @@ class MemoryStore:
     def _char_limit(self, target: str) -> int:
         if target == "user":
             return self.user_char_limit
-        if target == "shared":
+        if target in ("shared", "inbox"):
             return self.shared_memory_char_limit
         return self.memory_char_limit
 
@@ -1085,7 +1130,7 @@ class MemoryStore:
         state. Mid-session writes do not affect this. This keeps the system
         prompt stable across all turns, preserving the prefix cache.
 
-        ``target`` is a snapshot key: ``shared``, ``memory`` or ``user``.
+        ``target`` is a snapshot key: ``shared``, ``memory``, ``inbox`` or ``user``.
 
         Returns None if the snapshot is empty (no entries at load time).
         """
@@ -1163,6 +1208,9 @@ class MemoryStore:
                 f"SHARED MEMORY (known by everyone in this profile) "
                 f"[{pct}% — {current:,}/{limit:,} chars]"
             )
+        elif target == "inbox":
+            header = f"{INBOX_HEADER} [{pct}% — {current:,}/{limit:,} chars]"
+            content = _wrap_inbox_entries(content)
         else:
             header = f"MEMORY (your personal notes) [{pct}% — {current:,}/{limit:,} chars]"
 

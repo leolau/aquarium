@@ -13,6 +13,7 @@ import hmac
 import json
 import sqlite3
 import time
+from html import escape as _esc
 import os
 import uuid
 import re
@@ -200,24 +201,24 @@ def send_merge_confirmation(db, suggestion_id, new_handle, new_name,
     handles_text = ""
     for h in candidate_handles:
         icon = "\U0001f4f1" if h['handle_type'] == 'phone' else "\U0001f4e7"
-        handles_text += f"     {icon} {h['handle_value']} ({h['handle_type']}, {h.get('message_count', 0)} msgs)\n"
+        handles_text += f"     {icon} {_esc(str(h['handle_value']))} ({_esc(str(h['handle_type']))}, {h.get('message_count', 0)} msgs)\n"
 
     icon_new = "\U0001f4e7" if '@' in new_handle else "\U0001f4f1"
     text = (
         f"\U0001f517 <b>Contact Merge Suggestion</b>\n\n"
         f"New handle detected:\n"
-        f"  {icon_new} {new_handle} (\"{new_name}\")\n\n"
+        f"  {icon_new} {_esc(str(new_handle))} (\"{_esc(str(new_name))}\")\n\n"
         f"Possible match with existing contact:\n"
-        f"  \U0001f464 <b>{candidate_contact['display_name']}</b>"
+        f"  \U0001f464 <b>{_esc(str(candidate_contact['display_name']))}</b>"
     )
 
     if candidate_contact.get('relation'):
-        text += f" ({candidate_contact['relation']})"
+        text += f" ({_esc(str(candidate_contact['relation']))})"
     if candidate_contact.get('is_family'):
         text += " [family]"
 
     text += f"\n{handles_text}\n"
-    text += f"Reason: {reason}"
+    text += f"Reason: {_esc(str(reason))}"
 
     if not CALLBACK_SERVER_BASE:
         print("[contacts] CALLBACK_SERVER_BASE not set; merge suggestion sent without buttons")

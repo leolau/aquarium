@@ -530,3 +530,21 @@ def test_generated_caddyfile_is_valid(tmp_path):
     result = subprocess.run([caddy, "validate", "--adapter", "caddyfile", "--config", str(out)],
                             capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_service_secrets_are_written_outside_the_checkout_root_only():
+    """F16: the hermes user (and so the agent's shell) must not be able to read
+    the agent-home session key or app-mcp ticket key; systemd reads them as root."""
+    text = TEXT
+    step = text[text.index("8. agent-home + app-mcp env"):text.index("9. systemd")]
+    assert 'cat > /etc/aquarium/agent-home.env <<ENV' in step
+    assert "> /etc/aquarium/app-mcp.env" in step
+    assert "umask 077" in step.split("cat > /etc/aquarium/agent-home.env")[0]
+    assert not re.search(r"chown hermes[^\n]*\.env", step)
+    assert "$APP/agent-home/agent-home.env" not in step
+    for unit in ("agent-home/deploy/agent-home.service", "app-mcp/deploy/app-mcp.service"):
+        lines = [ln for ln in (REPO_ROOT / unit).read_text().splitlines() if ln.startswith("EnvironmentFile=")]
+        # The /etc copy is read last so it wins; the old in-checkout path stays
+        # optional so a box that hasn't moved it keeps working.
+        assert lines[-1].startswith("EnvironmentFile=-/etc/aquarium/"), unit
+        assert all(ln.startswith("EnvironmentFile=-") for ln in lines), unit

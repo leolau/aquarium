@@ -19,6 +19,7 @@ import { NextResponse } from "next/server";
 
 import { HermesApiError } from "@/lib/api/client";
 import { apiClientForRequest, getPrincipal } from "@/lib/auth/principal";
+import { ADMIN_ONLY_DENIED, canAdminister } from "@/lib/auth/roles";
 
 const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -72,6 +73,12 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!principal) {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   }
+  if (!canAdminister(principal)) {
+    return NextResponse.json(
+      { error: "forbidden", detail: ADMIN_ONLY_DENIED },
+      { status: 403 },
+    );
+  }
   const body = await readKeyBody(request);
   if (!body || !ENV_KEY_RE.test(body.key) || !body.value.trim()) {
     return NextResponse.json(
@@ -107,6 +114,12 @@ export async function DELETE(request: Request): Promise<NextResponse> {
   const principal = await getPrincipal();
   if (!principal) {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
+  }
+  if (!canAdminister(principal)) {
+    return NextResponse.json(
+      { error: "forbidden", detail: ADMIN_ONLY_DENIED },
+      { status: 403 },
+    );
   }
   const body = await readKeyBody(request);
   if (!body || !ENV_KEY_RE.test(body.key)) {
