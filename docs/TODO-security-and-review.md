@@ -87,7 +87,7 @@ Order below is most-effective → least.
 ## B. Docs / design review to-dos (from ai-prentice-4-all-docs-review.md)
 
 ### B1. [High] Local services bind `0.0.0.0` and lean entirely on the SG  (review #1)
-- [ ] Bind to `127.0.0.1`: `custom/email/email_mcp_server.py:688` (:8651, also
+- [x] (F1, 2026-10-18) Bind to `127.0.0.1`: `custom/email/email_mcp_server.py:688` (:8651, also
       drop `*` CORS/no-auth), `custom/whatsapp/mcp_server.py:474` (:8650),
       `custom/whatsapp/batcher.py:348` (:7900),
       `custom/email/email_poller.py:317` (:7901),
