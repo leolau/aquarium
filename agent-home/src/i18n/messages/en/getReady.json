@@ -57,7 +57,6 @@
   "d.whatsapp.stopped": "A linked bridge is not running.",
   "d.telegram.none": "No Telegram bot yet.",
   "d.telegram.done": "This Aquarium's Telegram bot is set up.",
-  "d.telegram.coming": "Your own Telegram bot is coming soon. For now the owner's bot is shared.",
   "d.email.none": "No mailbox yet. Gmail can also be read through Google (item 4).",
   "d.email.done": "{count} mailbox(es) are read.",
   "d.tools.none": "No extra tools yet. For example Canva, Notion, or your own server.",
@@ -141,5 +140,7 @@
   "d.email.attention": "A mailbox needs a fix: its last test or check failed.",
   "d.email.untested": "Mailbox saved, not tested yet.",
   "cell.waiting.email_test": "saved, not tested",
-  "cell.waiting.email_error": "needs a fix"
+  "cell.waiting.email_error": "needs a fix",
+  "d.telegram.not_linked": "Your bot is saved. Link your Telegram account to finish.",
+  "cell.waiting.telegram_link": "not linked yet"
 }

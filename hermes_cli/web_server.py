@@ -316,6 +316,7 @@ from hermes_cli.vpn_api import router as _vpn_router  # noqa: E402
 from hermes_cli.vpn_api import internal_router as _vpn_internal_router  # noqa: E402
 from hermes_cli.vpn_api import install_internal_auth as _vpn_install_internal_auth  # noqa: E402
 from hermes_cli.email_accounts_api import router as _email_accounts_router  # noqa: E402
+from hermes_cli.telegram_bot_api import router as _telegram_bot_router  # noqa: E402
 from hermes_cli.email_mailboxes_api import router as _email_mailboxes_router  # noqa: E402
 from hermes_cli.wa_bridge_api import router as _wa_bridge_router  # noqa: E402
 from hermes_cli.backup_offsite_api import router as _backup_offsite_router  # noqa: E402
@@ -338,6 +339,7 @@ app.include_router(_credentials_router)
 app.include_router(_google_client_router)
 app.include_router(_vpn_router)
 app.include_router(_vpn_internal_router)
+app.include_router(_telegram_bot_router)
 _vpn_install_internal_auth()
 app.include_router(_email_accounts_router)
 app.include_router(_email_mailboxes_router)

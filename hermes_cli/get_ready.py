@@ -413,13 +413,39 @@ async def status_whatsapp(ctx: Context) -> ItemStatus:
     return ItemStatus(ATTENTION, "whatsapp.stopped")
 
 
-async def status_telegram(ctx: Context) -> ItemStatus:
-    # The install's single bot (TELEGRAM_BOT_TOKEN in .env) is the owner's.
-    if not ctx.is_owner:
-        return ItemStatus(NOT_STARTED, "telegram.coming", coming=True)
-    if _secret_present(ctx.env, "TELEGRAM_BOT_TOKEN"):
+def telegram_bot_states(creds: List[Any]) -> Dict[str, str]:
+    """Per person, their own @BotFather bot (hermes_cli/telegram_bot_api):
+    ``linked`` or ``saved`` (token pasted, Telegram account not linked yet)."""
+    try:
+        from hermes_cli import telegram_bot_api as bots
+    except Exception:
+        return {}
+    states: Dict[str, str] = {}
+    for cred in creds:
+        if getattr(cred, "provider", "") != bots.PROVIDER or getattr(cred, "kind", "") != bots.KIND:
+            continue
+        payload = getattr(cred, "payload", None) or {}
+        states[cred.owner_user_id] = "linked" if payload.get("linked_user_id") else "saved"
+    return states
+
+
+def _telegram_status(state: Optional[str], install_bot: bool) -> ItemStatus:
+    """``install_bot``: the install's single bot (TELEGRAM_BOT_TOKEN), the owner's."""
+    if state == "linked" or install_bot:
         return ItemStatus(DONE, "telegram.done")
+    if state == "saved":
+        return ItemStatus(ATTENTION, "telegram.not_linked")
     return ItemStatus(NOT_STARTED, "telegram.none")
+
+
+async def status_telegram(ctx: Context) -> ItemStatus:
+    try:
+        creds = await own_credentials(ctx)
+    except Exception:
+        creds = []
+    state = telegram_bot_states(creds).get(ctx.user_id)
+    install_bot = ctx.is_owner and _secret_present(ctx.env, "TELEGRAM_BOT_TOKEN")
+    return _telegram_status(state, install_bot)
 
 
 async def own_mailbox_states(ctx: Context) -> List[str]:
@@ -747,6 +773,7 @@ async def people_status(ctx: Context) -> Dict[str, Any]:
     mailbox_states = await asyncio.to_thread(mailbox_states_by_person, creds)
     servers = install_mcp_servers(ctx.config)
     telegram = _secret_present(ctx.env, "TELEGRAM_BOT_TOKEN")
+    bot_states = telegram_bot_states(creds)
 
     rows = []
     for person in people:
@@ -766,14 +793,20 @@ async def people_status(ctx: Context) -> Dict[str, Any]:
             cells["whatsapp"] = {"state": WAITING, "reason": "qr"}
         else:
             cells["whatsapp"] = {"state": NOT_SET}
+        tg = _telegram_status(bot_states.get(person.user_id), is_owner and telegram)
+        if tg.status == DONE:
+            cells["telegram"] = {"state": SET}
+        elif tg.status == ATTENTION:
+            cells["telegram"] = {"state": WAITING, "reason": "telegram_link"}
+        else:
+            cells["telegram"] = {"state": NOT_SET}
         cells["email"] = _email_cell(
             _email_status(mailbox_states.get(person.user_id, []), len(mailboxes) if is_owner else 0)
         )
         if not is_owner:
-            for key in ("telegram", "tools"):
+            for key in ("tools",):
                 cells[key] = {"state": COMING}
         else:
-            cells["telegram"] = {"state": SET if telegram else NOT_SET}
             cells["tools"] = (
                 {"state": SET, "count": len(servers)} if servers else {"state": NOT_SET}
             )

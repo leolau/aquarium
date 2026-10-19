@@ -57,7 +57,6 @@
   "d.whatsapp.stopped": "有已連結的連接沒有運行。",
   "d.telegram.none": "尚未有 Telegram 機械人。",
   "d.telegram.done": "這個 Aquarium 的 Telegram 機械人已設定。",
-  "d.telegram.coming": "你自己的 Telegram 機械人即將推出。暫時共用擁有人的機械人。",
   "d.email.none": "尚未加入郵箱。Gmail 亦可經 Google（第 4 項）讀取。",
   "d.email.done": "正在讀取 {count} 個郵箱。",
   "d.tools.none": "尚未加入額外工具，例如 Canva、Notion 或你自己的伺服器。",
@@ -141,5 +140,7 @@
   "d.email.attention": "有郵箱需要修正：上次測試或檢查失敗。",
   "d.email.untested": "郵箱已儲存，尚未測試。",
   "cell.waiting.email_test": "已儲存，未測試",
-  "cell.waiting.email_error": "需要修正"
+  "cell.waiting.email_error": "需要修正",
+  "d.telegram.not_linked": "你的機械人已儲存。連結你的 Telegram 帳戶即可完成。",
+  "cell.waiting.telegram_link": "尚未連結"
 }

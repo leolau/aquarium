@@ -156,6 +156,14 @@ SIGNED_IN = {
     "POST /api/credentials/google/start",
     "POST /api/credentials/google/complete",
     "POST /api/credentials/google/{name}/refresh",
+    # telegram_bot_api: the caller's own Telegram bot
+    "GET /api/telegram-bot",
+    "PUT /api/telegram-bot",
+    "DELETE /api/telegram-bot",
+    "POST /api/telegram-bot/test",
+    "POST /api/telegram-bot/link/start",
+    "POST /api/telegram-bot/link/check",
+    "DELETE /api/telegram-bot/link",
     # wa_bridge_api: the caller's own bridges (others' only as a status for
     # owner/admin); adding one makes it the caller's
     "GET /api/wa-bridges",

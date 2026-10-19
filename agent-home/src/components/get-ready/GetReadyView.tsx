@@ -14,6 +14,7 @@ import { TelegramLinks } from "@/components/settings/TelegramLinks";
 import { ToolsSettings } from "@/components/settings/ToolsSettings";
 import { VpnConnections } from "@/components/settings/VpnConnections";
 import { WhatsAppBridges } from "@/components/settings/WhatsAppBridges";
+import { TelegramBotSetup } from "@/components/settings/TelegramBotSetup";
 import { EmailMailboxes } from "@/components/settings/EmailMailboxes";
 import { BackupsItem } from "@/components/get-ready/BackupsItem";
 import { Spinner } from "@/components/ui/Spinner";
@@ -402,7 +403,12 @@ function Panel({
     case "whatsapp":
       return <WhatsAppBridges />;
     case "telegram":
-      return isOwner ? <TelegramLinks canManage /> : <Note>{t("d.telegram.coming")}</Note>;
+      return (
+        <div className="space-y-4">
+          <TelegramBotSetup />
+          {isOwner ? <TelegramLinks canManage /> : null}
+        </div>
+      );
     case "email":
       return <EmailMailboxes />;
     case "backups":

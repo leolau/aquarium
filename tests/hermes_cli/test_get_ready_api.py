@@ -166,8 +166,8 @@ def test_existing_install_wide_settings_count_as_the_owners(client, acting, monk
     assert items["email"]["status"] == "done"
     acting["as"] = MEMBER
     items = _items(client.get("/api/get-ready").json())
-    for key in ("telegram", "tools"):
-        assert items[key]["status"] == "not_started" and items[key]["coming"], key
+    assert items["tools"]["status"] == "not_started" and items["tools"]["coming"]
+    assert items["telegram"]["status"] == "not_started" and not items["telegram"]["coming"]
     assert items["email"]["status"] == "not_started" and not items["email"]["coming"]
 
 
@@ -227,7 +227,7 @@ def test_people_status_shows_states_not_secrets(client, acting, who):
     assert rows["mia"]["connections"]["vpn"] == {"state": "set"}
     assert rows["ann"]["connections"]["vpn"] == {"state": "not_set"}
     assert rows["mia"]["connections"]["google"] == {"state": "waiting", "reason": "step_a"}
-    assert rows["mia"]["connections"]["telegram"] == {"state": "coming"}
+    assert rows["mia"]["connections"]["telegram"] == {"state": "not_set"}
     assert rows["amy"]["invited_pending"] is True
     assert rows[who.user_id]["is_you"] is True
 
@@ -342,3 +342,29 @@ def test_email_status_is_each_persons_own_mailbox(client, acting):
     assert rows["mia"]["email"] == {"state": "waiting", "reason": "email_test"}
     assert rows["ann"]["email"] == {"state": "not_set"}
     assert SECRET not in resp.text and "mia@example.com" not in resp.text
+
+
+def test_telegram_status_is_each_persons_own_bot(client, acting):
+    from hermes_cli import telegram_bot_api as bots
+    from hermes_cli.credential_store import FileCredentialStore
+
+    asyncio.run(
+        FileCredentialStore().put(
+            MEMBER,
+            provider=bots.PROVIDER,
+            name=bots.NAME,
+            kind=bots.KIND,
+            payload={"token": "123456:" + SECRET, "bot_username": "mia_bot"},
+            visibility="private:mia",
+        )
+    )
+    acting["as"] = MEMBER
+    item = _items(client.get("/api/get-ready").json())["telegram"]
+    assert item["status"] == "attention" and item["detail"] == "telegram.not_linked"
+    acting["as"] = ADMIN
+    assert _items(client.get("/api/get-ready").json())["telegram"]["status"] == "not_started"
+    resp = client.get("/api/get-ready/people")
+    rows = {r["user_id"]: r["connections"] for r in resp.json()["people"]}
+    assert rows["mia"]["telegram"] == {"state": "waiting", "reason": "telegram_link"}
+    assert rows["ann"]["telegram"] == {"state": "not_set"}
+    assert SECRET not in resp.text and "mia_bot" not in resp.text
