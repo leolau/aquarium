@@ -120,6 +120,9 @@ import type {
   SeminarSurveyAnswers,
   SeminarSurveyState,
   SeminarSurveySubmitResult,
+  GetReadyItem,
+  GetReadyPeopleResponse,
+  GetReadyResponse,
 } from "@/types";
 
 /** Raised when the Python API returns a non-2xx status. */
@@ -511,6 +514,23 @@ export class HermesApiClient {
    */
   async onboardingReadiness(): Promise<OnboardingReadinessResponse> {
     return this.request("/api/onboarding/readiness");
+  }
+
+  /** The P2 Get ready checklist for the signed-in person (status only). */
+  async getReady(): Promise<GetReadyResponse> {
+    return this.request("/api/get-ready");
+  }
+
+  /** Run one checklist item's live check; returns the refreshed item. */
+  async getReadyTest(item: string): Promise<GetReadyItem> {
+    return this.request(`/api/get-ready/${encodeURIComponent(item)}/test`, {
+      method: "POST",
+    });
+  }
+
+  /** Owner/admin: each person's connection status (never secrets). */
+  async getReadyPeople(): Promise<GetReadyPeopleResponse> {
+    return this.request("/api/get-ready/people");
   }
 
   /**
