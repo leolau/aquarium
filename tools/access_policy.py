@@ -162,6 +162,11 @@ def acting_as(user_id: Optional[str], role: Optional[str]) -> Iterator[None]:
         _principal.reset(token)
 
 
+def current_principal() -> Tuple[Optional[str], Optional[str]]:
+    """``(user_id, role)`` of the person the current tool call runs for."""
+    return _principal.get()
+
+
 def current_files_root() -> Optional[Path]:
     return files_root(*_principal.get())
 

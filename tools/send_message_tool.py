@@ -306,6 +306,41 @@ def _whatsapp_bridge_map() -> dict:
     return out
 
 
+def _whatsapp_bridge_send_denied(name, pconfig) -> str | None:
+    """Refuse to send from a bridge that belongs to someone other than the
+    person this tool call runs for (``hermes_cli.wa_bridge_owners``). Bridges
+    with no recorded person keep sending exactly as before."""
+    try:
+        from hermes_cli.wa_bridge_owners import (
+            bridge_name_for_session_path,
+            bridge_person,
+        )
+
+        extra = getattr(pconfig, "extra", None) or {}
+        if not name:
+            name = str(extra.get("bridge_name") or "").strip().lower() or None
+        if not name and extra.get("session_path"):
+            name = bridge_name_for_session_path(extra["session_path"])
+        if not name:
+            port = extra.get("bridge_port")
+            name = next(
+                (n for n, p in _whatsapp_bridge_map().items() if p == port), None
+            )
+        person = bridge_person(name) if name else None
+    except Exception:
+        return None
+    if not person:
+        return None
+    from tools.access_policy import current_principal
+
+    if current_principal()[0] == person:
+        return None
+    return (
+        f"The WhatsApp bridge '{name}' belongs to another person; only they "
+        "can send messages from it."
+    )
+
+
 def _handle_send(args):
     """Send a message to a platform target."""
     target = args.get("target", "")
@@ -319,12 +354,14 @@ def _handle_send(args):
     chat_id = None
     thread_id = None
     whatsapp_bridge_port = None
+    whatsapp_bridge_name = None
 
     # Optional named-bridge selector: whatsapp:<bridge-name>:<target>
     if platform_name == "whatsapp" and target_ref:
         _name, _sep, _rest = target_ref.partition(":")
         if _sep and _name.strip() in _whatsapp_bridge_map():
-            whatsapp_bridge_port = _whatsapp_bridge_map()[_name.strip()]
+            whatsapp_bridge_name = _name.strip()
+            whatsapp_bridge_port = _whatsapp_bridge_map()[whatsapp_bridge_name]
             target_ref = _rest.strip() or None
 
     if target_ref:
@@ -417,6 +454,11 @@ def _handle_send(args):
                 return tool_error(f"Platform '{platform_name}' is not configured. Set up credentials in ~/.hermes/config.yaml or environment variables.")
         else:
             return tool_error(f"Platform '{platform_name}' is not configured. Set up credentials in ~/.hermes/config.yaml or environment variables.")
+
+    if platform_name == "whatsapp":
+        denied = _whatsapp_bridge_send_denied(whatsapp_bridge_name, pconfig)
+        if denied:
+            return tool_error(denied)
 
     from gateway.platforms.base import BasePlatformAdapter
 

@@ -98,6 +98,7 @@ import type {
   NetworkFolderView,
   VpnView,
   WaBridge,
+  WaBridgesResponse,
   SessionTag,
   SessionsResponse,
   CronJob,
@@ -2493,8 +2494,16 @@ export class HermesApiClient {
   }
 
   /** WhatsApp bridge units (deployment sidecars; owner-gated). */
-  async waBridges(): Promise<{ bridges: WaBridge[] }> {
+  async waBridges(): Promise<WaBridgesResponse> {
     return this.request("/api/wa-bridges");
+  }
+
+  /** "Send yourself a test": one message to the bridge's own number. */
+  async waBridgeTest(name: string): Promise<{ sent: boolean; to: string | null }> {
+    return this.request(
+      `/api/wa-bridges/${encodeURIComponent(name)}/test`,
+      { method: "POST" },
+    );
   }
 
   /** Pending pairing payload for an unpaired bridge (auth material). */
