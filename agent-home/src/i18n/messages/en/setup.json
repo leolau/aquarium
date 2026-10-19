@@ -1,0 +1,18 @@
+{
+  "title": "Set up Aquarium",
+  "checking": "Checking your setup link…",
+  "invalid": "This setup link is not valid. It may have expired (links last 24 hours) or been used already.",
+  "invalidHelp": "To get a new one, run {command} on the server (as the Aquarium service account). A new link cancels the old one.",
+  "invalidFull": "This setup link is not valid. It may have expired (links last 24 hours) or been used already. Ask whoever installed Aquarium to run \"hermes setup-link\" on the server for a new one.",
+  "done": "The owner account is ready. Sign in with the email and password you just chose.",
+  "signIn": "Sign in",
+  "intro": "Create the owner's login for this Aquarium. Choose a password of at least {min} characters. This link works once.",
+  "email": "Email",
+  "password": "Password",
+  "confirm": "Confirm password",
+  "creating": "Creating…",
+  "create": "Create owner account",
+  "errorEmail": "Enter the owner's email address.",
+  "errorShort": "Use at least {min} characters.",
+  "errorMismatch": "The two passwords don't match."
+}

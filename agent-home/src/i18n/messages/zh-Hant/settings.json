@@ -1,0 +1,15 @@
+{
+  "title": "設定",
+  "language": "地區及語言",
+  "languageHint": "Aquarium 向你顯示的語言。設定會跟你的登入帳戶儲存，在其他裝置上亦適用。",
+  "theme": "顏色主題",
+  "themeHint": "選擇介面的外觀。你的選擇會儲存在這部裝置上。",
+  "notifications": "通知",
+  "inOut": "收發渠道",
+  "tools": "工具及整合",
+  "toolsHint": "助理可使用的 MCP 伺服器及 CLI 工具組 — 可啟用、停用、測試及重新驗證（例如 Canva OAuth）。",
+  "manageIntegrations": "管理整合",
+  "viewIntegrations": "查看整合",
+  "entityGoal": "機構目標",
+  "tags": "標籤"
+}

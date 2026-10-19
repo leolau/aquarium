@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { SettingsView } from "@/components/settings/SettingsView";
 
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+
 /**
  * SSR-based tests for SettingsView.
  *
@@ -100,5 +102,15 @@ describe("SettingsView", () => {
     const html = renderToStaticMarkup(<SettingsView canManageTools={false} />);
     expect(html).toContain("View integrations");
     expect(html).not.toContain("Manage integrations");
+  });
+});
+
+describe("SettingsView language", () => {
+  it("offers the EN / 繁體中文 switch inline, with English active by default", () => {
+    const html = renderToStaticMarkup(<SettingsView />);
+    expect(html).toContain("Region and language");
+    expect(html).toContain('data-component="LanguageSwitch"');
+    expect(html).toContain("繁體中文");
+    expect(html).toMatch(/aria-pressed="true"[^>]*>EN</);
   });
 });

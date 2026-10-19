@@ -91,6 +91,9 @@ HANDLER_CHECKED = {
 #: Any signed-in user; the handler limits what they see or change to their own
 #: data (chat scope, principal, project membership).
 SIGNED_IN = {
+    # user_prefs: the acting person's own language; no user id is taken from the request
+    "GET /api/me/preferences",
+    "PUT /api/me/preferences",
     # own login only (session subject, never a body id): password + two-factor
     "GET /api/account/security",
     "POST /api/account/password",

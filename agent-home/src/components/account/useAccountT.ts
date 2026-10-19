@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * Tiny local reader for the `account` strings until the shared `useT` hook
- * from `@/i18n` lands; swap this for `useT("account")` then.
+ * Typed reader for the `account` strings; the language comes from the shared
+ * `useT` hook (the person's saved choice), not the browser.
  */
-import { useEffect, useState } from "react";
+import { useT } from "@/i18n";
 
 import en from "@/i18n/messages/en/account.json";
 import zhHant from "@/i18n/messages/zh-Hant/account.json";
@@ -29,10 +29,5 @@ export function translate(
 }
 
 export function useAccountT(): AccountT {
-  const [locale, setLocale] = useState<"en" | "zh-Hant">("en");
-  useEffect(() => {
-    const docLang = document.documentElement.lang;
-    setLocale(pickLocale(docLang && docLang !== "en" ? [docLang] : navigator.languages ?? []));
-  }, []);
-  return (key, vars) => translate(locale, key, vars);
+  return useT("account") as AccountT;
 }

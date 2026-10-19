@@ -5,9 +5,11 @@ import { useState } from "react";
 
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Spinner } from "@/components/ui/Spinner";
+import { useT } from "@/i18n";
 
 /** Clears the `agent-home` session then returns to the login page. */
 export function LogoutButton() {
+  const t = useT("common");
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -35,17 +37,17 @@ export function LogoutButton() {
         {busy ? (
           <>
             <Spinner />
-            Signing out…
+            {t("signingOut")}
           </>
         ) : (
-          "Sign out"
+          t("signOut")
         )}
       </button>
       {confirming && (
         <ConfirmDialog
-          title="Sign out?"
-          body="You'll need to log in again on this device."
-          confirmLabel="Sign out"
+          title={t("signOutConfirmTitle")}
+          body={t("signOutConfirmBody")}
+          confirmLabel={t("signOut")}
           onCancel={() => setConfirming(false)}
           onConfirm={() => void signOut()}
         />

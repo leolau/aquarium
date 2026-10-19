@@ -3,8 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { useAccountT } from "@/components/account/useAccountT";
 import { Spinner } from "@/components/ui/Spinner";
+import { useT } from "@/i18n";
 
 export interface ProviderOption {
   name: string;
@@ -18,6 +18,7 @@ export interface ProviderOption {
  * Python `dashboard_auth` provider and mints the bridge session.
  */
 export function LoginForm({ providers }: { providers: ProviderOption[] }) {
+  const t = useT("login");
   const router = useRouter();
   const passwordProviders = providers.filter((p) => p.supports_password);
   const [provider, setProvider] = useState(passwordProviders[0]?.name ?? "");
@@ -29,7 +30,7 @@ export function LoginForm({ providers }: { providers: ProviderOption[] }) {
   // only until the code is accepted, then both are sent together.
   const [needsCode, setNeedsCode] = useState(false);
   const [code, setCode] = useState("");
-  const t = useAccountT();
+  const ta = useT("account");
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -60,16 +61,16 @@ export function LoginForm({ providers }: { providers: ProviderOption[] }) {
         return;
       }
       if (body?.error === "invalid_code") {
-        setError(t("codeWrong"));
+        setError(ta("codeWrong"));
         return;
       }
       if (body?.error === "too_many_attempts") {
-        setError(t("tooMany"));
+        setError(ta("tooMany"));
         return;
       }
-      setError(body?.detail ?? "Sign-in failed.");
+      setError(body?.detail ?? t("failed"));
     } catch {
-      setError("Could not reach the server.");
+      setError(t("unreachable"));
     } finally {
       setBusy(false);
     }
@@ -79,11 +80,11 @@ export function LoginForm({ providers }: { providers: ProviderOption[] }) {
     return (
       <form data-component="LoginCodeForm" onSubmit={submit} aria-busy={busy} className="space-y-4">
         <div>
-          <h2 className="text-base font-semibold">{t("loginCodeTitle")}</h2>
-          <p className="mt-1 text-sm text-[var(--color-muted)]">{t("loginCodeHelp")}</p>
+          <h2 className="text-base font-semibold">{ta("loginCodeTitle")}</h2>
+          <p className="mt-1 text-sm text-[var(--color-muted)]">{ta("loginCodeHelp")}</p>
         </div>
         <label className="block text-sm">
-          <span className="mb-1 block text-[var(--color-muted)]">{t("loginCodeLabel")}</span>
+          <span className="mb-1 block text-[var(--color-muted)]">{ta("loginCodeLabel")}</span>
           <input
             type="text"
             inputMode="text"
@@ -108,10 +109,10 @@ export function LoginForm({ providers }: { providers: ProviderOption[] }) {
           {busy ? (
             <>
               <Spinner size="md" />
-              {t("verifying")}
+              {ta("verifying")}
             </>
           ) : (
-            t("verify")
+            ta("verify")
           )}
         </button>
         <button
@@ -124,7 +125,7 @@ export function LoginForm({ providers }: { providers: ProviderOption[] }) {
           }}
           className="w-full text-sm text-[var(--color-muted)] underline"
         >
-          {t("back")}
+          {ta("back")}
         </button>
       </form>
     );
@@ -142,7 +143,7 @@ export function LoginForm({ providers }: { providers: ProviderOption[] }) {
     >
       {passwordProviders.length > 1 ? (
         <label className="block text-sm">
-          <span className="mb-1 block text-[var(--color-muted)]">Provider</span>
+          <span className="mb-1 block text-[var(--color-muted)]">{t("provider")}</span>
           <select
             value={provider}
             onChange={(e) => setProvider(e.target.value)}
@@ -157,7 +158,7 @@ export function LoginForm({ providers }: { providers: ProviderOption[] }) {
         </label>
       ) : null}
       <label className="block text-sm">
-        <span className="mb-1 block text-[var(--color-muted)]">Email / username</span>
+        <span className="mb-1 block text-[var(--color-muted)]">{t("username")}</span>
         <input
           type="text"
           autoComplete="username"
@@ -168,7 +169,7 @@ export function LoginForm({ providers }: { providers: ProviderOption[] }) {
         />
       </label>
       <label className="block text-sm">
-        <span className="mb-1 block text-[var(--color-muted)]">Password</span>
+        <span className="mb-1 block text-[var(--color-muted)]">{t("password")}</span>
         <input
           type="password"
           autoComplete="current-password"
@@ -191,16 +192,15 @@ export function LoginForm({ providers }: { providers: ProviderOption[] }) {
         {busy ? (
           <>
             <Spinner size="md" />
-            Signing in…
+            {t("signingIn")}
           </>
         ) : (
-          "Sign in"
+          t("signIn")
         )}
       </button>
       {passwordProviders.length === 0 ? (
         <p className="text-sm text-[var(--color-muted)]">
-          No password provider is configured on the AI layer. OAuth sign-in via
-          the bridge is deferred to a later wave.
+          {t("noProvider")}
         </p>
       ) : null}
     </form>
