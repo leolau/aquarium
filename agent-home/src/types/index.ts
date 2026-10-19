@@ -2818,3 +2818,18 @@ export interface ClarifyConfirmResult {
   plan_draft: { status: string; detail?: string | null } | null;
 }
 
+
+/** A person's own Telegram bot (Get ready item 6); never carries the token. */
+export interface TelegramBotView {
+  configured: boolean;
+  linked: boolean;
+  bot_username?: string | null;
+  bot_name?: string | null;
+  linked_username?: string | null;
+  link_pending?: boolean;
+  last_test_ok?: boolean | null;
+  last_test_at?: number | null;
+  last_test_error?: string | null;
+  /** Only on `link/start`: the one-time `t.me/<bot>?start=<code>` link. */
+  link_url?: string;
+}

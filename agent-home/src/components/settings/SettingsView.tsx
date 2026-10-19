@@ -7,6 +7,7 @@ import { EntityGoalSection } from "@/components/settings/EntityGoalSection";
 import { PushEnroll } from "@/components/push/PushEnroll";
 import { ConnectedAccounts } from "@/components/settings/ConnectedAccounts";
 import { TelegramLinks } from "@/components/settings/TelegramLinks";
+import { TelegramBotSetup } from "@/components/getready/TelegramBotSetup";
 import { VpnConnections } from "@/components/settings/VpnConnections";
 import { WhatsAppBridges } from "@/components/settings/WhatsAppBridges";
 import { BusyRegion } from "@/components/ui/BusyRegion";
@@ -165,6 +166,7 @@ function InOutSection({ canManageMembers }: { canManageMembers: boolean }) {
         <ConnectedAccounts />
         <VpnConnections />
         <WhatsAppBridges />
+        <TelegramBotSetup />
         <TelegramLinks canManage={canManageMembers} />
       </div>
     </section>
