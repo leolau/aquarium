@@ -768,6 +768,10 @@ def _secure_dir(path):
         mode = int(mode_str, 8) if mode_str else 0o700
     except ValueError:
         mode = 0o700
+    if not mode_str:
+        from hermes_constants import owner_only_mode
+
+        mode = owner_only_mode(path, mode)
     try:
         os.chmod(path, mode)
     except (OSError, NotImplementedError):

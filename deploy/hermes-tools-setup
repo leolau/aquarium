@@ -1,0 +1,164 @@
+#!/bin/bash
+# Turn on "agent commands as their own Linux user" on this machine. Run as root
+# from a root-owned checkout. Every change is saved first; the last line printed
+# is the rollback command.
+#
+#   deploy/hermes-tools-setup --hermes-home DIR --hermes-bin PATH \
+#       [--env-file FILE]... [--unit NAME]... [--enable] [--backup-dir DIR]
+#
+#   --hermes-home  the gateway's HERMES_HOME
+#   --hermes-bin   the gateway's `hermes` (CHECKOUT/.venv/bin/hermes)
+#   --env-file     the gateway unit's EnvironmentFile (DATABASE_URL etc.); the
+#                  allowlisted `hermes` commands load it, as the gateway does
+#   --unit         a systemd unit running as hermes that writes into HERMES_HOME;
+#                  gets UMask=0007 so new files stay closed to other users
+#   --enable       also set terminal.run_as: hermes-tools (and terminal.cwd to
+#                  HERMES_HOME/workspaces if it is unset) in config.yaml
+#
+# What it does:
+#   1. user hermes-tools; hermes joins the hermes-tools group
+#   2. root-owned copies of hermes-tools-exec, hermes-tools-cli, the `hermes`
+#      shim, hermes-vpn-helper and the sudoers rule (checked with visudo first)
+#   3. /etc/hermes-tools/cli.conf for hermes-tools-cli
+#   4. folder access in HERMES_HOME:
+#      - HERMES_HOME itself: others may pass through (o+x), never list it
+#      - every other top-level entry (.env, auth/, config.yaml, state.db,
+#        sessions/, logs/, plugins/, scripts/, ...): closed to others (o-rwx)
+#      - shared read/write with group hermes-tools: workspaces/, tools/,
+#        kanban/workspaces/, cache/{images,audio,videos,documents}/
+#      - shared read-only with group hermes-tools: skills/
+set -euo pipefail
+REPO=$(cd "$(dirname "$0")/.." && pwd)
+HH="" BIN="" ENABLE=0 BACKUP=""
+ENV_FILES=() UNITS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --hermes-home) HH=$2; shift 2 ;;
+    --hermes-bin) BIN=$2; shift 2 ;;
+    --env-file) ENV_FILES+=("$2"); shift 2 ;;
+    --unit) UNITS+=("$2"); shift 2 ;;
+    --enable) ENABLE=1; shift ;;
+    --backup-dir) BACKUP=$2; shift 2 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+[ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 2; }
+[ -n "$HH" ] && [ -d "$HH" ] || { echo "--hermes-home must be an existing folder" >&2; exit 2; }
+[ -n "$BIN" ] && [ -x "$BIN" ] || { echo "--hermes-bin must be the gateway's hermes" >&2; exit 2; }
+HH=$(realpath "$HH")
+id hermes >/dev/null
+BACKUP=${BACKUP:-/var/backups/hermes-tools-$(date +%Y%m%d-%H%M%S)}
+install -d -m 700 "$BACKUP" "$BACKUP/files"
+
+SHARED_RW=(workspaces tools kanban/workspaces cache/images cache/audio cache/videos cache/documents)
+SHARED_RO=(skills)
+FILES=(/usr/local/sbin/hermes-tools-exec /usr/local/sbin/hermes-tools-cli
+       /usr/local/sbin/hermes-vpn-helper /usr/local/lib/hermes-tools/bin/hermes
+       /etc/sudoers.d/hermes-tools /etc/hermes-tools/cli.conf "$HH/config.yaml")
+for unit in "${UNITS[@]}"; do FILES+=("/etc/systemd/system/$unit.d/hermes-tools-umask.conf"); done
+
+# ---------------------------------------------------------------- backup
+: > "$BACKUP/absent"
+for f in "${FILES[@]}"; do
+  if [ -e "$f" ]; then install -d "$BACKUP/files$(dirname "$f")"; cp -a "$f" "$BACKUP/files$f"
+  else printf '%s\n' "$f" >> "$BACKUP/absent"; fi
+done
+find "$HH" -xdev ! -type l -printf '%m\t%u\t%g\t%p\0' > "$BACKUP/perms.before"
+id -nG hermes | tr ' ' '\n' | grep -qx hermes-tools && echo yes > "$BACKUP/hermes-in-group" || echo no > "$BACKUP/hermes-in-group"
+cat > "$BACKUP/rollback.sh" <<'RB'
+#!/bin/bash
+# Undo deploy/hermes-tools-setup: owners/modes in HERMES_HOME, installed files,
+# config.yaml, unit drop-ins and the group membership. The hermes-tools user stays.
+set -euo pipefail
+B=$(cd "$(dirname "$0")" && pwd)
+while IFS=$'\t' read -r -d '' mode user group path; do
+  [ -e "$path" ] && [ ! -L "$path" ] || continue
+  chown "$user:$group" "$path"
+  chmod "$mode" "$path"
+  if [ -d "$path" ] && [ ${#mode} -le 3 ]; then chmod g-s "$path"; fi
+done < "$B/perms.before"
+(cd "$B/files" && find . -type f -print0) | while IFS= read -r -d '' f; do cp -a "$B/files/${f#./}" "/${f#./}"; done
+while IFS= read -r f; do [ -n "$f" ] && rm -f -- "$f"; done < "$B/absent"
+if [ "$(cat "$B/hermes-in-group")" = no ]; then gpasswd -d hermes hermes-tools >/dev/null 2>&1 || true; fi
+visudo -c >/dev/null
+systemctl daemon-reload
+echo "Rolled back. Restart the gateway (and any --unit) so it drops the hermes-tools group."
+RB
+chmod 700 "$BACKUP/rollback.sh"
+
+# ---------------------------------------------------------------- 1. user + group
+id hermes-tools >/dev/null 2>&1 || useradd --system --create-home --home-dir /home/hermes-tools \
+  --shell /usr/sbin/nologin hermes-tools
+usermod -aG hermes-tools hermes
+
+# ---------------------------------------------------------------- 2. helpers + rule
+visudo -cf "$REPO/deploy/sudoers.d/hermes-tools" >/dev/null
+install -m 755 -o root -g root "$REPO/deploy/hermes-tools-exec" /usr/local/sbin/hermes-tools-exec
+install -m 755 -o root -g root "$REPO/deploy/hermes-tools-cli" /usr/local/sbin/hermes-tools-cli
+install -m 755 -o root -g root "$REPO/deploy/hermes-vpn-helper" /usr/local/sbin/hermes-vpn-helper
+install -d -m 755 -o root -g root /usr/local/lib/hermes-tools /usr/local/lib/hermes-tools/bin
+install -m 755 -o root -g root "$REPO/deploy/hermes-tools-shim" /usr/local/lib/hermes-tools/bin/hermes
+install -m 440 -o root -g root "$REPO/deploy/sudoers.d/hermes-tools" /etc/sudoers.d/hermes-tools
+
+# ---------------------------------------------------------------- 3. cli.conf
+install -d -m 755 -o root -g root /etc/hermes-tools
+{
+  echo "# Written by deploy/hermes-tools-setup; read by /usr/local/sbin/hermes-tools-cli."
+  echo "HERMES_HOME=$HH"
+  echo "HERMES_BIN=$BIN"
+  for f in "${ENV_FILES[@]}"; do echo "ENV_FILE=$f"; done
+} > /etc/hermes-tools/cli.conf
+chown root:root /etc/hermes-tools/cli.conf && chmod 644 /etc/hermes-tools/cli.conf
+
+# ---------------------------------------------------------------- 4. folder access
+closed_children() { find "$1" -mindepth 1 -maxdepth 1 ! -type l -exec chmod o-rwx {} +; }
+chmod o-rw,o+x "$HH"
+closed_children "$HH"
+share() {  # share DIR rw|ro
+  local rel=$1 how=$2 dir="$HH/$1" anc="$HH" part
+  local parts; IFS=/ read -r -a parts <<< "$rel"
+  for part in "${parts[@]:0:${#parts[@]}-1}"; do
+    anc="$anc/$part"
+    [ -L "$anc" ] && { echo "skip $rel: $anc is a symlink" >&2; return; }
+    install -d -o hermes -g hermes -m 750 "$anc"
+    closed_children "$anc"
+    chmod o-rw,o+x "$anc"
+  done
+  [ -L "$dir" ] && { echo "skip $rel: it is a symlink" >&2; return; }
+  install -d -o hermes -g hermes-tools "$dir"
+  find "$dir" \( -type d -o -type f \) -exec chgrp hermes-tools {} +
+  if [ "$how" = rw ]; then
+    find "$dir" -type d -exec chmod g+rwxs,o-rwx {} +
+    find "$dir" -type f -exec chmod g+rwX,o-rwx {} +
+  else
+    find "$dir" -type d -exec chmod g+rxs,g-w,o-rwx {} +
+    find "$dir" -type f -exec chmod g+rX,g-w,o-rwx {} +
+  fi
+}
+for d in "${SHARED_RW[@]}"; do share "$d" rw; done
+for d in "${SHARED_RO[@]}"; do share "$d" ro; done
+
+# ---------------------------------------------------------------- unit umask
+for unit in "${UNITS[@]}"; do
+  install -d -m 755 "/etc/systemd/system/$unit.d"
+  printf '[Service]\nUMask=0007\n' > "/etc/systemd/system/$unit.d/hermes-tools-umask.conf"
+done
+[ ${#UNITS[@]} -eq 0 ] || systemctl daemon-reload
+
+# ---------------------------------------------------------------- --enable
+if [ "$ENABLE" = 1 ]; then
+  as_hermes() { sudo -u hermes -H env HERMES_HOME="$HH" "$@"; }
+  as_hermes "$BIN" config set terminal.run_as hermes-tools >/dev/null
+  # The agent's commands can't use the gateway's own home folder (the default terminal.cwd).
+  cwd=$(sudo -u hermes /usr/bin/python3 -I -c 'import sys, yaml
+c = yaml.safe_load(open(sys.argv[1])) or {}
+t = c.get("terminal") or {}
+print(t.get("cwd") or "" if isinstance(t, dict) else "")' "$HH/config.yaml" 2>/dev/null) || cwd="?"
+  case "$cwd" in
+    ""|.|auto|cwd) as_hermes "$BIN" config set terminal.cwd "$HH/workspaces" >/dev/null ;;
+    "?") echo "NOTE: could not read terminal.cwd; make sure it is a folder hermes-tools can use, e.g. $HH/workspaces" ;;
+  esac
+fi
+
+echo "hermes-tools setup done. Backup: $BACKUP"
+echo "Rollback: sudo bash $BACKUP/rollback.sh"

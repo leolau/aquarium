@@ -1,0 +1,278 @@
+#!/usr/bin/python3 -I
+"""hermes-tools-cli: run one allowlisted ``hermes`` command as hermes for the agent.
+
+With ``terminal.run_as: hermes-tools`` the agent's commands run as hermes-tools,
+which cannot read ``$HERMES_HOME/.env``, so the ``hermes`` CLI cannot start
+there. Skills still call ``hermes kanban …``, ``hermes tool new …``,
+``hermes promote …``. Inside the agent's shell, ``hermes`` is the shim
+/usr/local/lib/hermes-tools/bin/hermes (deploy/hermes-tools-shim), which runs
+
+    sudo -n -u hermes /usr/local/sbin/hermes-tools-cli <args>
+
+sudo resets the environment (the rule has no SETENV). This script runs as
+hermes, refuses anything that is not on COMMANDS below, rebuilds the
+environment from root-owned settings, and execs the real ``hermes``. It never
+takes a profile, a HERMES_HOME, a config path or a Python setting from the
+caller. Install only a root-owned copy:
+
+    install -m 0755 -o root -g root deploy/hermes-tools-cli /usr/local/sbin/hermes-tools-cli
+
+Settings, root-owned (written by deploy/hermes-tools-setup):
+
+    /etc/hermes-tools/cli.conf
+        HERMES_HOME=/path/to/hermes-home
+        HERMES_BIN=/path/to/checkout/.venv/bin/hermes
+        ENV_FILE=/path/to/the/gateway/EnvironmentFile   (repeatable)
+"""
+
+import os
+import pwd
+import re
+import stat
+import sys
+
+CONF = "/etc/hermes-tools/cli.conf"
+RUN_USER = "hermes"
+CALLER = "hermes-tools"
+#: Kanban workers say which task they are; passed by sudo's env_keep, checked here.
+KEEP_ENV = {
+    "HERMES_KANBAN_TASK": re.compile(r"[A-Za-z0-9_.:-]{1,128}"),
+    "HERMES_KANBAN_RUN_ID": re.compile(r"[0-9]{1,18}"),
+}
+MAX_ARGS = 256
+MAX_ARG_LEN = 256 * 1024
+
+V = True   # option takes a value
+F = False  # flag
+
+_KANBAN_LIST = {"--mine": F, "--assignee": V, "--status": V, "--tenant": V,
+                "--session": V, "--archived": F, "--json": F, "--sort": V,
+                "--workflow-template-id": V, "--step-key": V}
+_CRON_JOB = {"--name": V, "--deliver": V, "--repeat": V, "--skill": V,
+             "--script": V, "--no-agent": F, "--workdir": V}
+_VPN = {"--json": F}
+
+#: command -> {"opts": options at this level, "subs": subcommands} or leaf options.
+#: Anything not listed, at any level, is refused: hermes config/auth/dashboard/
+#: gateway/setup/..., cron tick and --accept-hooks, tool --as and new --root, tool config
+#: --file (the shim reads that file as hermes-tools and passes --json), skills
+#: install --force (keeps the skills security scan), owner init/alias.
+COMMANDS = {
+    "promote": {"--actor": V, "--approve": F},
+    "owner": {"subs": {
+        "show": {},
+        "transfer": {"--actor": V, "--approve": F, "--demote-to": V},
+    }},
+    "tool": {"opts": {"--mode": V}, "subs": {
+        "new": {"--shared": F},
+        "list": {},
+        "enable": {},
+        "disable": {},
+        "config": {"--json": V},
+        "promote": {},
+    }},
+    "cron": {"subs": {
+        "list": {"--all": F},
+        "status": {},
+        "create": _CRON_JOB,
+        "add": _CRON_JOB,
+        "edit": {**_CRON_JOB, "--schedule": V, "--prompt": V, "--add-skill": V,
+                 "--remove-skill": V, "--clear-skills": F, "--agent": F},
+        "pause": {},
+        "resume": {},
+        "run": {},
+        "remove": {},
+        "rm": {},
+        "delete": {},
+    }},
+    "kanban": {"opts": {"--board": V}, "subs": {
+        "list": _KANBAN_LIST,
+        "ls": _KANBAN_LIST,
+        "show": {"--json": F, "--state-type": V, "--state-name": V},
+        "create": {"--body": V, "--assignee": V, "--parent": V, "--workspace": V,
+                   "--branch": V, "--project": V, "--tenant": V, "--priority": V,
+                   "--triage": F, "--idempotency-key": V, "--max-runtime": V,
+                   "--created-by": V, "--skill": V, "--max-retries": V, "--goal": F,
+                   "--goal-max-turns": V, "--initial-status": V, "--json": F},
+        "tail": {"--interval": V},
+        "watch": {"--assignee": V, "--tenant": V, "--kinds": V, "--interval": V},
+        "stats": {"--json": F},
+        "block": {"--ids": V, "--kind": V},
+        "unblock": {"--reason": V},
+        "archive": {"--rm": V},
+        "comment": {"--author": V, "--max-len": V},
+        "complete": {"--result": V, "--summary": V, "--metadata": V},
+    }},
+    "vpn": {"subs": {"list": _VPN, "status": _VPN, "up": _VPN, "down": _VPN}},
+    "skills": {"subs": {
+        "search": {"--source": V, "--limit": V, "--json": F},
+        "install": {"--category": V, "--name": V, "--yes": F},
+        "list": {"--source": V, "--enabled-only": F},
+        "inspect": {},
+    }},
+    "memory": {"subs": {"status": {}}},
+}
+HELP = {"-h": F, "--help": F}
+
+
+class Refused(Exception):
+    pass
+
+
+def _option(argv, i, opts):
+    name, eq, _ = argv[i].partition("=")
+    if name not in opts:
+        raise Refused(f"option {name!r} is not allowed here")
+    if eq:
+        if not opts[name]:
+            raise Refused(f"{name} takes no value")
+        return i + 1
+    if opts[name]:
+        if i + 1 >= len(argv) or argv[i + 1].startswith("-"):
+            raise Refused(f"{name} needs a value (write {name}=VALUE if it starts with '-')")
+        return i + 2
+    return i + 1
+
+
+def check(argv):
+    """Return the command path (e.g. ``['tool', 'new']``) or raise Refused."""
+    if not argv:
+        raise Refused("no command given")
+    if len(argv) > MAX_ARGS:
+        raise Refused("too many arguments")
+    for arg in argv:
+        if "\x00" in arg or len(arg) > MAX_ARG_LEN:
+            raise Refused("argument too long or not text")
+    node, path, i = {"subs": COMMANDS}, [], 0
+    while "subs" in node:
+        if i >= len(argv):
+            raise Refused(f"`hermes {' '.join(path)}` needs a subcommand")
+        tok = argv[i]
+        if tok.startswith("-"):
+            if not path and tok not in HELP:
+                raise Refused(f"option {tok.partition('=')[0]!r} is not allowed here")
+            i = _option(argv, i, {**HELP, **node.get("opts", {})})
+            continue
+        if tok not in node["subs"]:
+            raise Refused(f"`hermes {' '.join(path + [tok])}` is not available")
+        path.append(tok)
+        node = node["subs"][tok]
+        i += 1
+    opts = {**HELP, **node}
+    while i < len(argv):
+        i = _option(argv, i, opts) if argv[i].startswith("-") else i + 1
+    return path
+
+
+def _trusted(path, uids, bad_gids, follow_final=True):
+    """Every directory up to *path*, and the file, safe from the caller."""
+    real = os.path.realpath(path)
+    for target in {path, real}:
+        current = "/"
+        parts = [p for p in target.split("/") if p]
+        for n, part in enumerate([None] + parts):
+            if part is not None:
+                current = os.path.join(current, part)
+            st = os.lstat(current)
+            if st.st_uid not in uids:
+                raise Refused(f"{current} is not owned by root or {RUN_USER}")
+            if stat.S_ISLNK(st.st_mode):
+                continue
+            if st.st_mode & stat.S_IWOTH and not (stat.S_ISDIR(st.st_mode) and st.st_mode & stat.S_ISVTX):
+                raise Refused(f"{current} is writable by everyone")
+            if st.st_mode & stat.S_IWGRP and st.st_gid in bad_gids:
+                raise Refused(f"{current} is writable by {CALLER}")
+    return real
+
+
+def _read_conf(bad_gids):
+    _trusted(CONF, {0}, bad_gids)
+    conf = {"ENV_FILE": []}
+    with open(CONF, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = (s.strip() for s in line.split("=", 1))
+            if key == "ENV_FILE":
+                conf["ENV_FILE"].append(value)
+            elif key in ("HERMES_HOME", "HERMES_BIN"):
+                conf[key] = value
+    for key in ("HERMES_HOME", "HERMES_BIN"):
+        if not os.path.isabs(conf.get(key, "")):
+            raise Refused(f"{CONF} must set {key} to an absolute path")
+    return conf
+
+
+def _env_file(path):
+    values = {}
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if line.startswith("export "):
+                line = line[7:].lstrip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key, value = key.strip(), value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                values[key] = value
+    return values
+
+
+def main(argv):
+    me = pwd.getpwuid(os.geteuid())
+    if me.pw_name != RUN_USER or os.getuid() != os.geteuid():
+        print(f"hermes-tools-cli: must run as {RUN_USER} (sudo -u {RUN_USER})", file=sys.stderr)
+        return 2
+    try:
+        caller = pwd.getpwnam(CALLER)
+        bad_gids = set(os.getgrouplist(CALLER, caller.pw_gid))
+    except KeyError:
+        bad_gids = set()
+    bad_gids.discard(0)
+    try:
+        path = check(argv)
+        conf = _read_conf(bad_gids)
+        hermes_bin = _trusted(conf["HERMES_BIN"], {0, me.pw_uid}, bad_gids)
+        _trusted(conf["HERMES_HOME"], {0, me.pw_uid}, bad_gids)
+    except Refused as exc:
+        print(f"hermes: refused: {exc}. From the agent's terminal only these work: "
+              + ", ".join(f"hermes {c}" for c in COMMANDS), file=sys.stderr)
+        return 2
+    except OSError as exc:
+        print(f"hermes-tools-cli: {exc}", file=sys.stderr)
+        return 2
+
+    env = {}
+    for env_file in conf["ENV_FILE"]:
+        try:
+            env.update(_env_file(env_file))
+        except OSError as exc:
+            print(f"hermes-tools-cli: cannot read {env_file} as {RUN_USER}: {exc}", file=sys.stderr)
+            return 2
+    for key in [k for k in env if k.startswith(("PYTHON", "LD_", "HERMES_PROFILE"))]:
+        del env[key]
+    for key, pattern in KEEP_ENV.items():
+        value = os.environ.get(key, "")
+        if value and pattern.fullmatch(value):
+            env[key] = value
+    env.update({
+        "HERMES_HOME": conf["HERMES_HOME"],
+        "HOME": me.pw_dir,
+        "USER": RUN_USER,
+        "LOGNAME": RUN_USER,
+        "PATH": os.path.dirname(hermes_bin) + ":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "LANG": "C.UTF-8",
+        "HERMES_TOOLS_CLI": " ".join(path),
+    })
+    os.umask(0o007)
+    os.chdir(conf["HERMES_HOME"])
+    os.execve(hermes_bin, [hermes_bin, *argv], env)
+    return 127
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -412,6 +412,7 @@ fix_paths < deploy/hermes-wa-bridge@.service | sed "s#/opt/data/hermes-home#$HER
 install -d -m 700 /etc/aquarium
 # ProtectHome hides ~hermes, so point the Hugging Face cache/token lookups at the model dir.
 sed -i "/^\[Service\]/a Environment=HF_HOME=$EMBED/hf" $UNIT_DIR/hermes-embed.service
+sed -i "/^\[Service\]/a UMask=0007" $UNIT_DIR/agent-home.service $UNIT_DIR/app-mcp.service
 if [ "${AQUARIUM_SKIP_EMBED_MODEL:-0}" = 1 ]; then sed -i 's/ --offline//' $UNIT_DIR/hermes-embed.service; fi
 for svc in dashboard gateway; do
   if [ $svc = dashboard ]; then
@@ -434,6 +435,8 @@ Wants=network-online.target
 Type=simple
 User=hermes
 Group=hermes
+# New files in HERMES_HOME stay closed to other users (deploy/hermes-tools-setup).
+UMask=0007
 WorkingDirectory=$APP
 Environment=PATH=$APP/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EnvironmentFile=$APP_ENV
@@ -449,10 +452,10 @@ UNIT
 done
 install -m 755 deploy/hermes-deploy.sh "$ROOT/deploy-hermes.sh"
 install -m 755 -o root -g root deploy/aquarium.py /usr/local/sbin/aquarium
-# Agent terminal commands as hermes-tools: root-owned helper + sudoers rule (validated first).
-install -m 755 -o root -g root deploy/hermes-tools-exec /usr/local/sbin/hermes-tools-exec
-visudo -cf deploy/sudoers.d/hermes-tools >/dev/null
-install -m 440 -o root -g root deploy/sudoers.d/hermes-tools /etc/sudoers.d/hermes-tools
+# Agent terminal commands run as hermes-tools (terminal.run_as): root-owned helpers, the
+# sudoers rule, the `hermes` allowlist and folder access in HERMES_HOME; see the script header.
+bash deploy/hermes-tools-setup --hermes-home "$HERMES_HOME_DIR" --hermes-bin "$APP/.venv/bin/hermes" \
+  --env-file "$APP_ENV" --enable --backup-dir /var/backups/hermes-tools-install >/dev/null
 systemctl daemon-reload
 systemctl enable -q hermes-embed hermes-dashboard hermes-gateway app-mcp agent-home
 systemctl restart hermes-embed hermes-dashboard hermes-gateway app-mcp agent-home

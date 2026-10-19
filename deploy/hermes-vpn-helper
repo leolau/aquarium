@@ -33,6 +33,7 @@ Python 3 stdlib only.
 import contextlib
 import errno
 import fcntl
+import grp
 import hashlib
 import ipaddress
 import json
@@ -58,6 +59,9 @@ SYS_NET = "/sys/class/net"
 PROC_MOUNTS = "/proc/self/mounts"
 SELF_PATH = "/usr/local/sbin/hermes-vpn-helper"
 MOUNT_USER = "hermes"
+#: Group on the mounts when it exists, so the agent's commands (run as
+#: hermes-tools, deploy/hermes-tools-exec) can read the files; else hermes.
+TOOLS_GROUP = "hermes-tools"
 #: Owners allowed on every directory from / down to MOUNT_ROOT.
 TRUSTED_UIDS = (0,)
 RESOLV_FILES = ("/etc/resolv.conf", "/run/systemd/resolve/resolv.conf")
@@ -501,6 +505,14 @@ def lock_busy(slug):
         os.close(fd)
 
 
+def mount_group():
+    try:
+        grp.getgrnam(TOOLS_GROUP)
+        return TOOLS_GROUP
+    except KeyError:
+        return MOUNT_USER
+
+
 def secure_mount_point(slug):
     """Create MOUNT_ROOT/<slug> under a chain no non-root user can rewrite."""
     root = os.path.abspath(MOUNT_ROOT)
@@ -853,7 +865,7 @@ def mount_cifs(share, target, creds_path, share_ip):
     unc = "//" + "/".join([server, share_name, *subs])
     for vers in SMB_DIALECTS:
         options = ",".join([
-            "ro", "nosuid", "nodev", "noexec", f"uid={MOUNT_USER}", f"gid={MOUNT_USER}",
+            "ro", "nosuid", "nodev", "noexec", f"uid={MOUNT_USER}", f"gid={mount_group()}",
             "file_mode=0440", "dir_mode=0550", "iocharset=utf8",
             f"credentials={creds_path}", f"vers={vers}", f"ip={share_ip}",
         ])
