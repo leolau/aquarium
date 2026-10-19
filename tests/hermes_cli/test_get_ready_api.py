@@ -67,6 +67,7 @@ def acting(monkeypatch, home):
     )
     monkeypatch.setattr(get_ready, "list_people", _people)
     monkeypatch.setattr(get_ready, "whatsapp_bridges", lambda: [])
+    monkeypatch.setattr(get_ready, "offsite_backup_state", lambda: "unavailable")
     return state
 
 
@@ -165,8 +166,9 @@ def test_existing_install_wide_settings_count_as_the_owners(client, acting, monk
     assert items["email"]["status"] == "done"
     acting["as"] = MEMBER
     items = _items(client.get("/api/get-ready").json())
-    for key in ("telegram", "tools", "email"):
+    for key in ("telegram", "tools"):
         assert items[key]["status"] == "not_started" and items[key]["coming"], key
+    assert items["email"]["status"] == "not_started" and not items["email"]["coming"]
 
 
 @pytest.mark.parametrize("item", ["owner", "model", "people", "backups", "security"])
@@ -301,3 +303,42 @@ def test_whatsapp_status_is_each_persons_own_bridges(client, acting, monkeypatch
     assert rows["mia"]["whatsapp"] == {"state": "waiting", "reason": "qr"}
     assert rows["ann"]["whatsapp"] == {"state": "not_set"}
     assert "mia-phone" not in json.dumps(rows) and "office" not in json.dumps(rows)
+
+
+def test_backups_item_reads_the_offsite_backup_state(client, monkeypatch):
+    from hermes_cli import get_ready
+
+    cases = {"unavailable": "not_started", "not_configured": "not_started",
+             "needs_restore_test": "attention", "backup_failed": "attention", "ok": "done"}
+    for state, expected in cases.items():
+        monkeypatch.setattr(get_ready, "offsite_backup_state", lambda s=state: s)
+        item = _items(client.get("/api/get-ready").json())["backups"]
+        assert item["status"] == expected and not item["coming"], state
+
+
+def test_email_status_is_each_persons_own_mailbox(client, acting):
+    from hermes_cli import email_mailboxes
+    from hermes_cli.credential_store import FileCredentialStore
+
+    asyncio.run(
+        FileCredentialStore().put(
+            MEMBER,
+            provider=email_mailboxes.PROVIDER,
+            name="mia@example.com",
+            kind=email_mailboxes.KIND,
+            payload={"address": "mia@example.com", "username": "mia", "password": SECRET,
+                     "imap_host": "imap.example.com", "imap_port": 993,
+                     "smtp_host": "smtp.example.com", "smtp_port": 465},
+            visibility="private:mia",
+        )
+    )
+    acting["as"] = MEMBER
+    item = _items(client.get("/api/get-ready").json())["email"]
+    assert item["status"] == "attention" and item["detail"] == "email.untested"
+    acting["as"] = ADMIN
+    assert _items(client.get("/api/get-ready").json())["email"]["status"] == "not_started"
+    resp = client.get("/api/get-ready/people")
+    rows = {r["user_id"]: r["connections"] for r in resp.json()["people"]}
+    assert rows["mia"]["email"] == {"state": "waiting", "reason": "email_test"}
+    assert rows["ann"]["email"] == {"state": "not_set"}
+    assert SECRET not in resp.text and "mia@example.com" not in resp.text

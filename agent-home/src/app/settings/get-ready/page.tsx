@@ -31,13 +31,15 @@ export default async function Page() {
     currentMain: null,
   };
   if (data) {
-    const [people, members, mcp, toolsets, model] = await Promise.allSettled([
+    const [people, members, mcp, toolsets, model, backups] = await Promise.allSettled([
       data.can_manage ? client.getReadyPeople() : Promise.resolve(null),
       data.can_manage ? client.members({ limit: 1, offset: 0 }) : Promise.resolve(null),
       client.mcpServers(),
       client.toolsets(),
       data.can_manage ? client.modelInfo() : Promise.resolve(null),
+      data.role === "owner" ? client.offsiteBackup() : Promise.resolve(null),
     ]);
+    if (backups.status === "fulfilled") extras.backups = backups.value;
     if (people.status === "fulfilled") extras.people = people.value;
     else extras.peopleError = "unavailable";
     if (members.status === "fulfilled" && members.value?.profile) extras.profile = members.value.profile;

@@ -15,6 +15,7 @@ file: only presence, counts and display names.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import tempfile
@@ -421,14 +422,60 @@ async def status_telegram(ctx: Context) -> ItemStatus:
     return ItemStatus(NOT_STARTED, "telegram.none")
 
 
-async def status_email(ctx: Context) -> ItemStatus:
-    # The email poller's mailboxes are install-wide; they count as the owner's.
-    if not ctx.is_owner:
-        return ItemStatus(NOT_STARTED, "email.coming", coming=True)
-    accounts = await asyncio.to_thread(email_accounts)
-    if accounts:
-        return ItemStatus(DONE, "email.done", {"count": len(accounts)})
+async def own_mailbox_states(ctx: Context) -> List[str]:
+    """The acting person's own mailboxes (hermes_cli/email_mailboxes), state only."""
+    try:
+        from hermes_cli import email_mailboxes
+
+        return [m["state"] for m in await email_mailboxes.list_mine(ctx.principal)]
+    except Exception:
+        return []
+
+
+def mailbox_states_by_person(creds: List[Any]) -> Dict[str, List[str]]:
+    """Per person, the state of each of their own mailboxes (never the mailbox itself)."""
+    try:
+        from hermes_cli import email_mailboxes
+    except Exception:
+        return {}
+    states: Dict[str, List[str]] = {}
+    for cred in creds:
+        if getattr(cred, "provider", "") != email_mailboxes.PROVIDER:
+            continue
+        if getattr(cred, "kind", "") != email_mailboxes.KIND:
+            continue
+        with contextlib.suppress(Exception):
+            state = email_mailboxes.view_of(cred)["state"]
+            states.setdefault(cred.owner_user_id, []).append(state)
+    return states
+
+
+def _email_status(states: List[str], legacy: int) -> ItemStatus:
+    """``legacy``: the install-wide poller's mailboxes, which count as the owner's."""
+    if "needs_attention" in states:
+        return ItemStatus(ATTENTION, "email.attention")
+    working = states.count("working") + legacy
+    if working:
+        return ItemStatus(DONE, "email.done", {"count": working})
+    if states:
+        return ItemStatus(ATTENTION, "email.untested")
     return ItemStatus(NOT_STARTED, "email.none")
+
+
+def _email_cell(status: ItemStatus) -> Dict[str, Any]:
+    if status.status == DONE:
+        return {"state": SET}
+    if status.detail == "email.untested":
+        return {"state": WAITING, "reason": "email_test"}
+    if status.status == ATTENTION:
+        return {"state": WAITING, "reason": "email_error"}
+    return {"state": NOT_SET}
+
+
+async def status_email(ctx: Context) -> ItemStatus:
+    states = await own_mailbox_states(ctx)
+    legacy = len(await asyncio.to_thread(email_accounts)) if ctx.is_owner else 0
+    return _email_status(states, legacy)
 
 
 async def status_tools(ctx: Context) -> ItemStatus:
@@ -452,8 +499,35 @@ async def status_vpn(ctx: Context) -> ItemStatus:
     return ItemStatus(NOT_STARTED, "vpn.none")
 
 
+def offsite_backup_state() -> str:
+    """Item 10's state from the offsite-backup helper (hermes_cli/backup_offsite_api)."""
+    try:
+        from hermes_cli import backup_offsite_api as offsite
+
+        return str(offsite._view(offsite._call("status", timeout=10)).get("state") or "unavailable")
+    except Exception:
+        return "unavailable"
+
+
+_BACKUP_ATTENTION = (
+    "running",
+    "needs_first_backup",
+    "backup_late",
+    "backup_failed",
+    "restore_test_failed",
+    "needs_restore_test",
+)
+
+
 async def status_backups(ctx: Context) -> ItemStatus:
-    return ItemStatus(NOT_STARTED, "backups.coming", coming=True)
+    state = await asyncio.to_thread(offsite_backup_state)
+    if state == "ok":
+        return ItemStatus(DONE, "backups.done")
+    if state == "not_configured":
+        return ItemStatus(NOT_STARTED, "backups.none")
+    if state in _BACKUP_ATTENTION:
+        return ItemStatus(ATTENTION, f"backups.{state}")
+    return ItemStatus(NOT_STARTED, "backups.unavailable")
 
 
 def _security_status(result: Mapping[str, Any]) -> ItemStatus:
@@ -670,6 +744,7 @@ async def people_status(ctx: Context) -> Dict[str, Any]:
     step_a = google_client_present()
     bridges = await asyncio.to_thread(whatsapp_bridges)
     mailboxes = await asyncio.to_thread(email_accounts)
+    mailbox_states = await asyncio.to_thread(mailbox_states_by_person, creds)
     servers = install_mcp_servers(ctx.config)
     telegram = _secret_present(ctx.env, "TELEGRAM_BOT_TOKEN")
 
@@ -691,12 +766,14 @@ async def people_status(ctx: Context) -> Dict[str, Any]:
             cells["whatsapp"] = {"state": WAITING, "reason": "qr"}
         else:
             cells["whatsapp"] = {"state": NOT_SET}
+        cells["email"] = _email_cell(
+            _email_status(mailbox_states.get(person.user_id, []), len(mailboxes) if is_owner else 0)
+        )
         if not is_owner:
-            for key in ("telegram", "email", "tools"):
+            for key in ("telegram", "tools"):
                 cells[key] = {"state": COMING}
         else:
             cells["telegram"] = {"state": SET if telegram else NOT_SET}
-            cells["email"] = {"state": SET if mailboxes else NOT_SET}
             cells["tools"] = (
                 {"state": SET, "count": len(servers)} if servers else {"state": NOT_SET}
             )

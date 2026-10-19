@@ -30,11 +30,14 @@ AQUARIUM_TEST_PREFIX (tests only) puts every absolute path under a fake root.
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import datetime as _dt
 import errno
 import fcntl
 import hashlib
+import hmac
+import http.client
 import io
 import json
 import os
@@ -51,6 +54,7 @@ import tarfile
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Callable, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
@@ -1060,7 +1064,9 @@ def iter_tree(root: Path) -> Iterator[Path]:
                 yield Path(dirpath) / name
 
 
-def make_backup(cfg: Dict[str, str], *, label: str = "manual", to: Optional[Path] = None) -> Path:
+def make_backup(cfg: Dict[str, str], *, label: str = "manual", to: Optional[Path] = None,
+                progress: Optional[Callable[[str, int], None]] = None) -> Path:
+    report = progress or (lambda phase, percent: None)
     if not have("gpg"):
         raise Fail("gpg is not installed", "apt-get install -y gnupg")
     key = backup_key()
@@ -1076,7 +1082,11 @@ def make_backup(cfg: Dict[str, str], *, label: str = "manual", to: Optional[Path
                       "db": None}
     genv = gpg_env()
     try:
-        if db_running(cfg):
+        report("database", 5)
+        url_env = None if db_running(cfg) else db_admin_env()
+        if url_env is not None:
+            manifest["db"] = dump_with_admin_url(url_env, staging)
+        elif db_running(cfg):
             say("  database dump")
             dbdir = staging / "db"
             dbdir.mkdir()
@@ -1094,6 +1104,7 @@ def make_backup(cfg: Dict[str, str], *, label: str = "manual", to: Optional[Path
             say("  database not running here: backing up files only")
         sources = backup_sources(cfg)
         manifest["paths"] = sources
+        report("files", 30)
         gpg = subprocess.Popen(
             ["gpg", "--batch", "--yes", "--quiet", "--pinentry-mode", "loopback", "--passphrase-file", str(key),
              "--symmetric", "--cipher-algo", "AES256", "-o", str(target) + ".part"],
@@ -1103,8 +1114,9 @@ def make_backup(cfg: Dict[str, str], *, label: str = "manual", to: Optional[Path
             if manifest["db"] is not None:
                 for f in ("postgres.dump", "globals.sql"):
                     _add_file(tar, staging / "db" / f, f"db/{f}", manifest)
-            for src in sources:
+            for i, src in enumerate(sources):
                 say(f"  {src}")
+                report("files", 30 + 30 * i // max(len(sources), 1))
                 for p in iter_tree(P(src)):
                     _add_file(tar, p, "root" + real(p), manifest)
             data = (json.dumps(manifest, indent=1, sort_keys=True) + "\n").encode()
@@ -1128,6 +1140,54 @@ def make_backup(cfg: Dict[str, str], *, label: str = "manual", to: Optional[Path
     if to is None:
         prune_backups(cfg)
     return target
+
+
+def db_admin_env() -> Optional[Dict[str, str]]:
+    """libpq settings from the owner address in /etc/aquarium/db-admin.env, if that file exists.
+
+    Used when the database is not the local supabase-db container (e.g. hosted Supabase or
+    another Postgres); the local container is dumped as supabase_admin, which sees every schema."""
+    url = read_kv(P(f"{ETC}/db-admin.env")).get("HERMES_DB_ADMIN_URL", "")
+    parts = urllib.parse.urlsplit(url) if url else None
+    if not parts or parts.scheme not in ("postgres", "postgresql") or not parts.hostname:
+        return None
+    env = {**os.environ, "PGHOST": parts.hostname,
+           "PGPORT": str(parts.port or 5432), "PGUSER": urllib.parse.unquote(parts.username or "postgres"),
+           "PGPASSWORD": urllib.parse.unquote(parts.password or ""),
+           "PGDATABASE": urllib.parse.unquote(parts.path.lstrip("/")) or "postgres", "PGCONNECT_TIMEOUT": "20"}
+    sslmode = urllib.parse.parse_qs(parts.query).get("sslmode")
+    if sslmode:
+        env["PGSSLMODE"] = sslmode[0]
+    return env
+
+
+def url_counts(env: Dict[str, str], dbname: str) -> Dict[str, int]:
+    proc = run(["psql", "-d", dbname, "-At", "-F", "|", "-c", COUNT_SQL], check=False, timeout=900, env=env)
+    counts: Dict[str, int] = {}
+    for line in proc.stdout.decode(errors="replace").splitlines():
+        name, _, value = line.partition("|")
+        if value.strip().isdigit():
+            counts[name] = int(value)
+    return counts
+
+
+def dump_with_admin_url(env: Dict[str, str], staging: Path) -> Dict:
+    if not have("pg_dump"):
+        raise Fail("pg_dump is not installed", "apt-get install -y postgresql-client")
+    say("  database dump (owner address from db-admin.env)")
+    dbdir = staging / "db"
+    dbdir.mkdir()
+    with open(dbdir / "postgres.dump", "wb") as fh:
+        p = subprocess.run(["pg_dump", "-Fc", "-d", env["PGDATABASE"]], stdout=fh, stderr=subprocess.PIPE,
+                           env=env, check=False)
+    if p.returncode != 0:
+        raise Fail("the database dump failed: " + p.stderr.decode(errors="replace").strip()[-300:],
+                   "Check that the database in /etc/aquarium/db-admin.env is reachable.")
+    with open(dbdir / "globals.sql", "wb") as fh:
+        # roles without passwords: a hosted database does not let the owner read them
+        subprocess.run(["pg_dumpall", "--globals-only", "--no-role-passwords"], stdout=fh,
+                       stderr=subprocess.PIPE, env=env, check=False)
+    return {"database": env["PGDATABASE"], "tables": url_counts(env, env["PGDATABASE"]), "via": "db-admin.env"}
 
 
 def prune_backups(cfg: Dict[str, str]) -> None:
@@ -1206,6 +1266,9 @@ def restore_test(cfg: Dict[str, str], manifest: Dict, staging: Path) -> List[str
     problems: List[str] = []
     if not manifest.get("db"):
         return problems
+    url_env = None if db_running(cfg) else db_admin_env()
+    if url_env is not None:
+        return restore_test_url(url_env, manifest, staging)
     if not db_running(cfg):
         return ["the database is not running here, so the dump could not be test-restored"]
     scratch = "aquarium_restore_test"
@@ -1222,6 +1285,28 @@ def restore_test(cfg: Dict[str, str], manifest: Dict, staging: Path) -> List[str
     finally:
         psql(cfg, f"DROP DATABASE IF EXISTS {scratch}")
     return problems
+
+
+def restore_test_url(env: Dict[str, str], manifest: Dict, staging: Path) -> List[str]:
+    """Same test through the db-admin.env owner: a scratch database on that server, then dropped."""
+    scratch = "aquarium_restore_test"
+
+    def sql(text: str) -> subprocess.CompletedProcess:
+        return run(["psql", "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-At", "-c", text], check=False,
+                   timeout=600, env=env)
+
+    sql(f"DROP DATABASE IF EXISTS {scratch}")
+    if sql(f"CREATE DATABASE {scratch}").returncode != 0:
+        return ["could not create the scratch database for the test"]
+    try:
+        with open(staging / "db/postgres.dump", "rb") as fh:
+            subprocess.run(["pg_restore", "--no-owner", "-d", scratch], stdin=fh, capture_output=True,
+                           env=env, check=False)
+        diff = compare_counts(manifest["db"]["tables"], url_counts(env, scratch))
+        say(f"  database: {len(manifest['db']['tables'])} tables restored into a scratch copy")
+        return [f"row count differs: {d}" for d in diff[:20]]
+    finally:
+        sql(f"DROP DATABASE IF EXISTS {scratch}")
 
 
 def supabase_others(cfg: Dict[str, str]) -> List[str]:
@@ -1325,6 +1410,641 @@ def _restore_apply(cfg: Dict[str, str], manifest: Dict, staging: Path, args: arg
                    "Run `aquarium doctor` and `aquarium logs <service>`.")
     say("\nRestore finished; everything is healthy.")
     return 0
+
+
+# --------------------------------------------------------------------------- offsite backups
+#
+# `aquarium offsite ...` copies encrypted backups to S3-compatible storage (Backblaze B2, Amazon
+# S3, MinIO, ...). Nothing here runs until the owner saves a target (`offsite configure`): until
+# then there is no settings file, no timer and no unit. The dashboard calls the five verbs in
+# deploy/sudoers.d/hermes-backup through sudo with exact arguments; settings arrive as JSON on
+# stdin and every verb answers with one JSON line. The storage keys stay in a root-only file and
+# never leave it; the dashboard reads progress and results from OFFSITE_STATUS (no secrets).
+
+OFFSITE_CONF = f"{ETC}/offsite.json"
+OFFSITE_ENV = f"{ETC}/offsite.env"
+OFFSITE_STATUS = "/var/lib/aquarium/offsite-status.json"
+OFFSITE_BACKUP_UNIT = "hermes-offsite-backup"
+OFFSITE_TEST_UNIT = "hermes-offsite-restore-test"
+OFFSITE_PROVIDERS = ("b2", "s3", "other")
+OFFSITE_PART = 64 * 2**20
+B2_AUTHORIZE_URL = "https://api.backblazeb2.com/b2api/v3/b2_authorize_account"
+OFFSITE_NAME_RE = re.compile(r"^aquarium-backup-(\d{8}T\d{6}Z)-offsite\.tar\.gz\.gpg$")
+
+
+class OffsiteError(Fail):
+    pass
+
+
+def _q(text: str, safe: str = "-_.~") -> str:
+    return urllib.parse.quote(text, safe=safe)
+
+
+class S3:
+    """A small S3 (signature v4) client: enough for put/get/list/delete. stdlib only."""
+
+    def __init__(self, endpoint: str, region: str, bucket: str, key_id: str, secret: str) -> None:
+        url = urllib.parse.urlsplit(endpoint)
+        if url.scheme not in ("https", "http") or not url.hostname:
+            raise OffsiteError("the storage address must look like https://s3.example.com")
+        if url.scheme == "http" and not test_mode():
+            raise OffsiteError("the storage address must start with https://")
+        self.scheme, self.region, self.bucket = url.scheme, region or "us-east-1", bucket
+        self.key_id, self.secret = key_id, secret
+        host = url.netloc
+        # Amazon wants the bucket in the host name; B2, MinIO and the rest take it in the path.
+        if host.endswith("amazonaws.com") and "." not in bucket:
+            self.host, self.base = f"{bucket}.{host}", ""
+        else:
+            self.host, self.base = host, "/" + bucket
+
+    def _sign(self, method: str, path: str, query: Dict[str, str], headers: Dict[str, str],
+              payload_hash: str) -> Dict[str, str]:
+        amzdate = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        date = amzdate[:8]
+        hdrs = {k.lower(): str(v).strip() for k, v in headers.items()}
+        hdrs.update({"host": self.host, "x-amz-date": amzdate, "x-amz-content-sha256": payload_hash})
+        canon_qs = "&".join(f"{_q(k)}={_q(v)}" for k, v in sorted(query.items()))
+        signed = ";".join(sorted(hdrs))
+        canon = "\n".join([method, _q(path, "/-_.~"), canon_qs,
+                           "".join(f"{k}:{hdrs[k]}\n" for k in sorted(hdrs)), signed, payload_hash])
+        scope = f"{date}/{self.region}/s3/aws4_request"
+        to_sign = "\n".join(["AWS4-HMAC-SHA256", amzdate, scope, hashlib.sha256(canon.encode()).hexdigest()])
+        k = ("AWS4" + self.secret).encode()
+        for part in (date, self.region, "s3", "aws4_request"):
+            k = hmac.new(k, part.encode(), hashlib.sha256).digest()
+        sig = hmac.new(k, to_sign.encode(), hashlib.sha256).hexdigest()
+        hdrs["authorization"] = (f"AWS4-HMAC-SHA256 Credential={self.key_id}/{scope}, "
+                                 f"SignedHeaders={signed}, Signature={sig}")
+        return hdrs
+
+    def request(self, method: str, key: str = "", *, query: Optional[Dict[str, str]] = None,
+                body: bytes = b"", sink: Optional[Callable[[bytes], None]] = None,
+                ok: Sequence[int] = (200, 204)) -> Tuple[int, Dict[str, str], bytes]:
+        query = dict(query or {})
+        path = self.base + ("/" + key if key else ("/" if not self.base else ""))
+        headers = self._sign(method, path, query, {"content-length": str(len(body))} if body or method in
+                             ("PUT", "POST") else {}, hashlib.sha256(body).hexdigest())
+        target = _q(path, "/-_.~") + ("?" + "&".join(f"{_q(k)}={_q(v)}" for k, v in sorted(query.items()))
+                                      if query else "")
+        cls = http.client.HTTPSConnection if self.scheme == "https" else http.client.HTTPConnection
+        kw = {"context": ssl.create_default_context()} if self.scheme == "https" else {}
+        try:
+            conn = cls(self.host, timeout=300, **kw)
+            conn.request(method, target, body=body or None, headers=headers)
+            resp = conn.getresponse()
+            status, rh = resp.status, {k.lower(): v for k, v in resp.getheaders()}
+            data = b""
+            if sink is not None and status in ok:
+                while True:
+                    chunk = resp.read(2**20)
+                    if not chunk:
+                        break
+                    sink(chunk)
+            else:
+                data = resp.read()
+            conn.close()
+        except (OSError, http.client.HTTPException) as error:
+            raise OffsiteError(f"could not reach the storage service ({error.__class__.__name__})",
+                               "Check the storage address and that this server can reach the internet.")
+        if status not in ok:
+            raise OffsiteError(_s3_error(status, data))
+        return status, rh, data
+
+    # -- operations
+    def put(self, key: str, data: bytes) -> None:
+        self.request("PUT", key, body=data)
+
+    def get(self, key: str) -> bytes:
+        return self.request("GET", key)[2]
+
+    def delete(self, key: str) -> None:
+        self.request("DELETE", key)
+
+    def size(self, key: str) -> int:
+        return int(self.request("HEAD", key)[1].get("content-length") or -1)
+
+    def list(self, prefix: str) -> List[Tuple[str, int]]:
+        found: List[Tuple[str, int]] = []
+        token = ""
+        while True:
+            query = {"list-type": "2", "prefix": prefix}
+            if token:
+                query["continuation-token"] = token
+            root = _xml(self.request("GET", query=query)[2])
+            for item in _children(root, "Contents"):
+                found.append((_text(item, "Key"), int(_text(item, "Size") or 0)))
+            token = _text(root, "NextContinuationToken")
+            if _text(root, "IsTruncated") != "true" or not token:
+                return found
+
+    def upload(self, key: str, path: Path, progress: Callable[[int], None]) -> None:
+        total = path.stat().st_size
+        if total <= OFFSITE_PART:
+            self.put(key, path.read_bytes())
+            progress(100)
+            return
+        upload_id = _text(_xml(self.request("POST", key, query={"uploads": ""})[2]), "UploadId")
+        parts: List[Tuple[int, str]] = []
+        try:
+            with open(path, "rb") as fh:
+                n = 0
+                while True:
+                    chunk = fh.read(OFFSITE_PART)
+                    if not chunk:
+                        break
+                    n += 1
+                    rh = self.request("PUT", key, query={"partNumber": str(n), "uploadId": upload_id},
+                                      body=chunk)[1]
+                    parts.append((n, rh.get("etag", "")))
+                    progress(min(99, int(fh.tell() * 100 / total)))
+            body = ("<CompleteMultipartUpload>" + "".join(
+                f"<Part><PartNumber>{n}</PartNumber><ETag>{etag}</ETag></Part>" for n, etag in parts)
+                + "</CompleteMultipartUpload>").encode()
+            data = self.request("POST", key, query={"uploadId": upload_id}, body=body)[2]
+            if b"<Error>" in data:
+                raise OffsiteError(_s3_error(500, data))
+        except BaseException:
+            with contextlib.suppress(Fail):
+                self.request("DELETE", key, query={"uploadId": upload_id})
+            raise
+        progress(100)
+
+    def download(self, key: str, path: Path, total: int, progress: Callable[[int], None]) -> None:
+        done = [0]
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            def sink(chunk: bytes) -> None:
+                fh.write(chunk)
+                done[0] += len(chunk)
+                progress(min(99, int(done[0] * 100 / max(total, 1))))
+            self.request("GET", key, sink=sink)
+        progress(100)
+
+
+def _xml(data: bytes):
+    import xml.etree.ElementTree as ET  # noqa: S405 - responses from the owner's own storage
+    try:
+        return ET.fromstring(data)
+    except ET.ParseError:
+        raise OffsiteError("the storage service sent an answer this tool does not understand")
+
+
+def _children(node, tag: str) -> list:
+    return [c for c in list(node) if c.tag.rsplit("}", 1)[-1] == tag]
+
+
+def _text(node, tag: str) -> str:
+    found = _children(node, tag)
+    return (found[0].text or "") if found else ""
+
+
+def _s3_error(status: int, data: bytes) -> str:
+    code = ""
+    with contextlib.suppress(Exception):
+        code = _text(_xml(data), "Code") if data else ""
+    if code == "NoSuchBucket" or (status == 404 and not code):
+        return "the bucket was not found: check the bucket name"
+    if code in ("InvalidAccessKeyId", "SignatureDoesNotMatch", "InvalidToken") or status == 401:
+        return "the storage service did not accept the key: check the Key ID and Secret key"
+    if status == 403 or code == "AccessDenied":
+        return "the key may not use this bucket: give the key read, write and delete access to it"
+    return f"the storage service refused the request ({code or status})"
+
+
+def offsite_status_path() -> Path:
+    return P(OFFSITE_STATUS)
+
+
+def load_offsite_status() -> Dict:
+    try:
+        return json.loads(offsite_status_path().read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def save_offsite_status(st: Dict) -> None:
+    path = offsite_status_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(st, fh, sort_keys=True)
+    if os.geteuid() == 0:
+        # The dashboard (service user) reads progress and results; no secrets are in this file.
+        with contextlib.suppress(KeyError):
+            os.chown(tmp, 0, pwd.getpwnam(load_config()["SERVICE_USER"]).pw_gid)
+    os.chmod(tmp, 0o640)
+    os.replace(tmp, path)
+
+
+def update_offsite_status(**changes) -> Dict:
+    st = load_offsite_status()
+    st.update(changes)
+    save_offsite_status(st)
+    return st
+
+
+def now_iso() -> str:
+    return _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
+
+
+def load_offsite() -> Tuple[Dict, Dict[str, str]]:
+    try:
+        conf = json.loads(P(OFFSITE_CONF).read_text())
+    except (OSError, ValueError):
+        raise OffsiteError("no offsite storage is set up yet")
+    creds = read_kv(P(OFFSITE_ENV))
+    if not creds.get("AQUARIUM_OFFSITE_KEY_ID") or not creds.get("AQUARIUM_OFFSITE_SECRET_KEY"):
+        raise OffsiteError("the storage key is missing: save the storage settings again")
+    return conf, creds
+
+
+def offsite_client(conf: Dict, creds: Dict[str, str]) -> S3:
+    return S3(conf["endpoint"], conf.get("region", ""), conf["bucket"],
+              creds["AQUARIUM_OFFSITE_KEY_ID"], creds["AQUARIUM_OFFSITE_SECRET_KEY"])
+
+
+def _public_target(conf: Dict, key_id: str) -> Dict:
+    return {"provider": conf["provider"], "bucket": conf["bucket"], "prefix": conf.get("prefix", ""),
+            "endpoint": conf["endpoint"], "region": conf.get("region", ""),
+            "key_id_hint": ("…" + key_id[-4:]) if len(key_id) > 4 else "…"}
+
+
+def _validate_offsite(raw: Dict, old_creds: Dict[str, str]) -> Tuple[Dict, str, str]:
+    provider = str(raw.get("provider") or "")
+    if provider not in OFFSITE_PROVIDERS:
+        raise OffsiteError("choose where to keep copies")
+    bucket = str(raw.get("bucket") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{1,61}[A-Za-z0-9]", bucket):
+        raise OffsiteError("enter the bucket name (letters, digits, dots and dashes)")
+    key_id = str(raw.get("key_id") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9+/=._-]{4,256}", key_id):
+        raise OffsiteError("enter the Key ID")
+    secret = str(raw.get("secret") or "").strip()
+    if not secret and old_creds.get("AQUARIUM_OFFSITE_KEY_ID") == key_id:
+        secret = old_creds.get("AQUARIUM_OFFSITE_SECRET_KEY", "")
+    if not secret or len(secret) > 512 or not all(33 <= ord(c) < 127 for c in secret):
+        raise OffsiteError("enter the Secret key")
+    prefix = str(raw.get("prefix") if raw.get("prefix") is not None else "aquarium/").strip().lstrip("/")
+    if not re.fullmatch(r"[A-Za-z0-9._/-]{0,100}", prefix) or ".." in prefix:
+        raise OffsiteError("the folder name may use letters, digits, dots, dashes and /")
+    if prefix and not prefix.endswith("/"):
+        prefix += "/"
+    at = str(raw.get("time") or "03:00")
+    if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", at):
+        raise OffsiteError("the backup time must look like 03:00")
+    try:
+        keep_days = int(raw["keep_days"] if raw.get("keep_days") is not None else 30)
+    except (TypeError, ValueError):
+        keep_days = 0
+    if not 1 <= keep_days <= 3650:
+        raise OffsiteError("keep copies for 1 to 3650 days")
+    endpoint = str(raw.get("endpoint") or "").strip().rstrip("/")
+    region = str(raw.get("region") or "").strip()
+    if region and not re.fullmatch(r"[a-z0-9-]{2,40}", region):
+        raise OffsiteError("the region must look like us-west-004 or eu-central-1")
+    if provider == "other" and not endpoint:
+        raise OffsiteError("enter the storage address, e.g. https://s3.example.com")
+    conf = {"provider": provider, "bucket": bucket, "prefix": prefix, "endpoint": endpoint, "region": region,
+            "time": at, "keep_days": keep_days, "schedule": bool(raw.get("schedule", True))}
+    return conf, key_id, secret
+
+
+def _resolve_endpoint(conf: Dict, key_id: str, secret: str) -> None:
+    """Fill in the S3 address and region the owner did not have to type."""
+    if conf["provider"] == "b2" and not conf["endpoint"]:
+        req = urllib.request.Request(B2_AUTHORIZE_URL, headers={
+            "Authorization": "Basic " + base64.b64encode(f"{key_id}:{secret}".encode()).decode()})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 - fixed https URL
+                info = json.loads(resp.read())
+        except urllib.error.HTTPError as error:
+            raise OffsiteError("Backblaze did not accept the key: check the Key ID and Secret key"
+                               if error.code in (401, 403) else f"Backblaze refused the key ({error.code})")
+        except (OSError, ValueError):
+            raise OffsiteError("could not reach Backblaze", "Check that this server can reach the internet.")
+        api = info.get("apiInfo", {}).get("storageApi", info)
+        conf["endpoint"] = str(api.get("s3ApiUrl") or "").rstrip("/")
+        if not conf["endpoint"]:
+            raise OffsiteError("Backblaze did not say where the bucket lives")
+    if conf["provider"] == "s3" and not conf["endpoint"]:
+        region = conf["region"]
+        if not region:
+            try:
+                req = urllib.request.Request(f"https://s3.amazonaws.com/{_q(conf['bucket'])}", method="HEAD")
+                with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+                    region = resp.headers.get("x-amz-bucket-region", "")
+            except urllib.error.HTTPError as error:
+                region = error.headers.get("x-amz-bucket-region", "") if error.headers else ""
+            except OSError:
+                region = ""
+        conf["region"] = region or "us-east-1"
+        conf["endpoint"] = f"https://s3.{conf['region']}.amazonaws.com"
+    if not conf["region"]:
+        m = re.match(r"^https?://s3\.([a-z0-9-]+)\.backblazeb2\.com", conf["endpoint"])
+        conf["region"] = m.group(1) if m else "us-east-1"
+
+
+def offsite_check(client: S3, prefix: str) -> None:
+    """Write, read back and delete a small file: proves the key may do what backups need."""
+    key = f"{prefix}.aquarium-check-{secrets.token_hex(4)}"
+    data = f"aquarium check {now_iso()}\n".encode()
+    client.put(key, data)
+    try:
+        if client.get(key) != data:
+            raise OffsiteError("the storage service gave back a different file than was written")
+    finally:
+        client.delete(key)
+
+
+def offsite_units() -> Dict[str, str]:
+    cmd = SELF_INSTALL
+    hardening = ("Nice=10\nIOSchedulingClass=idle\nPrivateTmp=yes\nNoNewPrivileges=yes\n")
+    return {
+        f"{OFFSITE_BACKUP_UNIT}.service": (
+            "[Unit]\nDescription=Aquarium offsite backup (set up in Get ready)\n"
+            "Wants=network-online.target\nAfter=network-online.target docker.service\n\n"
+            f"[Service]\nType=oneshot\nExecStart={cmd} offsite run --foreground\n{hardening}"),
+        f"{OFFSITE_BACKUP_UNIT}.timer": "",
+        f"{OFFSITE_TEST_UNIT}.service": (
+            "[Unit]\nDescription=Aquarium offsite restore test (set up in Get ready)\n"
+            "Wants=network-online.target\nAfter=network-online.target docker.service\n\n"
+            f"[Service]\nType=oneshot\nExecStart={cmd} offsite restore-test --foreground\n{hardening}"),
+    }
+
+
+def write_offsite_units(conf: Dict) -> None:
+    units = offsite_units()
+    units[f"{OFFSITE_BACKUP_UNIT}.timer"] = (
+        "[Unit]\nDescription=Nightly Aquarium offsite backup\n\n"
+        f"[Timer]\nOnCalendar=*-*-* {conf['time']}:00\nPersistent=true\nRandomizedDelaySec=300\n\n"
+        "[Install]\nWantedBy=timers.target\n")
+    for name, text in units.items():
+        path = P(f"{SYSTEMD}/{name}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        os.chmod(path, 0o644)
+    systemctl("daemon-reload", check=False)
+    timer = f"{OFFSITE_BACKUP_UNIT}.timer"
+    if conf.get("schedule", True):
+        systemctl("enable", "--now", timer)
+    else:
+        systemctl("disable", "--now", timer, check=False)
+
+
+def _offsite_answer(data: Dict, code: int = 0) -> int:
+    sys.stdout.write(json.dumps(data, sort_keys=True) + "\n")
+    sys.stdout.flush()
+    return code
+
+
+def _offsite_public_status() -> Dict:
+    st = load_offsite_status()
+    if not _running_alive(st):
+        st["running"] = None
+    st["configured"] = P(OFFSITE_CONF).exists()
+    st["key_exists"] = P(f"{ETC}/backup.key").exists()
+    return st
+
+
+def offsite_configure(cfg: Dict[str, str]) -> int:
+    try:
+        raw = json.loads(sys.stdin.read(65536) or "{}")
+        if not isinstance(raw, dict):
+            raise ValueError
+    except ValueError:
+        return _offsite_answer({"ok": False, "error": "the settings could not be read"}, 1)
+    try:
+        conf, key_id, secret = _validate_offsite(raw, read_kv(P(OFFSITE_ENV)))
+        _resolve_endpoint(conf, key_id, secret)
+        offsite_check(S3(conf["endpoint"], conf["region"], conf["bucket"], key_id, secret), conf["prefix"])
+    except Fail as error:
+        update_offsite_status(last_check={"at": now_iso(), "ok": False, "error": str(error)})
+        return _offsite_answer({"ok": False, "error": str(error)}, 1)
+    with admin_lock():
+        key_path = P(f"{ETC}/backup.key")
+        new_key = None
+        if not key_path.exists():
+            new_key = backup_key().read_text().strip()
+        write_private(P(OFFSITE_ENV), (f"AQUARIUM_OFFSITE_KEY_ID={key_id}\n"
+                                       f"AQUARIUM_OFFSITE_SECRET_KEY={secret}\n").encode())
+        write_private(P(OFFSITE_CONF), (json.dumps(conf, indent=1, sort_keys=True) + "\n").encode())
+        write_offsite_units(conf)
+        st = update_offsite_status(target=_public_target(conf, key_id),
+                                   schedule={"enabled": conf["schedule"], "time": conf["time"],
+                                             "keep_days": conf["keep_days"]},
+                                   last_check={"at": now_iso(), "ok": True, "error": ""})
+        audit(f"offsite configure {conf['provider']} bucket={conf['bucket']}")
+    answer = {"ok": True, "status": dict(st, configured=True, key_exists=True)}
+    if new_key:
+        answer["new_key"] = new_key  # shown once in Get ready so the owner can keep it elsewhere
+    return _offsite_answer(answer)
+
+
+def offsite_test(cfg: Dict[str, str]) -> int:
+    try:
+        conf, creds = load_offsite()
+        offsite_check(offsite_client(conf, creds), conf.get("prefix", ""))
+    except Fail as error:
+        update_offsite_status(last_check={"at": now_iso(), "ok": False, "error": str(error)})
+        return _offsite_answer({"ok": False, "error": str(error)}, 1)
+    st = update_offsite_status(last_check={"at": now_iso(), "ok": True, "error": ""})
+    return _offsite_answer({"ok": True, "status": st})
+
+
+def offsite_remove(cfg: Dict[str, str]) -> int:
+    """Stop offsite backups: timer and units go, the key file goes. Copies in the bucket stay."""
+    with admin_lock():
+        systemctl("disable", "--now", f"{OFFSITE_BACKUP_UNIT}.timer", check=False)
+        for name in offsite_units():
+            with contextlib.suppress(FileNotFoundError):
+                P(f"{SYSTEMD}/{name}").unlink()
+        systemctl("daemon-reload", check=False)
+        for f in (OFFSITE_ENV, OFFSITE_CONF):
+            with contextlib.suppress(FileNotFoundError):
+                P(f).unlink()
+        st = load_offsite_status()
+        for k in ("target", "schedule", "running"):
+            st.pop(k, None)
+        save_offsite_status(st)
+        audit("offsite remove")
+    return _offsite_answer({"ok": True})
+
+
+def _running_alive(st: Dict) -> bool:
+    running = st.get("running")
+    if not running:
+        return False
+    pid = running.get("pid")
+    if pid:
+        try:
+            os.kill(int(pid), 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+    started = running.get("started", "")
+    try:  # "starting": systemd has not launched the job yet; give it two minutes
+        age = (_dt.datetime.now(_dt.timezone.utc) - _dt.datetime.fromisoformat(started)).total_seconds()
+    except ValueError:
+        return False
+    return age < 120
+
+
+def offsite_start(cfg: Dict[str, str], kind: str) -> int:
+    """Ask systemd to run the job (so it survives the web request) and return at once."""
+    try:
+        load_offsite()
+    except Fail as error:
+        return _offsite_answer({"ok": False, "error": str(error)}, 1)
+    st = load_offsite_status()
+    if _running_alive(st):
+        return _offsite_answer({"ok": True, "started": False, "status": _offsite_public_status()})
+    if kind == "restore-test" and not (st.get("last_good_backup") or {}).get("name"):
+        return _offsite_answer({"ok": False, "error": "there is no copy to test yet: run a backup first"}, 1)
+    update_offsite_status(running={"kind": kind, "phase": "starting", "percent": 0, "started": now_iso(),
+                                   "pid": None})
+    unit = OFFSITE_BACKUP_UNIT if kind == "backup" else OFFSITE_TEST_UNIT
+    proc = systemctl("start", "--no-block", f"{unit}.service", check=False)
+    if proc.returncode != 0:
+        update_offsite_status(running=None)
+        return _offsite_answer({"ok": False, "error": "could not start the job on this server"}, 1)
+    return _offsite_answer({"ok": True, "started": True, "status": _offsite_public_status()})
+
+
+class _Progress:
+    def __init__(self, kind: str) -> None:
+        self.kind, self.started, self.last = kind, now_iso(), 0.0
+        self.set("starting", 0, force=True)
+
+    def set(self, phase: str, percent: int, *, force: bool = False) -> None:
+        if not force and time.monotonic() - self.last < 1.0:
+            return
+        self.last = time.monotonic()
+        update_offsite_status(running={"kind": self.kind, "phase": phase, "percent": int(percent),
+                                       "started": self.started, "pid": os.getpid()})
+
+
+def offsite_backup_now(cfg: Dict[str, str]) -> int:
+    conf, creds = load_offsite()
+    client = offsite_client(conf, creds)
+    began = time.monotonic()
+    prog = _Progress("backup")
+    work = P(cfg["BACKUP_DIR"]) / "offsite"
+    path: Optional[Path] = None
+    try:
+        with admin_lock():
+            # make_backup reports database (0-30%), files (30-60%); upload is 60-100%
+            path = make_backup(cfg, label="offsite", to=work,
+                               progress=lambda phase, pct: prog.set(phase, pct, force=phase != "files"))
+            name = path.name
+            size = path.stat().st_size
+            key = conf.get("prefix", "") + name
+            prog.set("uploading", 60, force=True)
+            client.upload(key, path, lambda pct: prog.set("uploading", 60 + pct * 40 // 100))
+            if client.size(key) != size:
+                raise OffsiteError("the copy in storage is not complete; it will be tried again")
+            prog.set("cleanup", 99, force=True)
+            removed = offsite_prune(client, conf)
+            copies = len([k for k, _ in client.list(conf.get("prefix", "")) if OFFSITE_NAME_RE.match(
+                k.rsplit("/", 1)[-1])])
+    except Fail as error:
+        update_offsite_status(running=None, last_backup={"at": now_iso(), "ok": False, "error": str(error)})
+        audit(f"offsite backup failed: {error}")
+        raise
+    finally:
+        if path is not None:
+            with contextlib.suppress(FileNotFoundError):
+                path.unlink()
+    result = {"at": now_iso(), "ok": True, "error": "", "name": name, "size": size,
+              "seconds": int(time.monotonic() - began)}
+    update_offsite_status(running=None, last_backup=result, last_good_backup=result, copies=copies)
+    audit(f"offsite backup {name} ({size} bytes) uploaded, {removed} old copies removed")
+    say(f"Offsite backup done: {name}")
+    return 0
+
+
+def offsite_prune(client: S3, conf: Dict) -> int:
+    """Delete copies older than keep_days; the newest copy is always kept."""
+    prefix = conf.get("prefix", "")
+    names = sorted(k for k, _ in client.list(prefix) if OFFSITE_NAME_RE.match(k[len(prefix):]))
+    cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=int(conf.get("keep_days", 30))))
+    removed = 0
+    for k in names[:-1]:
+        stamp = OFFSITE_NAME_RE.match(k[len(prefix):]).group(1)  # type: ignore[union-attr]
+        made = _dt.datetime.strptime(stamp, "%Y%m%dT%H%M%SZ").replace(tzinfo=_dt.timezone.utc)
+        if made < cutoff:
+            client.delete(k)
+            removed += 1
+    return removed
+
+
+def offsite_restore_test_now(cfg: Dict[str, str]) -> int:
+    conf, creds = load_offsite()
+    client = offsite_client(conf, creds)
+    prefix = conf.get("prefix", "")
+    prog = _Progress("restore-test")
+    work = Path(tempfile.mkdtemp(prefix=".restore-test-", dir=_scratch_parent(cfg)))
+    os.chmod(work, 0o700)
+    name = ""
+    try:
+        copies = sorted((k, s) for k, s in client.list(prefix) if OFFSITE_NAME_RE.match(k[len(prefix):]))
+        if not copies:
+            raise OffsiteError("there is no copy in storage to test yet")
+        key, size = copies[-1]
+        name = key[len(prefix):]
+        archive = work / name
+        prog.set("downloading", 0, force=True)
+        client.download(key, archive, size, lambda pct: prog.set("downloading", pct * 50 // 100))
+        prog.set("checking", 50, force=True)
+        staging = work / "unpacked"
+        staging.mkdir(mode=0o700)
+        manifest = open_backup(archive, backup_key(create=False), staging)
+        archive.unlink()
+        prog.set("checking", 70, force=True)
+        problems = restore_test(cfg, manifest, staging)
+        if problems:
+            raise OffsiteError("; ".join(problems[:3]))
+    except Fail as error:
+        update_offsite_status(running=None, last_restore_test={"at": now_iso(), "ok": False, "name": name,
+                                                               "error": str(error)})
+        audit(f"offsite restore test failed: {error}")
+        raise
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    result = {"at": now_iso(), "ok": True, "name": name, "error": "", "files": len(manifest.get("files", {})),
+              "tables": len((manifest.get("db") or {}).get("tables", {}))}
+    update_offsite_status(running=None, last_restore_test=result)
+    audit(f"offsite restore test {name}: ok")
+    say(f"Restore test passed: {name}")
+    return 0
+
+
+def _scratch_parent(cfg: Dict[str, str]) -> Path:
+    """Scratch space for a restore test: under the backup folder, never under live data."""
+    parent = P(cfg["BACKUP_DIR"]) / "restore-test"
+    parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(parent, 0o700)
+    return parent
+
+
+def cmd_offsite(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
+    verb = args.verb
+    if verb == "status":
+        return _offsite_answer(_offsite_public_status())
+    if verb == "configure":
+        return offsite_configure(cfg)
+    if verb == "test":
+        return offsite_test(cfg)
+    if verb == "remove":
+        return offsite_remove(cfg)
+    kind = "backup" if verb == "run" else "restore-test"
+    if not args.foreground:
+        return offsite_start(cfg, kind)
+    step("Offsite backup" if kind == "backup" else "Offsite restore test (nothing live is changed)")
+    return offsite_backup_now(cfg) if kind == "backup" else offsite_restore_test_now(cfg)
 
 
 # --------------------------------------------------------------------------- doctor
@@ -1785,7 +2505,8 @@ def undo_layout(cfg: Dict[str, str]) -> int:
 
 
 def cmd_uninstall(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
-    units = sorted(set(service_units()) | set(bridge_units()) | set(enabled_units("hermes-*.timer")))
+    units = sorted(set(service_units()) | set(bridge_units()) | set(enabled_units("hermes-*.timer"))
+                   | {p.name for p in P(SYSTEMD).glob("hermes-offsite-*")})
     data = [cfg["SUPABASE_DIR"].rsplit("/docker", 1)[0]] + hermes_homes(cfg) + [ETC, f"{cfg['DATA_ROOT']}/hermes-embed"]
     say("This removes Aquarium from this server:")
     say(f"  stop and remove {len(units)} services: {', '.join(units)}")
@@ -1856,6 +2577,9 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--yes", action="store_true")
     p.add_argument("--key-file")
     p.add_argument("--no-safety-backup", action="store_true")
+    p = sub.add_parser("offsite", help="encrypted copies in S3-compatible storage (set up in Get ready)")
+    p.add_argument("verb", choices=["status", "configure", "test", "run", "restore-test", "remove"])
+    p.add_argument("--foreground", action="store_true", help=argparse.SUPPRESS)
     p = sub.add_parser("doctor", help="check everything and say how to fix what fails")
     p.add_argument("--json", action="store_true", help="print the results as one JSON line")
     p = sub.add_parser("logs", help="service logs")
@@ -1876,7 +2600,7 @@ def parser() -> argparse.ArgumentParser:
 
 COMMANDS = {"status": cmd_status, "update": cmd_update, "backup": cmd_backup, "restore": cmd_restore,
             "doctor": cmd_doctor, "logs": cmd_logs, "migrate-layout": cmd_migrate_layout,
-            "uninstall": cmd_uninstall}
+            "uninstall": cmd_uninstall, "offsite": cmd_offsite}
 
 
 def main(argv: Optional[List[str]] = None) -> int:

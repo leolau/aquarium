@@ -14,6 +14,8 @@ import { TelegramLinks } from "@/components/settings/TelegramLinks";
 import { ToolsSettings } from "@/components/settings/ToolsSettings";
 import { VpnConnections } from "@/components/settings/VpnConnections";
 import { WhatsAppBridges } from "@/components/settings/WhatsAppBridges";
+import { EmailMailboxes } from "@/components/settings/EmailMailboxes";
+import { BackupsItem } from "@/components/get-ready/BackupsItem";
 import { Spinner } from "@/components/ui/Spinner";
 import { sendJson } from "@/components/users/api";
 import type {
@@ -24,6 +26,7 @@ import type {
   GetReadyStatus,
   McpServer,
   Toolset,
+  OffsiteBackupStatus,
 } from "@/types";
 
 const GROUPS: GetReadyGroup[] = ["basics", "connections", "safety"];
@@ -48,6 +51,7 @@ export interface GetReadyExtras {
   peopleError: string | null;
   tools: { servers: McpServer[]; toolsets: Toolset[] } | null;
   currentMain: { provider: string; model: string } | null;
+  backups?: OffsiteBackupStatus | null;
 }
 
 export function summarize(items: GetReadyItem[]): GetReadyResponse["summary"] {
@@ -155,7 +159,7 @@ export function GetReadyView({ initial, extras }: { initial: GetReadyResponse; e
           {items.map((item) => (
             <a
               key={item.id}
-              href={`#get-ready-${item.id}`}
+              href={item.id === "backups" && isOwner ? "#item-backups" : `#get-ready-${item.id}`}
               className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-[var(--color-surface-2)]"
             >
               <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] ${STATUS_DOT[item.status]}`}>
@@ -186,7 +190,9 @@ export function GetReadyView({ initial, extras }: { initial: GetReadyResponse; e
               </h2>
               <ul className="space-y-2">
                 {groupItems.map((item) =>
-                  item.id === "security" ? (
+                  item.id === "backups" && isOwner ? (
+                    <BackupsItem key={item.id} initial={extras.backups ?? null} />
+                  ) : item.id === "security" ? (
                     <li key={item.id} id="get-ready-security" className="scroll-mt-4">
                       <SecurityBasicsItem key={securityRun} number={item.n} />
                     </li>
@@ -398,7 +404,9 @@ function Panel({
     case "telegram":
       return isOwner ? <TelegramLinks canManage /> : <Note>{t("d.telegram.coming")}</Note>;
     case "email":
-      return isOwner ? <ConnectedAccounts /> : <Note>{t("d.email.coming")}</Note>;
+      return <EmailMailboxes />;
+    case "backups":
+      return <Note>{t("d.backups.owner_only")}</Note>;
     case "tools":
       return extras.tools ? (
         <ToolsSettings servers={extras.tools.servers} toolsets={extras.tools.toolsets} canManage={canManage} />
