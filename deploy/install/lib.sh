@@ -266,6 +266,17 @@ aq_install_vpn_support() {  # APP: VPN client, SMB mount support, the root VPN h
   chown "$AQ_CODE_OWNER" "$AQ_ROOTFS/etc/sudoers.d/hermes-vpn"
 }
 
+aq_install_security_check() {  # APP: read-only root helper + sudoers for Get ready → Security basics
+  local app=$1
+  install -d -m 755 "$AQ_ROOTFS/usr/local/sbin" "$AQ_ROOTFS/etc/sudoers.d"
+  visudo -cqf "$app/deploy/sudoers.d/hermes-security-check" \
+    || { aq_fail "deploy/sudoers.d/hermes-security-check does not pass visudo"; return 1; }
+  install -m 755 "$app/deploy/hermes-security-check" "$AQ_ROOTFS/usr/local/sbin/hermes-security-check"
+  chown "$AQ_CODE_OWNER" "$AQ_ROOTFS/usr/local/sbin/hermes-security-check"
+  install -m 440 "$app/deploy/sudoers.d/hermes-security-check" "$AQ_ROOTFS/etc/sudoers.d/hermes-security-check"
+  chown "$AQ_CODE_OWNER" "$AQ_ROOTFS/etc/sudoers.d/hermes-security-check"
+}
+
 aq_enable_unattended_upgrades() {  # automatic Ubuntu security updates (keeps an operator's choice)
   local conf="$AQ_ROOTFS/etc/apt/apt.conf.d/20auto-upgrades"
   apt-get install -y -q unattended-upgrades

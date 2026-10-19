@@ -3,12 +3,15 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { AccountSecurity } from "@/components/account/AccountSecurity";
 import { EntityGoalSection } from "@/components/settings/EntityGoalSection";
 import { PushEnroll } from "@/components/push/PushEnroll";
 import { ConnectedAccounts } from "@/components/settings/ConnectedAccounts";
+import { GoogleClientSetup } from "@/components/settings/GoogleClientSetup";
 import { TelegramLinks } from "@/components/settings/TelegramLinks";
 import { VpnConnections } from "@/components/settings/VpnConnections";
 import { WhatsAppBridges } from "@/components/settings/WhatsAppBridges";
+import { useSecurityBasicsT } from "@/components/get-ready/securityBasicsT";
 import { BusyRegion } from "@/components/ui/BusyRegion";
 import { Spinner } from "@/components/ui/Spinner";
 import type { EntityGoal, SessionTag } from "@/types";
@@ -53,6 +56,7 @@ export function SettingsView({
   entityGoalReadOnly = false,
   canManageMembers = true,
   canManageTools = true,
+  isOwner = false,
 }: {
   entityGoal?: EntityGoal | null;
   entityGoalReadOnly?: boolean;
@@ -60,6 +64,9 @@ export function SettingsView({
   canManageMembers?: boolean;
   /** Owner/admin may change Tools & Integrations; others may only view. */
   canManageTools?: boolean;
+  /** Owner: titles the own-login block "Owner account…" and sets up
+   *  install-wide pieces such as the Google client. */
+  isOwner?: boolean;
 } = {}) {
   const [theme, setTheme] = usePersistentState<ThemeId>(
     THEME_STORAGE_KEY,
@@ -75,6 +82,7 @@ export function SettingsView({
 
   return (
     <div data-component="SettingsView" className="space-y-6">
+      <AccountSecurity isOwner={isOwner} />
       <section>
         <h2 className="text-sm font-semibold">Colour theme</h2>
         <p className="mb-3 text-xs text-[var(--color-muted)]">
@@ -123,7 +131,7 @@ export function SettingsView({
 
       <PushEnroll />
 
-      <InOutSection canManageMembers={canManageMembers} />
+      <InOutSection canManageMembers={canManageMembers} isOwner={isOwner} />
 
       <section data-section="tools" className="mt-6">
         <h2 className="text-sm font-semibold">Tools &amp; Integrations</h2>
@@ -140,6 +148,8 @@ export function SettingsView({
         </Link>
       </section>
 
+      {canManageTools ? <GetReadyLink /> : null}
+
       <EntityGoalSection goal={entityGoal} readOnly={entityGoalReadOnly} />
 
       <TagsSection />
@@ -149,7 +159,31 @@ export function SettingsView({
 
 /* ── In&Out: channels the agent talks through ────────────────────── */
 
-function InOutSection({ canManageMembers }: { canManageMembers: boolean }) {
+/** Owner/admin: Get ready → Security basics (read-only server checks). */
+function GetReadyLink() {
+  const { t } = useSecurityBasicsT();
+  return (
+    <section data-section="get-ready" className="mt-6">
+      <h2 className="text-sm font-semibold">{t("pageTitle")}</h2>
+      <p className="mb-3 text-xs text-[var(--color-muted)]">{t("settingsNote")}</p>
+      <Link
+        href="/settings/get-ready"
+        className="flex items-center justify-between rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm font-medium"
+      >
+        {t("settingsLink")}
+        <span aria-hidden className="text-[var(--color-muted)]">→</span>
+      </Link>
+    </section>
+  );
+}
+
+function InOutSection({
+  canManageMembers,
+  isOwner,
+}: {
+  canManageMembers: boolean;
+  isOwner: boolean;
+}) {
   return (
     <section
       id="in-out"
@@ -162,6 +196,7 @@ function InOutSection({ canManageMembers }: { canManageMembers: boolean }) {
         accounts, private networks (VPN), WhatsApp bridges and Telegram.
       </p>
       <div className="space-y-6 border-t border-[var(--color-border)] pt-4">
+        {isOwner && <GoogleClientSetup />}
         <ConnectedAccounts />
         <VpnConnections />
         <WhatsAppBridges />

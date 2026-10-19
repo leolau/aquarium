@@ -333,7 +333,7 @@ def released_box(box):
 
 def test_refuses_without_root(tmp_path):
     env = {k: v for k, v in os.environ.items() if k != "AQUARIUM_TEST_PREFIX"}
-    if os.geteuid() == 0:
+    if os.geteuid() == 0:  # windows-footgun: ok — POSIX-only root admin tooling
         pytest.skip("running as root")
     proc = subprocess.run([sys.executable, str(CLI), "status"], capture_output=True, text=True, env=env)
     assert proc.returncode == 2
@@ -674,6 +674,21 @@ def test_doctor_all_good(box, capsys):
                  "VPN helper: not installed", "WhatsApp bridge helper: not installed", "backups: newest is 0 days old"):
         assert text in out, text
     assert "TOPSECRETPW" not in out and "sk-or-SECRET" not in out
+
+
+def test_doctor_json_is_one_line_with_every_row(box, capsys):
+    released_box(box)
+    box.set_systemd(down=["hermes-gateway.service"])
+    capsys.readouterr()
+    code = box.run("doctor", "--json")
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+    assert code == 1
+    data = json.loads(lines[-1])
+    assert data["failed"] >= 1 and len(data["rows"]) >= 5
+    row = next(r for r in data["rows"] if r["text"] == "service hermes-gateway.service: failed")
+    assert row["status"] == "fail" and "aquarium logs hermes-gateway.service" in row["fix"]
+    assert all(r["fix"] == "" for r in data["rows"] if r["status"] == "ok")
+    assert "TOPSECRETPW" not in lines[-1] and "problem(s)" not in "\n".join(lines)
 
 
 def test_doctor_explains_each_failure(box, capsys):

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { SetupOwnerForm } from "@/components/auth/SetupOwnerForm";
 import { MobileShell } from "@/components/MobileShell";
+import { HermesApiClient } from "@/lib/api/client";
 
 /**
  * First-run owner setup, opened from the link `hermes setup-link` prints
@@ -18,10 +19,16 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
-export default function Page() {
+export default async function Page() {
+  // Which password login to sign the new owner into, for the optional
+  // two-factor step. An unreachable API just skips that step.
+  const providers = await new HermesApiClient()
+    .authProviders()
+    .then((res) => res.providers)
+    .catch(() => []);
   return (
     <MobileShell title="Set up Aquarium" showCoral={false}>
-      <SetupOwnerForm />
+      <SetupOwnerForm providers={providers} />
     </MobileShell>
   );
 }

@@ -208,6 +208,7 @@ chmod +x agent-home/deploy/start.sh
 
 log "VPN helper and office file-share support"
 aq_install_vpn_support "$APP"
+aq_install_security_check "$APP"
 
 # ---------------------------------------------------------------- 4. Supabase
 log "Supabase (self-hosted, Docker Compose)"
