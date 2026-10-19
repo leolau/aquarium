@@ -453,6 +453,10 @@ UNIT
 done
 install -m 755 deploy/hermes-deploy.sh "$ROOT/deploy-hermes.sh"
 install -m 755 -o root -g root deploy/aquarium.py /usr/local/sbin/aquarium
+# Offsite backups from Get ready: exact `aquarium offsite <verb>` commands only. Nothing runs
+# until the owner saves a storage target there (no timer or unit exists before that).
+visudo -cqf deploy/sudoers.d/hermes-backup
+install -m 440 -o root -g root deploy/sudoers.d/hermes-backup /etc/sudoers.d/hermes-backup
 # Agent terminal commands run as hermes-tools (terminal.run_as): root-owned helpers, the
 # sudoers rule, the `hermes` allowlist and folder access in HERMES_HOME; see the script header.
 bash deploy/hermes-tools-setup --hermes-home "$HERMES_HOME_DIR" --hermes-bin "$APP/.venv/bin/hermes" \

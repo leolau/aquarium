@@ -201,6 +201,30 @@ def _validate_smb_folder(payload: Mapping[str, Any]) -> None:
         fail("trusted_for_import must be true or false")
 
 
+_MAIL_SECURITY = ("ssl", "starttls")
+
+
+def _validate_email_imap(payload: Mapping[str, Any]) -> None:
+    def fail(msg: str) -> None:
+        raise CredentialError(f"email-imap: {msg}")
+
+    address = str(payload.get("address") or "").strip()
+    if address.count("@") != 1 or _CONTROL.search(address) or " " in address:
+        fail("address must be an email address")
+    if _CONTROL.search(str(payload.get("username") or "")):
+        fail("username contains control characters")
+    for side in ("imap", "smtp"):
+        host = str(payload.get(f"{side}_host") or "").strip()
+        if not _FORTI_HOST.fullmatch(host):
+            fail(f"{side}_host must be a host name")
+        port = payload.get(f"{side}_port")
+        if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+            fail(f"{side}_port must be a number from 1 to 65535")
+        security = payload.get(f"{side}_security", "ssl")
+        if security not in _MAIL_SECURITY:
+            fail(f"{side}_security must be one of {', '.join(_MAIL_SECURITY)}")
+
+
 CREDENTIAL_KINDS: Dict[str, KindSpec] = {
     "google-oauth2": KindSpec(
         name="google-oauth2",
@@ -235,6 +259,18 @@ CREDENTIAL_KINDS: Dict[str, KindSpec] = {
         keep_secrets_on_put=True,
         materialize=False,
         validator=_validate_fortinet_vpn,
+    ),
+    "email-imap": KindSpec(
+        name="email-imap",
+        required=(
+            "address", "username", "password",
+            "imap_host", "imap_port", "smtp_host", "smtp_port",
+        ),
+        optional=("imap_security", "smtp_security", "preset"),
+        secret_fields=("password",),
+        keep_secrets_on_put=True,
+        materialize=False,
+        validator=_validate_email_imap,
     ),
     "smb-folder": KindSpec(
         name="smb-folder",

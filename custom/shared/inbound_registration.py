@@ -134,6 +134,28 @@ def mark_importance(
         return False
 
 
+async def resolve_person(user_id: str):
+    """The live principal ``user_id`` — or ``None`` (never the owner instead).
+
+    For per-person sources (a person's own mailbox): an arrival whose person
+    is gone or deactivated is dropped rather than handed to anyone else.
+    """
+    try:
+        from hermes_cli.access import PrincipalStore
+        from hermes_cli.config import load_config
+        from hermes_cli.datastore import get_store
+
+        config = load_config() or {}
+        store = PrincipalStore(get_store("supabase-app", "prod", config=config))
+        principal = await store.get(user_id)
+    except Exception as exc:
+        logger.warning("inbound registration: could not resolve %s (%s)", user_id, exc)
+        return None
+    if principal is None or not getattr(principal, "active", True):
+        return None
+    return principal
+
+
 def register_item(
     *,
     surface: str,
@@ -151,12 +173,14 @@ def register_item(
     importance: Optional[str] = None,
     has_attachments: bool = False,
     metadata: Optional[dict] = None,
+    owner_user_id: Optional[str] = None,
 ) -> Optional[str]:
     """Mirror one arrival into the shared registry. Never raises.
 
     Returns the item's id when registered — the callers that also register
     attachments need it for ``file_assets.inbound_item_id`` — and ``None``
-    otherwise. Safe to call from synchronous code.
+    otherwise. Safe to call from synchronous code. ``owner_user_id`` files
+    the arrival as that person (private to them) instead of the install owner.
     """
     if not surface or not external_id:
         return None
@@ -164,7 +188,10 @@ def register_item(
         from hermes_cli.inbound_registry import register_arrival
 
         async def _do():
-            principal = await _resolve_owner()
+            if owner_user_id:
+                principal = await resolve_person(owner_user_id)
+            else:
+                principal = await _resolve_owner()
             if principal is None:
                 return None
             item = await register_arrival(
