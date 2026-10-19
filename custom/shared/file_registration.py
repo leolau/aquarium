@@ -132,17 +132,23 @@ def register_file(
         return False
 
 
-def register_files_batch(items: list[dict]) -> int:
+def register_files_batch(items: list[dict], owner_user_id: Optional[str] = None) -> int:
     """Register multiple files in a single event loop.
 
     Each item is a dict with the same keyword arguments as :func:`register_file`.
+    ``owner_user_id`` files them as that person instead of the install owner.
     Returns the number of files successfully registered.
     """
     if not items:
         return 0
 
     async def _do_all():
-        principal = await _resolve_owner()
+        if owner_user_id:
+            from shared.inbound_registration import resolve_person
+
+            principal = await resolve_person(owner_user_id)
+        else:
+            principal = await _resolve_owner()
         if principal is None:
             return 0
         from hermes_cli.file_registry import store_and_register

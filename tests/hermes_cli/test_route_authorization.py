@@ -76,12 +76,13 @@ HANDLER_CHECKED = {
     "POST /api/profiles/suggestions/{suggestion_id}/dismiss": ("owner", "principal.is_owner"),
     "GET /api/email-accounts": ("owner", "_owner_principal"),
     "PATCH /api/email-accounts": ("owner", "_owner_principal"),
-    "GET /api/wa-bridges": ("owner", "_owner_principal"),
-    "GET /api/wa-bridges/{name}/qr": ("owner", "_owner_principal"),
-    "POST /api/wa-bridges/{name}/restart": ("owner", "_owner_principal"),
-    "POST /api/wa-bridges/{name}/stop": ("owner", "_owner_principal"),
-    "POST /api/wa-bridges/{name}/rebind": ("owner", "_owner_principal"),
-    "POST /api/wa-bridges": ("owner", "_owner_principal"),
+    # wa_bridge_api: only the person a bridge belongs to (bridge-owners.json;
+    # unrecorded bridges = the install owner) sees its QR or controls it
+    "GET /api/wa-bridges/{name}/qr": ("bridge person", "_require_bridge_person"),
+    "POST /api/wa-bridges/{name}/restart": ("bridge person", "_require_bridge_person"),
+    "POST /api/wa-bridges/{name}/stop": ("bridge person", "_require_bridge_person"),
+    "POST /api/wa-bridges/{name}/rebind": ("bridge person", "_require_bridge_person"),
+    "POST /api/wa-bridges/{name}/test": ("bridge person", "_require_bridge_person"),
     "PATCH /api/registry/goals/entity": ("owner", "principal.is_owner"),
     "GET /api/internal/vpn/folders": ("internal", "_require_app_mcp"),
     "POST /api/internal/vpn/folders/ensure": ("internal", "_require_app_mcp"),
@@ -150,9 +151,18 @@ SIGNED_IN = {
     "PUT /api/credentials/{provider}/{name}",
     "PATCH /api/credentials/{provider}/{name}",
     "DELETE /api/credentials/{provider}/{name}",
+    # email_mailboxes_api: the caller's own IMAP/SMTP mailboxes
+    "GET /api/email/mailboxes",
+    "PUT /api/email/mailboxes/{address}",
+    "DELETE /api/email/mailboxes/{address}",
+    "POST /api/email/mailboxes/{address}/test",
     "POST /api/credentials/google/start",
     "POST /api/credentials/google/complete",
     "POST /api/credentials/google/{name}/refresh",
+    # wa_bridge_api: the caller's own bridges (others' only as a status for
+    # owner/admin); adding one makes it the caller's
+    "GET /api/wa-bridges",
+    "POST /api/wa-bridges",
     # vpn_api: the caller's own VPN folders
     "GET /api/vpn/folders",
     "POST /api/vpn/folders",

@@ -330,6 +330,17 @@ if [ -e "$TOOLS_RULE" ] && ! cmp -s "$TOOLS_RULE" "$REPO/deploy/sudoers.d/hermes
   echo "    sudo visudo -cf $REPO/deploy/sudoers.d/hermes-tools && sudo install -m 440 -o root -g root $REPO/deploy/sudoers.d/hermes-tools $TOOLS_RULE"
 fi
 
+AQ_HELPER=/usr/local/sbin/aquarium
+if [ -e "$AQ_HELPER" ] && ! cmp -s "$AQ_HELPER" "$REPO/deploy/aquarium.py"; then
+  echo "AQUARIUM ADMIN COMMAND STALE: $AQ_HELPER differs from the reviewed copy at $AFTER. Install it with:"
+  echo "    sudo install -m 755 -o root -g root $REPO/deploy/aquarium.py $AQ_HELPER"
+fi
+BACKUP_RULE=/etc/sudoers.d/hermes-backup
+if [ -e "$BACKUP_RULE" ] && ! cmp -s "$BACKUP_RULE" "$REPO/deploy/sudoers.d/hermes-backup"; then
+  echo "BACKUP SUDOERS RULE STALE: $BACKUP_RULE differs from the reviewed copy at $AFTER. Install it with:"
+  echo "    sudo visudo -cf $REPO/deploy/sudoers.d/hermes-backup && sudo install -m 440 -o root -g root $REPO/deploy/sudoers.d/hermes-backup $BACKUP_RULE"
+fi
+
 # The deploy tool does not deploy itself: /opt/data/deploy-hermes.sh is a copy
 # installed by hand, so a merged fix to this script changes nothing on the box
 # until someone remembers to install it — and the deploy it was supposed to fix
