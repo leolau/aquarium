@@ -16,6 +16,9 @@ import "server-only";
 
 import { hermesApiBaseUrl } from "@/lib/env";
 import type {
+  GoogleClientCheck,
+  GoogleClientSaveResult,
+  GoogleClientStatus,
   AgentAttachmentPayload,
   CapacityResponse,
   UploadStorageStatus,
@@ -2464,6 +2467,39 @@ export class HermesApiClient {
     return this.request("/api/wa-bridges", {
       method: "POST",
       json: { name },
+    });
+  }
+
+  /** Google step A status: is an install-wide OAuth client saved (owner only). */
+  async googleClientStatus(): Promise<GoogleClientStatus> {
+    return this.request("/api/google-client");
+  }
+
+  /** Save + check the install's Google OAuth client (owner only). */
+  async saveGoogleClient(payload: {
+    client_json?: string;
+    client_id?: string;
+    client_secret?: string;
+    replace?: boolean;
+  }): Promise<GoogleClientSaveResult> {
+    return this.request("/api/google-client", { method: "PUT", json: payload });
+  }
+
+  /** Ask Google whether the saved client is still accepted (owner only). */
+  async testGoogleClient(): Promise<{
+    check: GoogleClientCheck;
+    client: GoogleClientStatus;
+  }> {
+    return this.request("/api/google-client/test", { method: "POST" });
+  }
+
+  /** Store the owner's ticks for Google step A, steps 1–5 (owner only). */
+  async saveGoogleClientSteps(
+    steps: Partial<GoogleClientStatus["steps"]>,
+  ): Promise<GoogleClientStatus> {
+    return this.request("/api/google-client/steps", {
+      method: "PUT",
+      json: { steps },
     });
   }
 

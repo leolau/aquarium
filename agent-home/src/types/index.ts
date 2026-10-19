@@ -2847,3 +2847,31 @@ export interface ClarifyConfirmResult {
   plan_draft: { status: string; detail?: string | null } | null;
 }
 
+
+/** Google step A: the install's OAuth client, as the owner sees it (no secret). */
+export interface GoogleClientStatus {
+  configured: boolean;
+  source: "file" | "legacy_file" | "env" | null;
+  client_type: "installed" | "web" | "unknown" | null;
+  /** A shortened client ID, enough to recognise it. */
+  client_id_hint: string | null;
+  /** Owner ticks for steps 1–5 (done in Google Cloud, which Aquarium can't see). */
+  steps: Record<"1" | "2" | "3" | "4" | "5", boolean>;
+  last_check: { result: GoogleClientCheck; at: number } | null;
+  scopes: string[];
+  redirect_uri: string;
+}
+
+export type GoogleClientCheck =
+  | "ok"
+  | "invalid_client"
+  | "redirect_mismatch"
+  | "unreachable"
+  | "unexpected"
+  | "missing";
+
+export interface GoogleClientSaveResult {
+  saved: boolean;
+  check: GoogleClientCheck;
+  client: GoogleClientStatus;
+}

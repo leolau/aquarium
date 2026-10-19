@@ -351,7 +351,7 @@ export function ConnectedAccounts() {
   );
 
   return (
-    <section data-component="ConnectedAccounts">
+    <section id="connected-accounts" data-component="ConnectedAccounts">
       <h2 className="text-sm font-semibold">Connected accounts</h2>
       <p className="mb-3 text-xs text-[var(--color-muted)]">
         Your own Google (and other) credentials, stored per login. Background
