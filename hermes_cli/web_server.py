@@ -4645,6 +4645,7 @@ async def _comms_goal_service():
     service = GoalManagementService(
         _comms_app_store(),
         audit_store=_comms_app_store(),
+        config=load_config() or {},
     )
     await service.initialize()
     return service

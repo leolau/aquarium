@@ -122,12 +122,15 @@ class GoalManagementService:
         *,
         audit_store: Optional[SupabaseAppStore] = None,
         approval_callback: Optional["ApprovalCallback"] = None,
+        config: Optional[Mapping[str, object]] = None,
     ) -> None:
         self._store = store
         self._audit_store = audit_store
         self._approval_callback = approval_callback
         self.goals = GoalRegistryStore(store)
-        self.memory = PgvectorMemoryStore(store)
+        self.memory = PgvectorMemoryStore(
+            store, config=dict(config) if config is not None else None
+        )
         self.tasks = TaskRegistryStore(store)
         self.tools = ToolRegistry(store)
 
@@ -144,6 +147,7 @@ class GoalManagementService:
             get_store("supabase-app", mode, source=source, config=config),
             audit_store=get_store("supabase-app", "prod", config=config),
             approval_callback=approval_callback,
+            config=config,
         )
 
     @property

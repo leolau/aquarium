@@ -161,17 +161,21 @@ def _get_memory_store():
     """
     from plugins.memory.supabase_pgvector.store import PgvectorMemoryStore
 
-    return PgvectorMemoryStore(_get_app_store())
+    from hermes_cli.config import load_config_readonly
+
+    return PgvectorMemoryStore(_get_app_store(), config=load_config_readonly())
 
 
 def _get_goal_management_service():
     """Return the shared FG-09 service for the configured MCP mode."""
+    from hermes_cli.config import load_config_readonly
     from hermes_cli.goal_management import GoalManagementService
 
     return GoalManagementService(
         _get_app_store(),
         audit_store=_get_app_store("prod"),
         approval_callback=_get_write_approval_callback(),
+        config=load_config_readonly(),
     )
 
 

@@ -271,3 +271,21 @@ async def test_completed_linked_task_records_progress_and_closes_goal() -> None:
     assert goals.progress == [
         "telegram advanced linked task task-1 to completed"
     ]
+
+
+def test_memory_tier_uses_configured_embedding() -> None:
+    """Goal links write memories in the same vector space as the memory tier."""
+    config = {
+        "memory": {
+            "embedding": {
+                "provider": "local_http",
+                "endpoint": "http://127.0.0.1:9",
+                "model": "BAAI/bge-m3",
+                "dim": 1024,
+            }
+        }
+    }
+    store = _FakeStore() if "_FakeStore" in globals() else None
+    service = GoalManagementService(store, config=config)  # type: ignore[arg-type]
+    assert service.memory.dim == 1024
+    assert GoalManagementService(store).memory.model_id == "hashing"  # type: ignore[arg-type]
