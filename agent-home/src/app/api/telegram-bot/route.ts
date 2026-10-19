@@ -7,13 +7,16 @@
  */
 import { NextResponse } from "next/server";
 
-import { forwardTelegramBot as forward } from "@/lib/telegramBotBff";
+import { getPrincipal } from "@/lib/auth/principal";
+import { forwardTelegramBot as forward, unauthenticated } from "@/lib/telegramBotBff";
 
 export async function GET(): Promise<NextResponse> {
+  if (!(await getPrincipal())) return unauthenticated();
   return forward((client) => client.telegramBot());
 }
 
 export async function PUT(request: Request): Promise<NextResponse> {
+  if (!(await getPrincipal())) return unauthenticated();
   let token = "";
   try {
     const body = (await request.json()) as { token?: unknown };
@@ -28,5 +31,6 @@ export async function PUT(request: Request): Promise<NextResponse> {
 }
 
 export async function DELETE(): Promise<NextResponse> {
+  if (!(await getPrincipal())) return unauthenticated();
   return forward((client) => client.removeTelegramBot());
 }

@@ -10,7 +10,7 @@
  * presses Start in Telegram and then "Check", which records their Telegram id.
  * From then on the gateway runs the bot for this person only.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 
 import {
   errorKey,
@@ -39,6 +39,8 @@ async function call(path: string, method: string, body?: unknown): Promise<Teleg
   return data;
 }
 
+const noopSubscribe = () => () => {};
+
 function Step({ n, text }: { n: number; text: string }) {
   return (
     <div className="flex items-start gap-2">
@@ -51,7 +53,12 @@ function Step({ n, text }: { n: number; text: string }) {
 }
 
 export function TelegramBotSetup({ lang }: { lang?: string } = {}) {
-  const [locale, setLocale] = useState(() => pickLocale(lang));
+  const pageLang = useSyncExternalStore(
+    noopSubscribe,
+    () => document.documentElement.lang,
+    () => "",
+  );
+  const locale = pickLocale(lang ?? pageLang);
   const t = useCallback(
     (key: TelegramBotKey, vars?: Record<string, string>) => translate(locale, key, vars),
     [locale],
@@ -64,15 +71,14 @@ export function TelegramBotSetup({ lang }: { lang?: string } = {}) {
   const [busy, setBusy] = useState<Busy>(null);
   const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
 
-  useEffect(() => {
-    if (!lang && typeof document !== "undefined") setLocale(pickLocale(document.documentElement.lang));
-  }, [lang]);
-
-  const load = useCallback(() => {
-    setLoadError(false);
+  const fetchView = useCallback(() => {
     call("/api/telegram-bot", "GET").then(setView, () => setLoadError(true));
   }, []);
-  useEffect(load, [load]);
+  useEffect(fetchView, [fetchView]);
+  const load = () => {
+    setLoadError(false);
+    fetchView();
+  };
 
   async function run(kind: Exclude<Busy, null>, fn: () => Promise<TelegramBotView>, ok?: (v: TelegramBotView) => string | null) {
     if (busy) return;

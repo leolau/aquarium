@@ -201,5 +201,10 @@
   "POST /api/webview/approval/[approvalId]": "signed-in",
   "DELETE /api/webview/session": "signed-in",
   "GET /api/webview/session": "signed-in",
-  "POST /api/webview/session": "signed-in"
+  "POST /api/webview/session": "signed-in",
+  "GET /api/telegram-bot": "signed-in",
+  "PUT /api/telegram-bot": "signed-in",
+  "DELETE /api/telegram-bot": "signed-in",
+  "POST /api/telegram-bot/[...action]": "signed-in",
+  "DELETE /api/telegram-bot/[...action]": "signed-in"
 }
