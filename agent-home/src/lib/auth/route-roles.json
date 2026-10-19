@@ -1,6 +1,9 @@
 {
   "GET /api/access/roles": "signed-in",
   "PUT /api/access/roles/[role]": "admin",
+  "POST /api/account/password": "signed-in",
+  "GET /api/account/security": "signed-in",
+  "POST /api/account/two-factor/[action]": "signed-in",
   "POST /api/app-mcp/ticket": "signed-in",
   "POST /api/auth/invitations/redeem": "public",
   "POST /api/auth/invitations/request": "public",

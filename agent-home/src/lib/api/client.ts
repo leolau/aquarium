@@ -123,6 +123,21 @@ import type {
 } from "@/types";
 
 /** Raised when the Python API returns a non-2xx status. */
+export interface AccountSecurity {
+  email: string;
+  two_factor: { enabled: boolean; recovery_codes_left: number };
+}
+
+export const TWO_FACTOR_ACTIONS = ["start", "confirm", "disable", "recovery-codes"] as const;
+export type TwoFactorAction = (typeof TWO_FACTOR_ACTIONS)[number];
+
+export interface TwoFactorResult {
+  ok?: boolean;
+  secret?: string;
+  otpauth_uri?: string;
+  recovery_codes?: string[];
+}
+
 export class HermesApiError extends Error {
   constructor(
     readonly status: number,
@@ -1158,6 +1173,36 @@ export class HermesApiClient {
     clientIp = "",
   ): Promise<{ ok: boolean }> {
     return this.request("/api/setup/owner", {
+      method: "POST",
+      json: input,
+      headers: forwardedFor(clientIp),
+    });
+  }
+
+  /** Two-factor status of the signed-in person's own login. */
+  async accountSecurity(): Promise<AccountSecurity> {
+    return this.request("/api/account/security");
+  }
+
+  /** Change the signed-in person's own password (`code` when two-factor is on). */
+  async changePassword(
+    input: { current_password: string; new_password: string; code?: string },
+    clientIp = "",
+  ): Promise<{ ok: boolean }> {
+    return this.request("/api/account/password", {
+      method: "POST",
+      json: input,
+      headers: forwardedFor(clientIp),
+    });
+  }
+
+  /** One two-factor step for the signed-in person's own login. */
+  async twoFactor(
+    action: TwoFactorAction,
+    input: { password?: string; code?: string },
+    clientIp = "",
+  ): Promise<TwoFactorResult> {
+    return this.request(`/api/account/two-factor/${action}`, {
       method: "POST",
       json: input,
       headers: forwardedFor(clientIp),

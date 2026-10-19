@@ -4042,6 +4042,193 @@ async def setup_owner(request: Request):
     return {"ok": True}
 
 
+# --- Own login: password + two-factor (agent-home Settings / Get ready item 1) ---
+#
+# Every route below acts only on the signed-in person's own login: the target is
+# always the verified session, never a body/query id, so nobody can change
+# anyone else's password or two-factor. Turning two-factor off or making new
+# recovery codes needs the current password *and* a current code.
+
+
+async def _account_login(request: "Request"):
+    """``(session, principal_id)`` of the signed-in caller, or 403/409/503."""
+    from hermes_cli import two_factor
+
+    session = getattr(request.state, "session", None)
+    if session is None or not (getattr(session, "user_id", "") or "").strip():
+        raise HTTPException(status_code=403, detail="Sign in to manage your login.")
+    try:
+        user_id = await two_factor.principal_id_for_session(session)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="Accounts are not set up on this server yet.") from exc
+    if not user_id:
+        raise HTTPException(status_code=409, detail="This login is not linked to a person yet.")
+    return session, user_id
+
+
+def _account_check_password(request: "Request", session, password: str) -> None:
+    """Re-check the caller's current password with the provider they signed in with."""
+    from hermes_cli.dashboard_auth import routes as auth_routes
+    from hermes_cli.dashboard_auth.base import InvalidCredentialsError, ProviderError
+    from hermes_cli.dashboard_auth.registry import get_provider
+
+    if auth_routes._password_rate_limited(_forwarded_client_ip(request)):
+        raise HTTPException(status_code=429, detail="Too many tries. Wait a minute and try again.")
+    provider = get_provider(getattr(session, "provider", "") or "")
+    if provider is None or not getattr(provider, "supports_password", False):
+        raise HTTPException(status_code=400, detail="This login has no password to check.")
+    username = (getattr(session, "email", "") or "").strip() or session.user_id
+    try:
+        provider.complete_password_login(username=username, password=password or "")
+    except InvalidCredentialsError as exc:
+        raise HTTPException(status_code=400, detail="That password is not right.") from exc
+    except ProviderError as exc:
+        raise HTTPException(status_code=503, detail="Sign-in service is unreachable. Try again shortly.") from exc
+
+
+def _account_check_code(user_id: str, code: str) -> None:
+    from hermes_cli import two_factor
+
+    try:
+        ok = two_factor.verify(user_id, code or "")
+    except two_factor.TwoFactorLocked as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    if not ok:
+        raise HTTPException(status_code=400, detail="That code doesn't match.")
+
+
+@app.get("/api/account/security")
+async def account_security(request: Request):
+    """Two-factor status of the caller's own login (signed-in, self only)."""
+    from hermes_cli import two_factor
+
+    session, user_id = await _account_login(request)
+    return {
+        "email": getattr(session, "email", "") or "",
+        "two_factor": two_factor.status(user_id),
+    }
+
+
+@app.post("/api/account/password")
+async def account_change_password(request: Request):
+    """Change the caller's own password. Body ``{current_password, new_password, code?}``.
+
+    ``code`` is required when two-factor is on. The owner's dashboard (basic
+    auth) password is kept the same, as first run sets it.
+    """
+    from hermes_cli import first_run, two_factor
+    from hermes_cli.invitations import InvitationError, validate_password
+    from hermes_cli.members import load_admin_client
+
+    session, user_id = await _account_login(request)
+    body = await _setup_body(request)
+    _account_check_password(request, session, str(body.get("current_password", "") or ""))
+    if two_factor.is_enabled(user_id):
+        _account_check_code(user_id, str(body.get("code", "") or ""))
+    try:
+        new_password = validate_password(
+            str(body.get("new_password", "") or ""),
+            email=getattr(session, "email", "") or "",
+        )
+    except InvitationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    provider = getattr(session, "provider", "")
+    if provider == "supabase":
+        admin = load_admin_client()
+        if admin is None:
+            raise HTTPException(status_code=503, detail="Password changes are not set up on this server.")
+        try:
+            admin.set_password(user_id=session.user_id, password=new_password)
+        except Exception as exc:  # noqa: BLE001 — never leak the reason
+            _log.warning("password change failed: %s", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="Could not change the password. Try again.") from exc
+        owner = await _comms_owner_id()
+        if owner and owner == user_id:
+            first_run._set_dashboard_password(new_password)
+    elif provider == "basic":
+        if not first_run._set_dashboard_password(new_password):
+            raise HTTPException(status_code=400, detail="This login's password can't be changed here.")
+    else:
+        raise HTTPException(status_code=400, detail="This login's password can't be changed here.")
+    _log.info("password changed for %s", user_id)
+    return {"ok": True}
+
+
+async def _comms_owner_id() -> str:
+    from hermes_cli.access import PrincipalStore
+
+    owner = await PrincipalStore(_comms_app_store()).get_owner()
+    return owner.user_id if owner is not None else ""
+
+
+@app.post("/api/account/two-factor/start")
+async def account_two_factor_start(request: Request):
+    """Make a new two-factor secret for the caller. Body ``{password}``.
+
+    Returns ``{secret, otpauth_uri}``; nothing is on until ``/confirm``.
+    """
+    from hermes_cli import two_factor
+
+    session, user_id = await _account_login(request)
+    body = await _setup_body(request)
+    _account_check_password(request, session, str(body.get("password", "") or ""))
+    account = (getattr(session, "email", "") or "").strip() or user_id
+    try:
+        return two_factor.start(user_id, account)
+    except two_factor.TwoFactorError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/account/two-factor/confirm")
+async def account_two_factor_confirm(request: Request):
+    """Turn two-factor on with the first app code. Body ``{code}``.
+
+    Returns the ten recovery codes; they are never shown again.
+    """
+    from hermes_cli import two_factor
+
+    _session, user_id = await _account_login(request)
+    body = await _setup_body(request)
+    try:
+        codes = two_factor.confirm(user_id, str(body.get("code", "") or ""))
+    except two_factor.TwoFactorLocked as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except two_factor.TwoFactorError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _log.info("two-factor turned on for %s", user_id)
+    return {"ok": True, "recovery_codes": codes}
+
+
+@app.post("/api/account/two-factor/disable")
+async def account_two_factor_disable(request: Request):
+    """Turn two-factor off. Body ``{password, code}`` (app or recovery code)."""
+    from hermes_cli import two_factor
+
+    session, user_id = await _account_login(request)
+    body = await _setup_body(request)
+    if not two_factor.is_enabled(user_id):
+        return {"ok": True}
+    _account_check_password(request, session, str(body.get("password", "") or ""))
+    _account_check_code(user_id, str(body.get("code", "") or ""))
+    two_factor.disable(user_id)
+    _log.info("two-factor turned off for %s", user_id)
+    return {"ok": True}
+
+
+@app.post("/api/account/two-factor/recovery-codes")
+async def account_two_factor_recovery_codes(request: Request):
+    """Replace all recovery codes. Body ``{password, code}``. Returns the new ten."""
+    from hermes_cli import two_factor
+
+    session, user_id = await _account_login(request)
+    body = await _setup_body(request)
+    if not two_factor.is_enabled(user_id):
+        raise HTTPException(status_code=409, detail="Two-factor login is off.")
+    _account_check_password(request, session, str(body.get("password", "") or ""))
+    _account_check_code(user_id, str(body.get("code", "") or ""))
+    return {"ok": True, "recovery_codes": two_factor.regenerate_recovery_codes(user_id)}
+
+
 def _forwarded_client_ip(request: "Request") -> str:
     """The invitee's own IP for the unauthenticated invitation endpoints.
 

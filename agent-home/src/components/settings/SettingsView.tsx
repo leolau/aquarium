@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { AccountSecurity } from "@/components/account/AccountSecurity";
 import { EntityGoalSection } from "@/components/settings/EntityGoalSection";
 import { PushEnroll } from "@/components/push/PushEnroll";
 import { ConnectedAccounts } from "@/components/settings/ConnectedAccounts";
@@ -53,6 +54,7 @@ export function SettingsView({
   entityGoalReadOnly = false,
   canManageMembers = true,
   canManageTools = true,
+  isOwner = false,
 }: {
   entityGoal?: EntityGoal | null;
   entityGoalReadOnly?: boolean;
@@ -60,6 +62,8 @@ export function SettingsView({
   canManageMembers?: boolean;
   /** Owner/admin may change Tools & Integrations; others may only view. */
   canManageTools?: boolean;
+  /** Titles the own-login block "Owner account…" for the owner. */
+  isOwner?: boolean;
 } = {}) {
   const [theme, setTheme] = usePersistentState<ThemeId>(
     THEME_STORAGE_KEY,
@@ -75,6 +79,7 @@ export function SettingsView({
 
   return (
     <div data-component="SettingsView" className="space-y-6">
+      <AccountSecurity isOwner={isOwner} />
       <section>
         <h2 className="text-sm font-semibold">Colour theme</h2>
         <p className="mb-3 text-xs text-[var(--color-muted)]">

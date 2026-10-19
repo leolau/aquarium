@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { useAccountT } from "@/components/account/useAccountT";
 import { Spinner } from "@/components/ui/Spinner";
 
 export interface ProviderOption {
@@ -24,29 +25,109 @@ export function LoginForm({ providers }: { providers: ProviderOption[] }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Second step: this login has two-factor on. The password stays in memory
+  // only until the code is accepted, then both are sent together.
+  const [needsCode, setNeedsCode] = useState(false);
+  const [code, setCode] = useState("");
+  const t = useAccountT();
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (busy) return;
     setError(null);
     setBusy(true);
     try {
       const res = await fetch("/api/session/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ provider, username, password }),
+        body: JSON.stringify(
+          needsCode ? { provider, username, password, code } : { provider, username, password },
+        ),
       });
+      const body = (await res.json().catch(() => null)) as {
+        detail?: string;
+        error?: string;
+        two_factor_required?: boolean;
+      } | null;
+      if (res.ok && body?.two_factor_required) {
+        setNeedsCode(true);
+        setCode("");
+        return;
+      }
       if (res.ok) {
         router.replace("/");
         router.refresh();
         return;
       }
-      const body = (await res.json().catch(() => null)) as { detail?: string } | null;
+      if (body?.error === "invalid_code") {
+        setError(t("codeWrong"));
+        return;
+      }
+      if (body?.error === "too_many_attempts") {
+        setError(t("tooMany"));
+        return;
+      }
       setError(body?.detail ?? "Sign-in failed.");
     } catch {
       setError("Could not reach the server.");
     } finally {
       setBusy(false);
     }
+  }
+
+  if (needsCode) {
+    return (
+      <form data-component="LoginCodeForm" onSubmit={submit} aria-busy={busy} className="space-y-4">
+        <div>
+          <h2 className="text-base font-semibold">{t("loginCodeTitle")}</h2>
+          <p className="mt-1 text-sm text-[var(--color-muted)]">{t("loginCodeHelp")}</p>
+        </div>
+        <label className="block text-sm">
+          <span className="mb-1 block text-[var(--color-muted)]">{t("loginCodeLabel")}</span>
+          <input
+            type="text"
+            inputMode="text"
+            autoComplete="one-time-code"
+            autoFocus
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3 font-mono tracking-[0.2em]"
+            required
+          />
+        </label>
+        {error ? (
+          <p role="alert" className="rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-sm text-red-300">
+            {error}
+          </p>
+        ) : null}
+        <button
+          type="submit"
+          disabled={busy || !code.trim()}
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--color-accent)] px-4 py-3 font-semibold text-[var(--color-accent-fg)] disabled:opacity-60"
+        >
+          {busy ? (
+            <>
+              <Spinner size="md" />
+              {t("verifying")}
+            </>
+          ) : (
+            t("verify")
+          )}
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => {
+            setNeedsCode(false);
+            setPassword("");
+            setError(null);
+          }}
+          className="w-full text-sm text-[var(--color-muted)] underline"
+        >
+          {t("back")}
+        </button>
+      </form>
+    );
   }
 
   return (
