@@ -98,6 +98,7 @@ import type {
   NetworkFolderView,
   VpnView,
   WaBridge,
+  WaBridgesResponse,
   SessionTag,
   SessionsResponse,
   CronJob,
@@ -481,6 +482,16 @@ export class HermesApiClient {
   /** Resolve the C1 principal + role for the current bridged session. */
   async whoami(): Promise<{ configured: boolean; principal: Principal | null }> {
     return this.request("/api/comms/whoami");
+  }
+
+  /** The signed-in person's own saved preferences (``language`` is null until chosen). */
+  async myPreferences(): Promise<{ language: string | null }> {
+    return this.request("/api/me/preferences");
+  }
+
+  /** Save the signed-in person's own language; nobody else's. */
+  async setMyLanguage(language: string): Promise<{ language: string }> {
+    return this.request("/api/me/preferences", { method: "PUT", json: { language } });
   }
 
   /** List the interactive auth providers (login-page bootstrap). Unauthed. */
@@ -2503,8 +2514,16 @@ export class HermesApiClient {
   }
 
   /** WhatsApp bridge units (deployment sidecars; owner-gated). */
-  async waBridges(): Promise<{ bridges: WaBridge[] }> {
+  async waBridges(): Promise<WaBridgesResponse> {
     return this.request("/api/wa-bridges");
+  }
+
+  /** "Send yourself a test": one message to the bridge's own number. */
+  async waBridgeTest(name: string): Promise<{ sent: boolean; to: string | null }> {
+    return this.request(
+      `/api/wa-bridges/${encodeURIComponent(name)}/test`,
+      { method: "POST" },
+    );
   }
 
   /** Pending pairing payload for an unpaired bridge (auth material). */

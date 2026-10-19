@@ -1,0 +1,10 @@
+{
+  "language": "Language",
+  "languageNote": "Changes this page right away. Each person can choose their own language.",
+  "languageSaveFailed": "Could not save your language. Try again.",
+  "signOut": "Sign out",
+  "signingOut": "Signing out…",
+  "signOutConfirmTitle": "Sign out?",
+  "signOutConfirmBody": "You'll need to log in again on this device.",
+  "cancel": "Cancel"
+}

@@ -5,6 +5,7 @@ import { useState } from "react";
 import { BusyRegion } from "@/components/ui/BusyRegion";
 import { Spinner } from "@/components/ui/Spinner";
 import type { EntityGoal, EntityGoalResponse } from "@/types";
+import { useT } from "@/i18n";
 
 /**
  * The entity goal — the one goal every sub-goal ladders into.
@@ -33,6 +34,7 @@ export function EntityGoalSection({
   goal: EntityGoal | null;
   readOnly?: boolean;
 }) {
+  const tSettings = useT("settings");
   const [title, setTitle] = useState(goal?.title ?? "");
   const [description, setDescription] = useState(goal?.description ?? "");
   const [saving, setSaving] = useState(false);
@@ -71,7 +73,7 @@ export function EntityGoalSection({
 
   return (
     <section data-component="EntityGoalSection" data-section="entity-goal">
-      <h2 className="text-sm font-semibold">Entity goal</h2>
+      <h2 className="text-sm font-semibold">{tSettings("entityGoal")}</h2>
       <p className="mb-3 text-xs text-[var(--color-muted)]">
         What this system exists to achieve. Every profile&apos;s sub-goal ladders
         into it, and it is published into each profile so they can see it.

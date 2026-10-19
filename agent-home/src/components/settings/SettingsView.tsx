@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { useT } from "@/components/get-ready/i18n";
 import { AccountSecurity } from "@/components/account/AccountSecurity";
 import { EntityGoalSection } from "@/components/settings/EntityGoalSection";
+import { LanguageSwitch } from "@/components/LanguageSwitch";
 import { PushEnroll } from "@/components/push/PushEnroll";
 import { ConnectedAccounts } from "@/components/settings/ConnectedAccounts";
 import { GoogleClientSetup } from "@/components/settings/GoogleClientSetup";
@@ -24,6 +25,7 @@ import {
   type ThemeId,
 } from "@/lib/theme";
 import { usePersistentState } from "@/lib/use-persistent-state";
+import { useT } from "@/i18n";
 
 /** Tag colours — same set used in SessionModal. */
 const TAG_COLORS = [
@@ -68,6 +70,7 @@ export function SettingsView({
    *  install-wide pieces such as the Google client. */
   isOwner?: boolean;
 } = {}) {
+  const t = useT("settings");
   const [theme, setTheme] = usePersistentState<ThemeId>(
     THEME_STORAGE_KEY,
     DEFAULT_THEME,
@@ -83,12 +86,16 @@ export function SettingsView({
 
   return (
     <div data-component="SettingsView" className="space-y-6">
+      <section data-section="language">
+        <h2 className="text-sm font-semibold">{t("language")}</h2>
+        <p className="mb-3 text-xs text-[var(--color-muted)]">{t("languageHint")}</p>
+        <LanguageSwitch />
+      </section>
+
       <AccountSecurity isOwner={isOwner} />
       <section>
-        <h2 className="text-sm font-semibold">Colour theme</h2>
-        <p className="mb-3 text-xs text-[var(--color-muted)]">
-          Choose how the interface looks. Your choice is saved on this device.
-        </p>
+        <h2 className="text-sm font-semibold">{t("theme")}</h2>
+        <p className="mb-3 text-xs text-[var(--color-muted)]">{t("themeHint")}</p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {THEMES.map((opt) => {
             const active = opt.id === theme;
@@ -135,16 +142,13 @@ export function SettingsView({
       <InOutSection canManageMembers={canManageMembers} isOwner={isOwner} />
 
       <section data-section="tools" className="mt-6">
-        <h2 className="text-sm font-semibold">Tools &amp; Integrations</h2>
-        <p className="mb-3 text-xs text-[var(--color-muted)]">
-          MCP servers and CLI toolsets the agent can use — enable, disable,
-          test, and re-authenticate (e.g. Canva OAuth).
-        </p>
+        <h2 className="text-sm font-semibold">{t("tools")}</h2>
+        <p className="mb-3 text-xs text-[var(--color-muted)]">{t("toolsHint")}</p>
         <Link
           href="/settings/tools"
           className="flex items-center justify-between rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm font-medium"
         >
-          {canManageTools ? "Manage integrations" : "View integrations"}
+          {canManageTools ? t("manageIntegrations") : t("viewIntegrations")}
           <span aria-hidden className="text-[var(--color-muted)]">→</span>
         </Link>
       </section>
@@ -185,13 +189,14 @@ function InOutSection({
   canManageMembers: boolean;
   isOwner: boolean;
 }) {
+  const t = useT("settings");
   return (
     <section
       id="in-out"
       data-section="in-out"
       className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
     >
-      <h2 className="text-base font-semibold">In&amp;Out</h2>
+      <h2 className="text-base font-semibold">{t("inOut")}</h2>
       <p className="mb-4 text-xs text-[var(--color-muted)]">
         Where messages, mail and calendar events come in and go out: Google
         accounts, private networks (VPN), WhatsApp bridges and Telegram.
@@ -210,6 +215,7 @@ function InOutSection({
 /* ── Tags management ─────────────────────────────────────────────── */
 
 function TagsSection() {
+  const t = useT("settings");
   const [tags, setTags] = useState<SessionTag[]>([]);
   const [name, setName] = useState("");
   const [color, setColor] = useState("blue");
@@ -291,7 +297,7 @@ function TagsSection() {
 
   return (
     <section data-section="tags">
-      <h2 className="text-sm font-semibold">Tags</h2>
+      <h2 className="text-sm font-semibold">{t("tags")}</h2>
       <p className="mb-3 text-xs text-[var(--color-muted)]">
         Define tags here, then associate them with conversations from the chat.
       </p>

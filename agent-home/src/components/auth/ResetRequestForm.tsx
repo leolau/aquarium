@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { useT } from "@/i18n";
+
 /**
  * "I can't sign in" — asks an administrator of the profile for a fresh link.
  *
@@ -12,6 +14,7 @@ import { useState } from "react";
  * nothing.
  */
 export function ResetRequestForm() {
+  const t = useT("login");
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
   const [open, setOpen] = useState(false);
@@ -43,7 +46,7 @@ export function ResetRequestForm() {
         onClick={() => setOpen(true)}
         className="text-xs text-[var(--color-muted)] underline"
       >
-        Can&apos;t sign in?
+        {t("cantSignIn")}
       </button>
     );
   }
@@ -55,13 +58,12 @@ export function ResetRequestForm() {
       className="mt-4 flex flex-col gap-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
     >
       <p className="text-xs text-[var(--color-muted)]">
-        Enter your email and an administrator of your profile will be given a
-        one-time link to hand over.
+        {t("resetIntro")}
       </p>
       <input
         type="email"
         required
-        aria-label="Your email address"
+        aria-label={t("resetEmailLabel")}
         placeholder="email@example.com"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
@@ -72,12 +74,11 @@ export function ResetRequestForm() {
         disabled={busy}
         className="rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-xs disabled:opacity-50"
       >
-        {busy ? "Sending…" : "Request a link"}
+        {busy ? t("sending") : t("requestLink")}
       </button>
       {sent ? (
         <p className="text-xs text-[var(--color-muted)]">
-          If that address is enrolled here, an administrator now has a link for
-          it.
+          {t("resetSent")}
         </p>
       ) : null}
     </form>

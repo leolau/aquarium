@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { StatusSummary } from "@/types";
+import { useT } from "@/i18n";
 
 const POLL_MS = 30_000;
 const AGE_TICK_MS = 1_000;
@@ -54,6 +55,7 @@ function fmtGb(bytes: number | null): string {
  * always says exactly how old the numbers are. The ↻ button re-reads now.
  */
 export function StatusStrip() {
+  const t = useT("nav");
   const [summary, setSummary] = useState<StatusSummary | null>(null);
   const [stale, setStale] = useState(false);
   // When the last *successful* fetch landed (local clock — immune to server/
@@ -166,31 +168,31 @@ export function StatusStrip() {
         </div>
       ) : null}
       <div className="mx-auto flex w-full max-w-2xl items-center gap-2 lg:max-w-5xl">
-        <Link href="/capacity" className={chip} title="CPU busy — tap for the capacity page">
-          <span className="font-medium text-[var(--color-fg)]">CPU</span>
+        <Link href="/capacity" className={chip} title={t("status.cpuTitle")}>
+          <span className="font-medium text-[var(--color-fg)]">{t("status.cpu")}</span>
           {fmtPct(summary?.cpu_pct ?? null)}
         </Link>
-        <Link href="/capacity" className={chip} title="Storage used on the hermes volume">
-          <span className="font-medium text-[var(--color-fg)]">Disk</span>
+        <Link href="/capacity" className={chip} title={t("status.diskTitle")}>
+          <span className="font-medium text-[var(--color-fg)]">{t("status.disk")}</span>
           {fmtPct(summary?.disk_pct ?? null)}
         </Link>
         {tokens ? (
           <Link
             href="/models"
             className={chip}
-            title="Tokens used in the last 30 days (input + output)"
+            title={t("status.tokensTitle")}
           >
-            <span className="font-medium text-[var(--color-fg)]">Tokens</span>
+            <span className="font-medium text-[var(--color-fg)]">{t("status.tokens")}</span>
             {tokens}/mo
             {cost ? ` · $${cost.toFixed(2)}` : ""}
           </Link>
         ) : null}
-        <span className={chip} title="Active agent conversations + running kanban cards">
-          <span className="font-medium text-[var(--color-fg)]">Tasks</span>
+        <span className={chip} title={t("status.tasksTitle")}>
+          <span className="font-medium text-[var(--color-fg)]">{t("status.tasks")}</span>
           {tasks}
         </span>
-        <span className={chip} title="Scheduled cron jobs (enabled of total)">
-          <span className="font-medium text-[var(--color-fg)]">Cron</span>
+        <span className={chip} title={t("status.cronTitle")}>
+          <span className="font-medium text-[var(--color-fg)]">{t("status.cron")}</span>
           {summary ? `${summary.cron_enabled}/${summary.cron_total}` : "—"}
         </span>
         {fetchedAt !== null ? (
