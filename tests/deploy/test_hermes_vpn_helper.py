@@ -209,7 +209,7 @@ def h(tmp_path, monkeypatch):
     monkeypatch.setattr(helper, "TOOLS_GROUP", "no-such-group-for-tests")
     monkeypatch.setattr(helper, "SYS_NET", str(world / "sysnet"))
     monkeypatch.setattr(helper, "PROC_MOUNTS", str(world / "mounts"))
-    monkeypatch.setattr(helper, "TRUSTED_UIDS", (0, os.getuid()))
+    monkeypatch.setattr(helper, "TRUSTED_UIDS", (0, os.getuid()))  # windows-footgun: ok — POSIX-only helper test
     monkeypatch.setattr(helper, "RESOLV_FILES", ())
     monkeypatch.setattr(helper, "UP_TIMEOUT", 5.0)
 
@@ -411,7 +411,7 @@ def test_spec_in_shared_directory_refused(h):
 
 
 def test_spec_from_other_user_refused(h, monkeypatch):
-    monkeypatch.setattr(h, "caller_uid", lambda: os.getuid() + 1)
+    monkeypatch.setattr(h, "caller_uid", lambda: os.getuid() + 1)  # windows-footgun: ok — POSIX-only helper test
     with pytest.raises(h.InputError):
         h.read_spec_file(write_spec(h, base_spec()))
 
