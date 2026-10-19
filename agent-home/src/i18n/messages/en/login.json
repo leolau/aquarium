@@ -1,0 +1,18 @@
+{
+  "title": "Sign in",
+  "intro": "Sign in with your Hermes account to open your agent home.",
+  "provider": "Provider",
+  "username": "Email / username",
+  "password": "Password",
+  "signIn": "Sign in",
+  "signingIn": "Signing in…",
+  "failed": "Sign-in failed.",
+  "unreachable": "Could not reach the server.",
+  "noProvider": "No password provider is configured on the AI layer. OAuth sign-in via the bridge is deferred to a later wave.",
+  "cantSignIn": "Can't sign in?",
+  "resetIntro": "Enter your email and an administrator of your profile will be given a one-time link to hand over.",
+  "resetEmailLabel": "Your email address",
+  "sending": "Sending…",
+  "requestLink": "Request a link",
+  "resetSent": "If that address is enrolled here, an administrator now has a link for it."
+}

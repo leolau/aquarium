@@ -3392,7 +3392,38 @@ class GatewayRunner(
                         source.platform,
                         exc_info=True,
                     )
+        bridge = getattr(adapter, "bridge_name", None) if adapter is not None else None
+        if isinstance(bridge, str) and bridge:
+            source = await self._clamp_whatsapp_bridge_person(source, bridge)
         return source
+
+    async def _clamp_whatsapp_bridge_person(
+        self, source: SessionSource, bridge: str
+    ) -> SessionSource:
+        """A message through a person's own WhatsApp bridge is handled only as
+        that person. Bridges with no recorded person keep today's routing."""
+        try:
+            from hermes_cli.wa_bridge_owners import bridge_person, own_number
+
+            person = bridge_person(bridge)
+            if not person:
+                return source
+            from gateway.inbound import clamp_to_bridge_person
+
+            return await clamp_to_bridge_person(
+                source,
+                person=person,
+                own_number=own_number(bridge),
+                store=self._get_principal_store(),
+            )
+        except Exception:
+            logger.warning(
+                "WhatsApp bridge %s: could not apply its person; message left "
+                "unbound.", bridge, exc_info=True,
+            )
+            source.internal_user_id = None
+            source.internal_user_role = None
+            return source
 
     def _spawn_inbound_file_registration(
         self, event: Any, source: SessionSource

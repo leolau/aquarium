@@ -1,0 +1,10 @@
+{
+  "language": "語言",
+  "languageNote": "此頁會即時轉換。每位用戶可以自選語言。",
+  "languageSaveFailed": "未能儲存你的語言設定，請再試一次。",
+  "signOut": "登出",
+  "signingOut": "正在登出…",
+  "signOutConfirmTitle": "要登出嗎？",
+  "signOutConfirmBody": "你需要在這部裝置上重新登入。",
+  "cancel": "取消"
+}

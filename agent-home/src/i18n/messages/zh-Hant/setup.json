@@ -1,0 +1,18 @@
+{
+  "title": "設定 Aquarium",
+  "checking": "正在檢查你的設定連結…",
+  "invalid": "此設定連結無效。連結可能已過期（有效期為 24 小時）或已經用過。",
+  "invalidHelp": "如需新連結，請在伺服器上（以 Aquarium 服務帳戶）執行 {command}。新連結會令舊連結失效。",
+  "invalidFull": "此設定連結無效。連結可能已過期（有效期為 24 小時）或已經用過。請安裝 Aquarium 的人在伺服器上執行「hermes setup-link」取得新連結。",
+  "done": "擁有者帳戶已準備好。請用你剛才設定的電郵及密碼登入。",
+  "signIn": "登入",
+  "intro": "為這個 Aquarium 建立擁有者的登入帳戶。密碼最少要有 {min} 個字元。此連結只可使用一次。",
+  "email": "電郵",
+  "password": "密碼",
+  "confirm": "確認密碼",
+  "creating": "正在建立…",
+  "create": "建立擁有者帳戶",
+  "errorEmail": "請輸入擁有者的電郵地址。",
+  "errorShort": "密碼最少要有 {min} 個字元。",
+  "errorMismatch": "兩次輸入的密碼不一致。"
+}

@@ -20,5 +20,7 @@ export default defineConfig({
     // PG is available.
     environment: "node",
     include: ["src/**/*.test.{ts,tsx}"],
+    // Components render English when a test mounts no I18nProvider.
+    setupFiles: ["./test/setup-i18n.ts"],
   },
 });

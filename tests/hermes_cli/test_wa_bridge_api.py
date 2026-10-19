@@ -5,6 +5,8 @@ the filesystem are faked — no FastAPI TestClient, no systemd."""
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi import HTTPException
 
@@ -19,8 +21,7 @@ class _FakeRequest:
         return self._body
 
 
-async def _no_owner(_request):
-    return None
+OWNER = SimpleNamespace(user_id="leo", display="Leo", role="owner", is_owner=True)
 
 
 @pytest.fixture
@@ -28,7 +29,13 @@ def wa_home(tmp_path, monkeypatch):
     wa = tmp_path / "whatsapp"
     wa.mkdir()
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    monkeypatch.setattr(api, "_owner_principal", _no_owner)
+    # Never read the host's real bridge units (a dev box may have some).
+    monkeypatch.setattr(api, "_systemctl", lambda *a, **k: _Proc())
+
+    async def _as_owner(_request):
+        return OWNER
+
+    monkeypatch.setattr(api, "_caller", _as_owner)
     return wa
 
 

@@ -73,12 +73,13 @@ HANDLER_CHECKED = {
     "POST /api/profiles/suggestions/{suggestion_id}/dismiss": ("owner", "principal.is_owner"),
     "GET /api/email-accounts": ("owner", "_owner_principal"),
     "PATCH /api/email-accounts": ("owner", "_owner_principal"),
-    "GET /api/wa-bridges": ("owner", "_owner_principal"),
-    "GET /api/wa-bridges/{name}/qr": ("owner", "_owner_principal"),
-    "POST /api/wa-bridges/{name}/restart": ("owner", "_owner_principal"),
-    "POST /api/wa-bridges/{name}/stop": ("owner", "_owner_principal"),
-    "POST /api/wa-bridges/{name}/rebind": ("owner", "_owner_principal"),
-    "POST /api/wa-bridges": ("owner", "_owner_principal"),
+    # wa_bridge_api: only the person a bridge belongs to (bridge-owners.json;
+    # unrecorded bridges = the install owner) sees its QR or controls it
+    "GET /api/wa-bridges/{name}/qr": ("bridge person", "_require_bridge_person"),
+    "POST /api/wa-bridges/{name}/restart": ("bridge person", "_require_bridge_person"),
+    "POST /api/wa-bridges/{name}/stop": ("bridge person", "_require_bridge_person"),
+    "POST /api/wa-bridges/{name}/rebind": ("bridge person", "_require_bridge_person"),
+    "POST /api/wa-bridges/{name}/test": ("bridge person", "_require_bridge_person"),
     "PATCH /api/registry/goals/entity": ("owner", "principal.is_owner"),
     "GET /api/internal/vpn/folders": ("internal", "_require_app_mcp"),
     "POST /api/internal/vpn/folders/ensure": ("internal", "_require_app_mcp"),
@@ -91,6 +92,16 @@ HANDLER_CHECKED = {
 #: Any signed-in user; the handler limits what they see or change to their own
 #: data (chat scope, principal, project membership).
 SIGNED_IN = {
+    # user_prefs: the acting person's own language; no user id is taken from the request
+    "GET /api/me/preferences",
+    "PUT /api/me/preferences",
+    # own login only (session subject, never a body id): password + two-factor
+    "GET /api/account/security",
+    "POST /api/account/password",
+    "POST /api/account/two-factor/start",
+    "POST /api/account/two-factor/confirm",
+    "POST /api/account/two-factor/disable",
+    "POST /api/account/two-factor/recovery-codes",
     # fastapi.applications: API schema pages
     "GET /openapi.json",
     "GET /docs",
@@ -148,6 +159,10 @@ SIGNED_IN = {
     "POST /api/telegram-bot/link/start",
     "POST /api/telegram-bot/link/check",
     "DELETE /api/telegram-bot/link",
+    # wa_bridge_api: the caller's own bridges (others' only as a status for
+    # owner/admin); adding one makes it the caller's
+    "GET /api/wa-bridges",
+    "POST /api/wa-bridges",
     # vpn_api: the caller's own VPN folders
     "GET /api/vpn/folders",
     "POST /api/vpn/folders",
@@ -494,6 +509,7 @@ ADMIN_ROUTES = [
     ("post", "/api/skills/hub/install", {"identifier": "x"}),
     ("post", "/api/memory/providers/honcho/oauth/start", None),
     ("post", "/api/mcp/servers", {"name": "evil", "command": "/bin/sh", "args": ["-c", "id"]}),
+    ("get", "/api/security-basics", None),
 ]
 
 
