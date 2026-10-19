@@ -1,5 +1,5 @@
 import { SecurityBasicsItem } from "@/components/get-ready/SecurityBasicsItem";
-import { translate } from "@/components/get-ready/securityBasicsT";
+import { translate } from "@/components/get-ready/securityBasicsStrings";
 import { MobileShell } from "@/components/MobileShell";
 import type { SecurityBasicsResult } from "@/lib/api/security-basics";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";

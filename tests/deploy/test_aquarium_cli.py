@@ -333,7 +333,7 @@ def released_box(box):
 
 def test_refuses_without_root(tmp_path):
     env = {k: v for k, v in os.environ.items() if k != "AQUARIUM_TEST_PREFIX"}
-    if os.geteuid() == 0:
+    if os.geteuid() == 0:  # windows-footgun: ok — POSIX-only root admin tooling
         pytest.skip("running as root")
     proc = subprocess.run([sys.executable, str(CLI), "status"], capture_output=True, text=True, env=env)
     assert proc.returncode == 2

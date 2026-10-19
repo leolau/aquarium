@@ -80,7 +80,7 @@ def world(tmp_path):
         '"/etc/ufw/applications.d"': f'"{tmp_path}/ufw-apps"',
         '"/root/.ssh/': f'"{tmp_path}/root/.ssh/',
         '"/home/*/.ssh/': f'"{tmp_path}/home/*/.ssh/',
-        "st.st_uid != 0": f"st.st_uid != {os.getuid()}",
+        "st.st_uid != 0": f"st.st_uid != {os.getuid()}",  # windows-footgun: ok — POSIX-only root admin tooling
     }.items():
         assert old in text, old
         text = text.replace(old, new)

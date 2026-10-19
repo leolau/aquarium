@@ -194,7 +194,7 @@ def run(argv: Sequence[str], *, check: bool = True, capture: bool = True, input:
         env: Optional[Dict[str, str]] = None, cwd: Optional[Path] = None, timeout: Optional[float] = None,
         as_service: Optional[str] = None) -> subprocess.CompletedProcess:
     preexec = None
-    if as_service and os.geteuid() == 0:
+    if as_service and os.geteuid() == 0:  # windows-footgun: ok — POSIX-only root admin tooling
         pw = pwd.getpwnam(as_service)
 
         def preexec() -> None:  # drop root before anything from the release runs
@@ -233,7 +233,7 @@ def chown_tree(path: Path, user: str) -> None:
     """Give a whole tree to ``user`` (root for code, the service user for data).
 
     Without root (tests) ownership can't change, so this is skipped."""
-    if os.geteuid() != 0:
+    if os.geteuid() != 0:  # windows-footgun: ok — POSIX-only root admin tooling
         return
     pw = pwd.getpwnam(user)
     for root, dirs, files in os.walk(path):
@@ -775,7 +775,7 @@ def refresh_self(rel: Path) -> None:
     tmp = dest.with_name(".aquarium.new")
     shutil.copyfile(src, tmp)
     os.chmod(tmp, 0o755)
-    if os.geteuid() == 0:
+    if os.geteuid() == 0:  # windows-footgun: ok — POSIX-only root admin tooling
         os.chown(tmp, 0, 0)
     os.replace(tmp, dest)
     say(f"  updated {SELF_INSTALL} from the release")
@@ -807,7 +807,7 @@ def carry_forward(old: Path, new: Path) -> List[str]:
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dest)
             st = os.stat(src)
-            if os.geteuid() == 0:
+            if os.geteuid() == 0:  # windows-footgun: ok — POSIX-only root admin tooling
                 os.chown(dest, st.st_uid, st.st_gid)
             carried.append(os.path.relpath(src, old_root))
     return carried
@@ -1472,7 +1472,7 @@ def check_self(cfg: Dict[str, str]) -> List[Tuple[str, str, str]]:
             st = path.stat()
             if any(real(path).startswith(h.rstrip("/") + "/") for h in hermes_homes(cfg)):
                 continue  # $HERMES_HOME/.env is written by the app itself
-            if st.st_mode & 0o077 or (os.geteuid() == 0 and st.st_uid != 0):
+            if st.st_mode & 0o077 or (os.geteuid() == 0 and st.st_uid != 0):  # windows-footgun: ok — POSIX-only root admin tooling
                 rows.append((WARN, f"settings file {real(path)} is readable by others (mode {st.st_mode & 0o777:o})",
                              f"chown root:root {real(path)} && chmod 600 {real(path)} (systemd reads it as root)."))
     return rows
@@ -1881,7 +1881,7 @@ COMMANDS = {"status": cmd_status, "update": cmd_update, "backup": cmd_backup, "r
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = parser().parse_args(argv)
-    if os.geteuid() != 0 and not test_mode():
+    if os.geteuid() != 0 and not test_mode():  # windows-footgun: ok — POSIX-only root admin tooling
         say("aquarium must run as root: sudo aquarium " + " ".join(sys.argv[1:]))
         return 2
     os.umask(0o022)

@@ -23,7 +23,7 @@ PINS = REPO_ROOT / "deploy" / "install" / "pins.env"
 LOCK = REPO_ROOT / "deploy" / "install" / "supabase-images.lock"
 SCRIPT = REPO_ROOT / "install-aquarium.sh"
 TEXT = SCRIPT.read_text()
-OWNER = f"{os.getuid()}:{os.getgid()}"
+OWNER = f"{os.getuid()}:{os.getgid()}"  # windows-footgun: ok — POSIX-only root admin tooling
 
 
 def _lib(snippet: str, env: dict | None = None, stubs: Path | None = None) -> subprocess.CompletedProcess:
