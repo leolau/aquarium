@@ -216,13 +216,26 @@ def connection_flags(creds: List[Any]) -> Dict[str, Any]:
 
 
 def whatsapp_bridges() -> List[Dict[str, Any]]:
-    """The install's WhatsApp bridges (owner-managed, install-wide today)."""
+    """Every WhatsApp bridge with its ``person`` (``None``: the install owner's,
+    e.g. a bridge made before per-person bridges)."""
     try:
-        from hermes_cli import wa_bridge_api
+        from hermes_cli import wa_bridge_api, wa_bridge_owners
 
-        return [wa_bridge_api._describe(name) for name in wa_bridge_api._bridge_names()]
+        recorded = wa_bridge_owners.load_owners()
+        bridges = []
+        for name in wa_bridge_api._bridge_names():
+            desc = dict(wa_bridge_api._describe(name))
+            rec = recorded.get(name)
+            desc["person"] = rec["user_id"] if rec else None
+            bridges.append(desc)
+        return bridges
     except Exception:
         return []
+
+
+def bridges_of(bridges: List[Dict[str, Any]], user_id: str, is_owner: bool) -> List[Dict[str, Any]]:
+    """The bridges that belong to one person (same rule as wa_bridge_api)."""
+    return [b for b in bridges if (b["person"] == user_id if b.get("person") else is_owner)]
 
 
 def email_accounts() -> List[Dict[str, Any]]:
@@ -387,11 +400,7 @@ async def status_google(ctx: Context) -> ItemStatus:
 
 
 async def status_whatsapp(ctx: Context) -> ItemStatus:
-    # Bridges are install-wide and owner-managed today; they count as the
-    # owner's. Per-person bridges are another unit's work.
-    if not ctx.is_owner:
-        return ItemStatus(NOT_STARTED, "whatsapp.coming", coming=True)
-    bridges = await asyncio.to_thread(whatsapp_bridges)
+    bridges = bridges_of(await asyncio.to_thread(whatsapp_bridges), ctx.user_id, ctx.is_owner)
     if not bridges:
         return ItemStatus(NOT_STARTED, "whatsapp.none")
     linked = [b for b in bridges if b.get("paired")]
@@ -675,16 +684,17 @@ async def people_status(ctx: Context) -> Dict[str, Any]:
             cells["google"] = {"state": WAITING, "reason": "step_a"}
         else:
             cells["google"] = {"state": NOT_SET}
+        theirs = bridges_of(bridges, person.user_id, is_owner)
+        if any(b.get("paired") for b in theirs):
+            cells["whatsapp"] = {"state": SET}
+        elif theirs:
+            cells["whatsapp"] = {"state": WAITING, "reason": "qr"}
+        else:
+            cells["whatsapp"] = {"state": NOT_SET}
         if not is_owner:
-            for key in ("whatsapp", "telegram", "email", "tools"):
+            for key in ("telegram", "email", "tools"):
                 cells[key] = {"state": COMING}
         else:
-            if any(b.get("paired") for b in bridges):
-                cells["whatsapp"] = {"state": SET}
-            elif bridges:
-                cells["whatsapp"] = {"state": WAITING, "reason": "qr"}
-            else:
-                cells["whatsapp"] = {"state": NOT_SET}
             cells["telegram"] = {"state": SET if telegram else NOT_SET}
             cells["email"] = {"state": SET if mailboxes else NOT_SET}
             cells["tools"] = (

@@ -165,7 +165,7 @@ def test_existing_install_wide_settings_count_as_the_owners(client, acting, monk
     assert items["email"]["status"] == "done"
     acting["as"] = MEMBER
     items = _items(client.get("/api/get-ready").json())
-    for key in ("telegram", "tools", "email", "whatsapp"):
+    for key in ("telegram", "tools", "email"):
         assert items[key]["status"] == "not_started" and items[key]["coming"], key
 
 
@@ -279,3 +279,25 @@ def test_security_item_uses_security_basics_last_result(client, monkeypatch, hom
     body = client.post("/api/get-ready/security/test").json()
     assert body["last_test"]["result"] == "ok"
     assert body["last_test"]["params"] == {"passed": 7, "total": 7}
+
+
+def test_whatsapp_status_is_each_persons_own_bridges(client, acting, monkeypatch):
+    from hermes_cli import get_ready
+
+    bridges = [
+        {"name": "office", "active": "active", "paired": True, "qr_pending": False, "person": None},
+        {"name": "mia-phone", "active": "active", "paired": False, "qr_pending": True, "person": "mia"},
+    ]
+    monkeypatch.setattr(get_ready, "whatsapp_bridges", lambda: bridges)
+    item = _items(client.get("/api/get-ready").json())["whatsapp"]
+    assert item["status"] == "done" and item["params"] == {"count": 1}
+    acting["as"] = MEMBER
+    item = _items(client.get("/api/get-ready").json())["whatsapp"]
+    assert item["status"] == "attention" and not item["coming"]
+    acting["as"] = ADMIN
+    assert _items(client.get("/api/get-ready").json())["whatsapp"]["status"] == "not_started"
+    rows = {r["user_id"]: r["connections"] for r in client.get("/api/get-ready/people").json()["people"]}
+    assert rows["root"]["whatsapp"] == {"state": "set"}
+    assert rows["mia"]["whatsapp"] == {"state": "waiting", "reason": "qr"}
+    assert rows["ann"]["whatsapp"] == {"state": "not_set"}
+    assert "mia-phone" not in json.dumps(rows) and "office" not in json.dumps(rows)

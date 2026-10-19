@@ -394,7 +394,7 @@ function Panel({
       );
     }
     case "whatsapp":
-      return isOwner ? <WhatsAppBridges /> : <Note>{t("d.whatsapp.coming")}</Note>;
+      return <WhatsAppBridges />;
     case "telegram":
       return isOwner ? <TelegramLinks canManage /> : <Note>{t("d.telegram.coming")}</Note>;
     case "email":

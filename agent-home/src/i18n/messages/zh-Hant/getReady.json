@@ -55,7 +55,6 @@
   "d.whatsapp.done": "{count} 個 WhatsApp 連接已連結手機。",
   "d.whatsapp.waiting_qr": "已加入「{name}」連接，正等待手機掃描二維碼。",
   "d.whatsapp.stopped": "有已連結的連接沒有運行。",
-  "d.whatsapp.coming": "你自己的 WhatsApp 即將推出。暫時由擁有人管理 WhatsApp。",
   "d.telegram.none": "尚未有 Telegram 機械人。",
   "d.telegram.done": "這個 Aquarium 的 Telegram 機械人已設定。",
   "d.telegram.coming": "你自己的 Telegram 機械人即將推出。暫時共用擁有人的機械人。",

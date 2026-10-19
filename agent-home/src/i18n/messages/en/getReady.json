@@ -55,7 +55,6 @@
   "d.whatsapp.done": "{count} WhatsApp bridge(s) linked to a phone.",
   "d.whatsapp.waiting_qr": "Bridge “{name}” is added, waiting for the phone to scan the QR code.",
   "d.whatsapp.stopped": "A linked bridge is not running.",
-  "d.whatsapp.coming": "Your own WhatsApp is coming soon. For now the owner manages WhatsApp.",
   "d.telegram.none": "No Telegram bot yet.",
   "d.telegram.done": "This Aquarium's Telegram bot is set up.",
   "d.telegram.coming": "Your own Telegram bot is coming soon. For now the owner's bot is shared.",

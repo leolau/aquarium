@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import { useT } from "@/components/get-ready/i18n";
 import { AccountSecurity } from "@/components/account/AccountSecurity";
 import { EntityGoalSection } from "@/components/settings/EntityGoalSection";
 import { LanguageSwitch } from "@/components/LanguageSwitch";
