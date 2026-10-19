@@ -1144,7 +1144,10 @@ export class HermesApiClient {
   }
 
   /** First-run owner setup (hermes_cli/first_run.py): is this link usable? */
-  async setupCheck(token: string, clientIp = ""): Promise<{ ok: boolean }> {
+  async setupCheck(
+    token: string,
+    clientIp = "",
+  ): Promise<{ ok: boolean; steps?: boolean }> {
     return this.request("/api/setup/check", {
       method: "POST",
       json: { token },
@@ -1158,6 +1161,42 @@ export class HermesApiClient {
     clientIp = "",
   ): Promise<{ ok: boolean }> {
     return this.request("/api/setup/owner", {
+      method: "POST",
+      json: input,
+      headers: forwardedFor(clientIp),
+    });
+  }
+
+  /** First-run AI model step: probe, save and test a provider key. */
+  async setupModel(
+    input: { token: string; provider: string; api_key: string },
+    clientIp = "",
+  ): Promise<SetupModelResult> {
+    return this.request("/api/setup/model", {
+      method: "POST",
+      json: input,
+      headers: forwardedFor(clientIp),
+    });
+  }
+
+  /** First-run timezone + language (config.yaml). */
+  async setupRegion(
+    input: { token: string; timezone: string; language: string },
+    clientIp = "",
+  ): Promise<{ ok: boolean }> {
+    return this.request("/api/setup/region", {
+      method: "POST",
+      json: input,
+      headers: forwardedFor(clientIp),
+    });
+  }
+
+  /** First-run read-only domain check (DNS + HTTPS). */
+  async setupDomain(
+    input: { token: string; host: string },
+    clientIp = "",
+  ): Promise<SetupDomainResult> {
+    return this.request("/api/setup/domain", {
       method: "POST",
       json: input,
       headers: forwardedFor(clientIp),
@@ -2876,4 +2915,22 @@ function safeJson(text: string): unknown {
   } catch {
     return text;
   }
+}
+
+export interface SetupModelResult {
+  ok: boolean;
+  provider?: string;
+  model?: string;
+  latency_ms?: number;
+  error?: "key_rejected" | "no_model" | "test_failed";
+  detail?: string;
+}
+
+export interface SetupDomainResult {
+  ok: boolean;
+  host: string;
+  resolves: boolean;
+  points_here: boolean;
+  https_ready: boolean;
+  server_addresses: string[];
 }
