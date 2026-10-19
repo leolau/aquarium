@@ -140,6 +140,14 @@ SIGNED_IN = {
     "POST /api/credentials/google/start",
     "POST /api/credentials/google/complete",
     "POST /api/credentials/google/{name}/refresh",
+    # telegram_bot_api: the caller's own Telegram bot
+    "GET /api/telegram-bot",
+    "PUT /api/telegram-bot",
+    "DELETE /api/telegram-bot",
+    "POST /api/telegram-bot/test",
+    "POST /api/telegram-bot/link/start",
+    "POST /api/telegram-bot/link/check",
+    "DELETE /api/telegram-bot/link",
     # vpn_api: the caller's own VPN folders
     "GET /api/vpn/folders",
     "POST /api/vpn/folders",

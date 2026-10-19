@@ -2954,7 +2954,13 @@ class TelegramAdapter(BasePlatformAdapter):
             await self._app.start()
 
             # Decide between webhook and polling mode
-            webhook_url = os.getenv("TELEGRAM_WEBHOOK_URL", "").strip()
+            # A person's own bot (gateway/person_telegram_bots.py) always
+            # polls: the install webhook URL belongs to the install bot.
+            webhook_url = (
+                ""
+                if self.config.extra.get("force_polling")
+                else os.getenv("TELEGRAM_WEBHOOK_URL", "").strip()
+            )
 
             if webhook_url:
                 # ── Webhook mode ─────────────────────────────────────

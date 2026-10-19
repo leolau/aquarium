@@ -245,6 +245,20 @@ CREDENTIAL_KINDS: Dict[str, KindSpec] = {
         materialize=False,
         validator=_validate_smb_folder,
     ),
+    # A person's own @BotFather bot (Get ready item 6). The gateway runs it
+    # only for its owner and only once ``linked_user_id`` is set.
+    "telegram-bot": KindSpec(
+        name="telegram-bot",
+        required=("token",),
+        optional=(
+            "bot_id", "bot_username", "bot_name", "linked_user_id",
+            "linked_username", "link_code_hash", "link_code_expires",
+            "last_test_at", "last_test_ok", "last_test_error",
+        ),
+        secret_fields=("token", "link_code_hash"),
+        keep_secrets_on_put=True,
+        materialize=False,
+    ),
 }
 
 
@@ -559,6 +573,14 @@ class FileCredentialStore:
             if d.get("provider") == provider and service in (d.get("services") or [])
         ]
 
+    async def resolve_by_kind(self, kind: str, *, provider: str) -> List[Credential]:
+        """Every owner's full-payload ``kind`` entries (in-process callers only)."""
+        return [
+            self._doc_to_credential(d)
+            for d in self._iter_docs()
+            if d.get("provider") == provider and d.get("kind") == kind
+        ]
+
     async def update_tokens(
         self,
         provider: str,
@@ -832,6 +854,37 @@ class SupabaseCredentialStore:
                     """,
                     provider,
                     service,
+                )
+            return [self._row_to_credential(r) for r in rows]
+        finally:
+            await conn.close()
+
+    async def resolve_by_kind(self, kind: str, *, provider: str) -> List[Credential]:
+        """Every owner's full-payload ``kind`` entries (in-process callers only).
+
+        Binds the owner principal like :meth:`resolve_for_service`.
+        """
+        from hermes_cli.access import PrincipalStore, bind_principal
+
+        conn = await self._connect()
+        try:
+            async with conn.transaction():
+                owner = await PrincipalStore(self._store).get_owner(
+                    connection=conn
+                )
+                if owner is None:
+                    return []
+                await bind_principal(conn, owner)
+                rows = await conn.fetch(
+                    f"""
+                    SELECT owner_user_id, provider, name, kind, visibility,
+                           services, payload, created_at, updated_at
+                    FROM {CREDENTIALS_TABLE}
+                    WHERE provider = $1 AND kind = $2
+                    ORDER BY owner_user_id, name
+                    """,
+                    provider,
+                    kind,
                 )
             return [self._row_to_credential(r) for r in rows]
         finally:

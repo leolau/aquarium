@@ -262,6 +262,12 @@ class GatewayAuthorizationMixin:
         if source.platform in {Platform.HOMEASSISTANT, Platform.WEBHOOK}:
             return True
 
+        # A person's own Telegram bot answers only its linked Telegram id.
+        person_bot_check = getattr(self, "_person_bot_authorization", None)
+        person_bot = person_bot_check(source) if person_bot_check else None
+        if person_bot is not None:
+            return person_bot
+
         # Relay (and any adapter whose authorization is enforced by a trusted
         # authenticated upstream): the Team Gateway connector authenticates this
         # gateway's WS with a per-instance secret and resolves owner-only author
