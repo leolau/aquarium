@@ -744,6 +744,46 @@ def _normalize_workdir(workdir: Optional[str]) -> Optional[str]:
     return str(resolved)
 
 
+def cron_model_override(cfg: Optional[Dict[str, Any]]) -> Tuple[Optional[str], Optional[str]]:
+    """Return ``(provider, model)`` from ``cron.model`` in config.yaml.
+
+    Applies to agent jobs that pin neither a provider nor a model. ``(None,
+    None)`` means the setting is empty and jobs follow the main ``model:``.
+    """
+    cron_cfg = (cfg or {}).get("cron")
+    model_cfg = cron_cfg.get("model") if isinstance(cron_cfg, dict) else None
+    if isinstance(model_cfg, str):
+        return None, model_cfg.strip() or None
+    if not isinstance(model_cfg, dict):
+        return None, None
+    provider = str(model_cfg.get("provider") or "").strip() or None
+    model = str(model_cfg.get("default") or model_cfg.get("model") or "").strip() or None
+    if not model:
+        return None, None
+    return provider, model
+
+
+def _load_effective_config() -> Optional[Dict[str, Any]]:
+    """config.yaml as the cron ticker sees it (managed overlay + env expansion)."""
+    try:
+        import yaml
+        from hermes_cli.config import _expand_env_vars
+
+        cfg_path = get_hermes_home() / "config.yaml"
+        if not cfg_path.exists():
+            return None
+        with cfg_path.open(encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        try:
+            from hermes_cli import managed_scope
+            cfg = managed_scope.apply_managed_overlay(cfg)
+        except Exception:
+            pass
+        return _expand_env_vars(cfg)
+    except Exception:
+        return None
+
+
 def _resolve_default_model_snapshot() -> Optional[str]:
     """Resolve the global default model the same way the cron ticker does.
 
@@ -814,6 +854,11 @@ def _compute_provider_model_snapshots(
     )
     if bool(no_agent):
         return None, None
+    if normalized_provider is None and normalized_model is None:
+        _, cron_model = cron_model_override(_load_effective_config())
+        if cron_model:
+            # Follows cron.model, an explicit operator choice: no drift guard.
+            return None, None
 
     provider_snapshot: Optional[str] = None
     model_snapshot: Optional[str] = None

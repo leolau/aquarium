@@ -2673,6 +2673,17 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
         except Exception as e:
             logger.warning("Job '%s': failed to load config.yaml, using defaults: %s", job_id, e)
 
+        # cron.model: the operator's model for jobs that pin neither axis.
+        from cron.jobs import cron_model_override
+
+        _cron_provider, _cron_model = (None, None)
+        _follows_cron_model = False
+        if not (job.get("provider") or "").strip() and not (job.get("model") or "").strip():
+            _cron_provider, _cron_model = cron_model_override(_cfg)
+            if _cron_model:
+                model = _cron_model
+                _follows_cron_model = True
+
         # Fail fast if no model resolved from job / env / config.yaml: an empty
         # model otherwise reaches the provider as an opaque 400 (#23979).
         if not (isinstance(model, str) and model.strip()):
@@ -2751,7 +2762,7 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
             # circuits that precedence and can resurrect old providers (for
             # example DeepSeek) for cron jobs that do not pin provider/model.
             runtime_kwargs = {
-                "requested": job.get("provider"),
+                "requested": job.get("provider") or _cron_provider,
             }
             if job.get("base_url"):
                 runtime_kwargs["explicit_base_url"] = job.get("base_url")
@@ -2799,14 +2810,17 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
         # any axis whose creation-time resolution failed) behaves exactly as
         # before — the guard never engages for it. Pinned axes are unaffected.
         _drift: list[str] = []
-        _provider_snapshot = (job.get("provider_snapshot") or "").strip().lower()
+        if _follows_cron_model:
+            _provider_snapshot = _model_snapshot = ""
+        else:
+            _provider_snapshot = (job.get("provider_snapshot") or "").strip().lower()
+            _model_snapshot = (job.get("model_snapshot") or "").strip().lower()
         if _provider_snapshot and not (job.get("provider") or "").strip():
             _current_provider = str(runtime.get("provider") or "").strip().lower()
             if _current_provider and _current_provider != _provider_snapshot:
                 _drift.append(
                     f"provider '{_provider_snapshot}' -> '{_current_provider}'"
                 )
-        _model_snapshot = (job.get("model_snapshot") or "").strip().lower()
         if _model_snapshot and not (job.get("model") or "").strip():
             _current_model = str(model or "").strip().lower()
             if _current_model and _current_model != _model_snapshot:
