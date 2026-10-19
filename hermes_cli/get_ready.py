@@ -318,8 +318,16 @@ async def list_people(ctx: Context) -> List[Person]:
 
 
 async def two_factor_status(ctx: Context) -> Optional[bool]:
-    """Seam for the 2FA unit: ``True``/``False`` once built, ``None`` = coming."""
-    return None
+    """Whether the owner's own login has two-factor on (``None``: no owner yet)."""
+    from hermes_cli import two_factor
+
+    owner_id = ctx.user_id if ctx.is_owner else ""
+    if not owner_id:
+        owner = next((p for p in await list_people(ctx) if p.role == "owner"), None)
+        owner_id = owner.user_id if owner is not None else ""
+    if not owner_id:
+        return None
+    return await asyncio.to_thread(two_factor.is_enabled, owner_id)
 
 
 # ---------------------------------------------------------------------------
@@ -332,10 +340,10 @@ async def status_owner(ctx: Context) -> ItemStatus:
 
     enrolled, _ = await probe_owner_enrolled(ctx.config)
     if not enrolled and not ctx.is_owner:
+        enrolled = any(p.role == "owner" for p in await list_people(ctx))
+    if not enrolled and not ctx.is_owner:
         return ItemStatus(NOT_STARTED, "owner.none")
     two_factor = await two_factor_status(ctx)
-    if two_factor is None:
-        return ItemStatus(DONE, "owner.done_2fa_coming", coming=True)
     if two_factor:
         return ItemStatus(DONE, "owner.done")
     return ItemStatus(ATTENTION, "owner.no_2fa")
@@ -439,8 +447,20 @@ async def status_backups(ctx: Context) -> ItemStatus:
     return ItemStatus(NOT_STARTED, "backups.coming", coming=True)
 
 
+def _security_status(result: Mapping[str, Any]) -> ItemStatus:
+    params = {"passed": result.get("passed", 0), "total": result.get("total", 0)}
+    if result.get("status") == "done":
+        return ItemStatus(DONE, "security.done", params)
+    if result.get("status") == "attention":
+        return ItemStatus(ATTENTION, "security.attention", params)
+    return ItemStatus(NOT_STARTED, "security.none")
+
+
 async def status_security(ctx: Context) -> ItemStatus:
-    return ItemStatus(NOT_STARTED, "security.coming", coming=True)
+    """Item 11: the last saved read-only server check (hermes_cli/security_basics)."""
+    from hermes_cli import security_basics
+
+    return _security_status(await asyncio.to_thread(security_basics.last_result))
 
 
 StatusProvider = Callable[[Context], Awaitable[ItemStatus]]
@@ -497,8 +517,22 @@ async def test_model(ctx: Context) -> TestOutcome:
     return TestOutcome("ok", "test.model_ok", {"seconds": seconds})
 
 
+async def test_security(ctx: Context) -> TestOutcome:
+    """Runs the same read-only checks as ``POST /api/security-basics/test``."""
+    from hermes_cli import security_basics
+
+    try:
+        result = await asyncio.to_thread(security_basics.run_test)
+    except security_basics.Busy:
+        return TestOutcome("warn", "security.busy")
+    status = _security_status(result)
+    tone = {DONE: "ok", ATTENTION: "warn"}.get(status.status, "bad")
+    return TestOutcome(tone, status.detail, status.params)
+
+
 TEST_PROVIDERS: Dict[str, TestProvider] = {
     "model": test_model,
+    "security": test_security,
 }
 
 

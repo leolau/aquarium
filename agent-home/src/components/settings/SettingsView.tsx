@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { useT } from "@/components/get-ready/i18n";
+import { AccountSecurity } from "@/components/account/AccountSecurity";
 import { EntityGoalSection } from "@/components/settings/EntityGoalSection";
 import { PushEnroll } from "@/components/push/PushEnroll";
 import { ConnectedAccounts } from "@/components/settings/ConnectedAccounts";
@@ -63,7 +64,8 @@ export function SettingsView({
   canManageMembers?: boolean;
   /** Owner/admin may change Tools & Integrations; others may only view. */
   canManageTools?: boolean;
-  /** Only the owner sets up install-wide pieces such as the Google client. */
+  /** Owner: titles the own-login block "Owner account…" and sets up
+   *  install-wide pieces such as the Google client. */
   isOwner?: boolean;
 } = {}) {
   const [theme, setTheme] = usePersistentState<ThemeId>(
@@ -78,26 +80,10 @@ export function SettingsView({
     applyTheme(next);
   }
 
-  const tGetReady = useT("getReady");
 
   return (
     <div data-component="SettingsView" className="space-y-6">
-      <section data-component="GetReadyEntry" className="space-y-2">
-        <h2 className="text-sm font-semibold">{tGetReady("nav.entry")}</h2>
-        <Link
-          href="/settings/get-ready"
-          className="flex items-center justify-between rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm font-medium"
-        >
-          <span>
-            {tGetReady("nav.entry")}
-            <span className="block text-xs font-normal text-[var(--color-muted)]">
-              {tGetReady("nav.hint")}
-            </span>
-          </span>
-          <span aria-hidden className="text-[var(--color-muted)]">→</span>
-        </Link>
-      </section>
-
+      <AccountSecurity isOwner={isOwner} />
       <section>
         <h2 className="text-sm font-semibold">Colour theme</h2>
         <p className="mb-3 text-xs text-[var(--color-muted)]">
@@ -163,6 +149,8 @@ export function SettingsView({
         </Link>
       </section>
 
+      <GetReadyLink />
+
       <EntityGoalSection goal={entityGoal} readOnly={entityGoalReadOnly} />
 
       <TagsSection />
@@ -171,6 +159,24 @@ export function SettingsView({
 }
 
 /* ── In&Out: channels the agent talks through ────────────────────── */
+
+/** Everyone: Settings → Get ready (the checklist; each person sees their own items). */
+function GetReadyLink() {
+  const t = useT("getReady");
+  return (
+    <section data-section="get-ready" data-component="GetReadyLink" className="mt-6">
+      <h2 className="text-sm font-semibold">{t("nav.entry")}</h2>
+      <p className="mb-3 text-xs text-[var(--color-muted)]">{t("nav.hint")}</p>
+      <Link
+        href="/settings/get-ready"
+        className="flex items-center justify-between rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm font-medium"
+      >
+        {t("nav.open")}
+        <span aria-hidden className="text-[var(--color-muted)]">→</span>
+      </Link>
+    </section>
+  );
+}
 
 function InOutSection({
   canManageMembers,

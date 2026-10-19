@@ -36,7 +36,6 @@
   "item.backups": "Backups",
   "item.security": "Security basics",
   "d.owner.none": "No owner account yet.",
-  "d.owner.done_2fa_coming": "Owner account is set up. Two-factor login is coming soon.",
   "d.owner.done": "Owner account is set up and two-factor login is on.",
   "d.owner.no_2fa": "Two-factor login is off. Turn it on to protect the owner account.",
   "d.model.none": "No AI model key yet. Add one so the assistant can answer.",
@@ -70,12 +69,10 @@
   "d.vpn.no_folder": "VPN added. Add a network folder to reach your files.",
   "d.vpn.done": "{folders} network folder(s) added.",
   "d.backups.coming": "No offsite copy yet. Backups are coming soon.",
-  "d.security.coming": "Security checks are coming soon.",
   "d.check_failed": "This check couldn't run right now.",
   "d.test.model_ok": "The model replied in {seconds} s.",
   "d.test.model_failed": "The model didn't answer. Check the key and the chosen model.",
   "d.test.model_timeout": "The model took too long to answer.",
-  "panel.ownerComing": "Password change, two-factor login and recovery codes are coming soon.",
   "panel.modelNote": "The key is checked with the provider before it is saved. The value is never shown again.",
   "panel.modelChoose": "Choose model and key",
   "panel.comingNote": "This part is coming soon.",
@@ -127,5 +124,11 @@
   "cell.tools": "{count} tools",
   "nav.entry": "Get ready",
   "nav.hint": "Checklist: what is set up and what is left",
-  "today": "today"
+  "today": "today",
+  "d.security.none": "Not checked yet. Test runs read-only checks on the server.",
+  "d.security.done": "{passed} of {total} server checks passed.",
+  "d.security.attention": "{passed} of {total} server checks passed. Set up shows what to fix.",
+  "d.security.busy": "A security check is already running. Try again in a minute.",
+  "panel.ownerSelf": "Two-factor login is set per login. This turns it on for your own login; the owner turns on theirs the same way.",
+  "nav.open": "Open the checklist"
 }

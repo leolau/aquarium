@@ -6,6 +6,8 @@ import { PeopleAndRoles } from "@/components/get-ready/PeopleAndRoles";
 import { formatWhen, useLocale, useT, type T } from "@/components/get-ready/i18n";
 import { NetworkFolders } from "@/components/files/NetworkFolders";
 import { ModelPickerSheet } from "@/components/models/ModelPickerSheet";
+import { AccountSecurity } from "@/components/account/AccountSecurity";
+import { SecurityBasicsItem } from "@/components/get-ready/SecurityBasicsItem";
 import { GoogleClientSetup } from "@/components/settings/GoogleClientSetup";
 import { ConnectedAccounts } from "@/components/settings/ConnectedAccounts";
 import { TelegramLinks } from "@/components/settings/TelegramLinks";
@@ -66,6 +68,7 @@ export function GetReadyView({ initial, extras }: { initial: GetReadyResponse; e
   const [testing, setTesting] = useState<Set<string>>(new Set());
   const [testingAll, setTestingAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [securityRun, setSecurityRun] = useState(0);
   const summary = summarize(items);
   const isOwner = initial.role === "owner";
 
@@ -94,6 +97,7 @@ export function GetReadyView({ initial, extras }: { initial: GetReadyResponse; e
     try {
       for (const item of items) await runTest(item.id);
     } finally {
+      setSecurityRun((n) => n + 1);
       setTestingAll(false);
     }
   }
@@ -181,7 +185,12 @@ export function GetReadyView({ initial, extras }: { initial: GetReadyResponse; e
                 {t(`group.${group}`)}
               </h2>
               <ul className="space-y-2">
-                {groupItems.map((item) => (
+                {groupItems.map((item) =>
+                  item.id === "security" ? (
+                    <li key={item.id} id="get-ready-security" className="scroll-mt-4">
+                      <SecurityBasicsItem key={securityRun} number={item.n} />
+                    </li>
+                  ) : (
                   <ItemRow
                     key={item.id}
                     item={item}
@@ -194,7 +203,8 @@ export function GetReadyView({ initial, extras }: { initial: GetReadyResponse; e
                   >
                     {open === item.id ? <Panel item={item} t={t} isOwner={isOwner} canManage={initial.can_manage} extras={extras} /> : null}
                   </ItemRow>
-                ))}
+                  ),
+                )}
               </ul>
             </section>
           );
@@ -229,7 +239,7 @@ function ItemRow({
     <li
       id={`get-ready-${item.id}`}
       data-component="GetReadyItemRow"
-      className="scroll-mt-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 sm:p-4"
+      className={`scroll-mt-4 rounded-2xl border bg-[var(--color-surface)] p-4 ${open ? "border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}
     >
       <div className="flex gap-3">
         <span
@@ -258,8 +268,8 @@ function ItemRow({
               </span>
             ) : null}
           </div>
-          <p className="mt-1 text-sm text-[var(--color-muted)]">{t(`d.${item.detail}`, item.params)}</p>
-          <p className="mt-1 text-xs text-[var(--color-muted)]" suppressHydrationWarning>
+          <p className="mt-1 text-xs text-[var(--color-muted)]">{t(`d.${item.detail}`, item.params)}</p>
+          <p className="text-xs text-[var(--color-muted)]" suppressHydrationWarning>
             {last ? (
               <>
                 {t("lastTest", { when: formatWhen(locale, last.at) })}
@@ -270,31 +280,31 @@ function ItemRow({
               t("never")
             )}
           </p>
-        </div>
-        <div className="flex shrink-0 flex-col gap-1.5 sm:flex-row sm:items-start">
-          <button
-            type="button"
-            onClick={onToggle}
-            aria-expanded={open}
-            className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium hover:bg-[var(--color-surface-2)]"
-          >
-            {open ? t("close") : t("setup")}
-          </button>
-          <button
-            type="button"
-            onClick={onTest}
-            disabled={testing || disabled}
-            aria-busy={testing}
-            className="inline-flex items-center justify-center gap-1 rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium hover:bg-[var(--color-surface-2)] disabled:opacity-60"
-          >
-            {testing ? (
-              <>
-                <Spinner /> {t("testing")}
-              </>
-            ) : (
-              t("test")
-            )}
-          </button>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={onToggle}
+              aria-expanded={open}
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium ${open ? "border border-[var(--color-border)] bg-[var(--color-surface-2)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)]"}`}
+            >
+              {open ? t("close") : t("setup")}
+            </button>
+            <button
+              type="button"
+              onClick={onTest}
+              disabled={testing || disabled}
+              aria-busy={testing}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1.5 text-xs font-medium disabled:opacity-60"
+            >
+              {testing ? (
+                <>
+                  <Spinner /> {t("testing")}
+                </>
+              ) : (
+                t("test")
+              )}
+            </button>
+          </div>
         </div>
       </div>
       {children ? <div className="mt-3 border-t border-[var(--color-border)] pt-3">{children}</div> : null}
@@ -326,7 +336,12 @@ function Panel({
   const [picker, setPicker] = useState(false);
   switch (item.id) {
     case "owner":
-      return <Note>{t("panel.ownerComing")}</Note>;
+      return (
+        <div className="space-y-2">
+          {isOwner ? null : <Note>{t("panel.ownerSelf")}</Note>}
+          <AccountSecurity isOwner={isOwner} />
+        </div>
+      );
     case "model":
       return (
         <div data-component="GetReadyModelPanel" className="space-y-2">

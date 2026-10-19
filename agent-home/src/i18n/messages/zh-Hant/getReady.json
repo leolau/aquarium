@@ -36,7 +36,6 @@
   "item.backups": "備份",
   "item.security": "基本安全",
   "d.owner.none": "尚未有擁有人帳戶。",
-  "d.owner.done_2fa_coming": "擁有人帳戶已設定。雙重驗證即將推出。",
   "d.owner.done": "擁有人帳戶已設定，雙重驗證已開啟。",
   "d.owner.no_2fa": "雙重驗證未開啟。請開啟以保護擁有人帳戶。",
   "d.model.none": "尚未有 AI 模型金鑰。請加入金鑰，助手才能回覆。",
@@ -70,12 +69,10 @@
   "d.vpn.no_folder": "已加入 VPN。請加入網絡資料夾以讀取檔案。",
   "d.vpn.done": "已加入 {folders} 個網絡資料夾。",
   "d.backups.coming": "尚未有異地備份。備份功能即將推出。",
-  "d.security.coming": "安全檢查即將推出。",
   "d.check_failed": "暫時未能執行這項檢查。",
   "d.test.model_ok": "模型在 {seconds} 秒內回覆。",
   "d.test.model_failed": "模型沒有回覆。請檢查金鑰及所選模型。",
   "d.test.model_timeout": "模型回覆時間太長。",
-  "panel.ownerComing": "更改密碼、雙重驗證及備用碼即將推出。",
   "panel.modelNote": "儲存前會先向供應商檢查金鑰，之後不會再顯示。",
   "panel.modelChoose": "選擇模型及金鑰",
   "panel.comingNote": "這部分即將推出。",
@@ -127,5 +124,11 @@
   "cell.tools": "{count} 個工具",
   "nav.entry": "準備就緒",
   "nav.hint": "清單：已設定及尚待完成的項目",
-  "today": "今天"
+  "today": "今天",
+  "d.security.none": "尚未檢查。「測試」會在伺服器上執行唯讀檢查。",
+  "d.security.done": "{total} 項伺服器檢查中有 {passed} 項通過。",
+  "d.security.attention": "{total} 項伺服器檢查中有 {passed} 項通過。按「設定」查看要修正的地方。",
+  "d.security.busy": "安全檢查正在進行中，請一分鐘後再試。",
+  "panel.ownerSelf": "雙重驗證按每個登入帳戶設定。這裏開啟的是你自己的登入；擁有人用同樣方法開啟自己的。",
+  "nav.open": "打開清單"
 }

@@ -246,3 +246,36 @@ def test_every_item_has_one_status_provider():
     from hermes_cli import get_ready
 
     assert set(get_ready.STATUS_PROVIDERS) == set(get_ready.ITEMS_BY_ID)
+
+
+def test_owner_item_reflects_the_owners_two_factor_login(client, acting):
+    import pyotp
+
+    from hermes_cli import two_factor
+
+    items = _items(client.get("/api/get-ready").json())
+    assert items["owner"]["status"] == "attention"
+    assert items["owner"]["detail"] == "owner.no_2fa" and not items["owner"]["coming"]
+    secret = two_factor.start("root", "leo@example.com")["secret"]
+    two_factor.confirm("root", pyotp.TOTP(secret).now())
+    assert _items(client.get("/api/get-ready").json())["owner"]["status"] == "done"
+    acting["as"] = ADMIN
+    assert _items(client.get("/api/get-ready").json())["owner"]["status"] == "done"
+
+
+def test_security_item_uses_security_basics_last_result(client, monkeypatch, home):
+    from hermes_cli import security_basics
+
+    items = _items(client.get("/api/get-ready").json())
+    assert items["security"]["status"] == "not_started" and not items["security"]["coming"]
+    saved = {"checked_at": "2026-10-19T10:00:00+00:00", "status": "attention",
+             "passed": 5, "total": 7, "helper": "ok", "checks": []}
+    (home / security_basics.STATE_NAME).write_text(json.dumps(saved), encoding="utf-8")
+    items = _items(client.get("/api/get-ready").json())
+    assert items["security"]["status"] == "attention"
+    assert items["security"]["params"] == {"passed": 5, "total": 7}
+
+    monkeypatch.setattr(security_basics, "run_test", lambda: {**saved, "status": "done", "passed": 7})
+    body = client.post("/api/get-ready/security/test").json()
+    assert body["last_test"]["result"] == "ok"
+    assert body["last_test"]["params"] == {"passed": 7, "total": 7}
