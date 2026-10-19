@@ -79,6 +79,29 @@ describe("ModelsView", () => {
     expect(html).toContain("auto → glm-5.2");
   });
 
+  it("shows the provider under each role's model", () => {
+    const html = renderToStaticMarkup(
+      <ModelsView
+        initial={overview({
+          auxiliary: {
+            main: { provider: "deepseek", model: "deepseek-v4-flash" },
+            tasks: [
+              { task: "vision", provider: "opencode-go", model: "qwen3.8-max", base_url: "" },
+              { task: "compression", provider: "auto", model: "", base_url: "" },
+            ],
+          },
+        })}
+      />,
+    );
+    expect(html).toMatch(/qwen3\.8-max<\/span><span[^>]*>opencode-go</);
+    expect(html).toMatch(/auto → deepseek-v4-flash<\/span><span[^>]*>deepseek</);
+  });
+
+  it("shows the provider under each in-use model", () => {
+    const html = renderToStaticMarkup(<ModelsView initial={overview()} />);
+    expect(html).toMatch(/deepseek-chat<\/span>.*?>deepseek<\/span>/);
+  });
+
   it("collapses non-top roles behind an expander", () => {
     const html = renderToStaticMarkup(<ModelsView initial={overview()} />);
     // 'approval' is not a top role — hidden behind the "+N more roles" row.
