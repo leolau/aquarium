@@ -7,6 +7,7 @@ import { EntityGoalSection } from "@/components/settings/EntityGoalSection";
 import { PushEnroll } from "@/components/push/PushEnroll";
 import { ConnectedAccounts } from "@/components/settings/ConnectedAccounts";
 import { TelegramLinks } from "@/components/settings/TelegramLinks";
+import { EmailMailboxes } from "@/components/settings/EmailMailboxes";
 import { VpnConnections } from "@/components/settings/VpnConnections";
 import { WhatsAppBridges } from "@/components/settings/WhatsAppBridges";
 import { BusyRegion } from "@/components/ui/BusyRegion";
@@ -159,10 +160,11 @@ function InOutSection({ canManageMembers }: { canManageMembers: boolean }) {
       <h2 className="text-base font-semibold">In&amp;Out</h2>
       <p className="mb-4 text-xs text-[var(--color-muted)]">
         Where messages, mail and calendar events come in and go out: Google
-        accounts, private networks (VPN), WhatsApp bridges and Telegram.
+        accounts, email, private networks (VPN), WhatsApp bridges and Telegram.
       </p>
       <div className="space-y-6 border-t border-[var(--color-border)] pt-4">
         <ConnectedAccounts />
+        <EmailMailboxes />
         <VpnConnections />
         <WhatsAppBridges />
         <TelegramLinks canManage={canManageMembers} />
