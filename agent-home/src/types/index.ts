@@ -2963,7 +2963,7 @@ export type GetReadyConnection = "google" | "whatsapp" | "telegram" | "email" | 
 
 export interface GetReadyConnectionCell {
   state: "set" | "waiting" | "not_set" | "coming";
-  reason?: "step_a" | "qr";
+  reason?: "step_a" | "qr" | "email_test" | "email_error" | "telegram_link";
   count?: number;
 }
 
