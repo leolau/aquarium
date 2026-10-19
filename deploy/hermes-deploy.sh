@@ -221,6 +221,17 @@ for cfg in ${HERMES_HOME_GLOB:-/opt/data/hermes-home*/config.yaml}; do
     || echo "WARNING: could not check security.terminal_database_credentials in $cfg" >&2
 done
 
+# P2 first run: /setup offers the model / region / domain steps only before the
+# owner's first login. A profile that already has chats gets
+# auth/first_run_done.json once, so a later `hermes setup-link` (login reset)
+# keeps only setting the password. Fresh installs (no chats) are left alone.
+for cfg in ${HERMES_HOME_GLOB:-/opt/data/hermes-home*/config.yaml}; do
+  [ -f "$cfg" ] || continue
+  runuser -u hermes -- env HERMES_HOME="$(dirname "$cfg")" \
+    ./.venv/bin/python -I scripts/mark_first_run_done.py \
+    || echo "WARNING: could not check the first-run marker for $(dirname "$cfg")" >&2
+done
+
 # Table setup as the schema owner (`hermes db migrate`). With
 # /etc/aquarium/db-admin.env (root, 0600) the owner address comes from there and
 # a failure stops the deploy before any restart: services on a least-privilege

@@ -247,6 +247,9 @@ async def create_owner(*, token: str, email: str, password: str, store: Any, adm
         release(home)
         raise
     consume(home)
+    from hermes_cli.first_run_steps import mark_done
+
+    mark_done(home)
     dashboard = _set_dashboard_password(password)
     try:
         from hermes_cli.identity_audit import record_identity_event

@@ -52,6 +52,9 @@ PUBLIC = {
     # first_run: one-time owner setup link; refuses everything without a token file
     "POST /api/setup/check",
     "POST /api/setup/owner",
+    "POST /api/setup/model",
+    "POST /api/setup/region",
+    "POST /api/setup/domain",
 }
 
 #: The handler enforces the role itself: route -> (role, check in its source).
