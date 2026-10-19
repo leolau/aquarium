@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { EntityGoalSection } from "@/components/settings/EntityGoalSection";
 import { PushEnroll } from "@/components/push/PushEnroll";
 import { ConnectedAccounts } from "@/components/settings/ConnectedAccounts";
+import { GoogleClientSetup } from "@/components/settings/GoogleClientSetup";
 import { TelegramLinks } from "@/components/settings/TelegramLinks";
 import { VpnConnections } from "@/components/settings/VpnConnections";
 import { WhatsAppBridges } from "@/components/settings/WhatsAppBridges";
@@ -54,6 +55,7 @@ export function SettingsView({
   entityGoalReadOnly = false,
   canManageMembers = true,
   canManageTools = true,
+  isOwner = false,
 }: {
   entityGoal?: EntityGoal | null;
   entityGoalReadOnly?: boolean;
@@ -61,6 +63,8 @@ export function SettingsView({
   canManageMembers?: boolean;
   /** Owner/admin may change Tools & Integrations; others may only view. */
   canManageTools?: boolean;
+  /** Only the owner sets up install-wide pieces such as the Google client. */
+  isOwner?: boolean;
 } = {}) {
   const [theme, setTheme] = usePersistentState<ThemeId>(
     THEME_STORAGE_KEY,
@@ -124,7 +128,7 @@ export function SettingsView({
 
       <PushEnroll />
 
-      <InOutSection canManageMembers={canManageMembers} />
+      <InOutSection canManageMembers={canManageMembers} isOwner={isOwner} />
 
       <section data-section="tools" className="mt-6">
         <h2 className="text-sm font-semibold">Tools &amp; Integrations</h2>
@@ -170,7 +174,13 @@ function GetReadyLink() {
   );
 }
 
-function InOutSection({ canManageMembers }: { canManageMembers: boolean }) {
+function InOutSection({
+  canManageMembers,
+  isOwner,
+}: {
+  canManageMembers: boolean;
+  isOwner: boolean;
+}) {
   return (
     <section
       id="in-out"
@@ -183,6 +193,7 @@ function InOutSection({ canManageMembers }: { canManageMembers: boolean }) {
         accounts, private networks (VPN), WhatsApp bridges and Telegram.
       </p>
       <div className="space-y-6 border-t border-[var(--color-border)] pt-4">
+        {isOwner && <GoogleClientSetup />}
         <ConnectedAccounts />
         <VpnConnections />
         <WhatsAppBridges />

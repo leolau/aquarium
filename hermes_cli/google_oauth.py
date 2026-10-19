@@ -261,6 +261,64 @@ def xoauth2_string(user: str, access_token: str) -> str:
     return f"user={user}\x01auth=Bearer {access_token}\x01\x01"
 
 
+def google_client_paths() -> List[Any]:
+    """Where :func:`load_google_client` looks for the client file, in order."""
+    from hermes_constants import get_hermes_home
+
+    home = get_hermes_home()
+    return [
+        home / "google-workspace" / "client_secret.json",
+        home / "google_client_secret.json",
+    ]
+
+
+def resolve_google_client() -> Optional[Dict[str, str]]:
+    """The deployment's OAuth client with where it came from, or ``None``.
+
+    Returns ``client_id``, ``client_secret``, ``source`` (``file``,
+    ``legacy_file`` or ``env``) and ``client_type`` (``installed`` = Desktop
+    app, ``web``, or ``unknown``).
+    """
+    for source, path in zip(("file", "legacy_file"), google_client_paths()):
+        try:
+            doc = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(doc, dict):
+            continue
+        client_type = (
+            "installed" if isinstance(doc.get("installed"), dict)
+            else "web" if isinstance(doc.get("web"), dict)
+            else "unknown"
+        )
+        installed = doc.get("installed") or doc.get("web") or doc
+        if not isinstance(installed, dict):
+            continue
+        client_id = str(installed.get("client_id") or "").strip()
+        client_secret = str(installed.get("client_secret") or "").strip()
+        if client_id and client_secret:
+            return {
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "source": source,
+                "client_type": client_type,
+            }
+    for id_env, secret_env in (
+        ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"),
+        ("GCAL_CLIENT_ID", "GCAL_CLIENT_SECRET"),
+    ):
+        client_id = os.getenv(id_env, "").strip()
+        client_secret = os.getenv(secret_env, "").strip()
+        if client_id and client_secret:
+            return {
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "source": "env",
+                "client_type": "unknown",
+            }
+    return None
+
+
 def load_google_client() -> Tuple[str, str]:
     """The deployment's OAuth client (client_id, client_secret).
 
@@ -269,31 +327,58 @@ def load_google_client() -> Tuple[str, str]:
     (``GOOGLE_CLIENT_ID``/``GOOGLE_CLIENT_SECRET``, falling back to the
     calendar poller's ``GCAL_CLIENT_ID``/``GCAL_CLIENT_SECRET``).
     """
-    from hermes_constants import get_hermes_home
-
-    home = get_hermes_home()
-    for path in (
-        home / "google-workspace" / "client_secret.json",
-        home / "google_client_secret.json",
-    ):
-        try:
-            doc = json.loads(path.read_text())
-        except (OSError, ValueError):
-            continue
-        installed = doc.get("installed") or doc.get("web") or doc
-        client_id = str(installed.get("client_id") or "").strip()
-        client_secret = str(installed.get("client_secret") or "").strip()
-        if client_id and client_secret:
-            return client_id, client_secret
-    for id_env, secret_env in (
-        ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"),
-        ("GCAL_CLIENT_ID", "GCAL_CLIENT_SECRET"),
-    ):
-        client_id = os.getenv(id_env, "").strip()
-        client_secret = os.getenv(secret_env, "").strip()
-        if client_id and client_secret:
-            return client_id, client_secret
+    client = resolve_google_client()
+    if client is not None:
+        return client["client_id"], client["client_secret"]
     raise GoogleOAuthError(
         "no Google OAuth client configured: place client_secret.json under "
         "$HERMES_HOME/google-workspace/ or set GOOGLE_CLIENT_ID/SECRET"
     )
+
+
+#: Outcomes of :func:`check_google_client`.
+CLIENT_CHECK_OK = "ok"
+CLIENT_CHECK_INVALID = "invalid_client"
+CLIENT_CHECK_REDIRECT = "redirect_mismatch"
+CLIENT_CHECK_UNREACHABLE = "unreachable"
+CLIENT_CHECK_UNEXPECTED = "unexpected"
+
+
+def check_google_client(client_id: str, client_secret: str) -> str:
+    """Ask Google whether it knows this client, without any user consent.
+
+    Exchanges a deliberately bogus authorization code. Google authenticates
+    the client before it looks at the code, so ``invalid_grant`` means the id
+    and secret are right, while ``invalid_client`` / ``unauthorized_client``
+    means a wrong id or secret.
+    """
+    body = urllib.parse.urlencode({
+        "grant_type": "authorization_code",
+        "code": "aquarium-client-check",
+        "redirect_uri": REDIRECT_URI,
+        "client_id": client_id,
+        "client_secret": client_secret,
+    }).encode()
+    req = urllib.request.Request(
+        TOKEN_URI,
+        data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT):
+            return CLIENT_CHECK_OK
+    except urllib.error.HTTPError as exc:
+        try:
+            error = str(json.loads(exc.read().decode()).get("error") or "")
+        except (OSError, ValueError, AttributeError):
+            error = ""
+    except (urllib.error.URLError, OSError):
+        return CLIENT_CHECK_UNREACHABLE
+    if error == "invalid_grant":
+        return CLIENT_CHECK_OK
+    if error in ("invalid_client", "unauthorized_client"):
+        return CLIENT_CHECK_INVALID
+    if error == "redirect_uri_mismatch":
+        return CLIENT_CHECK_REDIRECT
+    return CLIENT_CHECK_UNEXPECTED
