@@ -61,7 +61,6 @@
   "d.email.done": "正在讀取 {count} 個郵箱。",
   "d.tools.none": "尚未加入額外工具，例如 Canva、Notion 或你自己的伺服器。",
   "d.tools.done": "已加入 {count} 個額外工具伺服器。",
-  "d.tools.coming": "你自己的額外工具即將推出。暫時使用擁有人加入的工具。",
   "d.vpn.none": "你尚未加入 VPN。只在需要讀取辦公室伺服器上的檔案時才需要。",
   "d.vpn.no_folder": "已加入 VPN。請加入網絡資料夾以讀取檔案。",
   "d.vpn.done": "已加入 {folders} 個網絡資料夾。",

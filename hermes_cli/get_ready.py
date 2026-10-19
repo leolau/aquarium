@@ -504,13 +504,30 @@ async def status_email(ctx: Context) -> ItemStatus:
     return _email_status(states, legacy)
 
 
+def personal_mcp_counts(creds: List[Any]) -> Dict[str, int]:
+    """Per person, how many of their own MCP servers (hermes_cli/personal_mcp) they added."""
+    try:
+        from hermes_cli import personal_mcp
+    except Exception:
+        return {}
+    counts: Dict[str, int] = {}
+    for cred in creds:
+        if getattr(cred, "provider", "") == personal_mcp.PROVIDER and getattr(cred, "kind", "") == personal_mcp.KIND:
+            counts[cred.owner_user_id] = counts.get(cred.owner_user_id, 0) + 1
+    return counts
+
+
 async def status_tools(ctx: Context) -> ItemStatus:
     # ``mcp_servers`` in config.yaml are install-wide; they count as the owner's.
-    if not ctx.is_owner:
-        return ItemStatus(NOT_STARTED, "tools.coming", coming=True)
-    servers = install_mcp_servers(ctx.config)
-    if servers:
-        return ItemStatus(DONE, "tools.done", {"count": len(servers)})
+    try:
+        creds = await own_credentials(ctx)
+    except Exception:
+        creds = []
+    count = personal_mcp_counts(creds).get(ctx.user_id, 0)
+    if ctx.is_owner:
+        count += len(install_mcp_servers(ctx.config))
+    if count:
+        return ItemStatus(DONE, "tools.done", {"count": count})
     return ItemStatus(NOT_STARTED, "tools.none")
 
 
@@ -774,6 +791,7 @@ async def people_status(ctx: Context) -> Dict[str, Any]:
     servers = install_mcp_servers(ctx.config)
     telegram = _secret_present(ctx.env, "TELEGRAM_BOT_TOKEN")
     bot_states = telegram_bot_states(creds)
+    mcp_counts = personal_mcp_counts(creds)
 
     rows = []
     for person in people:
@@ -803,13 +821,8 @@ async def people_status(ctx: Context) -> Dict[str, Any]:
         cells["email"] = _email_cell(
             _email_status(mailbox_states.get(person.user_id, []), len(mailboxes) if is_owner else 0)
         )
-        if not is_owner:
-            for key in ("tools",):
-                cells[key] = {"state": COMING}
-        else:
-            cells["tools"] = (
-                {"state": SET, "count": len(servers)} if servers else {"state": NOT_SET}
-            )
+        tools = mcp_counts.get(person.user_id, 0) + (len(servers) if is_owner else 0)
+        cells["tools"] = {"state": SET, "count": tools} if tools else {"state": NOT_SET}
         cells["vpn"] = {"state": SET if (flags["vpn"] or flags["folders"]) else NOT_SET}
         rows.append(
             {

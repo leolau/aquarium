@@ -61,7 +61,6 @@
   "d.email.done": "{count} mailbox(es) are read.",
   "d.tools.none": "No extra tools yet. For example Canva, Notion, or your own server.",
   "d.tools.done": "{count} extra tool server(s) added.",
-  "d.tools.coming": "Your own extra tools are coming soon. For now you use the tools the owner added.",
   "d.vpn.none": "You haven't added a VPN. Only needed to reach files on an office server.",
   "d.vpn.no_folder": "VPN added. Add a network folder to reach your files.",
   "d.vpn.done": "{folders} network folder(s) added.",

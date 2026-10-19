@@ -15,6 +15,7 @@ import { ToolsSettings } from "@/components/settings/ToolsSettings";
 import { VpnConnections } from "@/components/settings/VpnConnections";
 import { WhatsAppBridges } from "@/components/settings/WhatsAppBridges";
 import { TelegramBotSetup } from "@/components/settings/TelegramBotSetup";
+import { PersonalMcpServers } from "@/components/settings/PersonalMcpServers";
 import { EmailMailboxes } from "@/components/settings/EmailMailboxes";
 import { BackupsItem } from "@/components/get-ready/BackupsItem";
 import { Spinner } from "@/components/ui/Spinner";
@@ -414,10 +415,17 @@ function Panel({
     case "backups":
       return <Note>{t("d.backups.owner_only")}</Note>;
     case "tools":
-      return extras.tools ? (
-        <ToolsSettings servers={extras.tools.servers} toolsets={extras.tools.toolsets} canManage={canManage} />
-      ) : (
-        <Note>{t("loadFailed")}</Note>
+      return (
+        <div className="space-y-4">
+          <PersonalMcpServers />
+          {canManage ? (
+            extras.tools ? (
+              <ToolsSettings servers={extras.tools.servers} toolsets={extras.tools.toolsets} canManage />
+            ) : (
+              <Note>{t("loadFailed")}</Note>
+            )
+          ) : null}
+        </div>
       );
     case "vpn":
       return (

@@ -166,7 +166,7 @@ def test_existing_install_wide_settings_count_as_the_owners(client, acting, monk
     assert items["email"]["status"] == "done"
     acting["as"] = MEMBER
     items = _items(client.get("/api/get-ready").json())
-    assert items["tools"]["status"] == "not_started" and items["tools"]["coming"]
+    assert items["tools"]["status"] == "not_started" and not items["tools"]["coming"]
     assert items["telegram"]["status"] == "not_started" and not items["telegram"]["coming"]
     assert items["email"]["status"] == "not_started" and not items["email"]["coming"]
 
@@ -368,3 +368,31 @@ def test_telegram_status_is_each_persons_own_bot(client, acting):
     assert rows["mia"]["telegram"] == {"state": "waiting", "reason": "telegram_link"}
     assert rows["ann"]["telegram"] == {"state": "not_set"}
     assert SECRET not in resp.text and "mia_bot" not in resp.text
+
+
+def test_tools_status_counts_each_persons_own_mcp_servers(client, acting, monkeypatch):
+    from hermes_cli import personal_mcp
+    from hermes_cli.credential_store import FileCredentialStore
+
+    monkeypatch.setattr(personal_mcp, "_resolve", lambda host: ["93.184.216.34"])
+
+    asyncio.run(
+        FileCredentialStore().put(
+            MEMBER,
+            provider=personal_mcp.PROVIDER,
+            name="notion",
+            kind=personal_mcp.KIND,
+            payload={"url": "https://mcp.example.com/mcp", "headers": {"Authorization": SECRET}},
+            visibility="private:mia",
+        )
+    )
+    acting["as"] = MEMBER
+    item = _items(client.get("/api/get-ready").json())["tools"]
+    assert item["status"] == "done" and item["params"] == {"count": 1}
+    acting["as"] = ADMIN
+    assert _items(client.get("/api/get-ready").json())["tools"]["status"] == "not_started"
+    resp = client.get("/api/get-ready/people")
+    rows = {r["user_id"]: r["connections"] for r in resp.json()["people"]}
+    assert rows["mia"]["tools"] == {"state": "set", "count": 1}
+    assert rows["ann"]["tools"] == {"state": "not_set"}
+    assert SECRET not in resp.text and "notion" not in resp.text
