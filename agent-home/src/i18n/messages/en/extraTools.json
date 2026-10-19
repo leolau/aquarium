@@ -1,6 +1,6 @@
 {
   "title": "Your own tools",
-  "intro": "Your own tools: the assistant uses them only when it works for you. Add one from the catalog or enter a server address, then press Test.",
+  "intro": "The assistant uses them only when it works for you. Add one from the catalog or enter a server address, then press Test.",
   "onlyYou": "Only you can use these. Nobody else, not even the owner, can see or use them or their keys.",
   "nextChat": "New or changed tools show up in your next new chat.",
   "empty": "No MCP servers yet.",

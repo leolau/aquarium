@@ -122,6 +122,7 @@ export function PersonalMcpServers({ onCount }: { onCount?: (count: number) => v
       setForm(null);
       await load();
       setCatalog(null);
+      setCatalogOpen(false);
       if (saved.auth !== "oauth") await runTest(saved.name);
     } catch (err) {
       setFormError(err instanceof Error ? err.message : String(err));
@@ -138,6 +139,7 @@ export function PersonalMcpServers({ onCount }: { onCount?: (count: number) => v
       await call(serverPath(target.name), { method: "DELETE" });
       setResults((r) => ({ ...r, [target.name]: null }));
       setCatalog(null);
+      setCatalogOpen(false);
       await load();
     } catch (err) {
       setResults((r) => ({
