@@ -164,6 +164,7 @@
   "PATCH /api/projects/[slug]/tools": "signed-in",
   "GET /api/projects/doctor": "signed-in",
   "POST /api/seminar/survey/submit": "public",
+  "POST /api/session/language": "public",
   "POST /api/session/login": "public",
   "POST /api/session/logout": "public",
   "GET /api/status/summary": "signed-in",

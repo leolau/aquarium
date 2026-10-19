@@ -3377,6 +3377,43 @@ async def comms_whoami(request: Request, _console_scope=Depends(require_console_
     }
 
 
+
+class UserPreferencesUpdate(BaseModel):
+    language: str
+
+
+async def _preferences_principal(request: Request):
+    """The acting principal for a preferences call (never ``?as=``)."""
+    try:
+        return await _comms_resolve_principal(request)
+    except _CommsNotConfigured:
+        raise HTTPException(
+            status_code=503, detail="Per-person settings need the user directory."
+        )
+
+
+@app.get("/api/me/preferences")
+async def get_my_preferences(request: Request):
+    """The signed-in person's own interface preferences (e.g. language)."""
+    from hermes_cli.user_prefs import get_language
+
+    principal = await _preferences_principal(request)
+    return {"language": get_language(principal.user_id)}
+
+
+@app.put("/api/me/preferences")
+async def put_my_preferences(body: UserPreferencesUpdate, request: Request):
+    """Save the signed-in person's own preferences; nobody else's."""
+    from hermes_cli.user_prefs import SUPPORTED_LANGUAGES, set_language
+
+    principal = await _preferences_principal(request)
+    if body.language not in SUPPORTED_LANGUAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"language must be one of: {', '.join(SUPPORTED_LANGUAGES)}",
+        )
+    return {"language": set_language(principal.user_id, body.language)}
+
 def _comms_user_service(actor=None):
     """Build a :class:`MemberService` over this profile's store + GoTrue.
 

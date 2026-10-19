@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 
 import { SetupOwnerForm } from "@/components/auth/SetupOwnerForm";
+import { LanguageSwitch } from "@/components/LanguageSwitch";
 import { MobileShell } from "@/components/MobileShell";
+import { getT } from "@/i18n/server";
 
 /**
  * First-run owner setup, opened from the link `hermes setup-link` prints
@@ -18,9 +20,15 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
-export default function Page() {
+export default async function Page() {
+  const t = await getT("setup");
+  const common = await getT("common");
   return (
-    <MobileShell title="Set up Aquarium" showCoral={false}>
+    <MobileShell title={t("title")} showCoral={false}>
+      <div className="mb-4 flex flex-col gap-1 text-sm">
+        <span className="text-[var(--color-muted)]">{common("language")}</span>
+        <LanguageSwitch showNote />
+      </div>
       <SetupOwnerForm />
     </MobileShell>
   );

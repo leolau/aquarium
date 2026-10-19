@@ -1,0 +1,41 @@
+{
+  "launcher": "Coral 選單",
+  "openMenu": "打開 Coral 選單",
+  "closeMenu": "關閉 Coral 選單",
+  "clusters": {
+    "workspace": "工作區",
+    "system": "系統"
+  },
+  "apps": {
+    "home": { "name": "主頁" },
+    "todos": { "name": "待辦事項", "hint": "需要你處理的事" },
+    "chat": { "name": "對話", "hint": "同一個大腦對話" },
+    "inbox": { "name": "收件匣", "hint": "所有收到的內容" },
+    "memory": { "name": "記憶", "hint": "它記得的事" },
+    "projects": { "name": "項目", "hint": "自動運行的工作" },
+    "files": { "name": "檔案", "hint": "所有收到的內容" },
+    "activity": { "name": "活動", "hint": "互動記錄" },
+    "graph": { "name": "圖譜", "hint": "GTS 中心" },
+    "capacity": { "name": "容量", "hint": "這部伺服器的剩餘資源" },
+    "users": { "name": "用戶", "hint": "名冊及登記" },
+    "suggestions": { "name": "建議", "hint": "建議的子目標" },
+    "tools": { "name": "工具", "hint": "助理建立的應用程式" },
+    "models": { "name": "模型", "hint": "每個位置用的大腦" },
+    "core": { "name": "核心區", "hint": "C7 邊界" },
+    "webview": { "name": "助理網頁檢視", "hint": "FG-17b CDP" },
+    "settings": { "name": "設定", "hint": "主題及偏好" },
+    "onboarding": { "name": "開始使用", "hint": "FG-15 準備程度" }
+  },
+  "status": {
+    "cpu": "CPU",
+    "cpuTitle": "CPU 使用率 — 按此查看容量頁",
+    "disk": "磁碟",
+    "diskTitle": "hermes 儲存空間的使用量",
+    "tokens": "Token",
+    "tokensTitle": "過去 30 日用了的 Token（輸入 + 輸出）",
+    "tasks": "任務",
+    "tasksTitle": "進行中的助理對話 + 運行中的看板卡",
+    "cron": "排程",
+    "cronTitle": "已排程的工作（已啟用／總數）"
+  }
+}

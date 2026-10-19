@@ -1,0 +1,15 @@
+{
+  "title": "Settings",
+  "language": "Region and language",
+  "languageHint": "The language Aquarium shows you. Saved for your login, so it follows you to other devices.",
+  "theme": "Colour theme",
+  "themeHint": "Choose how the interface looks. Your choice is saved on this device.",
+  "notifications": "Notifications",
+  "inOut": "In&Out",
+  "tools": "Tools & Integrations",
+  "toolsHint": "MCP servers and CLI toolsets the agent can use — enable, disable, test, and re-authenticate (e.g. Canva OAuth).",
+  "manageIntegrations": "Manage integrations",
+  "viewIntegrations": "View integrations",
+  "entityGoal": "Entity goal",
+  "tags": "Tags"
+}

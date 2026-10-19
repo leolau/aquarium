@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { Spinner } from "@/components/ui/Spinner";
+import { useT } from "@/i18n";
 
 export interface ProviderOption {
   name: string;
@@ -17,6 +18,7 @@ export interface ProviderOption {
  * Python `dashboard_auth` provider and mints the bridge session.
  */
 export function LoginForm({ providers }: { providers: ProviderOption[] }) {
+  const t = useT("login");
   const router = useRouter();
   const passwordProviders = providers.filter((p) => p.supports_password);
   const [provider, setProvider] = useState(passwordProviders[0]?.name ?? "");
@@ -41,9 +43,9 @@ export function LoginForm({ providers }: { providers: ProviderOption[] }) {
         return;
       }
       const body = (await res.json().catch(() => null)) as { detail?: string } | null;
-      setError(body?.detail ?? "Sign-in failed.");
+      setError(body?.detail ?? t("failed"));
     } catch {
-      setError("Could not reach the server.");
+      setError(t("unreachable"));
     } finally {
       setBusy(false);
     }
@@ -61,7 +63,7 @@ export function LoginForm({ providers }: { providers: ProviderOption[] }) {
     >
       {passwordProviders.length > 1 ? (
         <label className="block text-sm">
-          <span className="mb-1 block text-[var(--color-muted)]">Provider</span>
+          <span className="mb-1 block text-[var(--color-muted)]">{t("provider")}</span>
           <select
             value={provider}
             onChange={(e) => setProvider(e.target.value)}
@@ -76,7 +78,7 @@ export function LoginForm({ providers }: { providers: ProviderOption[] }) {
         </label>
       ) : null}
       <label className="block text-sm">
-        <span className="mb-1 block text-[var(--color-muted)]">Email / username</span>
+        <span className="mb-1 block text-[var(--color-muted)]">{t("username")}</span>
         <input
           type="text"
           autoComplete="username"
@@ -87,7 +89,7 @@ export function LoginForm({ providers }: { providers: ProviderOption[] }) {
         />
       </label>
       <label className="block text-sm">
-        <span className="mb-1 block text-[var(--color-muted)]">Password</span>
+        <span className="mb-1 block text-[var(--color-muted)]">{t("password")}</span>
         <input
           type="password"
           autoComplete="current-password"
@@ -110,16 +112,15 @@ export function LoginForm({ providers }: { providers: ProviderOption[] }) {
         {busy ? (
           <>
             <Spinner size="md" />
-            Signing in…
+            {t("signingIn")}
           </>
         ) : (
-          "Sign in"
+          t("signIn")
         )}
       </button>
       {passwordProviders.length === 0 ? (
         <p className="text-sm text-[var(--color-muted)]">
-          No password provider is configured on the AI layer. OAuth sign-in via
-          the bridge is deferred to a later wave.
+          {t("noProvider")}
         </p>
       ) : null}
     </form>

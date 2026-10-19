@@ -17,6 +17,8 @@ import { NextResponse } from "next/server";
 import { hermesApiBaseUrl } from "@/lib/env";
 import { resolvePrincipalOrStatus } from "@/lib/auth/principal";
 import { writeSession } from "@/lib/auth/session";
+import { syncLanguageAtLogin } from "@/i18n/sync";
+import { HermesApiClient } from "@/lib/api/client";
 
 interface LoginBody {
   provider?: unknown;
@@ -116,5 +118,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     principal,
     issuedAt: Math.floor(Date.now() / 1000),
   });
+  await syncLanguageAtLogin(new HermesApiClient({ hermesToken: token }));
   return NextResponse.json({ ok: true, principal });
 }

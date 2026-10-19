@@ -461,6 +461,16 @@ export class HermesApiClient {
     return this.request("/api/comms/whoami");
   }
 
+  /** The signed-in person's own saved preferences (``language`` is null until chosen). */
+  async myPreferences(): Promise<{ language: string | null }> {
+    return this.request("/api/me/preferences");
+  }
+
+  /** Save the signed-in person's own language; nobody else's. */
+  async setMyLanguage(language: string): Promise<{ language: string }> {
+    return this.request("/api/me/preferences", { method: "PUT", json: { language } });
+  }
+
   /** List the interactive auth providers (login-page bootstrap). Unauthed. */
   async authProviders(): Promise<{
     providers: { name: string; display_name: string; supports_password: boolean }[];

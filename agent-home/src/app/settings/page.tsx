@@ -1,5 +1,6 @@
 import { MobileShell } from "@/components/MobileShell";
 import { SettingsView } from "@/components/settings/SettingsView";
+import { getT } from "@/i18n/server";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
 import { canManageTools } from "@/lib/auth/roles";
 import type { EntityGoal } from "@/types";
@@ -24,7 +25,7 @@ export default async function Page() {
     // No registry (or it is unreachable): the section says so.
   }
   return (
-    <MobileShell title="Settings">
+    <MobileShell title={(await getT("settings"))("title")}>
       <SettingsView
         entityGoal={entityGoal}
         entityGoalReadOnly={!principal.is_owner}
