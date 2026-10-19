@@ -113,6 +113,10 @@ def test_every_change_route_is_gated():
         methods = getattr(route, "methods", None) or set()
         if not path.startswith(("/api/mcp", "/api/tools")):
             continue
+        if path.startswith("/api/mcp/personal"):
+            # Each person's own MCP servers (#595): open to every role, owner
+            # checks per person are covered in test_personal_mcp.py.
+            continue
         for method in methods - {"GET", "HEAD", "OPTIONS"}:
             deps = {d.call for d in route.dependant.dependencies}
             assert _require_tools_manager in deps, f"{method} {path} is not role-gated"
