@@ -137,6 +137,11 @@ SIGNED_IN = {
     "PUT /api/credentials/{provider}/{name}",
     "PATCH /api/credentials/{provider}/{name}",
     "DELETE /api/credentials/{provider}/{name}",
+    # email_mailboxes_api: the caller's own IMAP/SMTP mailboxes
+    "GET /api/email/mailboxes",
+    "PUT /api/email/mailboxes/{address}",
+    "DELETE /api/email/mailboxes/{address}",
+    "POST /api/email/mailboxes/{address}/test",
     "POST /api/credentials/google/start",
     "POST /api/credentials/google/complete",
     "POST /api/credentials/google/{name}/refresh",
