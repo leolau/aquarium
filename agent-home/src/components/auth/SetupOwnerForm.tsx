@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { TwoFactorSetup } from "@/components/account/TwoFactorSetup";
-import { useAccountT } from "@/components/account/useAccountT";
 import { errorMessage, sendJson } from "@/components/users/api";
+import { useT, type Translator } from "@/i18n";
 
 /** Mirrors the server-side minimum; the server is still the authority. */
 const MIN_PASSWORD_LENGTH = 12;
@@ -21,16 +21,24 @@ export function tokenFromHash(hash: string): string {
   return (params.get("token") ?? "").trim();
 }
 
-/** Local checks before posting; ``null`` when the form looks fine. */
-export function setupFormError(email: string, password: string, confirm: string): string | null {
+/** Local checks before posting; ``null`` when the form looks fine. ``t`` is
+ *  the "setup" translator; without it the messages are in English. */
+export function setupFormError(
+  email: string,
+  password: string,
+  confirm: string,
+  t?: Translator,
+): string | null {
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) {
-    return "Enter the owner's email address.";
+    return t ? t("errorEmail") : "Enter the owner's email address.";
   }
   if (password.length < MIN_PASSWORD_LENGTH) {
-    return `Use at least ${MIN_PASSWORD_LENGTH} characters.`;
+    return t
+      ? t("errorShort", { min: MIN_PASSWORD_LENGTH })
+      : `Use at least ${MIN_PASSWORD_LENGTH} characters.`;
   }
   if (password !== confirm) {
-    return "The two passwords don't match.";
+    return t ? t("errorMismatch") : "The two passwords don't match.";
   }
   return null;
 }
@@ -55,7 +63,8 @@ export function SetupOwnerForm({
 }: {
   providers?: { name: string; supports_password: boolean }[];
 }) {
-  const t = useAccountT();
+  const t = useT("setup");
+  const ta = useT("account");
   const [phase, setPhase] = useState<Phase>("checking");
   const [token, setToken] = useState("");
   const [email, setEmail] = useState("");
@@ -89,7 +98,7 @@ export function SetupOwnerForm({
     evt.preventDefault();
     if (busy) return;
     setError(null);
-    const problem = setupFormError(email, password, confirm);
+    const problem = setupFormError(email, password, confirm, t);
     if (problem) {
       setError(problem);
       return;
@@ -112,7 +121,7 @@ export function SetupOwnerForm({
         : null;
       setPhase(login?.ok ? "twoFactor" : "done");
     } catch (err) {
-      setError(errorMessage(err, SETUP_LINK_INVALID));
+      setError(errorMessage(err, t.has("invalidFull") ? t("invalidFull") : SETUP_LINK_INVALID));
     } finally {
       setBusy(false);
     }
@@ -128,20 +137,25 @@ export function SetupOwnerForm({
   if (phase === "checking") {
     return (
       <p data-component="SetupChecking" aria-busy="true" className="text-sm text-[var(--color-muted)]">
-        Checking your setup link…
+        {t("checking")}
       </p>
     );
   }
   if (phase === "invalid") {
     return (
       <div data-component="SetupInvalid" role="alert" className={card}>
-        <p>
-          This setup link is not valid. It may have expired (links last 24 hours) or
-          been used already.
-        </p>
+        <p>{t("invalid")}</p>
         <p className="mt-2 text-[var(--color-muted)]">
-          To get a new one, run <code className="font-mono">hermes setup-link</code> on
-          the server (as the Aquarium service account). A new link cancels the old one.
+          {(() => {
+            const [before, after = ""] = t("invalidHelp").split("{command}");
+            return (
+              <>
+                {before}
+                <code className="font-mono">hermes setup-link</code>
+                {after}
+              </>
+            );
+          })()}
         </p>
       </div>
     );
@@ -149,8 +163,8 @@ export function SetupOwnerForm({
   if (phase === "twoFactor") {
     return (
       <section data-component="SetupTwoFactor" className={`${card} flex flex-col gap-3`}>
-        <h2 className="text-base font-semibold">2. {t("twoFactorRecommended")}</h2>
-        <p className="text-xs text-[var(--color-muted)]">{t("s2Desc")}</p>
+        <h2 className="text-base font-semibold">2. {ta("twoFactorRecommended")}</h2>
+        <p className="text-xs text-[var(--color-muted)]">{ta("s2Desc")}</p>
         <TwoFactorSetup
           t={t}
           password={password}
@@ -164,18 +178,18 @@ export function SetupOwnerForm({
             setConfirm("");
             setPhase("signedIn");
           }}
-          cancelLabel={t("skip")}
+          cancelLabel={ta("skip")}
         />
-        <p className="text-xs text-[var(--color-muted)]">{t("skipLater")}</p>
+        <p className="text-xs text-[var(--color-muted)]">{ta("skipLater")}</p>
       </section>
     );
   }
   if (phase === "signedIn") {
     return (
       <div data-component="SetupDone" className={card}>
-        <p>{t("setupSignedIn")}</p>
+        <p>{ta("setupSignedIn")}</p>
         <Link href="/" className={`${button} mt-3`}>
-          {t("setupOpen")}
+          {ta("setupOpen")}
         </Link>
       </div>
     );
@@ -183,9 +197,9 @@ export function SetupOwnerForm({
   if (phase === "done") {
     return (
       <div data-component="SetupDone" className={card}>
-        <p>The owner account is ready. Sign in with the email and password you just chose.</p>
+        <p>{t("done")}</p>
         <a href="/login" className={`${button} mt-3`}>
-          Sign in
+          {t("signIn")}
         </a>
       </div>
     );
@@ -193,15 +207,14 @@ export function SetupOwnerForm({
   return (
     <form data-component="SetupOwnerForm" onSubmit={submit} aria-busy={busy} className="flex flex-col gap-3">
       <p className="text-sm text-[var(--color-muted)]">
-        Create the owner&apos;s login for this Aquarium. Choose a password of at
-        least {MIN_PASSWORD_LENGTH} characters. This link works once.
+        {t("intro", { min: MIN_PASSWORD_LENGTH })}
       </p>
       <input
         type="email"
         required
         autoComplete="email"
-        aria-label="Email"
-        placeholder="Email"
+        aria-label={t("email")}
+        placeholder={t("email")}
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         className={field}
@@ -210,8 +223,8 @@ export function SetupOwnerForm({
         type="password"
         required
         autoComplete="new-password"
-        aria-label="Password"
-        placeholder="Password"
+        aria-label={t("password")}
+        placeholder={t("password")}
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         className={field}
@@ -220,15 +233,15 @@ export function SetupOwnerForm({
         type="password"
         required
         autoComplete="new-password"
-        aria-label="Confirm password"
-        placeholder="Confirm password"
+        aria-label={t("confirm")}
+        placeholder={t("confirm")}
         value={confirm}
         onChange={(e) => setConfirm(e.target.value)}
         className={field}
       />
       {error ? <p role="alert" className="text-sm text-red-300">{error}</p> : null}
       <button type="submit" disabled={busy} className={button}>
-        {busy ? "Creating…" : "Create owner account"}
+        {busy ? t("creating") : t("create")}
       </button>
     </form>
   );

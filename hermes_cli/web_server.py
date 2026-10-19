@@ -317,7 +317,10 @@ from hermes_cli.vpn_api import router as _vpn_router  # noqa: E402
 from hermes_cli.vpn_api import internal_router as _vpn_internal_router  # noqa: E402
 from hermes_cli.vpn_api import install_internal_auth as _vpn_install_internal_auth  # noqa: E402
 from hermes_cli.email_accounts_api import router as _email_accounts_router  # noqa: E402
+from hermes_cli.telegram_bot_api import router as _telegram_bot_router  # noqa: E402
+from hermes_cli.email_mailboxes_api import router as _email_mailboxes_router  # noqa: E402
 from hermes_cli.wa_bridge_api import router as _wa_bridge_router  # noqa: E402
+from hermes_cli.backup_offsite_api import router as _backup_offsite_router  # noqa: E402
 from hermes_cli.security_basics_api import router as _security_basics_router  # noqa: E402
 from hermes_cli.goals_api import router as _goals_router  # noqa: E402
 from hermes_cli.projects_api import router as _projects_router  # noqa: E402
@@ -338,9 +341,12 @@ app.include_router(_personal_mcp_router)
 app.include_router(_google_client_router)
 app.include_router(_vpn_router)
 app.include_router(_vpn_internal_router)
+app.include_router(_telegram_bot_router)
 _vpn_install_internal_auth()
 app.include_router(_email_accounts_router)
+app.include_router(_email_mailboxes_router)
 app.include_router(_wa_bridge_router)
+app.include_router(_backup_offsite_router)
 app.include_router(_security_basics_router)
 app.include_router(_goals_router)
 app.include_router(_projects_router)
@@ -3382,6 +3388,43 @@ async def comms_whoami(request: Request, _console_scope=Depends(require_console_
         },
     }
 
+
+
+class UserPreferencesUpdate(BaseModel):
+    language: str
+
+
+async def _preferences_principal(request: Request):
+    """The acting principal for a preferences call (never ``?as=``)."""
+    try:
+        return await _comms_resolve_principal(request)
+    except _CommsNotConfigured:
+        raise HTTPException(
+            status_code=503, detail="Per-person settings need the user directory."
+        )
+
+
+@app.get("/api/me/preferences")
+async def get_my_preferences(request: Request):
+    """The signed-in person's own interface preferences (e.g. language)."""
+    from hermes_cli.user_prefs import get_language
+
+    principal = await _preferences_principal(request)
+    return {"language": get_language(principal.user_id)}
+
+
+@app.put("/api/me/preferences")
+async def put_my_preferences(body: UserPreferencesUpdate, request: Request):
+    """Save the signed-in person's own preferences; nobody else's."""
+    from hermes_cli.user_prefs import SUPPORTED_LANGUAGES, set_language
+
+    principal = await _preferences_principal(request)
+    if body.language not in SUPPORTED_LANGUAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"language must be one of: {', '.join(SUPPORTED_LANGUAGES)}",
+        )
+    return {"language": set_language(principal.user_id, body.language)}
 
 def _comms_user_service(actor=None):
     """Build a :class:`MemberService` over this profile's store + GoTrue.

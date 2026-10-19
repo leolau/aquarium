@@ -62,8 +62,9 @@ export function TwoFactorSetup({
   }
 
   useEffect(() => {
-    if (knownPassword) void start(knownPassword);
     // Only once, with the password the first-run form just set.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (knownPassword) void start(knownPassword);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

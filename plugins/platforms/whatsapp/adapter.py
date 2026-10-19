@@ -467,6 +467,17 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
             return float(default)
         return parsed
 
+    @property
+    def bridge_name(self) -> Optional[str]:
+        """Name of the bridge this adapter reads (``extra.bridge_name``, else
+        ``session-<name>`` in ``session_path``), used to find its person."""
+        explicit = str(self.config.extra.get("bridge_name") or "").strip().lower()
+        if explicit:
+            return explicit
+        from hermes_cli.wa_bridge_owners import bridge_name_for_session_path
+
+        return bridge_name_for_session_path(getattr(self, "_session_path", ""))
+
     def _session_credential_name(self) -> Optional[str]:
         """Name of the credential-store entry this bridge instance uses.
 

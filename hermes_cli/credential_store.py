@@ -207,6 +207,30 @@ def _validate_mcp_server(payload: Mapping[str, Any]) -> None:
     validate_credential_payload(payload)
 
 
+_MAIL_SECURITY = ("ssl", "starttls")
+
+
+def _validate_email_imap(payload: Mapping[str, Any]) -> None:
+    def fail(msg: str) -> None:
+        raise CredentialError(f"email-imap: {msg}")
+
+    address = str(payload.get("address") or "").strip()
+    if address.count("@") != 1 or _CONTROL.search(address) or " " in address:
+        fail("address must be an email address")
+    if _CONTROL.search(str(payload.get("username") or "")):
+        fail("username contains control characters")
+    for side in ("imap", "smtp"):
+        host = str(payload.get(f"{side}_host") or "").strip()
+        if not _FORTI_HOST.fullmatch(host):
+            fail(f"{side}_host must be a host name")
+        port = payload.get(f"{side}_port")
+        if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+            fail(f"{side}_port must be a number from 1 to 65535")
+        security = payload.get(f"{side}_security", "ssl")
+        if security not in _MAIL_SECURITY:
+            fail(f"{side}_security must be one of {', '.join(_MAIL_SECURITY)}")
+
+
 CREDENTIAL_KINDS: Dict[str, KindSpec] = {
     "google-oauth2": KindSpec(
         name="google-oauth2",
@@ -242,6 +266,18 @@ CREDENTIAL_KINDS: Dict[str, KindSpec] = {
         materialize=False,
         validator=_validate_fortinet_vpn,
     ),
+    "email-imap": KindSpec(
+        name="email-imap",
+        required=(
+            "address", "username", "password",
+            "imap_host", "imap_port", "smtp_host", "smtp_port",
+        ),
+        optional=("imap_security", "smtp_security", "preset"),
+        secret_fields=("password",),
+        keep_secrets_on_put=True,
+        materialize=False,
+        validator=_validate_email_imap,
+    ),
     "smb-folder": KindSpec(
         name="smb-folder",
         required=("vpn", "share_path"),
@@ -260,6 +296,20 @@ CREDENTIAL_KINDS: Dict[str, KindSpec] = {
         secret_fields=("headers",),
         materialize=False,
         validator=_validate_mcp_server,
+    ),
+    # A person's own @BotFather bot (Get ready item 6). The gateway runs it
+    # only for its owner and only once ``linked_user_id`` is set.
+    "telegram-bot": KindSpec(
+        name="telegram-bot",
+        required=("token",),
+        optional=(
+            "bot_id", "bot_username", "bot_name", "linked_user_id",
+            "linked_username", "link_code_hash", "link_code_expires",
+            "last_test_at", "last_test_ok", "last_test_error",
+        ),
+        secret_fields=("token", "link_code_hash"),
+        keep_secrets_on_put=True,
+        materialize=False,
     ),
 }
 
@@ -575,6 +625,14 @@ class FileCredentialStore:
             if d.get("provider") == provider and service in (d.get("services") or [])
         ]
 
+    async def resolve_by_kind(self, kind: str, *, provider: str) -> List[Credential]:
+        """Every owner's full-payload ``kind`` entries (in-process callers only)."""
+        return [
+            self._doc_to_credential(d)
+            for d in self._iter_docs()
+            if d.get("provider") == provider and d.get("kind") == kind
+        ]
+
     async def update_tokens(
         self,
         provider: str,
@@ -848,6 +906,37 @@ class SupabaseCredentialStore:
                     """,
                     provider,
                     service,
+                )
+            return [self._row_to_credential(r) for r in rows]
+        finally:
+            await conn.close()
+
+    async def resolve_by_kind(self, kind: str, *, provider: str) -> List[Credential]:
+        """Every owner's full-payload ``kind`` entries (in-process callers only).
+
+        Binds the owner principal like :meth:`resolve_for_service`.
+        """
+        from hermes_cli.access import PrincipalStore, bind_principal
+
+        conn = await self._connect()
+        try:
+            async with conn.transaction():
+                owner = await PrincipalStore(self._store).get_owner(
+                    connection=conn
+                )
+                if owner is None:
+                    return []
+                await bind_principal(conn, owner)
+                rows = await conn.fetch(
+                    f"""
+                    SELECT owner_user_id, provider, name, kind, visibility,
+                           services, payload, created_at, updated_at
+                    FROM {CREDENTIALS_TABLE}
+                    WHERE provider = $1 AND kind = $2
+                    ORDER BY owner_user_id, name
+                    """,
+                    provider,
+                    kind,
                 )
             return [self._row_to_credential(r) for r in rows]
         finally:

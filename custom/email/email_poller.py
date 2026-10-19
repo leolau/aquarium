@@ -40,8 +40,27 @@ def get_db():
     return conn
 
 def load_config():
-    with open(CONFIG_PATH) as f:
+    with open(CONFIG_PATH, encoding='utf-8') as f:
         return json.load(f)
+
+def load_install_accounts():
+    """Enabled entries of the install-wide config; none when it is absent
+    (fresh installs start with no mailbox)."""
+    try:
+        config = load_config()
+    except FileNotFoundError:
+        return []
+    return [a for a in config.get('accounts', []) if a.get('enabled', True)]
+
+def load_personal_mailboxes():
+    """Every person's own mailbox from the credential store (Get ready 7)."""
+    try:
+        import asyncio
+        from hermes_cli import email_mailboxes
+        return asyncio.run(email_mailboxes.all_mailboxes())
+    except Exception as e:
+        print(f"[poller] Could not read personal mailboxes: {e}")
+        return []
 
 def decode_header_value(raw):
     """Decode an email header value (handles encoded words like =?UTF-8?B?...?=)."""
@@ -165,7 +184,8 @@ def parse_address_list(raw):
 
 def _register_email_attachments(payloads, *, account_id, conversation,
                                  sender_id, sender_name, message_id,
-                                 received_dt, inbound_item_id=None):
+                                 received_dt, inbound_item_id=None,
+                                 owner_user_id=None):
     """Register email attachment bytes in the file registry.
 
     Best-effort: failures are logged but never raise into the poller path.
@@ -201,7 +221,7 @@ def _register_email_attachments(payloads, *, account_id, conversation,
         }
         for p in payloads
     ]
-    registered = register_files_batch(items)
+    registered = register_files_batch(items, owner_user_id=owner_user_id)
     if registered:
         print(f"[poller] Registered {registered} attachment file(s) from email {message_id}")
 
@@ -435,6 +455,126 @@ def poll_account(account, db):
     return total_new
 
 
+def _register_personal_message(msg, *, owner_user_id, address, folder):
+    """File one message from a person's own mailbox as that person only.
+
+    Nothing goes into the shared email_messages table: the batcher, triage
+    and email MCP read it as the install owner. Returns False when the
+    registry could not take it (the caller retries on the next poll).
+    """
+    from shared.inbound_registration import register_item
+
+    message_id = msg.get('Message-ID', '').strip('<>').strip() or str(uuid.uuid4())
+    from_header = decode_header_value(msg.get('From', ''))
+    from_name, from_addr = email.utils.parseaddr(from_header)
+    from_addr = from_addr or from_header
+    subject = decode_header_value(msg.get('Subject', ''))
+    to_addrs = parse_address_list(msg.get('To', ''))
+    cc_addrs = parse_address_list(msg.get('Cc', ''))
+    in_reply_to = msg.get('In-Reply-To', '').strip('<>').strip() or None
+    thread_id = extract_thread_id(msg)
+    text_body, _html = extract_email_body(msg)
+    attachments, attachment_payloads = extract_attachments(msg)
+    try:
+        received_dt = parsedate_to_datetime(msg.get('Date', ''))
+    except Exception:
+        received_dt = None
+    item_id = register_item(
+        surface='email',
+        external_id=message_id,
+        account_id=address,
+        kind='message',
+        conversation=thread_id or message_id,
+        sender_id=from_addr,
+        sender_name=from_name,
+        subject=subject,
+        body=text_body or '',
+        occurred_at=received_dt or datetime.now(timezone.utc),
+        has_attachments=bool(attachments),
+        metadata={'to': to_addrs, 'cc': cc_addrs, 'folder': folder,
+                  'in_reply_to': in_reply_to},
+        owner_user_id=owner_user_id,
+    )
+    if item_id is None:
+        return False
+    if attachment_payloads:
+        _register_email_attachments(
+            attachment_payloads,
+            account_id=address,
+            conversation=thread_id or message_id,
+            sender_id=from_addr,
+            sender_name=from_name,
+            message_id=message_id,
+            received_dt=received_dt,
+            inbound_item_id=item_id,
+            owner_user_id=owner_user_id,
+        )
+    return True
+
+
+def poll_personal_mailbox(cred, install_addresses=()):
+    """Poll one person's own mailbox (password login, INBOX, read-only)."""
+    from hermes_cli import email_mailboxes as mb
+
+    owner, address, payload = cred.owner_user_id, cred.name, cred.payload
+    state = mb.poll_state(owner, address)
+    now = datetime.now(timezone.utc).isoformat()
+    if address.lower() in install_addresses:
+        # Already read by the install-wide config; don't file it twice.
+        mb.record_poll(owner, address, {**state, 'at': now, 'ok': True,
+                                        'error': None, 'new_count': 0,
+                                        'skipped': 'install-wide'})
+        return 0
+    try:
+        mail = mb.open_imap(payload)
+    except Exception as e:
+        mb.record_poll(owner, address, {**state, 'at': now, 'ok': False,
+                                        'error': mb.plain_error(e, payload['imap_host'])})
+        return 0
+    new_count, error = 0, None
+    uidvalidity = state.get('uidvalidity')
+    last_uid = int(state.get('last_uid') or 0)
+    try:
+        status, _ = mail.select('INBOX', readonly=True)
+        if status != 'OK':
+            raise RuntimeError('cannot open INBOX')
+        _, values = mail.response('UIDVALIDITY')
+        current = (values[0].decode() if values and values[0] else '')
+        if current != uidvalidity:
+            uidvalidity, last_uid = current, 0
+        if last_uid > 0:
+            criteria = f'UID {last_uid + 1}:*'
+        else:
+            criteria = 'SINCE ' + (datetime.now() - timedelta(days=1)).strftime('%d-%b-%Y')
+        status, found = mail.uid('SEARCH', None, criteria)
+        uids = [int(u) for u in found[0].split()] if status == 'OK' and found and found[0] else []
+        for uid in sorted(u for u in uids if u > last_uid)[:50]:
+            status, msg_data = mail.uid('FETCH', str(uid), '(RFC822)')
+            if status != 'OK' or not msg_data or not isinstance(msg_data[0], tuple):
+                last_uid = uid
+                continue
+            msg = email.message_from_bytes(msg_data[0][1])
+            if not _register_personal_message(msg, owner_user_id=owner,
+                                              address=address, folder='INBOX'):
+                error = 'New mail could not be filed yet; it will be retried.'
+                break
+            new_count += 1
+            last_uid = uid
+    except Exception as e:
+        print(f"[poller] personal mailbox: error ({type(e).__name__})")
+        error = 'Reading the mailbox failed; it will be retried.'
+    finally:
+        try:
+            mail.logout()
+        except Exception:
+            pass
+    mb.record_poll(owner, address, {
+        'uidvalidity': uidvalidity, 'last_uid': last_uid, 'at': now,
+        'ok': error is None, 'error': error, 'new_count': new_count,
+    })
+    return new_count
+
+
 # Health check server
 poll_status = {'last_poll': None, 'accounts': {}, 'running': True}
 
@@ -463,26 +603,27 @@ def main():
     health_thread.start()
     print(f"[poller] Health server on port {HEALTH_PORT}")
 
-    config = load_config()
-    accounts = [a for a in config['accounts'] if a.get('enabled', True)]
+    accounts = load_install_accounts()
+    personal = load_personal_mailboxes()
     print(f"[poller] Active accounts: {len(accounts)}")
     for a in accounts:
         print(f"[poller]   {a['id']}: {a['address']} (poll every {a.get('poll_interval_seconds', 60)}s)")
+    print(f"[poller] Personal mailboxes: {len(personal)}")
 
-    if not accounts:
+    if not accounts and not personal:
         print("[poller] No enabled accounts. Waiting for config update...")
         while True:
             time.sleep(60)
-            config = load_config()
-            accounts = [a for a in config['accounts'] if a.get('enabled', True)]
-            if accounts:
+            accounts = load_install_accounts()
+            personal = load_personal_mailboxes()
+            if accounts or personal:
                 break
 
     poll_status['accounts'] = {a['id']: {'address': a['address'], 'last_poll': None, 'new_count': 0} for a in accounts}
 
     while True:
-        config = load_config()
-        accounts = [a for a in config['accounts'] if a.get('enabled', True)]
+        accounts = load_install_accounts()
+        personal = load_personal_mailboxes()
 
         db = get_db()
         for account in accounts:
@@ -500,10 +641,19 @@ def main():
                 traceback.print_exc()
         db.close()
 
-        # Sleep for the shortest poll interval
-        min_interval = min(a.get('poll_interval_seconds', 60) for a in accounts)
-        time.sleep(min_interval)
+        install_addresses = {str(a.get('address', '')).lower() for a in accounts}
+        personal_errors = 0
+        for cred in personal:
+            try:
+                poll_personal_mailbox(cred, install_addresses)
+            except Exception as e:
+                personal_errors += 1
+                print(f"[poller] Error polling a personal mailbox: {type(e).__name__}")
+        poll_status['personal'] = {'mailboxes': len(personal), 'errors': personal_errors}
 
+        # Sleep for the shortest poll interval
+        min_interval = min((a.get('poll_interval_seconds', 60) for a in accounts), default=60)
+        time.sleep(min_interval)
 
 if __name__ == '__main__':
     main()

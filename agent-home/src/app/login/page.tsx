@@ -1,8 +1,10 @@
 import { redirect } from "next/navigation";
 
 import { ResetRequestForm } from "@/components/auth/ResetRequestForm";
+import { LanguageSwitch } from "@/components/LanguageSwitch";
 import { LoginForm, type ProviderOption } from "@/components/LoginForm";
 import { MobileShell } from "@/components/MobileShell";
+import { getT } from "@/i18n/server";
 import { HermesApiClient, HermesApiError } from "@/lib/api/client";
 import { getPrincipal } from "@/lib/auth/principal";
 
@@ -14,6 +16,7 @@ export default async function LoginPage() {
     redirect("/");
   }
 
+  const t = await getT("login");
   let providers: ProviderOption[] = [];
   try {
     const res = await new HermesApiClient().authProviders();
@@ -27,10 +30,8 @@ export default async function LoginPage() {
   }
 
   return (
-    <MobileShell title="Sign in" showCoral={false}>
-      <p className="mb-6 text-sm text-[var(--color-muted)]">
-        Sign in with your Hermes account to open your agent home.
-      </p>
+    <MobileShell title={t("title")} showCoral={false} actions={<LanguageSwitch />}>
+      <p className="mb-6 text-sm text-[var(--color-muted)]">{t("intro")}</p>
       <LoginForm providers={providers} />
       {/* Self-service recovery: a locked-out user cannot sign in to ask, and
        * nobody hands out temporary passwords by hand any more. */}

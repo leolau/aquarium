@@ -143,8 +143,15 @@ async def put_credential(request: Request, provider: str, name: str):
     kind = str(body.get("kind") or "")
     payload = dict(body.get("payload") or {})
     spec = CREDENTIAL_KINDS.get(kind)
-    from hermes_cli import vpn
+    from hermes_cli import telegram_bot_api, vpn
 
+    if kind == telegram_bot_api.KIND or (
+        provider == telegram_bot_api.PROVIDER
+        and getattr(await _own_entry(store, principal, provider, name), "kind", None)
+        == telegram_bot_api.KIND
+    ):
+        # Linking must go through /api/telegram-bot (it proves the Telegram id).
+        raise HTTPException(409, "manage your Telegram bot under /api/telegram-bot")
     if provider == vpn.PROVIDER:
         # VPNs and network folders share provider "fortinet" (and so one name
         # space per owner): never let one silently replace the other.
@@ -212,6 +219,10 @@ async def delete_credential(request: Request, provider: str, name: str):
     deleted = await store.delete(principal, provider, name)
     if not deleted:
         raise HTTPException(404, "credential not found")
+    if provider == "telegram":
+        from hermes_cli.telegram_bot_api import touch_change_marker
+
+        touch_change_marker()
     return {"deleted": True}
 
 

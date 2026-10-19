@@ -1259,6 +1259,42 @@ export interface NetworkFolderInput {
  * the credential's `email` service flag (that one marks the credential as
  * usable for mail; this one controls whether the background poller runs).
  */
+export type EmailSecurity = "ssl" | "starttls";
+export type EmailPreset = "gmail" | "outlook" | "other";
+
+/** Server settings a preset fills in (`GET /api/email/mailboxes` presets). */
+export interface EmailServerSettings {
+  imap_host: string;
+  imap_port: number;
+  imap_security: EmailSecurity;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_security: EmailSecurity;
+}
+
+/** One of the caller's own IMAP/SMTP mailboxes. Never carries the password. */
+export interface EmailMailbox extends EmailServerSettings {
+  address: string;
+  username: string;
+  preset: EmailPreset;
+  password_set: boolean;
+  state: "working" | "needs_attention" | "untested";
+  last_test: {
+    at: string;
+    ok: boolean;
+    imap: { ok: boolean; error?: string };
+    smtp: { ok: boolean; error?: string };
+  } | null;
+  last_poll: { at?: string; ok?: boolean; error?: string | null; new_count?: number } | null;
+}
+
+/** Body of `PUT /api/email/mailboxes/{address}`; empty password keeps the saved one. */
+export interface EmailMailboxInput extends EmailServerSettings {
+  username: string;
+  password?: string;
+  preset: EmailPreset;
+}
+
 export interface EmailPollerAccount {
   id: string;
   address: string;
@@ -1282,6 +1318,35 @@ export interface WaBridge {
   qr_age_seconds: number | null;
   /** qr.txt older than Baileys' ~60s rotation — almost certainly dead. */
   qr_stale: boolean;
+  /** Plain state: waiting_for_qr | connected | not_linked | restarting | stopped | failed. */
+  status?: WaBridgeStatus;
+  /** The linked phone's own number, masked (only for the bridge's person). */
+  number?: string | null;
+}
+
+export type WaBridgeStatus =
+  | "waiting_for_qr"
+  | "connected"
+  | "not_linked"
+  | "restarting"
+  | "stopped"
+  | "failed";
+
+/** Someone else's bridge, as owner/admin see it: who and whether it works. */
+export interface WaBridgeOther {
+  name: string;
+  person: string;
+  person_display: string;
+  status: WaBridgeStatus;
+}
+
+export interface WaBridgesResponse {
+  /** The caller's own bridges. */
+  bridges: WaBridge[];
+  /** Other people's bridges (owner/admin only; empty for everyone else). */
+  others?: WaBridgeOther[];
+  /** Whether this server can add bridges (root helper installed). */
+  can_add?: boolean;
 }
 
 /** What the to-do filter chips can offer without leading to an empty list. */
@@ -2844,6 +2909,85 @@ export interface ClarifyConfirmResult {
   plan_draft: { status: string; detail?: string | null } | null;
 }
 
+
+/** A person's own Telegram bot (Get ready item 6); never carries the token. */
+export interface TelegramBotView {
+  configured: boolean;
+  linked: boolean;
+  bot_username?: string | null;
+  bot_name?: string | null;
+  linked_username?: string | null;
+  link_pending?: boolean;
+  last_test_ok?: boolean | null;
+  last_test_at?: number | null;
+  last_test_error?: string | null;
+  /** Only on `link/start`: the one-time `t.me/<bot>?start=<code>` link. */
+  link_url?: string;
+}
+
+// -- offsite backups (Get ready item 10) -------------------------------------
+
+export type OffsiteProvider = "b2" | "s3" | "other";
+
+export type OffsiteBackupState =
+  | "unavailable"
+  | "not_configured"
+  | "running"
+  | "backup_failed"
+  | "needs_first_backup"
+  | "backup_late"
+  | "restore_test_failed"
+  | "needs_restore_test"
+  | "ok";
+
+export interface OffsiteRun {
+  at: string;
+  ok: boolean;
+  error?: string;
+  name?: string;
+  size?: number;
+  tables?: number;
+  files?: number;
+}
+
+export interface OffsiteBackupStatus {
+  available: boolean;
+  configured: boolean;
+  state: OffsiteBackupState;
+  target?: {
+    provider: OffsiteProvider;
+    bucket: string;
+    prefix: string;
+    endpoint: string;
+    region: string;
+    key_id_hint: string;
+  } | null;
+  schedule?: { enabled: boolean; time: string; keep_days: number };
+  running?: {
+    kind: "backup" | "restore-test";
+    phase: string;
+    percent: number;
+    started: string;
+  } | null;
+  last_backup?: OffsiteRun | null;
+  last_good_backup?: OffsiteRun | null;
+  last_restore_test?: OffsiteRun | null;
+  last_check?: { at: string; ok: boolean; error?: string } | null;
+  copies?: number | null;
+  key_exists?: boolean;
+}
+
+export interface OffsiteBackupSettings {
+  provider: OffsiteProvider;
+  bucket: string;
+  key_id: string;
+  secret: string;
+  endpoint?: string;
+  region?: string;
+  time?: string;
+  keep_days?: number;
+  schedule?: boolean;
+}
 
 /** Google step A: the install's OAuth client, as the owner sees it (no secret). */
 export interface GoogleClientStatus {

@@ -1,0 +1,12 @@
+# Lets the Hermes dashboard (user hermes) manage offsite backups from Get ready
+# (owner only; the dashboard checks the role before it calls sudo). Each line is
+# one exact command of the root-owned /usr/local/sbin/aquarium (installed from
+# deploy/aquarium.py, never the checkout's copy, which the hermes user can
+# write). Settings arrive as JSON on stdin; storage keys stay in root-only
+# /etc/aquarium/offsite.env. Install: root:root 0440.
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium offsite status
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium offsite configure
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium offsite test
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium offsite run
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium offsite restore-test
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium offsite remove

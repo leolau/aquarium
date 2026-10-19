@@ -1,0 +1,18 @@
+{
+  "title": "登入",
+  "intro": "請用你的 Hermes 帳戶登入，打開你的助理主頁。",
+  "provider": "登入方式",
+  "username": "電郵／用戶名稱",
+  "password": "密碼",
+  "signIn": "登入",
+  "signingIn": "正在登入…",
+  "failed": "登入失敗。",
+  "unreachable": "未能連接伺服器。",
+  "noProvider": "AI 層未設定密碼登入方式。經橋接的 OAuth 登入會在稍後推出。",
+  "cantSignIn": "無法登入？",
+  "resetIntro": "輸入你的電郵，你所屬設定檔的管理員會收到一條一次性連結，再轉交給你。",
+  "resetEmailLabel": "你的電郵地址",
+  "sending": "正在傳送…",
+  "requestLink": "索取連結",
+  "resetSent": "如果這個地址已在此登記，管理員現已收到相關連結。"
+}

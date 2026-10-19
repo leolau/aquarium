@@ -52,6 +52,7 @@ import type {
   MembersResponse,
   MemoryDocumentsResponse,
   ModelInfo,
+  OffsiteBackupStatus,
   ModelOptionsResponse,
   ModelSetResponse,
   ModelTestResponse,
@@ -93,11 +94,15 @@ import type {
   RoleLimitsResponse,
   SessionCreateResponse,
   CredentialEntry,
+  EmailMailbox,
+  EmailMailboxInput,
   EmailPollerAccount,
+  EmailServerSettings,
   NetworkFolderInput,
   NetworkFolderView,
   VpnView,
   WaBridge,
+  WaBridgesResponse,
   SessionTag,
   SessionsResponse,
   CronJob,
@@ -127,7 +132,11 @@ import type {
   SeminarSurveyAnswers,
   SeminarSurveyState,
   SeminarSurveySubmitResult,
+  TelegramBotView,
 } from "@/types";
+
+/** Per-person Telegram bot actions forwarded to Hermes `/api/telegram-bot/*`. */
+export type TelegramBotAction = "test" | "link/start" | "link/check" | "link";
 
 /** Raised when the Python API returns a non-2xx status. */
 export interface AccountSecurity {
@@ -527,6 +536,16 @@ export class HermesApiClient {
   /** Resolve the C1 principal + role for the current bridged session. */
   async whoami(): Promise<{ configured: boolean; principal: Principal | null }> {
     return this.request("/api/comms/whoami");
+  }
+
+  /** The signed-in person's own saved preferences (``language`` is null until chosen). */
+  async myPreferences(): Promise<{ language: string | null }> {
+    return this.request("/api/me/preferences");
+  }
+
+  /** Save the signed-in person's own language; nobody else's. */
+  async setMyLanguage(language: string): Promise<{ language: string }> {
+    return this.request("/api/me/preferences", { method: "PUT", json: { language } });
   }
 
   /** List the interactive auth providers (login-page bootstrap). Unauthed. */
@@ -2406,6 +2425,26 @@ export class HermesApiClient {
     );
   }
 
+  /** The caller's own Telegram bot (`/api/telegram-bot`); never the token. */
+  async telegramBot(): Promise<TelegramBotView> {
+    return this.request("/api/telegram-bot");
+  }
+
+  async saveTelegramBot(token: string): Promise<TelegramBotView> {
+    return this.request("/api/telegram-bot", { method: "PUT", json: { token } });
+  }
+
+  async removeTelegramBot(): Promise<TelegramBotView> {
+    return this.request("/api/telegram-bot", { method: "DELETE" });
+  }
+
+  async telegramBotAction(
+    action: TelegramBotAction,
+    method: "POST" | "DELETE" = "POST",
+  ): Promise<TelegramBotView> {
+    return this.request(`/api/telegram-bot/${action}`, { method });
+  }
+
   async deleteCredential(
     provider: string,
     name: string,
@@ -2431,6 +2470,31 @@ export class HermesApiClient {
       `/api/credentials/${encodeURIComponent(provider)}/${encodeURIComponent(name)}`,
       { method: "PUT", json: body },
     );
+  }
+
+  // -- offsite backups (Get ready item 10, owner only) ----------------------
+
+  /** Offsite backup status: target without secrets, progress, last results. */
+  async offsiteBackup(): Promise<OffsiteBackupStatus> {
+    return this.request("/api/backups/offsite");
+  }
+
+  /** Check the storage with this key and save it; `new_key` only the first time. */
+  async configureOffsiteBackup(
+    settings: Record<string, unknown>,
+  ): Promise<{ status: OffsiteBackupStatus; new_key?: string }> {
+    return this.request("/api/backups/offsite", { method: "PUT", json: settings });
+  }
+
+  /** Stop offsite backups; copies already in storage stay. */
+  async removeOffsiteBackup(): Promise<OffsiteBackupStatus> {
+    return this.request("/api/backups/offsite", { method: "DELETE" });
+  }
+
+  async offsiteBackupAction(
+    action: "test" | "run" | "restore-test",
+  ): Promise<OffsiteBackupStatus | { started: boolean; status: OffsiteBackupStatus }> {
+    return this.request(`/api/backups/offsite/${action}`, { method: "POST" });
   }
 
   // -- private networks (Settings → In&Out → Fortinet VPN) -----------------
@@ -2531,9 +2595,50 @@ export class HermesApiClient {
     });
   }
 
+  /** The caller's own IMAP/SMTP mailboxes (never any password). */
+  async emailMailboxes(): Promise<{
+    mailboxes: EmailMailbox[];
+    presets: Record<string, EmailServerSettings>;
+  }> {
+    return this.request("/api/email/mailboxes");
+  }
+
+  /** Create or replace the caller's mailbox; an empty password keeps it. */
+  async putEmailMailbox(
+    address: string,
+    body: EmailMailboxInput,
+  ): Promise<{ mailbox: EmailMailbox }> {
+    return this.request(`/api/email/mailboxes/${encodeURIComponent(address)}`, {
+      method: "PUT",
+      json: body,
+    });
+  }
+
+  async deleteEmailMailbox(address: string): Promise<{ deleted: boolean }> {
+    return this.request(`/api/email/mailboxes/${encodeURIComponent(address)}`, {
+      method: "DELETE",
+    });
+  }
+
+  /** Log into IMAP and SMTP with the saved settings (no mail is sent). */
+  async testEmailMailbox(address: string): Promise<{ mailbox: EmailMailbox }> {
+    return this.request(
+      `/api/email/mailboxes/${encodeURIComponent(address)}/test`,
+      { method: "POST" },
+    );
+  }
+
   /** WhatsApp bridge units (deployment sidecars; owner-gated). */
-  async waBridges(): Promise<{ bridges: WaBridge[] }> {
+  async waBridges(): Promise<WaBridgesResponse> {
     return this.request("/api/wa-bridges");
+  }
+
+  /** "Send yourself a test": one message to the bridge's own number. */
+  async waBridgeTest(name: string): Promise<{ sent: boolean; to: string | null }> {
+    return this.request(
+      `/api/wa-bridges/${encodeURIComponent(name)}/test`,
+      { method: "POST" },
+    );
   }
 
   /** Pending pairing payload for an unpaired bridge (auth material). */
