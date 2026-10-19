@@ -1265,6 +1265,20 @@ def init_agent(
         "reasoning_config": reasoning_config,
         "max_tokens": max_tokens,
     }
+
+    # The chat person's own MCP servers (Get ready item 8), chosen once per
+    # chat. Needs the session id/store set above.
+    from tools.personal_mcp import apply_to_agent as _apply_personal_mcp
+
+    _apply_personal_mcp(agent)
+    if agent._personal_mcp_defs:
+        _denied = _denied_tools(agent._internal_user_id, agent._internal_user_role)
+        if _denied:
+            agent._personal_mcp_defs = [
+                t for t in agent._personal_mcp_defs if t["function"]["name"] not in _denied
+            ]
+            agent.tools = [t for t in agent.tools if t["function"]["name"] not in _denied]
+        agent.valid_tool_names = {t["function"]["name"] for t in agent.tools}
     
     # In-memory todo list for task planning (one per agent/session)
     from tools.todo_tool import TodoStore

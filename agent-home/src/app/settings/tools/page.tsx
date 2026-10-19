@@ -1,4 +1,5 @@
 import { MobileShell } from "@/components/MobileShell";
+import { PersonalMcpServers } from "@/components/settings/PersonalMcpServers";
 import { RoleLimitsSection } from "@/components/settings/RoleLimitsSection";
 import { ToolsSettings } from "@/components/settings/ToolsSettings";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
@@ -33,6 +34,7 @@ export default async function Page() {
 
   return (
     <MobileShell title="Tools & Integrations">
+      <PersonalMcpServers />
       {error ? (
         <div
           data-component="ToolsSettingsError"

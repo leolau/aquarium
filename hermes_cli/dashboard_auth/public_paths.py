@@ -70,6 +70,9 @@ PUBLIC_API_PATHS: frozenset[str] = frozenset({
     # With no token minted both refuse everything.
     "/api/setup/check",
     "/api/setup/owner",
+    "/api/setup/model",
+    "/api/setup/region",
+    "/api/setup/domain",
     # Seminar survey (hermes_cli/seminar_survey.py). Unauthenticated by
     # definition: attendees have no account. Both are keyed by a 192-bit token
     # that was only ever sent into the attendee's own WhatsApp chat, and are

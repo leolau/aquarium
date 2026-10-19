@@ -4937,6 +4937,11 @@ def refresh_agent_mcp_tools(
     # half-swap. ``staged_engine_names`` are the context-engine routing names
     # this rebuild actually appended (matching agent_init's dedup-aware add).
     staged_engine_names = _reinject_post_build_tools(agent, new_defs, new_names)
+    # The person's own MCP tools chosen when this chat started (never changed
+    # mid-chat; see tools/personal_mcp.py).
+    from tools.personal_mcp import reinject as _reinject_personal_mcp
+
+    _reinject_personal_mcp(agent, new_defs, new_names)
 
     # Single atomic read-diff-publish so the returned ``added`` is consistent
     # with what was actually published, even under concurrent callers, and a

@@ -311,6 +311,7 @@ from hermes_cli.files_api import router as _files_router  # noqa: E402
 from hermes_cli.incomings_api import router as _incomings_router  # noqa: E402
 from hermes_cli.todos_api import router as _todos_router  # noqa: E402
 from hermes_cli.credentials_api import router as _credentials_router  # noqa: E402
+from hermes_cli.personal_mcp import router as _personal_mcp_router  # noqa: E402
 from hermes_cli.google_client_api import router as _google_client_router  # noqa: E402
 from hermes_cli.vpn_api import router as _vpn_router  # noqa: E402
 from hermes_cli.vpn_api import internal_router as _vpn_internal_router  # noqa: E402
@@ -336,6 +337,7 @@ app.include_router(_files_router)
 app.include_router(_incomings_router)
 app.include_router(_todos_router)
 app.include_router(_credentials_router)
+app.include_router(_personal_mcp_router)
 app.include_router(_google_client_router)
 app.include_router(_vpn_router)
 app.include_router(_vpn_internal_router)
@@ -4040,7 +4042,12 @@ async def setup_check(request: Request):
     )
     if not allowed or not first_run.check(token):
         raise HTTPException(status_code=400, detail=first_run.NEUTRAL_DETAIL)
-    return {"ok": True}
+    from hermes_cli import first_run_steps
+
+    # ``steps``: the model / region / domain steps are offered only on the very
+    # first run; a link minted later (e.g. to reset the owner's login) only sets
+    # the password.
+    return {"ok": True, "steps": not first_run_steps.is_done()}
 
 
 def _setup_owner_deps():
@@ -4087,6 +4094,105 @@ async def setup_owner(request: Request):
     if not created:
         raise HTTPException(status_code=400, detail=first_run.NEUTRAL_DETAIL)
     return {"ok": True}
+
+
+def _setup_step_body_or_400(request: "Request", body: dict) -> None:
+    """Refuse a first-run step unless the one-time link is still valid and unused."""
+    from hermes_cli import first_run, first_run_steps
+
+    token = str(body.get("token", "") or "")
+    if not first_run_steps.step_allowed(token, ip=_forwarded_client_ip(request)):
+        raise HTTPException(status_code=400, detail=first_run.NEUTRAL_DETAIL)
+
+
+@app.post("/api/setup/model")
+async def setup_model(request: Request):
+    """First-run AI model step. **Unauthenticated**, needs the one-time link.
+
+    Body ``{token, provider, api_key}``. Probes the key, saves it to .env, makes
+    the provider's recommended model the main model and sends one short real
+    message. If any of that fails the previous key and model come back. The key
+    is never returned.
+    """
+    from hermes_cli import first_run_steps
+
+    body = await _setup_body(request)
+    _setup_step_body_or_400(request, body)
+    provider = str(body.get("provider", "") or "").strip()
+    api_key = str(body.get("api_key", "") or "").strip()
+    env_key = first_run_steps.SETUP_PROVIDERS.get(provider)
+    if not env_key:
+        raise HTTPException(status_code=400, detail="Choose a provider.")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Paste the API key first.")
+    return await asyncio.to_thread(_setup_model_sync, provider, env_key, api_key)
+
+
+def _setup_model_sync(provider: str, env_key: str, api_key: str) -> dict:
+    import copy
+
+    from hermes_cli import first_run_steps
+
+    probe = _probe_provider_credential(env_key, api_key)
+    if not probe.get("ok") and probe.get("reachable"):
+        return {"ok": False, "error": "key_rejected"}
+    model = first_run_steps.recommended_model(provider)
+    if not model:
+        return {"ok": False, "error": "no_model"}
+    previous_key = first_run_steps.env_snapshot(env_key)
+    previous_model = copy.deepcopy(load_config().get("model"))
+    save_env_value(env_key, api_key)
+    try:
+        _apply_model_assignment_sync("main", provider, model, "", "", "")
+        result = _run_model_test_sync("main", "", "", "", None)
+    except Exception as exc:  # noqa: BLE001 — reported as a failed test below
+        result = {"ok": False, "error": type(exc).__name__}
+    if result.get("ok"):
+        return {
+            "ok": True,
+            "provider": provider,
+            "model": result.get("model") or model,
+            "latency_ms": result.get("latency_ms"),
+        }
+    first_run_steps.restore_model(env_key, previous_key, previous_model)
+    detail = str(result.get("error") or "").replace(api_key, "***")[:300]
+    return {"ok": False, "error": "test_failed", "detail": detail}
+
+
+@app.post("/api/setup/region")
+async def setup_region(request: Request):
+    """First-run timezone. **Unauthenticated**, needs the one-time link.
+
+    Body ``{token, timezone}``; writes config.yaml ``timezone``.
+    """
+    from hermes_cli import first_run_steps
+
+    body = await _setup_body(request)
+    _setup_step_body_or_400(request, body)
+    tz_name = str(body.get("timezone", "") or "").strip()
+    if not first_run_steps.valid_timezone(tz_name):
+        raise HTTPException(status_code=400, detail="Choose a timezone from the list.")
+    await asyncio.to_thread(first_run_steps.write_region, timezone_name=tz_name)
+    return {"ok": True, "timezone": tz_name}
+
+
+@app.post("/api/setup/domain")
+async def setup_domain(request: Request):
+    """First-run domain check. **Unauthenticated**, needs the one-time link.
+
+    Read-only: does the name point at this server, and does HTTPS answer there.
+    Nothing is written and the web server config is not touched.
+    """
+    from hermes_cli import first_run_steps
+
+    body = await _setup_body(request)
+    _setup_step_body_or_400(request, body)
+    host = first_run_steps.normalize_host(str(body.get("host", "") or ""))
+    if not host:
+        raise HTTPException(
+            status_code=400, detail="Enter a name like aquarium.example.com."
+        )
+    return await asyncio.to_thread(first_run_steps.check_domain, host)
 
 
 # --- Own login: password + two-factor (agent-home Settings / Get ready item 1) ---
@@ -7656,6 +7762,14 @@ async def validate_provider_credential(body: EnvVarUpdate, request: Request):
             return {"ok": True, "reachable": True, "message": "", "models": _parse_model_ids(resp)}
         except Exception:
             return {"ok": False, "reachable": False, "message": f"Could not reach {url}."}
+
+    return _probe_provider_credential(key, value)
+
+
+def _probe_provider_credential(key: str, value: str) -> dict:
+    """One live auth probe for a provider key (shared by /api/providers/validate
+    and the first-run /api/setup/model step)."""
+    import httpx
 
     probe = _CREDENTIAL_PROBES.get(key)
     if not probe:

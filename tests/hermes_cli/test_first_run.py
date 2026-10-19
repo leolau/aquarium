@@ -204,7 +204,7 @@ def test_endpoints_refuse_everything_without_a_minted_token(client):
 
 def test_owner_endpoint_end_to_end(client):
     link = first_run.mint("admin", ttl=3600)
-    assert client.post("/api/setup/check", json={"token": link.token}).json() == {"ok": True}
+    assert client.post("/api/setup/check", json={"token": link.token}).json() == {"ok": True, "steps": True}
     weak = client.post("/api/setup/owner", json={"token": link.token, "email": "o@example.com", "password": "x"})
     assert weak.status_code == 400 and "at least" in weak.json()["detail"]
     ok = client.post("/api/setup/owner", json={"token": link.token, "email": "o@example.com", "password": PASSWORD})

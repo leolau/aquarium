@@ -109,6 +109,9 @@ import type {
   McpOAuthFlowState,
   McpServersResponse,
   McpServerTestResult,
+  PersonalMcpCatalogEntry,
+  PersonalMcpServer,
+  PersonalMcpServersResponse,
   SystemStats,
   TagSuggestion,
   Toolset,
@@ -485,6 +488,52 @@ export class HermesApiClient {
       `/api/mcp/servers/${encodeURIComponent(name)}/oauth/cancel`,
       { method: "POST", json: {} },
     );
+  }
+
+  /** The signed-in person's own MCP servers (only theirs; Get ready item 8). */
+  async personalMcpServers(): Promise<PersonalMcpServersResponse> {
+    return this.request("/api/mcp/personal");
+  }
+
+  async addPersonalMcpServer(body: {
+    name: string;
+    url: string;
+    headers?: Record<string, string>;
+    auth?: "oauth";
+  }): Promise<PersonalMcpServer> {
+    return this.request("/api/mcp/personal", { method: "POST", json: body });
+  }
+
+  async deletePersonalMcpServer(name: string): Promise<{ ok: boolean }> {
+    return this.request(`/api/mcp/personal/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    });
+  }
+
+  async testPersonalMcpServer(name: string): Promise<McpServerTestResult> {
+    return this.request(`/api/mcp/personal/${encodeURIComponent(name)}/test`, {
+      method: "POST",
+      json: {},
+    });
+  }
+
+  async personalMcpCatalog(): Promise<{ entries: PersonalMcpCatalogEntry[] }> {
+    return this.request("/api/mcp/personal/catalog");
+  }
+
+  /** Owner/admin: how many own tools each person has (counts only). */
+  async personalMcpByPerson(): Promise<{ people: { user_id: string; servers: number }[] }> {
+    return this.request("/api/mcp/personal/people");
+  }
+
+  async personalMcpOauth(
+    name: string,
+    step: "start" | "status" | "redirect" | "cancel",
+    url?: string,
+  ): Promise<McpOAuthFlowState & { ok?: boolean }> {
+    const path = `/api/mcp/personal/${encodeURIComponent(name)}/oauth/${step}`;
+    if (step === "status") return this.request(path);
+    return this.request(path, { method: "POST", json: step === "redirect" ? { url } : {} });
   }
 
   /** Resolve the C1 principal + role for the current bridged session. */
@@ -1202,7 +1251,10 @@ export class HermesApiClient {
   }
 
   /** First-run owner setup (hermes_cli/first_run.py): is this link usable? */
-  async setupCheck(token: string, clientIp = ""): Promise<{ ok: boolean }> {
+  async setupCheck(
+    token: string,
+    clientIp = "",
+  ): Promise<{ ok: boolean; steps?: boolean }> {
     return this.request("/api/setup/check", {
       method: "POST",
       json: { token },
@@ -1216,6 +1268,42 @@ export class HermesApiClient {
     clientIp = "",
   ): Promise<{ ok: boolean }> {
     return this.request("/api/setup/owner", {
+      method: "POST",
+      json: input,
+      headers: forwardedFor(clientIp),
+    });
+  }
+
+  /** First-run AI model step: probe, save and test a provider key. */
+  async setupModel(
+    input: { token: string; provider: string; api_key: string },
+    clientIp = "",
+  ): Promise<SetupModelResult> {
+    return this.request("/api/setup/model", {
+      method: "POST",
+      json: input,
+      headers: forwardedFor(clientIp),
+    });
+  }
+
+  /** First-run timezone (config.yaml `timezone`). */
+  async setupRegion(
+    input: { token: string; timezone: string },
+    clientIp = "",
+  ): Promise<{ ok: boolean }> {
+    return this.request("/api/setup/region", {
+      method: "POST",
+      json: input,
+      headers: forwardedFor(clientIp),
+    });
+  }
+
+  /** First-run read-only domain check (DNS + HTTPS). */
+  async setupDomain(
+    input: { token: string; host: string },
+    clientIp = "",
+  ): Promise<SetupDomainResult> {
+    return this.request("/api/setup/domain", {
       method: "POST",
       json: input,
       headers: forwardedFor(clientIp),
@@ -3093,4 +3181,22 @@ function safeJson(text: string): unknown {
   } catch {
     return text;
   }
+}
+
+export interface SetupModelResult {
+  ok: boolean;
+  provider?: string;
+  model?: string;
+  latency_ms?: number;
+  error?: "key_rejected" | "no_model" | "test_failed";
+  detail?: string;
+}
+
+export interface SetupDomainResult {
+  ok: boolean;
+  host: string;
+  resolves: boolean;
+  points_here: boolean;
+  https_ready: boolean;
+  server_addresses: string[];
 }
