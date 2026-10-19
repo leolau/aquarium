@@ -462,6 +462,28 @@ def test_vpn_support_refuses_a_broken_sudoers_file(tmp_path):
     assert not (rootfs / "etc/sudoers.d/hermes-vpn").exists()
 
 
+def test_security_check_installs_root_helper_and_argument_free_sudoers(tmp_path):
+    rootfs = tmp_path / "root"
+    out = _lib(f"aq_install_security_check '{REPO_ROOT}'", {"AQ_ROOTFS": str(rootfs)}, _system_stubs(tmp_path))
+    assert out.returncode == 0, out.stderr
+    helper = rootfs / "usr/local/sbin/hermes-security-check"
+    assert helper.read_bytes() == (REPO_ROOT / "deploy/hermes-security-check").read_bytes()
+    assert helper.stat().st_mode & 0o777 == 0o755
+    sudoers = rootfs / "etc/sudoers.d/hermes-security-check"
+    assert sudoers.read_text() == (REPO_ROOT / "deploy/sudoers.d/hermes-security-check").read_text()
+    assert sudoers.stat().st_mode & 0o777 == 0o440
+    assert 'NOPASSWD: /usr/local/sbin/hermes-security-check ""' in sudoers.read_text()
+
+
+def test_security_check_refuses_a_broken_sudoers_file(tmp_path):
+    rootfs = tmp_path / "root"
+    out = _lib(f"aq_install_security_check '{REPO_ROOT}'", {"AQ_ROOTFS": str(rootfs)},
+               _system_stubs(tmp_path, visudo_ok=False))
+    assert out.returncode != 0 and "visudo" in out.stderr
+    assert not (rootfs / "etc/sudoers.d/hermes-security-check").exists()
+    assert not (rootfs / "usr/local/sbin/hermes-security-check").exists()
+
+
 def test_unattended_upgrades_on_fresh_box_and_operator_choice_kept(tmp_path):
     rootfs = tmp_path / "root"
     stubs = _system_stubs(tmp_path)

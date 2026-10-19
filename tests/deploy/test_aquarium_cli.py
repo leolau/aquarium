@@ -676,6 +676,21 @@ def test_doctor_all_good(box, capsys):
     assert "TOPSECRETPW" not in out and "sk-or-SECRET" not in out
 
 
+def test_doctor_json_is_one_line_with_every_row(box, capsys):
+    released_box(box)
+    box.set_systemd(down=["hermes-gateway.service"])
+    capsys.readouterr()
+    code = box.run("doctor", "--json")
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+    assert code == 1
+    data = json.loads(lines[-1])
+    assert data["failed"] >= 1 and len(data["rows"]) >= 5
+    row = next(r for r in data["rows"] if r["text"] == "service hermes-gateway.service: failed")
+    assert row["status"] == "fail" and "aquarium logs hermes-gateway.service" in row["fix"]
+    assert all(r["fix"] == "" for r in data["rows"] if r["status"] == "ok")
+    assert "TOPSECRETPW" not in lines[-1] and "problem(s)" not in "\n".join(lines)
+
+
 def test_doctor_explains_each_failure(box, capsys):
     released_box(box)
     box.set_systemd(down=["hermes-gateway.service"])

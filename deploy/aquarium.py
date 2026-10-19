@@ -10,7 +10,7 @@ service user through ``python -m hermes_cli.aquarium_probe``.
     aquarium update [--version vX.Y.Z | --channel stable|beta]
     aquarium backup [--to DIR]               encrypted backup (database, data, settings)
     aquarium restore <file> [--test] [--yes] put a backup back (or only test it)
-    aquarium doctor                          health checks with a plain-language fix each
+    aquarium doctor [--json]                 health checks with a plain-language fix each
     aquarium logs [service] [-n N] [-f]
     aquarium migrate-layout [--dry-run | --yes | --undo]
     aquarium uninstall [--yes] [--purge-data]
@@ -87,6 +87,7 @@ TOOLS_DIR = "/usr/local/lib/aquarium"  # the installer's pinned cosign lives her
 ROOT_HELPERS = [  # root-run copies that must match the release (reported, never auto-installed)
     ("/usr/local/sbin/hermes-vpn-helper", "deploy/hermes-vpn-helper", "VPN helper"),
     ("/usr/local/sbin/hermes-wa-bridge-add", "deploy/hermes-wa-bridge-add", "WhatsApp bridge helper"),
+    ("/usr/local/sbin/hermes-security-check", "deploy/hermes-security-check", "security check helper"),
 ]
 BUILD_CACHE = "/var/cache/aquarium"
 
@@ -1503,6 +1504,8 @@ DOCTOR = [check_disk, check_self, check_services, check_db, check_http, check_ce
 
 def cmd_doctor(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
     failed = warned = 0
+    as_json = getattr(args, "json", False)
+    found: List[Dict[str, str]] = []
     for check in DOCTOR:
         try:
             rows = check(cfg)
@@ -1511,12 +1514,18 @@ def cmd_doctor(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
         except Exception as error:  # one broken check must not hide the others
             rows = [(WARN, f"{check.__name__}: could not run ({error.__class__.__name__}: {error})", "")]
         for status, text, fix in rows:
-            say(f"  {'ok  ' if status == OK else 'WARN' if status == WARN else 'FAIL'}  {text}")
-            if status != OK and fix:
-                say(f"        Fix: {fix}")
+            found.append({"status": status, "text": text, "fix": fix if status != OK else ""})
+            if not as_json:
+                say(f"  {'ok  ' if status == OK else 'WARN' if status == WARN else 'FAIL'}  {text}")
+                if status != OK and fix:
+                    say(f"        Fix: {fix}")
             failed += status == FAILED
             warned += status == WARN
-    say(f"\n{failed} problem(s), {warned} warning(s).")
+    if as_json:
+        # One line for deploy/hermes-security-check (Get ready → Security basics).
+        print(json.dumps({"rows": found, "failed": failed, "warned": warned}), flush=True)
+    else:
+        say(f"\n{failed} problem(s), {warned} warning(s).")
     return 1 if failed else 0
 
 
@@ -1847,7 +1856,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--yes", action="store_true")
     p.add_argument("--key-file")
     p.add_argument("--no-safety-backup", action="store_true")
-    sub.add_parser("doctor", help="check everything and say how to fix what fails")
+    p = sub.add_parser("doctor", help="check everything and say how to fix what fails")
+    p.add_argument("--json", action="store_true", help="print the results as one JSON line")
     p = sub.add_parser("logs", help="service logs")
     p.add_argument("service", nargs="?")
     p.add_argument("-n", "--lines", type=int, default=200)
