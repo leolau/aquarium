@@ -43,7 +43,7 @@ const noopSubscribe = () => () => {};
 
 function Step({ n, text }: { n: number; text: string }) {
   return (
-    <div className="flex items-start gap-2">
+    <div data-component="Step" className="flex items-start gap-2">
       <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[var(--color-border)] text-[11px] font-semibold">
         {n}
       </span>
@@ -214,7 +214,7 @@ export function TelegramBotSetup({ lang }: { lang?: string } = {}) {
                     </p>
                   ) : null}
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2 sm:shrink-0">
                   <button type="button" className={BTN} disabled={busy !== null} onClick={() => void test()}>
                     {label("test", "test", "testing")}
                   </button>
@@ -234,7 +234,7 @@ export function TelegramBotSetup({ lang }: { lang?: string } = {}) {
             {!view.configured ? null : view.linked ? (
               <div className="flex flex-col gap-2 rounded-lg border border-[var(--color-border)] p-3 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-sm">✓ {t("linked", { who: view.linked_username ? `@${view.linked_username}` : "Telegram" })}</p>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2 sm:shrink-0">
                   <button type="button" className={BTN} disabled={busy !== null} onClick={() => void linkStart()}>
                     {label("linkStart", "relink", "linkStarting")}
                   </button>
