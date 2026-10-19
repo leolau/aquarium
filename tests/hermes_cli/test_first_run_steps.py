@@ -62,7 +62,7 @@ def _env(home):
 
 STEPS = [
     ("/api/setup/model", {"provider": "openrouter", "api_key": KEY}),
-    ("/api/setup/region", {"timezone": "Asia/Hong_Kong", "language": "zh-Hant"}),
+    ("/api/setup/region", {"timezone": "Asia/Hong_Kong"}),
     ("/api/setup/domain", {"host": "aquarium.example.com"}),
 ]
 
@@ -167,19 +167,17 @@ def test_model_step_rejects_unknown_provider_and_empty_key(client):
 def test_region_step_writes_config_yaml_not_env(client, home):
     link = first_run.mint("admin", ttl=3600)
     response = client.post("/api/setup/region", json={
-        "token": link.token, "timezone": "Asia/Taipei", "language": "zh-Hant"})
+        "token": link.token, "timezone": "Asia/Taipei"})
     assert response.status_code == 200
     cfg = _config(home)
     assert cfg["timezone"] == "Asia/Taipei"
-    assert cfg["agent_home"]["language"] == "zh-Hant"
     assert "Asia/Taipei" not in _env(home)
 
 
-@pytest.mark.parametrize("tz,lang", [("Mars/Base", "en"), ("", "en"), ("Asia/Hong_Kong", "fr")])
-def test_region_step_rejects_bad_values(client, home, tz, lang):
+@pytest.mark.parametrize("tz", ["Mars/Base", "", "../../etc/passwd"])
+def test_region_step_rejects_bad_values(client, home, tz):
     link = first_run.mint("admin", ttl=3600)
-    response = client.post("/api/setup/region",
-                           json={"token": link.token, "timezone": tz, "language": lang})
+    response = client.post("/api/setup/region", json={"token": link.token, "timezone": tz})
     assert response.status_code == 400
     assert "timezone" not in _config(home) or _config(home)["timezone"] == ""
 
@@ -241,7 +239,7 @@ def test_existing_install_with_chats_is_marked_done_so_a_reset_link_gets_no_step
     }
     refused = client.post(
         "/api/setup/region",
-        json={"token": link.token, "timezone": "UTC", "language": "en"},
+        json={"token": link.token, "timezone": "UTC"},
     )
     assert refused.status_code == 400
     assert first_run_steps.mark_existing_install_done(home) is False

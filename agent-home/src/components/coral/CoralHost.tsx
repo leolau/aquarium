@@ -12,6 +12,7 @@ import {
 } from "@/components/coral/coral-interlock";
 import { CoralTile } from "@/components/coral/CoralPetal";
 import { useChatUnreadCount } from "@/components/coral/useChatUnread";
+import { useT } from "@/i18n";
 
 const STAGGER_MS = 18;
 
@@ -32,6 +33,7 @@ export function CoralHost({
 }: {
   badgeCounts?: Record<string, number>;
 }) {
+  const t = useT("nav");
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const fabRef = useRef<HTMLButtonElement>(null);
@@ -117,7 +119,7 @@ export function CoralHost({
             ref={panelRef}
             id="coral-panel"
             role="menu"
-            aria-label="Coral launcher"
+            aria-label={t("launcher")}
             onKeyDown={onPanelKeyDown}
             className="coral-panel"
           >
@@ -154,7 +156,7 @@ export function CoralHost({
                     className={`coral-section coral-section--${petal.id} mt-4`}
                   >
                     <h3 className="mb-1 px-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
-                      {petal.label}
+                      {t.has(`clusters.${petal.id}`) ? t(`clusters.${petal.id}`) : petal.label}
                     </h3>
                     <div className="grid grid-cols-4 gap-1">
                       {petal.members.map((member) => (
@@ -193,7 +195,7 @@ export function CoralHost({
         }}
         aria-expanded={open}
         aria-controls={open ? "coral-panel" : undefined}
-        aria-label={open ? "Close Coral menu" : "Open Coral menu"}
+        aria-label={open ? t("closeMenu") : t("openMenu")}
         className="coral-fab fixed z-[60] flex h-11 w-11 items-center justify-center rounded-l-none rounded-r-full text-base text-[var(--color-accent-fg)]"
         style={{
           left: 0,

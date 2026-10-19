@@ -1,0 +1,41 @@
+{
+  "launcher": "Coral launcher",
+  "openMenu": "Open Coral menu",
+  "closeMenu": "Close Coral menu",
+  "clusters": {
+    "workspace": "Workspace",
+    "system": "System"
+  },
+  "apps": {
+    "home": { "name": "Home" },
+    "todos": { "name": "To-dos", "hint": "What needs you" },
+    "chat": { "name": "Chat", "hint": "One-brain chat" },
+    "inbox": { "name": "Inbox", "hint": "Everything that arrived" },
+    "memory": { "name": "Memory", "hint": "What it remembers" },
+    "projects": { "name": "Projects", "hint": "What runs on its own" },
+    "files": { "name": "Files", "hint": "Everything that arrived" },
+    "activity": { "name": "Activity", "hint": "Interaction traces" },
+    "graph": { "name": "Graph", "hint": "GTS Centre" },
+    "capacity": { "name": "Capacity", "hint": "Headroom on this box" },
+    "users": { "name": "Users", "hint": "Directory + enrolment" },
+    "suggestions": { "name": "Suggestions", "hint": "Proposed sub-goals" },
+    "tools": { "name": "Tools", "hint": "Apps the agent built" },
+    "models": { "name": "Models", "hint": "Brains per slot" },
+    "core": { "name": "Core area", "hint": "C7 boundary" },
+    "webview": { "name": "Agent webview", "hint": "FG-17b CDP" },
+    "settings": { "name": "Settings", "hint": "Theme + preferences" },
+    "onboarding": { "name": "Getting started", "hint": "FG-15 readiness" }
+  },
+  "status": {
+    "cpu": "CPU",
+    "cpuTitle": "CPU busy — tap for the capacity page",
+    "disk": "Disk",
+    "diskTitle": "Storage used on the hermes volume",
+    "tokens": "Tokens",
+    "tokensTitle": "Tokens used in the last 30 days (input + output)",
+    "tasks": "Tasks",
+    "tasksTitle": "Active agent conversations + running kanban cards",
+    "cron": "Cron",
+    "cronTitle": "Scheduled cron jobs (enabled of total)"
+  }
+}

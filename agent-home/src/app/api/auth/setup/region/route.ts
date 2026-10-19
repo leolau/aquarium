@@ -1,5 +1,5 @@
 /**
- * POST /api/auth/setup/region — first-run timezone + language (config.yaml).
+ * POST /api/auth/setup/region — first-run timezone (config.yaml).
  * **Unauthenticated on purpose**: the owner has no login yet; the one-time
  * setup token is the credential, and the dashboard refuses the step once the
  * owner exists. Secrets travel only in the JSON body and are never logged.
@@ -19,7 +19,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     return NextResponse.json(
       await new HermesApiClient().setupRegion(
-        { token: str(body.token), timezone: str(body.timezone), language: str(body.language) },
+        { token: str(body.token), timezone: str(body.timezone) },
         callerIp(request),
       ),
     );

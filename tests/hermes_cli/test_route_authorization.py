@@ -94,6 +94,16 @@ HANDLER_CHECKED = {
 #: Any signed-in user; the handler limits what they see or change to their own
 #: data (chat scope, principal, project membership).
 SIGNED_IN = {
+    # user_prefs: the acting person's own language; no user id is taken from the request
+    "GET /api/me/preferences",
+    "PUT /api/me/preferences",
+    # own login only (session subject, never a body id): password + two-factor
+    "GET /api/account/security",
+    "POST /api/account/password",
+    "POST /api/account/two-factor/start",
+    "POST /api/account/two-factor/confirm",
+    "POST /api/account/two-factor/disable",
+    "POST /api/account/two-factor/recovery-codes",
     # fastapi.applications: API schema pages
     "GET /openapi.json",
     "GET /docs",
@@ -489,6 +499,7 @@ ADMIN_ROUTES = [
     ("post", "/api/skills/hub/install", {"identifier": "x"}),
     ("post", "/api/memory/providers/honcho/oauth/start", None),
     ("post", "/api/mcp/servers", {"name": "evil", "command": "/bin/sh", "args": ["-c", "id"]}),
+    ("get", "/api/security-basics", None),
 ]
 
 

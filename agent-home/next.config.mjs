@@ -43,7 +43,12 @@ const nextConfig = {
   // so customer boxes never run `next build`. Tracing starts at the repo root
   // because npm workspaces hoist node_modules there.
   ...(process.env.AQUARIUM_STANDALONE === "1"
-    ? { output: "standalone", outputFileTracingRoot: fileURLToPath(new URL("..", import.meta.url)) }
+    ? {
+        output: "standalone",
+        outputFileTracingRoot: fileURLToPath(new URL("..", import.meta.url)),
+        // UI strings are read from disk at runtime (src/i18n/load.ts).
+        outputFileTracingIncludes: { "/**": ["./src/i18n/messages/**/*.json"] },
+      }
     : {}),
   // Lint and typecheck run as dedicated `npm run lint` / `npm run typecheck`
   // steps (and in CI); don't couple them to the production build.

@@ -2,11 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import type { ProviderOption } from "@/components/LoginForm";
+import { TwoFactorSetup } from "@/components/account/TwoFactorSetup";
+import { LanguageSwitch } from "@/components/LanguageSwitch";
+import { Spinner } from "@/components/ui/Spinner";
 import { errorMessage, sendJson } from "@/components/users/api";
+import { useT, type Translator } from "@/i18n";
 import type { SetupDomainResult, SetupModelResult } from "@/lib/api/client";
-
-import { localeFromBrowser, setupT, type SetupKey, type SetupLocale } from "./setupI18n";
 
 /** Mirrors the server-side minimum; the server is still the authority. */
 const MIN_PASSWORD_LENGTH = 12;
@@ -20,7 +21,7 @@ export const SETUP_LINK_INVALID =
   "on the server for a new one.";
 
 /** Provider id (config.yaml `model.provider`) → label key, in the mockup's order. */
-export const SETUP_PROVIDERS: { id: string; label: SetupKey; keyUrl: string }[] = [
+export const SETUP_PROVIDERS: { id: string; label: string; keyUrl: string }[] = [
   { id: "openrouter", label: "p_or", keyUrl: "https://openrouter.ai/settings/keys" },
   { id: "anthropic", label: "p_an", keyUrl: "https://console.anthropic.com/settings/keys" },
   { id: "openai-api", label: "p_oa", keyUrl: "https://platform.openai.com/api-keys" },
@@ -36,20 +37,38 @@ export function tokenFromHash(hash: string): string {
   return (params.get("token") ?? "").trim();
 }
 
-type FormProblem = "err_email" | "err_short" | "err_match";
+type FormProblem = "errorEmail" | "errorShort" | "errorMismatch";
 
 /** Local checks before posting; ``null`` when the form looks fine. */
 export function setupFormProblem(email: string, password: string, confirm: string): FormProblem | null {
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) return "err_email";
-  if (password.length < MIN_PASSWORD_LENGTH) return "err_short";
-  if (password !== confirm) return "err_match";
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) return "errorEmail";
+  if (password.length < MIN_PASSWORD_LENGTH) return "errorShort";
+  if (password !== confirm) return "errorMismatch";
   return null;
 }
 
-/** English wording of {@link setupFormProblem}. */
-export function setupFormError(email: string, password: string, confirm: string): string | null {
+const PROBLEM_EN: Record<FormProblem, string> = {
+  errorEmail: "Enter the owner's email address.",
+  errorShort: `Use at least ${MIN_PASSWORD_LENGTH} characters.`,
+  errorMismatch: "The two passwords don't match.",
+};
+
+/** Wording of {@link setupFormProblem}; ``t`` is the "setup" translator (English without it). */
+export function setupFormError(
+  email: string,
+  password: string,
+  confirm: string,
+  t?: Translator,
+): string | null {
   const problem = setupFormProblem(email, password, confirm);
-  return problem ? setupT("en", problem) : null;
+  if (!problem) return null;
+  return t ? t(problem, { min: MIN_PASSWORD_LENGTH }) : PROBLEM_EN[problem];
+}
+
+/** The password login the owner just created belongs to (GoTrue first). */
+export function ownerLoginProvider(providers: { name: string; supports_password: boolean }[]): string {
+  const usable = providers.filter((p) => p.supports_password).map((p) => p.name);
+  return usable.includes("supabase") ? "supabase" : (usable[0] ?? "");
 }
 
 /**
@@ -83,8 +102,8 @@ function allTimezones(): string[] {
   }
 }
 
-type Phase = "checking" | "invalid" | "form";
-type ModelState = { kind: "idle" } | { kind: "ok"; seconds: string; model: string } | { kind: "bad"; key: SetupKey | null; detail?: string };
+type Phase = "checking" | "invalid" | "form" | "twoFactor" | "done";
+type ModelState = { kind: "idle" } | { kind: "ok"; seconds: string; model: string } | { kind: "bad"; key: string | null; detail?: string };
 type DomainState = { kind: "idle" } | { kind: "result"; result: SetupDomainResult } | { kind: "error"; message: string };
 
 const card = "rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4";
@@ -96,25 +115,26 @@ const okBox = "rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py
 const badBox = "rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300";
 const warnBox = "rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-[var(--color-warn-text)]";
 
-function Spinner() {
-  return <span aria-hidden="true" className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-r-transparent" />;
-}
-
 /**
  * First-run setup from the link `hermes setup-link` prints (P2 screen 1):
- * owner login, two-factor (later, in Get ready), AI model key with a live
- * test, timezone + language, an optional read-only domain check, then
- * "Finish setup" creates the owner, signs them in and opens Get ready.
+ * owner login, AI model key with a live test, timezone + language, an optional
+ * read-only domain check; "Finish setup" creates the owner, signs them in,
+ * offers two-factor login on the same page and then opens Get ready.
  *
  * The token is read from the URL fragment in the browser, then removed from the
  * address bar (so it is not left in history or on screen) and only ever posted
  * in a JSON body. It is never rendered into the page.
  */
-export function SetupOwnerForm({ providers = [] }: { providers?: ProviderOption[] }) {
+export function SetupOwnerForm({
+  providers = [],
+}: {
+  providers?: { name: string; supports_password: boolean }[];
+}) {
+  const t = useT("setup");
+  const ta = useT("account");
   const [phase, setPhase] = useState<Phase>("checking");
   const [steps, setSteps] = useState(true);
   const [token, setToken] = useState("");
-  const [lang, setLang] = useState<SetupLocale>("en");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -129,14 +149,9 @@ export function SetupOwnerForm({ providers = [] }: { providers?: ProviderOption[
   const [domain, setDomain] = useState<DomainState>({ kind: "idle" });
   const [error, setError] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
-  const [signInFailed, setSignInFailed] = useState(false);
-  const t = (key: SetupKey, vars?: Record<string, string | number>) => setupT(lang, key, vars);
+  const [leaving, setLeaving] = useState(false);
 
   useEffect(() => {
-    const fromBrowser = () => {
-      setLang(localeFromBrowser(navigator.languages ?? [navigator.language]));
-      setTimezone(browserTimezone());
-    };
     const found = tokenFromHash(window.location.hash);
     if (window.location.hash) {
       window.history.replaceState(null, "", window.location.pathname);
@@ -146,25 +161,18 @@ export function SetupOwnerForm({ providers = [] }: { providers?: ProviderOption[
       : Promise.reject(new Error("no setup token in the link"));
     asked
       .then((res) => {
-        fromBrowser();
+        setTimezone(browserTimezone());
         setToken(found);
         setSteps(res.steps !== false);
         setPhase("form");
       })
-      .catch(() => {
-        fromBrowser();
-        setPhase("invalid");
-      });
+      .catch(() => setPhase("invalid"));
     // A link pasted into a tab already on /setup only changes the fragment, which
     // does not reload the page; reload so the new token is read.
     const onHashChange = () => window.location.reload();
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
-
-  useEffect(() => {
-    document.documentElement.lang = lang;
-  }, [lang]);
 
   const timezones = useMemo(() => {
     const rest = allTimezones().filter((z) => !COMMON_TIMEZONES.includes(z));
@@ -220,13 +228,20 @@ export function SetupOwnerForm({ providers = [] }: { providers?: ProviderOption[
     }
   }
 
+  function openGetReady() {
+    setPassword("");
+    setConfirm("");
+    setLeaving(true);
+    window.location.assign(GET_READY_PATH);
+  }
+
   async function finish(evt: React.FormEvent) {
     evt.preventDefault();
     if (finishing) return;
     setError(null);
-    const problem = setupFormProblem(email, password, confirm);
+    const problem = setupFormError(email, password, confirm, t);
     if (problem) {
-      setError(t(problem));
+      setError(problem);
       document.getElementById("s1")?.scrollIntoView({ behavior: "smooth" });
       return;
     }
@@ -234,67 +249,94 @@ export function SetupOwnerForm({ providers = [] }: { providers?: ProviderOption[
     try {
       // Region first: the link is used up once the owner exists.
       if (steps) {
-        await sendJson("/api/auth/setup/region", "POST", { token, timezone, language: lang });
+        await sendJson("/api/auth/setup/region", "POST", { token, timezone });
       }
       await sendJson("/api/auth/setup/owner", "POST", { token, email: email.trim(), password });
     } catch (err) {
-      setError(errorMessage(err, SETUP_LINK_INVALID));
+      setError(errorMessage(err, t.has("invalidFull") ? t("invalidFull") : SETUP_LINK_INVALID));
       setFinishing(false);
       return;
     }
-    try {
-      window.localStorage.setItem("aquarium.language", lang);
-    } catch {
-      // Private mode: the saved config.yaml value still applies.
-    }
-    const loginProvider = providers.find((p) => p.supports_password)?.name ?? "";
-    try {
-      await sendJson("/api/session/login", "POST", {
-        provider: loginProvider,
-        username: email.trim(),
-        password,
-      });
-      window.location.assign(GET_READY_PATH);
-    } catch {
-      setSignInFailed(true);
-      setFinishing(false);
-    }
+    // Sign straight in (this also saves the language chosen on this page for
+    // the owner), so the optional two-factor step can run here.
+    const loginProvider = ownerLoginProvider(providers);
+    const login = loginProvider
+      ? await fetch("/api/session/login", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ provider: loginProvider, username: email.trim(), password }),
+        }).catch(() => null)
+      : null;
+    setFinishing(false);
+    setPhase(login?.ok ? "twoFactor" : "done");
   }
 
   if (phase === "checking") {
     return (
       <p data-component="SetupChecking" aria-busy="true" className="text-sm text-[var(--color-muted)]">
-        {t("checking_link")}
+        {t("checking")}
       </p>
     );
   }
   if (phase === "invalid") {
+    const [before, after = ""] = t("invalidHelp").split("{command}");
     return (
-      <div data-component="SetupInvalid" role="alert" className={`${card} text-sm`}>
-        <p>{t("invalid_1")}</p>
-        <p className="mt-2 text-[var(--color-muted)]">{t("invalid_2")}</p>
+      <div className="flex flex-col gap-4">
+        <LanguageSwitch />
+        <div data-component="SetupInvalid" role="alert" className={`${card} text-sm`}>
+          <p>{t("invalid")}</p>
+          <p className="mt-2 text-[var(--color-muted)]">
+            {before}
+            <code className="font-mono">hermes setup-link</code>
+            {after}
+          </p>
+        </div>
       </div>
     );
   }
-  if (signInFailed) {
+  if (phase === "done") {
     return (
       <div data-component="SetupDone" className={`${card} text-sm`}>
-        <p>{t("err_signin")}</p>
+        <p>{t("done")}</p>
         <a href="/login" className={`${primary} mt-3`}>
-          {t("signin")}
+          {t("signIn")}
         </a>
       </div>
     );
   }
+  if (phase === "twoFactor") {
+    return (
+      <section data-component="SetupTwoFactor" className={`${card} mx-auto flex w-full max-w-2xl flex-col gap-3 text-sm`}>
+        <h2 className="text-base font-semibold">{t("s2_t")}</h2>
+        <p className="text-xs text-[var(--color-muted)]">{ta("s2Desc")}</p>
+        {leaving ? (
+          <p aria-busy="true" className="flex items-center gap-2 text-[var(--color-muted)]">
+            <Spinner /> {t("opening")}
+          </p>
+        ) : (
+          <>
+            <TwoFactorSetup
+              t={ta}
+              password={password}
+              onDone={openGetReady}
+              onCancel={openGetReady}
+              cancelLabel={ta("skip")}
+            />
+            <p className="text-xs text-[var(--color-muted)]">{ta("skipLater")}</p>
+          </>
+        )}
+      </section>
+    );
+  }
 
-  const rail: { id: string; key: SetupKey; done: boolean }[] = [
+  const rail: { id: string; key: string; done: boolean }[] = [
     { id: "s1", key: "r1", done: ownerDone },
     { id: "s2", key: "r2", done: false },
     ...(steps
       ? [
-          { id: "s3", key: "r3" as SetupKey, done: model.kind === "ok" },
-          { id: "s4", key: "r4" as SetupKey, done: false },
-          { id: "s5", key: "r5" as SetupKey, done: domain.kind === "result" && domain.result.points_here },
+          { id: "s3", key: "r3", done: model.kind === "ok" },
+          { id: "s4", key: "r4", done: false },
+          { id: "s5", key: "r5", done: domain.kind === "result" && domain.result.points_here },
         ]
       : []),
   ];
@@ -331,9 +373,9 @@ export function SetupOwnerForm({ providers = [] }: { providers?: ProviderOption[
 
       <div className="flex min-w-0 flex-col gap-4">
         <div className="flex flex-col gap-1">
-          <h2 className="text-lg font-semibold">{t("setup_title")}</h2>
+          <h2 className="text-lg font-semibold">{t("title")}</h2>
           <p className="text-sm text-[var(--color-muted)]">
-            {steps ? t("setup_intro", { expiry: t("expiry_soon") }) : t("reset_intro")}
+            {steps ? t("setup_intro") : t("reset_intro")}
           </p>
         </div>
 
@@ -371,7 +413,7 @@ export function SetupOwnerForm({ providers = [] }: { providers?: ProviderOption[
                   ))}
                 </span>
                 <span className="text-xs" style={{ color: password ? STRENGTH_COLOURS[strength] : "var(--color-muted)" }}>
-                  {t((`st${strength}`) as SetupKey)} · {password.length} {t("pw_len")}
+                  {t(`st${strength}`)} · {password.length} {t("pw_len")}
                 </span>
               </span>
               <span className="text-xs text-[var(--color-muted)]">{t("pw_hint")}</span>
@@ -399,7 +441,7 @@ export function SetupOwnerForm({ providers = [] }: { providers?: ProviderOption[
           <h3 className="font-semibold">{t("s2_t")}</h3>
           <p className="text-xs text-[var(--color-muted)]">{t("s2_d")}</p>
           <p data-component="TwoFactorLater" className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm">
-            {t("s2_later_only")}
+            {t("s2_after")}
           </p>
         </section>
 
@@ -494,23 +536,7 @@ export function SetupOwnerForm({ providers = [] }: { providers?: ProviderOption[
                   <span className="text-xs text-[var(--color-muted)]">{t("tz_note")}</span>
                 </label>
                 <div className={label}>
-                  {t("lang")}
-                  <div role="group" aria-label={t("lang")} className="flex rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-1">
-                    {(["en", "zh-Hant"] as const).map((l) => (
-                      <button
-                        key={l}
-                        type="button"
-                        aria-pressed={lang === l}
-                        onClick={() => setLang(l)}
-                        className={`flex-1 rounded-md px-3 py-1.5 text-sm ${
-                          lang === l ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-muted)]"
-                        }`}
-                      >
-                        {l === "en" ? "English" : "繁體中文"}
-                      </button>
-                    ))}
-                  </div>
-                  <span className="text-xs text-[var(--color-muted)]">{t("lang_note")}</span>
+                  <LanguageSwitch showNote />
                 </div>
               </div>
             </section>
@@ -535,7 +561,7 @@ export function SetupOwnerForm({ providers = [] }: { providers?: ProviderOption[
                   <button type="button" onClick={checkDomain} disabled={domainBusy || finishing} className={btn}>
                     {domainBusy ? (
                       <>
-                        <Spinner /> {t("checking")}
+                        <Spinner /> {t("checkingDomain")}
                       </>
                     ) : (
                       t("check")

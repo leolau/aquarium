@@ -1,0 +1,271 @@
+#!/usr/bin/python3 -I
+"""hermes-security-check: read-only server security facts for Get ready → Security basics.
+
+The dashboard (user hermes) runs it through sudo with NO arguments:
+
+    sudo -n /usr/local/sbin/hermes-security-check
+
+and gets one JSON object on stdout. It only reads settings and never changes
+anything. Every check is fixed below: no argument, environment variable or
+file under the hermes-writable checkout / HERMES_HOME decides what runs, so
+the rule cannot be turned into "run X as root". Reading these needs root:
+``sshd -T`` (host keys), ``ufw status``, other users' authorized_keys,
+``ss -p`` process names, and ``aquarium doctor``.
+
+sudo may only ever run a root-owned copy of this file, never the one in the
+checkout (the hermes user can edit the checkout):
+
+    install -m 0755 -o root -g root deploy/hermes-security-check /usr/local/sbin/hermes-security-check
+    visudo -cf deploy/sudoers.d/hermes-security-check && \
+      install -m 0440 -o root -g root deploy/sudoers.d/hermes-security-check /etc/sudoers.d/hermes-security-check
+
+The output holds facts only (yes/no settings, port numbers, process names,
+key counts, certificate dates, doctor rows): never key material or file
+contents.
+"""
+
+import contextlib
+import fcntl
+import glob
+import ipaddress
+import json
+import os
+import re
+import subprocess
+import sys
+
+PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+LOCK = "/run/hermes-security-check.lock"
+SSHD = "/usr/sbin/sshd"
+AQUARIUM = "/usr/local/sbin/aquarium"
+CADDYFILE = "/etc/caddy/Caddyfile"
+AQUARIUM_CONF = "/etc/aquarium/aquarium.conf"
+UFW_APPS = "/etc/ufw/applications.d"
+KEY_FILES = ["/root/.ssh/authorized_keys", "/root/.ssh/authorized_keys2",
+             "/home/*/.ssh/authorized_keys", "/home/*/.ssh/authorized_keys2"]
+DOCTOR_TIMEOUT = 150
+DOMAIN_RE = re.compile(r"^(?=.{4,253}$)([a-z0-9-]{1,63}\.)+[a-z]{2,63}$")
+KEY_RE = re.compile(r"(^|\s)(ssh-(rsa|ed25519|dss)|ecdsa-sha2-\S+|sk-\S+@openssh\.com)\s+[A-Za-z0-9+/=]{16,}")
+
+
+def run(argv, timeout=20):
+    """(returncode, stdout) of a fixed command; (None, "") when it can't run."""
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
+                              env={"PATH": PATH, "LC_ALL": "C"}, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return None, ""
+    return proc.returncode, proc.stdout
+
+
+def check_ssh():
+    if not os.path.exists(SSHD):
+        return {"installed": False}
+    code, out = run([SSHD, "-T"])
+    if code != 0:
+        return {"installed": True, "readable": False}
+    conf = {}
+    for line in out.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) == 2:
+            conf.setdefault(parts[0].lower(), parts[1].strip().lower())
+    keys = 0
+    for pattern in KEY_FILES:
+        for path in glob.glob(pattern):
+            with contextlib.suppress(OSError, UnicodeDecodeError):
+                with open(path, encoding="utf-8", errors="strict") as fh:
+                    keys += sum(1 for ln in fh if not ln.lstrip().startswith("#") and KEY_RE.search(ln))
+    return {
+        "installed": True,
+        "readable": True,
+        "password_authentication": conf.get("passwordauthentication") == "yes",
+        "kbd_interactive_authentication": conf.get("kbdinteractiveauthentication",
+                                                   conf.get("challengeresponseauthentication")) == "yes",
+        "permit_root_login": conf.get("permitrootlogin", ""),
+        "permit_empty_passwords": conf.get("permitemptypasswords") == "yes",
+        "authorized_keys": keys,
+    }
+
+
+def check_updates():
+    code, out = run(["dpkg-query", "-W", "-f=${Status}", "unattended-upgrades"])
+    installed = code == 0 and "install ok installed" in out
+    values = {}
+    code, out = run(["apt-config", "dump"])
+    for line in out.splitlines():
+        m = re.match(r'^(APT::Periodic::(?:Unattended-Upgrade|Update-Package-Lists))\s+"([^"]*)";', line)
+        if m:
+            values[m.group(1)] = m.group(2)
+    code, out = run(["systemctl", "is-enabled", "apt-daily-upgrade.timer"])
+    timer = out.strip() in ("enabled", "static", "enabled-runtime")
+    unattended = values.get("APT::Periodic::Unattended-Upgrade", "0") not in ("", "0")
+    lists = values.get("APT::Periodic::Update-Package-Lists", "0") not in ("", "0")
+    return {"installed": installed, "unattended_upgrade": unattended,
+            "update_package_lists": lists, "timer_enabled": timer}
+
+
+def _public(host):
+    host = host.strip("[]").split("%", 1)[0]
+    if host in ("*", ""):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return True
+    if getattr(ip, "ipv4_mapped", None):
+        ip = ip.ipv4_mapped
+    if ip.is_unspecified:
+        return True
+    return not (ip.is_loopback or ip.is_private or ip.is_link_local)
+
+
+def _port_set(spec, apps):
+    """Ports a ufw "To" column allows: None = every port."""
+    spec = re.sub(r"\s*\(v6\)\s*$", "", spec.strip())
+    if spec.lower() == "anywhere":
+        return None
+    if spec in apps:
+        return set(apps[spec])
+    ports = set()
+    m = re.match(r"^([\d,:]+)(/(tcp|udp))?$", spec)
+    if not m or m.group(3) == "udp":
+        return ports
+    for part in m.group(1).split(","):
+        if ":" in part:
+            lo, hi = part.split(":", 1)
+            if lo.isdigit() and hi.isdigit() and int(hi) - int(lo) <= 65535:
+                ports.update(range(int(lo), int(hi) + 1))
+        elif part.isdigit():
+            ports.add(int(part))
+    return ports
+
+
+def _ufw_apps():
+    apps = {}
+    for path in sorted(glob.glob(os.path.join(UFW_APPS, "*"))):
+        name = None
+        with contextlib.suppress(OSError, UnicodeDecodeError):
+            with open(path, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if line.startswith("[") and line.endswith("]"):
+                        name = line[1:-1]
+                    elif name and line.lower().startswith("ports="):
+                        ports = set()
+                        for chunk in line.split("=", 1)[1].split("|"):
+                            ports |= _port_set(chunk, {}) or set()
+                        apps[name] = sorted(ports)
+    return apps
+
+
+def check_firewall():
+    code, out = run(["ufw", "status"])
+    if code is None:
+        return {"tool": None, "active": False, "allow_all": False, "allowed": []}
+    active = bool(re.search(r"^Status:\s*active", out, re.M))
+    apps = _ufw_apps()
+    allowed, allow_all = set(), False
+    for line in out.splitlines():
+        m = re.match(r"^(.+?)\s{2,}(ALLOW|LIMIT)(\s+IN)?\s{2,}", line)
+        if not m:
+            continue
+        ports = _port_set(m.group(1), apps)
+        if ports is None:
+            allow_all = True
+        else:
+            allowed |= ports
+    return {"tool": "ufw", "active": active, "allow_all": allow_all, "allowed": sorted(allowed)}
+
+
+def check_ports(firewall):
+    code, out = run(["ss", "-H", "-tlnp"])
+    if code != 0:
+        return {"readable": False, "open": []}
+    seen = {}
+    for line in out.splitlines():
+        cols = line.split()
+        if len(cols) < 4:
+            continue
+        local = cols[3]
+        host, _, port = local.rpartition(":")
+        if not port.isdigit() or not _public(host):
+            continue
+        procs = re.findall(r'\("([^"]{1,40})",', line)
+        process = procs[0] if procs else ""
+        docker = process == "docker-proxy"
+        reachable = (docker or not firewall["active"] or firewall["allow_all"]
+                     or int(port) in firewall["allowed"])
+        if reachable:
+            entry = seen.setdefault(int(port), {"port": int(port), "process": process, "bypasses_firewall": docker})
+            entry["bypasses_firewall"] = entry["bypasses_firewall"] or docker
+    return {"readable": True, "open": [seen[p] for p in sorted(seen)]}
+
+
+def site_domains():
+    domains = []
+    with contextlib.suppress(OSError, UnicodeDecodeError):
+        with open(AQUARIUM_CONF, encoding="utf-8") as fh:
+            for line in fh:
+                m = re.match(r"^\s*(HOME_DOMAIN|DASHBOARD_DOMAIN)\s*=\s*['\"]?([^'\"\s#]+)", line)
+                if m:
+                    domains.append(m.group(2).lower())
+    with contextlib.suppress(OSError, UnicodeDecodeError):
+        with open(CADDYFILE, encoding="utf-8") as fh:
+            depth = 0
+            for line in fh:
+                text = line.split("#", 1)[0]
+                if depth == 0 and "{" in text:
+                    for addr in re.split(r"[\s,]+", text.split("{", 1)[0]):
+                        addr = re.sub(r"^https?://", "", addr).split("/", 1)[0].rsplit(":", 1)[0].lower()
+                        if DOMAIN_RE.match(addr):
+                            domains.append(addr)
+                depth += text.count("{") - text.count("}")
+    return list(dict.fromkeys(d for d in domains if DOMAIN_RE.match(d)))[:20]
+
+
+def check_doctor():
+    try:
+        st = os.stat(AQUARIUM)
+    except OSError:
+        return {"installed": False}
+    if st.st_uid != 0 or st.st_mode & 0o022:
+        return {"installed": True, "trusted": False}
+    code, out = run([AQUARIUM, "doctor", "--json"], timeout=DOCTOR_TIMEOUT)
+    if code is None:
+        return {"installed": True, "trusted": True, "ran": False}
+    for line in reversed(out.splitlines()):
+        with contextlib.suppress(ValueError):
+            data = json.loads(line)
+            if isinstance(data, dict) and isinstance(data.get("rows"), list):
+                rows = [{"status": str(r.get("status", ""))[:8], "text": str(r.get("text", ""))[:300],
+                         "fix": str(r.get("fix", ""))[:500]} for r in data["rows"][:100] if isinstance(r, dict)]
+                return {"installed": True, "trusted": True, "ran": True, "supports_json": True, "rows": rows}
+    return {"installed": True, "trusted": True, "ran": True, "supports_json": False}
+
+
+def main(argv):
+    if argv:
+        print("usage: hermes-security-check   (takes no arguments)", file=sys.stderr)
+        return 2
+    try:
+        lock = open(LOCK, "a", encoding="utf-8")
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print(json.dumps({"version": 1, "error": "busy"}))
+        return 75
+    firewall = check_firewall()
+    report = {
+        "version": 1,
+        "ssh": check_ssh(),
+        "updates": check_updates(),
+        "firewall": firewall,
+        "ports": check_ports(firewall),
+        "domains": site_domains(),
+        "doctor": check_doctor(),
+    }
+    print(json.dumps(report))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

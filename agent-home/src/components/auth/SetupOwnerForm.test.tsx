@@ -6,11 +6,12 @@ import {
   SETUP_LINK_INVALID,
   SETUP_PROVIDERS,
   SetupOwnerForm,
+  ownerLoginProvider,
   passwordStrength,
   setupFormError,
   tokenFromHash,
 } from "@/components/auth/SetupOwnerForm";
-import { localeFromBrowser, setupT } from "@/components/auth/setupI18n";
+import { createTranslator } from "@/i18n/translate";
 import en from "@/i18n/messages/en/setup.json";
 import zhHant from "@/i18n/messages/zh-Hant/setup.json";
 
@@ -65,14 +66,22 @@ describe("passwordStrength", () => {
 });
 
 describe("setup strings", () => {
-  it("has every English key in Traditional Chinese", () => {
-    expect(Object.keys(zhHant).sort()).toEqual(Object.keys(en).sort());
+  it("words form problems in the page's language", () => {
+    const zh = createTranslator({ setup: zhHant }, "setup");
+    expect(setupFormError("owner@example.com", "short", "short", zh)).toContain("12");
+    expect(setupFormError("owner", "x", "x", zh)).toBe(zhHant.errorEmail);
   });
-  it("fills placeholders and switches language", () => {
-    expect(setupT("en", "s3_ok", { seconds: "1.2" })).toContain("1.2 s");
-    expect(setupT("zh-Hant", "finish")).toBe("完成設定");
-    expect(localeFromBrowser(["zh-HK", "en"])).toBe("zh-Hant");
-    expect(localeFromBrowser(["en-GB"])).toBe("en");
+  it("has a label for every provider and step-status the page shows", () => {
+    const t = createTranslator({ setup: en }, "setup");
+    for (const p of SETUP_PROVIDERS) expect(t.has(p.label)).toBe(true);
+    for (const k of ["st0", "st1", "st2", "st3", "r1", "r2", "r3", "r4", "r5"]) expect(t.has(k)).toBe(true);
+  });
+});
+
+describe("ownerLoginProvider", () => {
+  it("signs the new owner into the password login, GoTrue first", () => {
+    expect(ownerLoginProvider([{ name: "basic", supports_password: true }, { name: "supabase", supports_password: true }])).toBe("supabase");
+    expect(ownerLoginProvider([{ name: "google", supports_password: false }])).toBe("");
   });
 });
 

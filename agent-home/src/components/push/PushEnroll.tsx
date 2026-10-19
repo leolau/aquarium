@@ -8,6 +8,7 @@
  * notification opens straight into the topic.
  */
 import { useCallback, useEffect, useState } from "react";
+import { useT } from "@/i18n";
 
 type PushSupport = "checking" | "supported" | "unsupported";
 type EnrollState = "off" | "on" | "busy" | "denied" | "unavailable";
@@ -23,6 +24,7 @@ function urlBase64ToUint8Array(base64String: string) {
 }
 
 export function PushEnroll() {
+  const tSettings = useT("settings");
   const [support, setSupport] = useState<PushSupport>("checking");
   const [state, setState] = useState<EnrollState>("off");
 
@@ -106,7 +108,7 @@ export function PushEnroll() {
 
   return (
     <section>
-      <h2 className="text-sm font-semibold">Notifications</h2>
+      <h2 className="text-sm font-semibold">{tSettings("notifications")}</h2>
       <p className="mb-3 text-xs text-[var(--color-muted)]">
         When the agent delivers a report into a chat topic, this device gets a
         notification that opens straight into that topic.

@@ -1,6 +1,6 @@
 """First-run setup steps that run before the owner's first sign-in (P2 screen 1).
 
-The /setup page saves the AI model key, the timezone and the language and checks
+The /setup page saves the AI model key and the timezone and checks
 a domain name while the person holding the one-time ``hermes setup-link`` token
 fills in the form. Every step is allowed only while that token is valid (unused,
 unexpired) and the owner's first-run login has not been created yet; after
@@ -34,8 +34,6 @@ SETUP_PROVIDERS: dict[str, str] = {
     "deepseek": "DEEPSEEK_API_KEY",
     "gemini": "GEMINI_API_KEY",
 }
-
-LANGUAGES = ("en", "zh-Hant")
 
 _HOST_RE = re.compile(
     r"^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$"
@@ -205,19 +203,18 @@ def restore_model(env_key: str, previous_key: Optional[str], previous_model: Any
     save_config(cfg)
 
 
-def write_region(*, timezone_name: str, language: str) -> None:
+def write_region(*, timezone_name: str) -> None:
+    """config.yaml ``timezone``. The language is per person (user_prefs), saved
+    for the owner from the page's language switch at their first sign-in."""
     from hermes_cli.config import load_config, save_config
 
     cfg = load_config()
     cfg["timezone"] = timezone_name
-    agent_home = cfg.get("agent_home") if isinstance(cfg.get("agent_home"), dict) else {}
-    agent_home["language"] = language
-    cfg["agent_home"] = agent_home
     save_config(cfg)
 
 
 __all__ = [
-    "LANGUAGES", "SETUP_PROVIDERS", "STEP_THROTTLE", "check_domain", "done_path",
+    "SETUP_PROVIDERS", "STEP_THROTTLE", "check_domain", "done_path",
     "env_snapshot", "is_done", "mark_done", "normalize_host", "recommended_model", "restore_model",
     "server_addresses",
     "step_allowed", "valid_timezone", "write_region",
