@@ -1674,6 +1674,7 @@ from gateway.delivery import DeliveryRouter, looks_like_telegram_private_chat_id
 from gateway.authz_mixin import GatewayAuthorizationMixin
 from gateway.kanban_watchers import GatewayKanbanWatchersMixin
 from gateway.person_telegram_bots import PersonTelegramBotsMixin
+from gateway.person_whatsapp_bridges import PersonWhatsAppBridgesMixin
 from gateway.slash_commands import GatewaySlashCommandsMixin
 from gateway.platforms.base import (
     BasePlatformAdapter,
@@ -2581,6 +2582,7 @@ async def _dispose_unused_adapter(adapter: "BasePlatformAdapter | None") -> None
 class GatewayRunner(
     GatewayAuthorizationMixin,
     PersonTelegramBotsMixin,
+    PersonWhatsAppBridgesMixin,
     GatewayKanbanWatchersMixin,
     GatewaySlashCommandsMixin,
 ):
@@ -2634,6 +2636,9 @@ class GatewayRunner(
         # Per-person Telegram bots, keyed by account id (gateway/person_telegram_bots.py).
         self._person_bot_adapters: Dict[str, BasePlatformAdapter] = {}
         self._person_bot_specs: Dict[str, Any] = {}
+        # Per-person WhatsApp bridges (gateway/person_whatsapp_bridges.py).
+        self._person_wa_adapter_map: Dict[str, BasePlatformAdapter] = {}
+        self._person_wa_spec_map: Dict[str, Any] = {}
         # In-flight file-registry uploads, held so the event loop cannot
         # garbage-collect a background task before it finishes.
         self._file_registry_tasks: set = set()
@@ -7017,6 +7022,9 @@ class GatewayRunner(
             _person_bots_task = asyncio.create_task(self._person_telegram_bots_loop())
             _bg_tasks.add(_person_bots_task)
             _person_bots_task.add_done_callback(_bg_tasks.discard)
+            _person_wa_task = asyncio.create_task(self._person_whatsapp_bridges_loop())
+            _bg_tasks.add(_person_wa_task)
+            _person_wa_task.add_done_callback(_bg_tasks.discard)
         
         # Emit gateway:startup hook
         hook_count = len(self.hooks.loaded_hooks)
@@ -8027,6 +8035,9 @@ class GatewayRunner(
             _stop_person_bots = getattr(self, "_stop_all_person_bots", None)
             if _stop_person_bots is not None:
                 await _stop_person_bots()
+            _stop_person_wa = getattr(self, "_stop_all_person_wa", None)
+            if _stop_person_wa is not None:
+                await _stop_person_wa()
             logger.info(
                 "Shutdown phase: all adapters disconnected at +%.2fs",
                 _phase_elapsed(),

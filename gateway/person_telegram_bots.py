@@ -95,6 +95,8 @@ class PersonTelegramBotsMixin:
         account_id = getattr(source, "account_id", None)
         if account_id and str(account_id).startswith(ACCOUNT_PREFIX):
             return self._person_bots().get(str(account_id))
+        if account_id and str(account_id).startswith("wabridge:"):
+            return self._person_wa_adapters().get(str(account_id))
         return self.adapters.get(source.platform)
 
     def _person_bot_authorization(self, source: Any) -> Optional[bool]:
