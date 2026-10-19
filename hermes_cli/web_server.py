@@ -6587,6 +6587,74 @@ async def get_onboarding_readiness(profile: Optional[str] = None):
     return readiness.as_dict()
 
 
+async def _get_ready_context(request: "Request"):
+    """The P2 "Get ready" context for the acting person (never ``?as=``).
+
+    A single-user install with no app datastore acts as its owner, matching
+    the file credential store's owner fallback.
+    """
+    from hermes_cli import get_ready
+    from hermes_cli.access import Principal
+
+    try:
+        principal = await _comms_resolve_principal(request, allow_as=False)
+    except _CommsNotConfigured:
+        principal = Principal(user_id="owner", display="owner", role="owner")
+    return get_ready.Context(
+        principal=principal, config=load_config() or {}, env=os.environ
+    )
+
+
+@app.get("/api/get-ready")
+async def get_ready_checklist(request: Request):
+    """The Get ready checklist for the caller: live status + last test per item.
+
+    Owner/admin get all eleven items; a member or viewer only their own
+    connections (items 4-9), each with *their* status.
+    """
+    from hermes_cli import get_ready
+
+    ctx = await _get_ready_context(request)
+    return await get_ready.checklist(ctx)
+
+
+@app.post("/api/get-ready/{item}/test")
+async def get_ready_test(request: Request, item: str):
+    """Run one item's live check for the caller and remember the result.
+
+    Install-wide items (basics, keep it safe) are owner/admin only; the
+    per-person items test the caller's own connection.
+    """
+    from hermes_cli import get_ready
+
+    if item not in get_ready.ITEMS_BY_ID:
+        raise HTTPException(status_code=404, detail=f"Unknown checklist item: {item}")
+    ctx = await _get_ready_context(request)
+    if not get_ready.can_see(ctx, item):
+        raise HTTPException(
+            status_code=403, detail="Only the owner or an admin can test this item."
+        )
+    outcome = await get_ready.run_test(ctx, item)
+    get_ready.record_test(ctx.user_id, item, outcome)
+    return await get_ready.item_payload(
+        ctx, get_ready.ITEMS_BY_ID[item], get_ready.last_tests_for(ctx.user_id)
+    )
+
+
+@app.get("/api/get-ready/people", dependencies=_ADMIN)
+async def get_ready_people(request: Request):
+    """Owner/admin: each person's connection status (set / waiting / not set).
+
+    Status only: never a key, token, message, file or credential payload.
+    """
+    from hermes_cli import get_ready
+
+    ctx = await _get_ready_context(request)
+    if not ctx.is_manager:
+        raise HTTPException(status_code=403, detail="Owner or admin only.")
+    return await get_ready.people_status(ctx)
+
+
 _EMPTY_MODEL_INFO: dict = {
     "model": "",
     "provider": "",

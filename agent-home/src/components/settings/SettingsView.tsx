@@ -14,7 +14,6 @@ import { TelegramBotSetup } from "@/components/settings/TelegramBotSetup";
 import { EmailMailboxes } from "@/components/settings/EmailMailboxes";
 import { VpnConnections } from "@/components/settings/VpnConnections";
 import { WhatsAppBridges } from "@/components/settings/WhatsAppBridges";
-import { useSecurityBasicsT } from "@/components/get-ready/securityBasicsT";
 import { BusyRegion } from "@/components/ui/BusyRegion";
 import { Spinner } from "@/components/ui/Spinner";
 import type { EntityGoal, SessionTag } from "@/types";
@@ -85,6 +84,7 @@ export function SettingsView({
     applyTheme(next);
   }
 
+
   return (
     <div data-component="SettingsView" className="space-y-6">
       <section data-section="language">
@@ -154,7 +154,7 @@ export function SettingsView({
         </Link>
       </section>
 
-      {canManageTools ? <GetReadyLink /> : null}
+      <GetReadyLink />
 
       <EntityGoalSection goal={entityGoal} readOnly={entityGoalReadOnly} />
 
@@ -165,18 +165,18 @@ export function SettingsView({
 
 /* ── In&Out: channels the agent talks through ────────────────────── */
 
-/** Owner/admin: Get ready → Security basics (read-only server checks). */
+/** Everyone: Settings → Get ready (the checklist; each person sees their own items). */
 function GetReadyLink() {
-  const { t } = useSecurityBasicsT();
+  const t = useT("getReady");
   return (
-    <section data-section="get-ready" className="mt-6">
-      <h2 className="text-sm font-semibold">{t("pageTitle")}</h2>
-      <p className="mb-3 text-xs text-[var(--color-muted)]">{t("settingsNote")}</p>
+    <section data-section="get-ready" data-component="GetReadyLink" className="mt-6">
+      <h2 className="text-sm font-semibold">{t("nav.entry")}</h2>
+      <p className="mb-3 text-xs text-[var(--color-muted)]">{t("nav.hint")}</p>
       <Link
         href="/settings/get-ready"
         className="flex items-center justify-between rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm font-medium"
       >
-        {t("settingsLink")}
+        {t("nav.open")}
         <span aria-hidden className="text-[var(--color-muted)]">→</span>
       </Link>
     </section>

@@ -319,6 +319,10 @@ SIGNED_IN = {
     "GET /api/sessions/search",
     "GET /api/config",
     "GET /api/onboarding/readiness",
+    # get-ready: P2 checklist; handler scopes to the caller, 403s install-wide
+    # items for members/viewers
+    "GET /api/get-ready",
+    "POST /api/get-ready/{item}/test",
     "GET /api/model/options",
     "GET /api/model/recommended-default",
     "GET /api/model/auxiliary",

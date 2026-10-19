@@ -2910,6 +2910,77 @@ export interface ClarifyConfirmResult {
 }
 
 
+// ---------------------------------------------------------------------------
+// P2 "Get ready" checklist (GET /api/get-ready, /api/get-ready/people)
+// ---------------------------------------------------------------------------
+
+export type GetReadyItemId =
+  | "owner"
+  | "model"
+  | "people"
+  | "google"
+  | "whatsapp"
+  | "telegram"
+  | "email"
+  | "tools"
+  | "vpn"
+  | "backups"
+  | "security";
+
+export type GetReadyStatus = "done" | "attention" | "not_started";
+export type GetReadyGroup = "basics" | "connections" | "safety";
+
+export interface GetReadyTestRecord {
+  at: string;
+  result: "ok" | "warn" | "bad";
+  detail: string;
+  params: Record<string, string | number>;
+}
+
+export interface GetReadyItem {
+  id: GetReadyItemId;
+  n: number;
+  group: GetReadyGroup;
+  required: boolean;
+  per_person: boolean;
+  status: GetReadyStatus;
+  /** Message key; the UI owns the wording (English + Traditional Chinese). */
+  detail: string;
+  params: Record<string, string | number>;
+  coming: boolean;
+  steps: { id: string; status: GetReadyStatus }[];
+  last_test: GetReadyTestRecord | null;
+}
+
+export interface GetReadyResponse {
+  role: string;
+  can_manage: boolean;
+  items: GetReadyItem[];
+  summary: { total: number; done: number; attention: number; not_started: number };
+}
+
+export type GetReadyConnection = "google" | "whatsapp" | "telegram" | "email" | "tools" | "vpn";
+
+export interface GetReadyConnectionCell {
+  state: "set" | "waiting" | "not_set" | "coming";
+  reason?: "step_a" | "qr" | "email_test" | "email_error" | "telegram_link";
+  count?: number;
+}
+
+export interface GetReadyPerson {
+  user_id: string;
+  display: string;
+  role: string;
+  is_you: boolean;
+  invited_pending: boolean;
+  connections: Record<GetReadyConnection, GetReadyConnectionCell>;
+}
+
+export interface GetReadyPeopleResponse {
+  connections: GetReadyConnection[];
+  people: GetReadyPerson[];
+}
+
 /** A person's own Telegram bot (Get ready item 6); never carries the token. */
 export interface TelegramBotView {
   configured: boolean;
