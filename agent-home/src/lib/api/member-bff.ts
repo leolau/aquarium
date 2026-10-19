@@ -40,7 +40,10 @@ export async function requireMemberAdmin(): Promise<
  * FG-27 fail-closes a cross-profile read, so the console does not approximate
  * it. Python enforces the same guard independently.
  */
-export async function requireMemberOwner(): Promise<
+export async function requireMemberOwner(
+  detail = "Only the owner can delete a user: the account is box-wide and " +
+    "may serve other profiles.",
+): Promise<
   { client: HermesApiClient } | { response: NextResponse }
 > {
   const principal = await getPrincipal();
@@ -52,9 +55,7 @@ export async function requireMemberOwner(): Promise<
       response: NextResponse.json(
         {
           error: "forbidden",
-          detail:
-            "Only the owner can delete a user: the account is box-wide and " +
-            "may serve other profiles.",
+          detail,
         },
         { status: 403 },
       ),

@@ -60,4 +60,6 @@ def test_shipped_sudoers_files_point_at_shipped_helpers():
             m = RULE.search(line)
             if m and m.group("cmds").strip().startswith("/usr/local/sbin/"):
                 helper = m.group("cmds").strip().split()[0].rsplit("/", 1)[1]
-                assert (REPO / "deploy" / helper).is_file(), (rule.name, helper)
+                # `aquarium` is installed from deploy/aquarium.py (install-aquarium.sh)
+                shipped = REPO / "deploy" / helper
+                assert shipped.is_file() or shipped.with_suffix(".py").is_file(), (rule.name, helper)
