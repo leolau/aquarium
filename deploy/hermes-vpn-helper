@@ -70,7 +70,8 @@ UP_TIMEOUT = 60.0
 CERT_TIMEOUT = 10.0
 MOUNT_TIMEOUT = 45.0
 CHECK_TIMEOUT = 20.0
-#: Extra wait for a walker blocked inside one directory listing.
+#: Extra wait for a walker blocked inside one directory listing; after it the
+#: check reports the files counted so far if the share's top folder answered.
 CHECK_GRACE = 5.0
 CHECK_MAX_ENTRIES = 200_000
 IDLE_CHECK_SECONDS = 60
@@ -1217,8 +1218,15 @@ def cmd_status(slug):
     return status_doc(slug)
 
 
-def count_files(root, deadline):
-    """(count, stop) — stop is None, ``"time"`` or ``"entries"``."""
+def count_files(root, deadline, progress=None):
+    """(count, stop) — stop is None, ``"time"`` or ``"entries"``.
+
+    ``progress`` gets the running ``count`` and ``root_listed`` so a caller
+    that stops waiting for a walker stuck in a slow listing can still report
+    what was counted.
+    """
+    progress = {} if progress is None else progress
+    progress.update(count=0, root_listed=False)
     count = 0
     stack = [root]
     while stack:
@@ -1227,11 +1235,15 @@ def count_files(root, deadline):
         if count >= CHECK_MAX_ENTRIES:
             return count, "entries"
         with os.scandir(stack.pop()) as entries:
+            progress["root_listed"] = True
             for entry in entries:
                 if entry.is_dir(follow_symlinks=False):
                     stack.append(entry.path)
                 else:
                     count += 1
+                    progress["count"] = count
+                if time.monotonic() > deadline:
+                    return count, "time"
     return count, None
 
 
@@ -1262,11 +1274,12 @@ def cmd_check(slug):
 def walk_check(root):
     """Count files under ``root`` with a deadline; a ``check`` dict (no ``at``)."""
     result = {}
+    progress = {}
 
     def walk():
         try:
             result["count"], result["partial"] = count_files(
-                root, time.monotonic() + CHECK_TIMEOUT
+                root, time.monotonic() + CHECK_TIMEOUT, progress
             )
         except OSError as exc:
             result["error"] = exc.strerror or str(exc)
@@ -1274,7 +1287,12 @@ def walk_check(root):
     worker = threading.Thread(target=walk, daemon=True)
     worker.start()
     worker.join(CHECK_TIMEOUT + CHECK_GRACE)
-    if worker.is_alive():
+    if worker.is_alive() and progress.get("root_listed"):
+        n = progress.get("count", 0)
+        check = {"ok": True, "file_count": n,
+                 "message": (f"File server reachable, at least {n:,} files "
+                             f"(stopped counting after {CHECK_TIMEOUT + CHECK_GRACE:g} s).")}
+    elif worker.is_alive():
         check = {"ok": False, "file_count": None, "message": slow_message()}
     elif "error" in result:
         check = {"ok": False, "file_count": None,
