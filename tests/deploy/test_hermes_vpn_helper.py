@@ -206,9 +206,10 @@ def h(tmp_path, monkeypatch):
     monkeypatch.setattr(helper, "SAFE_PATH", f"{world / 'bin'}:/usr/bin:/bin")
     monkeypatch.setattr(helper, "RUN_DIR", str(tmp_path / "run"))
     monkeypatch.setattr(helper, "MOUNT_ROOT", str(data / "vpn-files"))
+    monkeypatch.setattr(helper, "TOOLS_GROUP", "no-such-group-for-tests")
     monkeypatch.setattr(helper, "SYS_NET", str(world / "sysnet"))
     monkeypatch.setattr(helper, "PROC_MOUNTS", str(world / "mounts"))
-    monkeypatch.setattr(helper, "TRUSTED_UIDS", (0, os.getuid()))
+    monkeypatch.setattr(helper, "TRUSTED_UIDS", (0, os.getuid()))  # windows-footgun: ok — POSIX-only helper test
     monkeypatch.setattr(helper, "RESOLV_FILES", ())
     monkeypatch.setattr(helper, "UP_TIMEOUT", 5.0)
 
@@ -410,7 +411,7 @@ def test_spec_in_shared_directory_refused(h):
 
 
 def test_spec_from_other_user_refused(h, monkeypatch):
-    monkeypatch.setattr(h, "caller_uid", lambda: os.getuid() + 1)
+    monkeypatch.setattr(h, "caller_uid", lambda: os.getuid() + 1)  # windows-footgun: ok — POSIX-only helper test
     with pytest.raises(h.InputError):
         h.read_spec_file(write_spec(h, base_spec()))
 
@@ -1342,3 +1343,11 @@ def test_check_message_when_the_file_server_hangs(h, tmp_path, monkeypatch):
 def test_slow_message_matches_the_contract_with_default_budget():
     h = load_helper()
     assert h.slow_message() == "File server is too slow to answer (no reply within 25 s)."
+
+
+def test_mounts_get_the_hermes_tools_group_when_it_exists(monkeypatch):
+    helper = load_helper()
+    monkeypatch.setattr(helper, "TOOLS_GROUP", "root")
+    assert helper.mount_group() == "root"
+    monkeypatch.setattr(helper, "TOOLS_GROUP", "no-such-group-for-tests")
+    assert helper.mount_group() == helper.MOUNT_USER

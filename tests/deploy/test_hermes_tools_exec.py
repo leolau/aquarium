@@ -33,8 +33,10 @@ def test_rule_switches_to_hermes_tools_never_root():
 def test_installer_and_deploy_ship_it():
     install = (REPO / "install-aquarium.sh").read_text()
     assert "useradd --system --create-home --home-dir /home/hermes-tools" in install
-    assert "deploy/hermes-tools-exec /usr/local/sbin/hermes-tools-exec" in install
-    assert "visudo -cf deploy/sudoers.d/hermes-tools" in install
+    assert "bash deploy/hermes-tools-setup" in install
+    setup = (REPO / "deploy/hermes-tools-setup").read_text()
+    assert 'deploy/hermes-tools-exec" /usr/local/sbin/hermes-tools-exec' in setup
+    assert 'visudo -cf "$REPO/deploy/sudoers.d/hermes-tools"' in setup
     assert "TOOLS HELPER STALE" in (REPO / "deploy/hermes-deploy.sh").read_text()
 
 
@@ -75,5 +77,4 @@ def test_rule_keeps_path_and_process_group():
     assert "Defaults!/usr/local/sbin/hermes-tools-exec !use_pty, !secure_path" in text
     deploy = (REPO / "deploy/hermes-deploy.sh").read_text()
     assert "TOOLS SUDOERS RULE STALE" in deploy
-    install = (REPO / "install-aquarium.sh").read_text()
-    assert "usermod -aG hermes-tools hermes" in install
+    assert "usermod -aG hermes-tools hermes" in (REPO / "deploy/hermes-tools-setup").read_text()

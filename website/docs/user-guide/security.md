@@ -457,9 +457,35 @@ terminal:
   run_as: hermes-tools   # default: "" (the gateway's own user)
 ```
 
-With it set, foreground commands, background processes and `execute_code` start through the root-owned helper `/usr/local/sbin/hermes-tools-exec` (`sudo -n -E -u hermes-tools`, never root). They keep the already-filtered environment and `PATH`, but the gateway's process and its `0600` files belong to another user. Timeouts and `process kill` signal them through the same helper. The gateway user must be in the `hermes-tools` group so it can read the working-directory files a command leaves behind (`usermod -aG hermes-tools hermes`, then restart the gateway).
+With it set, foreground commands, background processes, `execute_code` and the file tools (which run through the terminal) start through the root-owned helper `/usr/local/sbin/hermes-tools-exec` (`sudo -n -E -u hermes-tools`, never root). They keep the already-filtered environment and `PATH`, but the gateway's process and its private files belong to another user. Timeouts and `process kill` stop them through the same helper. If the setting names a user but the helper is missing or not root-owned, commands fail with a message naming `terminal.run_as`; they never quietly fall back to the gateway user.
 
-The helper, its sudoers rule (`deploy/sudoers.d/hermes-tools`) and the user are installed by `install-aquarium.sh`; the header of `deploy/hermes-tools-exec` has the commands for an existing box. If the setting names a user but the helper is missing or not root-owned, commands fail with a message naming `terminal.run_as` instead of falling back to the gateway user. Folders the agent should work in must be readable (and writable, where it edits files) by `hermes-tools`.
+**`hermes …` from the agent's terminal.** `hermes-tools` cannot read `$HERMES_HOME/.env`, so the real CLI cannot start as that user. Inside the agent's shell, `hermes` is a shim (`/usr/local/lib/hermes-tools/bin/hermes`). It passes the arguments to `/usr/local/sbin/hermes-tools-cli`, which runs as `hermes` and accepts only this list:
+
+| Command | Allowed |
+|---|---|
+| `hermes promote KIND:REF` | `--approve`, `--actor` |
+| `hermes owner` | `show`, `transfer` |
+| `hermes tool` | `new` (no `--root`), `list`, `enable`, `disable`, `config` (`--json`; `--file` is read by the shim as `hermes-tools`), `promote`; `--mode` (no `--as`) |
+| `hermes cron` | `list`, `status`, `create`/`add`, `edit`, `pause`, `resume`, `run`, `remove` (no `tick`, no `--accept-hooks`) |
+| `hermes kanban` | `list`, `show`, `create`, `tail`, `watch`, `stats`, `block`, `unblock`, `archive`, `comment`, `complete` |
+| `hermes vpn` | `list`, `status`, `up`, `down` |
+| `hermes skills` | `search`, `install` (no `--force`, so the security scan always runs), `list`, `inspect` |
+| `hermes memory` | `status` |
+
+Everything else is refused with a plain message. That covers `hermes config` (so the agent can't switch `security.terminal_database_credentials` back on), `hermes auth`, `hermes dashboard`, `-p`/`--profile`, unknown or abbreviated options, and values starting with `-`. The helper ignores the caller's environment: `HERMES_HOME`, the `hermes` binary and the gateway's env file come from root-owned `/etc/hermes-tools/cli.conf`, and only `HERMES_KANBAN_TASK`/`HERMES_KANBAN_RUN_ID` pass through, after a format check. It refuses to run a `hermes` binary or HERMES_HOME that `hermes-tools` could replace, including through a symlink. Anyone who controls the agent's terminal can still run the listed commands; with the gateway's own user they could already do that and more.
+
+**Folders.** `deploy/hermes-tools-setup` (run by `install-aquarium.sh`, or by hand on an existing box) sets up these folders:
+
+- `HERMES_HOME` itself: other users can pass through it but not list it.
+- Every other top-level entry stays closed to other users: `.env`, `auth/`, `config.yaml`, `state.db`, `sessions/`, `logs/`, `plugins/`, `scripts/` and the rest.
+- Shared read/write with the `hermes-tools` group: `workspaces/`, `tools/`, `kanban/workspaces/` and the media caches `cache/{images,audio,videos,documents}/`.
+- Shared read-only: `skills/`. Skill edits go through the gateway's skill tool.
+
+Cron scripts run as the gateway only from `scripts/`, which `hermes-tools` can't write. VPN and network-folder mounts get the `hermes-tools` group, read-only.
+
+The gateway's units get `UMask=0007`, so new files stay closed to other users. The setup also sets `terminal.cwd` to `HERMES_HOME/workspaces` when it is unset, because the default is the gateway's own home folder.
+
+The setup saves every owner, mode and file it changes, and writes a `rollback.sh` next to the backup.
 
 ### Credential File Passthrough (OAuth tokens, etc.) {#credential-file-passthrough}
 

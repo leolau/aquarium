@@ -28,4 +28,7 @@ fi
 shift
 umask 007
 export HOME=/home/hermes-tools USER=hermes-tools LOGNAME=hermes-tools
+# `hermes` here is deploy/hermes-tools-shim: it asks hermes-tools-cli to run an
+# allowlisted command as hermes (this user cannot read the gateway's .env).
+export PATH=/usr/local/lib/hermes-tools/bin:${PATH:-/usr/bin:/bin}
 exec /bin/bash "$@"

@@ -663,9 +663,35 @@ def secure_parent_dir(path: Path) -> None:
     if parent == Path("/") or len(parent.parts) < 3:
         return
     try:
-        os.chmod(parent, 0o700)
+        os.chmod(parent, owner_only_mode(parent))
     except OSError:
         pass
+
+
+def owner_only_mode(path: Path, base: int = 0o700) -> int:
+    """*base*, plus the sharing an operator set up on purpose for *path*.
+
+    ``deploy/hermes-tools-setup`` (``terminal.run_as``) lets other users pass
+    through HERMES_HOME (o=x only, never r/w) and hands a few folders to the
+    ``hermes-tools`` group. Re-securing a folder keeps those two things: the
+    pass-through bit (only when others have no read/write), and the group bits plus setgid when the folder belongs to
+    a group other than its owner's own group. Everything else becomes *base*.
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return base
+    # Pass-through only (o=x, no r/w) is deliberate; a plain 0755 is not.
+    mode = base | (st.st_mode & 0o001 if not st.st_mode & 0o006 else 0)
+    try:
+        import pwd
+
+        own_gid = pwd.getpwuid(st.st_uid).pw_gid
+    except (ImportError, KeyError):
+        return mode
+    if st.st_gid != own_gid:
+        mode |= st.st_mode & 0o2070
+    return mode
 
 
 def _norm_home_path(path: str | None) -> str:

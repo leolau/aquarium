@@ -1,0 +1,42 @@
+#!/bin/bash
+# `hermes` inside the agent's terminal when commands run as hermes-tools.
+#
+# hermes-tools cannot read $HERMES_HOME/.env, so the real CLI cannot start
+# there. deploy/hermes-tools-exec puts this file first on PATH, and it hands the
+# arguments to the allowlist helper, which runs them as hermes:
+#
+#   sudo -n -u hermes /usr/local/sbin/hermes-tools-cli <args>
+#
+# `hermes tool config NAME --file F` is the one command that names a file: it is
+# read here, as hermes-tools, and passed on as --json, so the helper never opens
+# a path chosen by the agent. Install only a root-owned copy:
+#
+#   install -D -m 0755 -o root -g root deploy/hermes-tools-shim /usr/local/lib/hermes-tools/bin/hermes
+set -euo pipefail
+args=("$@")
+is_tool_config=0
+if [[ ${#args[@]} -ge 2 && ${args[0]} == tool ]]; then
+  for a in "${args[@]:1}"; do [[ $a == config ]] && { is_tool_config=1; break; }; done
+fi
+if (( is_tool_config )); then
+  out=()
+  i=0
+  while (( i < ${#args[@]} )); do
+    a=${args[i]}
+    if [[ $a == --file ]]; then
+      if (( i + 1 >= ${#args[@]} )); then echo "hermes: --file needs a path" >&2; exit 2; fi
+      out+=("--json=$(cat -- "${args[i+1]}")")
+      i=$((i + 2))
+      continue
+    fi
+    if [[ $a == --file=* ]]; then
+      out+=("--json=$(cat -- "${a#--file=}")")
+      i=$((i + 1))
+      continue
+    fi
+    out+=("$a")
+    i=$((i + 1))
+  done
+  args=("${out[@]}")
+fi
+exec sudo -n -u hermes /usr/local/sbin/hermes-tools-cli "${args[@]}"

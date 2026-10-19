@@ -298,6 +298,16 @@ if [ -e "$TOOLS_HELPER" ] && ! cmp -s "$TOOLS_HELPER" "$REPO/deploy/hermes-tools
   echo "TOOLS HELPER STALE: $TOOLS_HELPER differs from the reviewed copy at $AFTER. Install it with:"
   echo "    sudo install -m 755 -o root -g root $REPO/deploy/hermes-tools-exec $TOOLS_HELPER"
 fi
+TOOLS_CLI=/usr/local/sbin/hermes-tools-cli
+if [ -e "$TOOLS_CLI" ] && ! cmp -s "$TOOLS_CLI" "$REPO/deploy/hermes-tools-cli"; then
+  echo "TOOLS CLI HELPER STALE: $TOOLS_CLI differs from the reviewed copy at $AFTER. Install it with:"
+  echo "    sudo install -m 755 -o root -g root $REPO/deploy/hermes-tools-cli $TOOLS_CLI"
+fi
+TOOLS_SHIM=/usr/local/lib/hermes-tools/bin/hermes
+if [ -e "$TOOLS_SHIM" ] && ! cmp -s "$TOOLS_SHIM" "$REPO/deploy/hermes-tools-shim"; then
+  echo "TOOLS SHIM STALE: $TOOLS_SHIM differs from the reviewed copy at $AFTER. Install it with:"
+  echo "    sudo install -m 755 -o root -g root $REPO/deploy/hermes-tools-shim $TOOLS_SHIM"
+fi
 TOOLS_RULE=/etc/sudoers.d/hermes-tools
 if [ -e "$TOOLS_RULE" ] && ! cmp -s "$TOOLS_RULE" "$REPO/deploy/sudoers.d/hermes-tools"; then
   echo "TOOLS SUDOERS RULE STALE: $TOOLS_RULE differs from the reviewed copy at $AFTER. Install it with:"
