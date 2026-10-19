@@ -149,7 +149,7 @@ export function SetupOwnerForm({
   if (phase === "twoFactor") {
     return (
       <section data-component="SetupTwoFactor" className={`${card} flex flex-col gap-3`}>
-        <h2 className="text-base font-semibold">2. {t("twoFactor")}</h2>
+        <h2 className="text-base font-semibold">2. {t("twoFactorRecommended")}</h2>
         <p className="text-xs text-[var(--color-muted)]">{t("s2Desc")}</p>
         <TwoFactorSetup
           t={t}

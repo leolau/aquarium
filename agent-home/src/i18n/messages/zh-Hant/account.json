@@ -58,5 +58,6 @@
   "setupSignedIn": "擁有人帳戶已建立，你已登入。",
   "setupOpen": "開啟 Aquarium",
   "setupDoneLogin": "擁有人帳戶已建立。請用剛才設定的電郵及密碼登入。",
-  "signIn": "登入"
+  "signIn": "登入",
+  "twoFactorRecommended": "雙重驗證登入（建議）"
 }

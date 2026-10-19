@@ -58,5 +58,6 @@
   "setupSignedIn": "The owner account is ready and you are signed in.",
   "setupOpen": "Open Aquarium",
   "setupDoneLogin": "The owner account is ready. Sign in with the email and password you just chose.",
-  "signIn": "Sign in"
+  "signIn": "Sign in",
+  "twoFactorRecommended": "Two-factor login (recommended)"
 }

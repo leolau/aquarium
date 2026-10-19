@@ -79,13 +79,17 @@ export function AccountSecurity({ isOwner = false }: { isOwner?: boolean }) {
                 aria-checked={enabled}
                 aria-label={t("twoFactor")}
                 onClick={() => open(enabled ? "off" : "setup")}
-                className={`relative h-6 w-11 rounded-full transition ${
-                  enabled ? "bg-[var(--color-accent)]" : "bg-[var(--color-surface-2)] border border-[var(--color-border)]"
-                }`}
+                className="flex w-11 shrink-0 items-center"
               >
                 <span
-                  className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition ${enabled ? "left-[22px]" : "left-0.5"}`}
-                />
+                  className={`relative block h-6 w-11 rounded-full transition ${
+                    enabled ? "bg-[var(--color-accent)]" : "border border-[var(--color-border)] bg-[var(--color-surface-2)]"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition ${enabled ? "left-[22px]" : "left-0.5"}`}
+                  />
+                </span>
               </button>
               <span>{t("twoFactor")}</span>
             </label>
