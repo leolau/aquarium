@@ -142,6 +142,16 @@ SIGNED_IN = {
     "POST /api/registry/todos/{todo_id}/complete",
     "POST /api/registry/todos/{todo_id}/snooze",
     "POST /api/registry/todos/{todo_id}/promote",
+    # personal_mcp: the caller's own MCP servers (owner checks in the handler)
+    "GET /api/mcp/personal",
+    "POST /api/mcp/personal",
+    "DELETE /api/mcp/personal/{name}",
+    "POST /api/mcp/personal/{name}/test",
+    "GET /api/mcp/personal/catalog",
+    "POST /api/mcp/personal/{name}/oauth/start",
+    "GET /api/mcp/personal/{name}/oauth/status",
+    "POST /api/mcp/personal/{name}/oauth/redirect",
+    "POST /api/mcp/personal/{name}/oauth/cancel",
     # credentials_api: the caller's own credentials
     "GET /api/credentials",
     "GET /api/credentials/{provider}/{name}",

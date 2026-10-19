@@ -438,6 +438,12 @@ def _compute_tool_definitions(
     # needed; plugins respect enabled_toolsets / disabled_toolsets like any
     # other toolset.
 
+    # A person's own MCP tools are never reached through a toolset; only
+    # tools.personal_mcp.apply_to_agent adds them, to that person's chats.
+    from tools.personal_mcp import personal_tool_names
+
+    tools_to_include.difference_update(personal_tool_names(tools_to_include))
+
     # Ask the registry for schemas (only returns tools whose check_fn passes)
     filtered_tools = registry.get_definitions(tools_to_include, quiet=quiet_mode)
 
@@ -962,6 +968,11 @@ def handle_function_call(
 
     if function_name in denied_tools(principal_user_id, principal_role):
         return json.dumps({"error": blocked_tool_error(function_name)}, ensure_ascii=False)
+    from tools.personal_mcp import blocked_call_error
+
+    _personal_error = blocked_call_error(function_name, principal_user_id)
+    if _personal_error:
+        return json.dumps({"error": _personal_error}, ensure_ascii=False)
 
     # ── Tool Search bridge dispatch ──────────────────────────────────
     # tool_search and tool_describe are pure catalog reads — handle them
