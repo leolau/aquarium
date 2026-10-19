@@ -346,9 +346,9 @@ export function SetupOwnerForm({ providers = [] }: { providers?: ProviderOption[
               <input type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} className={field} />
             </label>
             <label className={label}>
-              <span className="flex items-center justify-between">
+              <span className="flex min-h-11 items-center justify-between">
                 {t("password")}
-                <button type="button" onClick={() => setShowPw((v) => !v)} className="text-xs text-[var(--color-accent)]">
+                <button type="button" onClick={() => setShowPw((v) => !v)} className="px-1 text-xs text-[var(--color-accent)]">
                   {showPw ? t("hide") : t("show")}
                 </button>
               </span>
@@ -377,7 +377,7 @@ export function SetupOwnerForm({ providers = [] }: { providers?: ProviderOption[
               <span className="text-xs text-[var(--color-muted)]">{t("pw_hint")}</span>
             </label>
             <label className={label}>
-              {t("confirm")}
+              <span className="flex min-h-11 items-center">{t("confirm")}</span>
               <input
                 type={showPw ? "text" : "password"}
                 required
