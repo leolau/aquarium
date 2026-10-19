@@ -7,7 +7,7 @@
  * returns the password. "Save and test" saves, then logs into IMAP and SMTP
  * (no mail is sent). The install-wide poller toggle stays in Google accounts.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import en from "@/i18n/messages/en/email.json";
@@ -25,11 +25,14 @@ type T = (key: Key, vars?: Record<string, string>) => string;
 
 /** Local stand-in for the shared `useT` hook (not on develop yet): picks
  *  zh-Hant when the page language is Chinese, else English. */
+const noSubscribe = () => () => {};
+
 export function useEmailT(): T {
-  const [zh, setZh] = useState(false);
-  useEffect(() => {
-    setZh(document.documentElement.lang.toLowerCase().startsWith("zh"));
-  }, []);
+  const zh = useSyncExternalStore(
+    noSubscribe,
+    () => document.documentElement.lang.toLowerCase().startsWith("zh"),
+    () => false,
+  );
   return useCallback(
     (key, vars) => {
       const table: Record<string, string> = zh ? zhHant : en;
@@ -156,22 +159,26 @@ export function EmailMailboxes() {
   }, [t]);
 
   useEffect(() => {
-    void load();
+    const timer = setTimeout(() => void load(), 0);
+    return () => clearTimeout(timer);
   }, [load]);
 
-  useEffect(() => {
-    if (mailboxes && mailboxes.length === 0 && !form) setForm({ values: EMPTY, editing: false });
-  }, [mailboxes, form]);
+  // With no mailbox yet the form is simply open (Get ready item 7).
+  const blank = { values: EMPTY, editing: false };
+  const shown = form ?? (mailboxes?.length === 0 ? blank : null);
 
   const upsert = (m: EmailMailbox) =>
     setMailboxes((list) => [...(list ?? []).filter((x) => x.address !== m.address), m]);
 
   const setField = (field: keyof FormValues, value: string) =>
-    setForm((f) => (f ? { ...f, values: { ...f.values, [field]: value } } : f));
+    setForm((f) => {
+      const cur = f ?? blank;
+      return { ...cur, values: { ...cur.values, [field]: value } };
+    });
 
   const choosePreset = (preset: EmailPreset) =>
-    setForm((f) => {
-      if (!f) return f;
+    setForm((prev) => {
+      const f = prev ?? blank;
       const p = preset === "other" ? null : presets[preset];
       const values: FormValues = { ...f.values, preset };
       if (p) {
@@ -185,13 +192,13 @@ export function EmailMailboxes() {
     });
 
   async function saveAndTest() {
-    if (!form || busy) return;
-    const parsed = toInput(form.values, form.editing);
+    if (!shown || busy) return;
+    const parsed = toInput(shown.values, shown.editing);
     if ("problem" in parsed) {
       setError(t(parsed.problem));
       return;
     }
-    const address = form.values.address.trim().toLowerCase();
+    const address = shown.values.address.trim().toLowerCase();
     setBusy(address);
     setError(null);
     try {
@@ -243,7 +250,7 @@ export function EmailMailboxes() {
     }
   }
 
-  const v = form?.values;
+  const v = shown?.values;
   return (
     <section data-component="EmailMailboxes">
       <h2 className="text-sm font-semibold">{t("title")}</h2>
@@ -266,7 +273,7 @@ export function EmailMailboxes() {
           ))}
         </ul>
       )}
-      {mailboxes && !form && (
+      {mailboxes && !shown && (
         <button
           type="button"
           className={btnCls}
@@ -312,7 +319,7 @@ export function EmailMailboxes() {
                 autoComplete="email"
                 placeholder="info@yourcompany.com"
                 value={v.address}
-                disabled={form.editing}
+                disabled={shown?.editing}
                 onChange={(e) => setField("address", e.target.value)}
               />
             </label>
@@ -335,10 +342,10 @@ export function EmailMailboxes() {
                 aria-label={t("password")}
                 autoComplete="new-password"
                 value={v.password}
-                placeholder={form.editing ? "••••••••" : ""}
+                placeholder={shown?.editing ? "••••••••" : ""}
                 onChange={(e) => setField("password", e.target.value)}
               />
-              {form.editing && <span className="block">{t("passwordKept")}</span>}
+              {shown?.editing && <span className="block">{t("passwordKept")}</span>}
             </label>
           </div>
           <div className="flex gap-2">
