@@ -241,5 +241,10 @@
   "PUT /api/telegram-bot": "signed-in",
   "DELETE /api/telegram-bot": "signed-in",
   "POST /api/telegram-bot/[...action]": "signed-in",
-  "DELETE /api/telegram-bot/[...action]": "signed-in"
+  "DELETE /api/telegram-bot/[...action]": "signed-in",
+  "GET /api/browse/places": "signed-in",
+  "GET /api/browse/list": "signed-in",
+  "GET /api/browse/file": "signed-in",
+  "POST /api/browse/save": "signed-in",
+  "POST /api/browse/attach": "signed-in"
 }

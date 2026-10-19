@@ -100,6 +100,9 @@ import type {
   EmailServerSettings,
   NetworkFolderInput,
   NetworkFolderView,
+  BrowseListing,
+  BrowsePlace,
+  BrowseSaveResult,
   VpnView,
   WaBridge,
   WaBridgesResponse,
@@ -2632,6 +2635,47 @@ export class HermesApiClient {
       `/api/vpn/folders/${encodeURIComponent(name)}/${action}`,
       { method: "POST" },
     );
+  }
+
+  // -- Files → Browse (network folders + own workspace, read-only) -----------
+
+  /** Places the caller may browse: readable network folders, then their workspace. */
+  async browsePlaces(): Promise<{ places: BrowsePlace[] }> {
+    return this.request("/api/browse/places");
+  }
+
+  /** One folder level of a place (`path` relative to it, `""` for the top). */
+  async browseList(place: string, path: string): Promise<BrowseListing> {
+    const qs = new URLSearchParams({ place, path });
+    return this.request(`/api/browse/list?${qs.toString()}`);
+  }
+
+  /** Copy one file into the caller's own Files (Storage + registry). */
+  async browseSave(place: string, path: string): Promise<BrowseSaveResult> {
+    return this.request("/api/browse/save", { method: "POST", json: { place, path } });
+  }
+
+  /** The file's bytes as an unconsumed upstream response. */
+  async browseFile(place: string, path: string): Promise<Response> {
+    const qs = new URLSearchParams({ place, path });
+    const headers = new Headers();
+    if (this.hermesToken) {
+      headers.set("cookie", `hermes_session_at=${this.hermesToken}`);
+      headers.set("authorization", `Bearer ${this.hermesToken}`);
+    }
+    const res = await fetch(`${this.baseUrl}${this.scopedPath(`/api/browse/file?${qs.toString()}`)}`, {
+      headers,
+      cache: "no-store",
+    });
+    if (!res.ok || !res.body) {
+      const text = res.body ? await res.text().catch(() => "") : "";
+      throw new HermesApiError(
+        res.status,
+        upstreamDetail(text ? safeJson(text) : undefined, "That file could not be opened."),
+        text,
+      );
+    }
+    return res;
   }
 
   /** Email-poller account flags (deployment poller config; owner-gated). */

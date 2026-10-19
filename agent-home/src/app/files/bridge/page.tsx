@@ -1,4 +1,5 @@
 import { MobileShell } from "@/components/MobileShell";
+import { FilesTabs } from "@/components/files/FilesTabs";
 import { FolderBridgeView } from "@/components/files/FolderBridgeView";
 import { requirePrincipal } from "@/lib/auth/principal";
 
@@ -19,6 +20,7 @@ export default async function Page() {
   await requirePrincipal();
   return (
     <MobileShell title="Folder Bridge">
+      <FilesTabs />
       <FolderBridgeView />
     </MobileShell>
   );

@@ -121,6 +121,10 @@ SIGNED_IN = {
     "POST /api/memory/explorer/projection/query",
     "GET /api/memory/explorer/documents",
     # files_api: file registry rows scoped to the caller
+    "GET /api/browse/places",
+    "GET /api/browse/list",
+    "GET /api/browse/file",
+    "POST /api/browse/save",
     "GET /api/registry/files",
     "GET /api/registry/files/surfaces",
     "POST /api/registry/files/register",

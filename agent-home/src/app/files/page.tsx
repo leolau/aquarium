@@ -1,4 +1,5 @@
 import { MobileShell } from "@/components/MobileShell";
+import { FilesTabs } from "@/components/files/FilesTabs";
 import { FilesView } from "@/components/files/FilesView";
 import { HermesApiError } from "@/lib/api/client";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
@@ -43,6 +44,7 @@ export default async function Page() {
 
   return (
     <MobileShell title="Files">
+      <FilesTabs />
       {noPrincipal ? (
         <div
           data-component="FilesNoPrincipal"

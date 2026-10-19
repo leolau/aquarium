@@ -314,6 +314,7 @@ from hermes_cli.credentials_api import router as _credentials_router  # noqa: E4
 from hermes_cli.personal_mcp import router as _personal_mcp_router  # noqa: E402
 from hermes_cli.google_client_api import router as _google_client_router  # noqa: E402
 from hermes_cli.vpn_api import router as _vpn_router  # noqa: E402
+from hermes_cli.browse_api import router as _browse_router  # noqa: E402
 from hermes_cli.vpn_api import internal_router as _vpn_internal_router  # noqa: E402
 from hermes_cli.vpn_api import install_internal_auth as _vpn_install_internal_auth  # noqa: E402
 from hermes_cli.email_accounts_api import router as _email_accounts_router  # noqa: E402
@@ -340,6 +341,7 @@ app.include_router(_credentials_router)
 app.include_router(_personal_mcp_router)
 app.include_router(_google_client_router)
 app.include_router(_vpn_router)
+app.include_router(_browse_router)
 app.include_router(_vpn_internal_router)
 app.include_router(_telegram_bot_router)
 _vpn_install_internal_auth()
