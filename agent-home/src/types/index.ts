@@ -2833,7 +2833,6 @@ export interface TelegramBotView {
   /** Only on `link/start`: the one-time `t.me/<bot>?start=<code>` link. */
   link_url?: string;
 }
-||||||| 6cf4ebe40
 
 /** Google step A: the install's OAuth client, as the owner sees it (no secret). */
 export interface GoogleClientStatus {
