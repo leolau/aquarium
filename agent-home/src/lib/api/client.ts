@@ -94,7 +94,10 @@ import type {
   RoleLimitsResponse,
   SessionCreateResponse,
   CredentialEntry,
+  EmailMailbox,
+  EmailMailboxInput,
   EmailPollerAccount,
+  EmailServerSettings,
   NetworkFolderInput,
   NetworkFolderView,
   VpnView,
@@ -2517,6 +2520,39 @@ export class HermesApiClient {
       method: "PATCH",
       json: { address, enabled },
     });
+  }
+
+  /** The caller's own IMAP/SMTP mailboxes (never any password). */
+  async emailMailboxes(): Promise<{
+    mailboxes: EmailMailbox[];
+    presets: Record<string, EmailServerSettings>;
+  }> {
+    return this.request("/api/email/mailboxes");
+  }
+
+  /** Create or replace the caller's mailbox; an empty password keeps it. */
+  async putEmailMailbox(
+    address: string,
+    body: EmailMailboxInput,
+  ): Promise<{ mailbox: EmailMailbox }> {
+    return this.request(`/api/email/mailboxes/${encodeURIComponent(address)}`, {
+      method: "PUT",
+      json: body,
+    });
+  }
+
+  async deleteEmailMailbox(address: string): Promise<{ deleted: boolean }> {
+    return this.request(`/api/email/mailboxes/${encodeURIComponent(address)}`, {
+      method: "DELETE",
+    });
+  }
+
+  /** Log into IMAP and SMTP with the saved settings (no mail is sent). */
+  async testEmailMailbox(address: string): Promise<{ mailbox: EmailMailbox }> {
+    return this.request(
+      `/api/email/mailboxes/${encodeURIComponent(address)}/test`,
+      { method: "POST" },
+    );
   }
 
   /** WhatsApp bridge units (deployment sidecars; owner-gated). */

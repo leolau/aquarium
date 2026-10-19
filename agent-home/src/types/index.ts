@@ -1259,6 +1259,42 @@ export interface NetworkFolderInput {
  * the credential's `email` service flag (that one marks the credential as
  * usable for mail; this one controls whether the background poller runs).
  */
+export type EmailSecurity = "ssl" | "starttls";
+export type EmailPreset = "gmail" | "outlook" | "other";
+
+/** Server settings a preset fills in (`GET /api/email/mailboxes` presets). */
+export interface EmailServerSettings {
+  imap_host: string;
+  imap_port: number;
+  imap_security: EmailSecurity;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_security: EmailSecurity;
+}
+
+/** One of the caller's own IMAP/SMTP mailboxes. Never carries the password. */
+export interface EmailMailbox extends EmailServerSettings {
+  address: string;
+  username: string;
+  preset: EmailPreset;
+  password_set: boolean;
+  state: "working" | "needs_attention" | "untested";
+  last_test: {
+    at: string;
+    ok: boolean;
+    imap: { ok: boolean; error?: string };
+    smtp: { ok: boolean; error?: string };
+  } | null;
+  last_poll: { at?: string; ok?: boolean; error?: string | null; new_count?: number } | null;
+}
+
+/** Body of `PUT /api/email/mailboxes/{address}`; empty password keeps the saved one. */
+export interface EmailMailboxInput extends EmailServerSettings {
+  username: string;
+  password?: string;
+  preset: EmailPreset;
+}
+
 export interface EmailPollerAccount {
   id: string;
   address: string;
