@@ -10,6 +10,7 @@ import { GoogleClientSetup } from "@/components/settings/GoogleClientSetup";
 import { TelegramLinks } from "@/components/settings/TelegramLinks";
 import { VpnConnections } from "@/components/settings/VpnConnections";
 import { WhatsAppBridges } from "@/components/settings/WhatsAppBridges";
+import { useSecurityBasicsT } from "@/components/get-ready/securityBasicsT";
 import { BusyRegion } from "@/components/ui/BusyRegion";
 import { Spinner } from "@/components/ui/Spinner";
 import type { EntityGoal, SessionTag } from "@/types";
@@ -144,6 +145,8 @@ export function SettingsView({
         </Link>
       </section>
 
+      {canManageTools ? <GetReadyLink /> : null}
+
       <EntityGoalSection goal={entityGoal} readOnly={entityGoalReadOnly} />
 
       <TagsSection />
@@ -152,6 +155,24 @@ export function SettingsView({
 }
 
 /* ── In&Out: channels the agent talks through ────────────────────── */
+
+/** Owner/admin: Get ready → Security basics (read-only server checks). */
+function GetReadyLink() {
+  const { t } = useSecurityBasicsT();
+  return (
+    <section data-section="get-ready" className="mt-6">
+      <h2 className="text-sm font-semibold">{t("pageTitle")}</h2>
+      <p className="mb-3 text-xs text-[var(--color-muted)]">{t("settingsNote")}</p>
+      <Link
+        href="/settings/get-ready"
+        className="flex items-center justify-between rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm font-medium"
+      >
+        {t("settingsLink")}
+        <span aria-hidden className="text-[var(--color-muted)]">→</span>
+      </Link>
+    </section>
+  );
+}
 
 function InOutSection({
   canManageMembers,

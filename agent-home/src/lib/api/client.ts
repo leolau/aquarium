@@ -15,6 +15,7 @@
 import "server-only";
 
 import { hermesApiBaseUrl } from "@/lib/env";
+import type { SecurityBasicsResult } from "@/lib/api/security-basics";
 import type {
   GoogleClientCheck,
   GoogleClientSaveResult,
@@ -2343,6 +2344,16 @@ export class HermesApiClient {
   /** The caller's readable fortinet-vpn entries with live tunnel status. */
   async vpns(): Promise<{ vpns: VpnView[] }> {
     return this.request("/api/vpn");
+  }
+
+  /** Get ready → Security basics: the last saved result (owner/admin). */
+  async securityBasics(): Promise<SecurityBasicsResult> {
+    return this.request("/api/security-basics");
+  }
+
+  /** Run the read-only security checks now (owner/admin; up to ~3 min). */
+  async testSecurityBasics(): Promise<SecurityBasicsResult> {
+    return this.request("/api/security-basics/test", { method: "POST" });
   }
 
   /** Connect / disconnect / test a VPN. Connection failures come back as

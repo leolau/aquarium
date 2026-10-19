@@ -293,6 +293,11 @@ if [ -e "$WA_HELPER" ] && ! cmp -s "$WA_HELPER" "$REPO/deploy/hermes-wa-bridge-a
   echo "WA BRIDGE HELPER STALE: $WA_HELPER differs from the reviewed copy at $AFTER. Install it with:"
   echo "    sudo install -m 755 -o root -g root $REPO/deploy/hermes-wa-bridge-add $WA_HELPER"
 fi
+SECURITY_HELPER=/usr/local/sbin/hermes-security-check
+if [ -e "$SECURITY_HELPER" ] && ! cmp -s "$SECURITY_HELPER" "$REPO/deploy/hermes-security-check"; then
+  echo "SECURITY CHECK HELPER STALE: $SECURITY_HELPER differs from the reviewed copy at $AFTER. Install it with:"
+  echo "    sudo install -m 755 -o root -g root $REPO/deploy/hermes-security-check $SECURITY_HELPER"
+fi
 TOOLS_HELPER=/usr/local/sbin/hermes-tools-exec
 if [ -e "$TOOLS_HELPER" ] && ! cmp -s "$TOOLS_HELPER" "$REPO/deploy/hermes-tools-exec"; then
   echo "TOOLS HELPER STALE: $TOOLS_HELPER differs from the reviewed copy at $AFTER. Install it with:"
