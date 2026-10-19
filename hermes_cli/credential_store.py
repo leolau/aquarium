@@ -201,6 +201,12 @@ def _validate_smb_folder(payload: Mapping[str, Any]) -> None:
         fail("trusted_for_import must be true or false")
 
 
+def _validate_mcp_server(payload: Mapping[str, Any]) -> None:
+    from hermes_cli.personal_mcp import validate_credential_payload
+
+    validate_credential_payload(payload)
+
+
 CREDENTIAL_KINDS: Dict[str, KindSpec] = {
     "google-oauth2": KindSpec(
         name="google-oauth2",
@@ -244,6 +250,16 @@ CREDENTIAL_KINDS: Dict[str, KindSpec] = {
         keep_secrets_on_put=True,
         materialize=False,
         validator=_validate_smb_folder,
+    ),
+    # A person's own MCP server (hermes_cli/personal_mcp.py). Header values
+    # are API keys; only the chat runtime reads them.
+    "mcp-server": KindSpec(
+        name="mcp-server",
+        required=("url",),
+        optional=("headers", "auth"),
+        secret_fields=("headers",),
+        materialize=False,
+        validator=_validate_mcp_server,
     ),
 }
 

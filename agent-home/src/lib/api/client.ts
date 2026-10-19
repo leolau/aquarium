@@ -100,6 +100,9 @@ import type {
   McpOAuthFlowState,
   McpServersResponse,
   McpServerTestResult,
+  PersonalMcpCatalogEntry,
+  PersonalMcpServer,
+  PersonalMcpServersResponse,
   SystemStats,
   TagSuggestion,
   Toolset,
@@ -454,6 +457,52 @@ export class HermesApiClient {
       `/api/mcp/servers/${encodeURIComponent(name)}/oauth/cancel`,
       { method: "POST", json: {} },
     );
+  }
+
+  /** The signed-in person's own MCP servers (only theirs; Get ready item 8). */
+  async personalMcpServers(): Promise<PersonalMcpServersResponse> {
+    return this.request("/api/mcp/personal");
+  }
+
+  async addPersonalMcpServer(body: {
+    name: string;
+    url: string;
+    headers?: Record<string, string>;
+    auth?: "oauth";
+  }): Promise<PersonalMcpServer> {
+    return this.request("/api/mcp/personal", { method: "POST", json: body });
+  }
+
+  async deletePersonalMcpServer(name: string): Promise<{ ok: boolean }> {
+    return this.request(`/api/mcp/personal/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    });
+  }
+
+  async testPersonalMcpServer(name: string): Promise<McpServerTestResult> {
+    return this.request(`/api/mcp/personal/${encodeURIComponent(name)}/test`, {
+      method: "POST",
+      json: {},
+    });
+  }
+
+  async personalMcpCatalog(): Promise<{ entries: PersonalMcpCatalogEntry[] }> {
+    return this.request("/api/mcp/personal/catalog");
+  }
+
+  /** Owner/admin: how many own tools each person has (counts only). */
+  async personalMcpByPerson(): Promise<{ people: { user_id: string; servers: number }[] }> {
+    return this.request("/api/mcp/personal/people");
+  }
+
+  async personalMcpOauth(
+    name: string,
+    step: "start" | "status" | "redirect" | "cancel",
+    url?: string,
+  ): Promise<McpOAuthFlowState & { ok?: boolean }> {
+    const path = `/api/mcp/personal/${encodeURIComponent(name)}/oauth/${step}`;
+    if (step === "status") return this.request(path);
+    return this.request(path, { method: "POST", json: step === "redirect" ? { url } : {} });
   }
 
   /** Resolve the C1 principal + role for the current bridged session. */

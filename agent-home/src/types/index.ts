@@ -2416,6 +2416,32 @@ export interface McpServersResponse {
   servers: McpServer[];
 }
 
+/** One of the signed-in person's own MCP servers (Get ready item 8). */
+export interface PersonalMcpServer {
+  name: string;
+  url: string;
+  /** "oauth" when the server needs a sign-in; null otherwise. */
+  auth: "oauth" | null;
+  /** Names of the saved key headers (values never leave the server). */
+  header_names: string[];
+  oauth_token_present?: boolean;
+}
+
+export interface PersonalMcpServersResponse {
+  /** False on installs without per-person sign-in (no multi-user datastore). */
+  configured: boolean;
+  servers: PersonalMcpServer[];
+  limit: number;
+}
+
+export interface PersonalMcpCatalogEntry {
+  name: string;
+  description: string;
+  url: string;
+  auth: "oauth" | null;
+  added: boolean;
+}
+
 /** One tool group (toolset) as seen by one role on Settings → Tools. */
 export interface RoleToolGroup {
   name: string;
