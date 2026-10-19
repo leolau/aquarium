@@ -6,6 +6,7 @@ import { PeopleAndRoles } from "@/components/get-ready/PeopleAndRoles";
 import { formatWhen, useLocale, useT, type T } from "@/components/get-ready/i18n";
 import { NetworkFolders } from "@/components/files/NetworkFolders";
 import { ModelPickerSheet } from "@/components/models/ModelPickerSheet";
+import { GoogleClientSetup } from "@/components/settings/GoogleClientSetup";
 import { ConnectedAccounts } from "@/components/settings/ConnectedAccounts";
 import { TelegramLinks } from "@/components/settings/TelegramLinks";
 import { ToolsSettings } from "@/components/settings/ToolsSettings";
@@ -361,7 +362,11 @@ function Panel({
               {t("d.google.stepA")}{" "}
               <span className={`rounded-full px-2 py-0.5 text-[11px] ${STATUS_PILL[stepA]}`}>{t(`status.${stepA}`)}</span>
             </p>
-            {stepA !== "done" ? <Note>{t("d.google.stepAComing")}</Note> : null}
+            {isOwner ? (
+              <GoogleClientSetup />
+            ) : stepA !== "done" ? (
+              <Note>{t("d.google.stepAOwnerOnly")}</Note>
+            ) : null}
           </div>
           <div>
             <p className="text-sm font-medium">

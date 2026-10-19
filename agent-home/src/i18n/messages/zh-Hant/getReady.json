@@ -51,7 +51,7 @@
   "d.google.stepA": "步驟 A · 建立你的 Google 用戶端（一次，由擁有人）",
   "d.google.stepB": "步驟 B · 連接你的 Google 帳戶（每人）",
   "d.google.stepBLock": "完成步驟 A 後開放",
-  "d.google.stepAComing": "步驟 A 的引導（建立 Google 用戶端）即將推出。在此之前，由擁有人把用戶端檔案放到伺服器上。",
+  "d.google.stepAOwnerOnly": "由擁有人為整個 Aquarium 做一次。如果一直顯示「未開始」，請聯絡擁有人。",
   "d.whatsapp.none": "尚未有 WhatsApp 連接。",
   "d.whatsapp.done": "{count} 個 WhatsApp 連接已連結手機。",
   "d.whatsapp.waiting_qr": "已加入「{name}」連接，正等待手機掃描二維碼。",

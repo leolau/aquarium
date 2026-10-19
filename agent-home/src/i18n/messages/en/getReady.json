@@ -51,7 +51,7 @@
   "d.google.stepA": "Step A · Create your Google client (once, owner)",
   "d.google.stepB": "Step B · Connect your Google account (each person)",
   "d.google.stepBLock": "opens after step A",
-  "d.google.stepAComing": "The guided step A (creating the Google client) is coming soon. Until then the owner places the client file on the server.",
+  "d.google.stepAOwnerOnly": "The owner does this once for the whole Aquarium. Ask them if this stays \"not started\".",
   "d.whatsapp.none": "No WhatsApp bridge yet.",
   "d.whatsapp.done": "{count} WhatsApp bridge(s) linked to a phone.",
   "d.whatsapp.waiting_qr": "Bridge “{name}” is added, waiting for the phone to scan the QR code.",
