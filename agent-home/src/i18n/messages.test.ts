@@ -3,16 +3,9 @@ import { describe, expect, it } from "vitest";
 
 import { LOCALES } from "@/i18n/config";
 import { readLocaleFiles } from "@/i18n/load";
-import { flattenKeys, type MessageTree } from "@/i18n/translate";
+import { flattenKeys, lookup } from "@/i18n/translate";
 
 const en = readLocaleFiles("en");
-
-function lookup(tree: MessageTree, key: string): unknown {
-  return key.split(".").reduce<unknown>(
-    (node, part) => (node && typeof node === "object" ? (node as MessageTree)[part] : undefined),
-    tree,
-  );
-}
 
 const placeholders = (text: string) => (text.match(/\{\w+\}/g) ?? []).sort();
 

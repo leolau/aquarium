@@ -14,6 +14,12 @@ describe("createTranslator", () => {
     expect(t.has("deep.key")).toBe(true);
   });
 
+  it("reads a flat key that itself contains dots", () => {
+    const t = createTranslator({ flat: { "status.done": "Done" } }, "flat");
+    expect(t("status.done")).toBe("Done");
+    expect(t.has("status.done")).toBe(true);
+  });
+
   it("shows the key for a missing string instead of a blank", () => {
     const t = createTranslator(messages, "demo");
     expect(t("nope")).toBe("demo.nope");

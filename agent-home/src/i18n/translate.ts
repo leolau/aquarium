@@ -15,7 +15,10 @@ export interface Translator {
   has(key: string): boolean;
 }
 
-function lookup(tree: MessageTree | undefined, key: string): string | undefined {
+/** A flat key that itself contains dots (`"status.done"`) wins over a nested path. */
+export function lookup(tree: MessageTree | undefined, key: string): string | undefined {
+  const flat = tree?.[key];
+  if (typeof flat === "string") return flat;
   let node: string | MessageTree | undefined = tree;
   for (const part of key.split(".")) {
     if (!node || typeof node === "string") return undefined;

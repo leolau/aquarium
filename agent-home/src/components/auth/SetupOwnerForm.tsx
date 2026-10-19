@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { TwoFactorSetup } from "@/components/account/TwoFactorSetup";
 import { errorMessage, sendJson } from "@/components/users/api";
 import { useT, type Translator } from "@/i18n";
 
@@ -41,7 +43,13 @@ export function setupFormError(
   return null;
 }
 
-type Phase = "checking" | "invalid" | "form" | "done";
+type Phase = "checking" | "invalid" | "form" | "twoFactor" | "signedIn" | "done";
+
+/** The password login the owner just created belongs to (GoTrue first). */
+export function ownerLoginProvider(providers: { name: string; supports_password: boolean }[]): string {
+  const usable = providers.filter((p) => p.supports_password).map((p) => p.name);
+  return usable.includes("supabase") ? "supabase" : (usable[0] ?? "");
+}
 
 /**
  * First-run owner setup from the link `hermes setup-link` prints.
@@ -50,8 +58,13 @@ type Phase = "checking" | "invalid" | "form" | "done";
  * address bar (so it is not left in history or on screen) and only ever posted
  * in a JSON body. It is never rendered into the page.
  */
-export function SetupOwnerForm() {
+export function SetupOwnerForm({
+  providers = [],
+}: {
+  providers?: { name: string; supports_password: boolean }[];
+}) {
   const t = useT("setup");
+  const ta = useT("account");
   const [phase, setPhase] = useState<Phase>("checking");
   const [token, setToken] = useState("");
   const [email, setEmail] = useState("");
@@ -97,7 +110,16 @@ export function SetupOwnerForm() {
         email: email.trim(),
         password,
       });
-      setPhase("done");
+      // Sign straight in so the optional two-factor step can run on this page.
+      const provider = ownerLoginProvider(providers);
+      const login = provider
+        ? await fetch("/api/session/login", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ provider, username: email.trim(), password }),
+          }).catch(() => null)
+        : null;
+      setPhase(login?.ok ? "twoFactor" : "done");
     } catch (err) {
       setError(errorMessage(err, t.has("invalidFull") ? t("invalidFull") : SETUP_LINK_INVALID));
     } finally {
@@ -135,6 +157,40 @@ export function SetupOwnerForm() {
             );
           })()}
         </p>
+      </div>
+    );
+  }
+  if (phase === "twoFactor") {
+    return (
+      <section data-component="SetupTwoFactor" className={`${card} flex flex-col gap-3`}>
+        <h2 className="text-base font-semibold">2. {ta("twoFactorRecommended")}</h2>
+        <p className="text-xs text-[var(--color-muted)]">{ta("s2Desc")}</p>
+        <TwoFactorSetup
+          t={t}
+          password={password}
+          onDone={() => {
+            setPassword("");
+            setConfirm("");
+            setPhase("signedIn");
+          }}
+          onCancel={() => {
+            setPassword("");
+            setConfirm("");
+            setPhase("signedIn");
+          }}
+          cancelLabel={ta("skip")}
+        />
+        <p className="text-xs text-[var(--color-muted)]">{ta("skipLater")}</p>
+      </section>
+    );
+  }
+  if (phase === "signedIn") {
+    return (
+      <div data-component="SetupDone" className={card}>
+        <p>{ta("setupSignedIn")}</p>
+        <Link href="/" className={`${button} mt-3`}>
+          {ta("setupOpen")}
+        </Link>
       </div>
     );
   }
