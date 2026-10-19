@@ -1303,7 +1303,7 @@ def test_check_message_for_a_full_count(h, tmp_path):
 
 
 def test_check_message_when_counting_hits_the_time_budget(h, tmp_path, monkeypatch):
-    monkeypatch.setattr(h, "count_files", lambda root, deadline: (26412, "time"))
+    monkeypatch.setattr(h, "count_files", lambda root, deadline, progress=None: (26412, "time"))
     check = h.walk_check(str(tmp_path))
     assert check["ok"] is True and check["file_count"] == 26412
     assert check["message"] == (
@@ -1329,7 +1329,7 @@ def test_check_message_when_the_file_server_hangs(h, tmp_path, monkeypatch):
     import threading
 
     release = threading.Event()
-    monkeypatch.setattr(h, "count_files", lambda root, deadline: (release.wait(5), (0, None))[1])
+    monkeypatch.setattr(h, "count_files", lambda root, deadline, progress=None: (release.wait(5), (0, None))[1])
     monkeypatch.setattr(h, "CHECK_TIMEOUT", 0.05)
     monkeypatch.setattr(h, "CHECK_GRACE", 0.05)
     try:
@@ -1338,6 +1338,47 @@ def test_check_message_when_the_file_server_hangs(h, tmp_path, monkeypatch):
         release.set()
     assert check["ok"] is False and check["file_count"] is None
     assert check["message"].startswith("File server is too slow to answer (no reply within")
+
+
+def test_check_reports_the_partial_count_when_a_listing_outlasts_the_budget(h, tmp_path, monkeypatch):
+    import threading
+
+    release = threading.Event()
+
+    def stuck_after_root(root, deadline, progress=None):
+        progress.update(root_listed=True, count=2095)
+        release.wait(5)
+        return 2095, None
+
+    monkeypatch.setattr(h, "count_files", stuck_after_root)
+    monkeypatch.setattr(h, "CHECK_TIMEOUT", 0.05)
+    monkeypatch.setattr(h, "CHECK_GRACE", 0.05)
+    try:
+        check = h.walk_check(str(tmp_path))
+    finally:
+        release.set()
+    assert check == {"ok": True, "file_count": 2095,
+                     "message": "File server reachable, at least 2,095 files (stopped counting after 0.1 s)."}
+
+
+def test_count_files_publishes_progress(h, tmp_path):
+    tmp_path = tmp_path / "share"
+    (tmp_path / "sub").mkdir(parents=True)
+    for name in ("a", "b", "sub/c"):
+        (tmp_path / name).write_text("x")
+    progress = {}
+    assert h.count_files(str(tmp_path), h.time.monotonic() + 5, progress) == (3, None)
+    assert progress == {"count": 3, "root_listed": True}
+
+
+def test_count_files_checks_the_clock_inside_a_directory(h, tmp_path, monkeypatch):
+    tmp_path = tmp_path / "share"
+    tmp_path.mkdir()
+    for i in range(5):
+        (tmp_path / f"f{i}").write_text("x")
+    clock = iter([0.0] + [100.0] * 50)
+    monkeypatch.setattr(h.time, "monotonic", lambda: next(clock))
+    assert h.count_files(str(tmp_path), 10.0) == (1, "time")
 
 
 def test_slow_message_matches_the_contract_with_default_budget():
