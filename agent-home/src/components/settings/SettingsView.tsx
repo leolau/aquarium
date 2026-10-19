@@ -10,6 +10,7 @@ import { PushEnroll } from "@/components/push/PushEnroll";
 import { ConnectedAccounts } from "@/components/settings/ConnectedAccounts";
 import { GoogleClientSetup } from "@/components/settings/GoogleClientSetup";
 import { TelegramLinks } from "@/components/settings/TelegramLinks";
+import { TelegramBotSetup } from "@/components/settings/TelegramBotSetup";
 import { EmailMailboxes } from "@/components/settings/EmailMailboxes";
 import { VpnConnections } from "@/components/settings/VpnConnections";
 import { WhatsAppBridges } from "@/components/settings/WhatsAppBridges";
@@ -207,6 +208,7 @@ function InOutSection({
         <EmailMailboxes />
         <VpnConnections />
         <WhatsAppBridges />
+        <TelegramBotSetup />
         <TelegramLinks canManage={canManageMembers} />
       </div>
     </section>

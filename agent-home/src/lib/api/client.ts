@@ -129,7 +129,11 @@ import type {
   SeminarSurveyAnswers,
   SeminarSurveyState,
   SeminarSurveySubmitResult,
+  TelegramBotView,
 } from "@/types";
+
+/** Per-person Telegram bot actions forwarded to Hermes `/api/telegram-bot/*`. */
+export type TelegramBotAction = "test" | "link/start" | "link/check" | "link";
 
 /** Raised when the Python API returns a non-2xx status. */
 export interface AccountSecurity {
@@ -2370,6 +2374,26 @@ export class HermesApiClient {
       `/api/credentials/${encodeURIComponent(provider)}/${encodeURIComponent(name)}`,
       { method: "PATCH", json: payload },
     );
+  }
+
+  /** The caller's own Telegram bot (`/api/telegram-bot`); never the token. */
+  async telegramBot(): Promise<TelegramBotView> {
+    return this.request("/api/telegram-bot");
+  }
+
+  async saveTelegramBot(token: string): Promise<TelegramBotView> {
+    return this.request("/api/telegram-bot", { method: "PUT", json: { token } });
+  }
+
+  async removeTelegramBot(): Promise<TelegramBotView> {
+    return this.request("/api/telegram-bot", { method: "DELETE" });
+  }
+
+  async telegramBotAction(
+    action: TelegramBotAction,
+    method: "POST" | "DELETE" = "POST",
+  ): Promise<TelegramBotView> {
+    return this.request(`/api/telegram-bot/${action}`, { method });
   }
 
   async deleteCredential(
