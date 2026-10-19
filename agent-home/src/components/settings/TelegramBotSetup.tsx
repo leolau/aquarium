@@ -10,14 +10,10 @@
  * presses Start in Telegram and then "Check", which records their Telegram id.
  * From then on the gateway runs the bot for this person only.
  */
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState } from "react";
 
-import {
-  errorKey,
-  pickLocale,
-  translate,
-  type TelegramBotKey,
-} from "@/components/settings/telegramBotStrings";
+import { errorKey, type TelegramBotKey } from "@/components/settings/telegramBotStrings";
+import { useT } from "@/i18n";
 import { Spinner } from "@/components/ui/Spinner";
 import type { TelegramBotView } from "@/types";
 
@@ -39,10 +35,6 @@ async function call(path: string, method: string, body?: unknown): Promise<Teleg
   return data;
 }
 
-function subscribeLanguage(onChange: () => void): () => void {
-  window.addEventListener("languagechange", onChange);
-  return () => window.removeEventListener("languagechange", onChange);
-}
 
 function Step({ n, text }: { n: number; text: string }) {
   return (
@@ -55,17 +47,9 @@ function Step({ n, text }: { n: number; text: string }) {
   );
 }
 
-export function TelegramBotSetup({ lang }: { lang?: string } = {}) {
-  const pageLang = useSyncExternalStore(
-    subscribeLanguage,
-    () => navigator.languages?.find((l) => l.toLowerCase().startsWith("zh")) ?? navigator.language,
-    () => "",
-  );
-  const locale = pickLocale(lang ?? pageLang);
-  const t = useCallback(
-    (key: TelegramBotKey, vars?: Record<string, string>) => translate(locale, key, vars),
-    [locale],
-  );
+export function TelegramBotSetup() {
+  const tr = useT("telegramBot");
+  const t = (key: TelegramBotKey, vars?: Record<string, string>) => tr(key, vars);
   const [view, setView] = useState<TelegramBotView | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [token, setToken] = useState("");
