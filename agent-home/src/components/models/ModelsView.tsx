@@ -58,12 +58,15 @@ function formatContext(n: number): string {
   return `${n} ctx`;
 }
 
-/** What a role row shows on the right — pinned model, or "auto → main". */
-function slotDisplay(assignment: AuxTaskAssignment | undefined, mainModel: string): string {
+/** What a role row shows on the right — pinned model, or "auto → main" — and its provider. */
+function slotDisplay(
+  assignment: AuxTaskAssignment | undefined,
+  main: { provider: string; model: string },
+): { model: string; provider: string } {
   if (!assignment || assignment.provider === "auto" || !assignment.provider) {
-    return `auto → ${mainModel || "main"}`;
+    return { model: `auto → ${main.model || "main"}`, provider: main.provider };
   }
-  return assignment.model || assignment.provider;
+  return { model: assignment.model || "provider default", provider: assignment.provider };
 }
 
 /** Which configured slot a usage row's model+provider currently serves. */
@@ -279,6 +282,7 @@ export function ModelsView({
           {roles.map((role) => {
             const a = assignments.get(role.task);
             const isAuto = !a || a.provider === "auto" || !a.provider;
+            const shown = slotDisplay(a, data.auxiliary.main);
             return (
               <button
                 key={role.task}
@@ -290,12 +294,19 @@ export function ModelsView({
                   <span className="block text-sm">{role.label}</span>
                   <span className="block text-[11px] text-[var(--color-muted)]">{role.hint}</span>
                 </span>
-                <span
-                  className={`ml-auto truncate text-right text-[13px] ${
-                    isAuto ? "text-[var(--color-muted)]" : "text-[var(--color-accent)]"
-                  }`}
-                >
-                  {slotDisplay(a, data.auxiliary.main.model)}
+                <span className="ml-auto min-w-0 text-right">
+                  <span
+                    className={`block truncate text-[13px] ${
+                      isAuto ? "text-[var(--color-muted)]" : "text-[var(--color-accent)]"
+                    }`}
+                  >
+                    {shown.model}
+                  </span>
+                  {shown.provider ? (
+                    <span className="block truncate text-[11px] text-[var(--color-muted)]">
+                      {shown.provider}
+                    </span>
+                  ) : null}
                 </span>
                 <span className="text-[var(--color-muted)]">›</span>
               </button>
@@ -343,13 +354,18 @@ export function ModelsView({
               return (
                 <div
                   key={`${u.provider}:${u.model}`}
-                  className="flex items-baseline gap-2 border-b border-[var(--color-border)] py-2.5 last:border-b-0"
+                  className="border-b border-[var(--color-border)] py-2.5 last:border-b-0"
                 >
-                  <span className="min-w-0 truncate text-sm font-medium">{u.model}</span>
-                  <Pill tone={tag === "not configured" ? "muted" : "accent"}>{tag}</Pill>
-                  <span className="ml-auto shrink-0 text-[11px] text-[var(--color-muted)]">
-                    {u.sessions} sessions · {formatTokens(tokens)} tok · {formatCost(cost)}
-                  </span>
+                  <div className="flex items-baseline gap-2">
+                    <span className="min-w-0 truncate text-sm font-medium">{u.model}</span>
+                    <Pill tone={tag === "not configured" ? "muted" : "accent"}>{tag}</Pill>
+                  </div>
+                  <div className="mt-0.5 flex items-baseline gap-2 text-[11px] text-[var(--color-muted)]">
+                    {u.provider ? <span className="min-w-0 truncate">{u.provider}</span> : null}
+                    <span className="ml-auto shrink-0">
+                      {u.sessions} sessions · {formatTokens(tokens)} tok · {formatCost(cost)}
+                    </span>
+                  </div>
                 </div>
               );
             })}
