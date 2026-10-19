@@ -2288,6 +2288,7 @@ class GatewaySlashCommandsMixin:
         service = GoalManagementService(
             store,
             audit_store=get_store("supabase-app", "prod", config=config),
+            config=config,
         )
         await service.initialize()
         surface = "telegram" if source.platform == Platform.TELEGRAM else "channel"

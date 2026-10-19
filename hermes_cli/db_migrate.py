@@ -99,7 +99,7 @@ def _steps(store: Any, config: dict) -> List[Step]:
 
     async def goal_management(conn: Any) -> None:
         # Opens its own connection; the store already carries the owner DSN.
-        await GoalManagementService(store).initialize()
+        await GoalManagementService(store, config=config).initialize()
 
     return [
         ("app schemas", initialize_supabase_app),
