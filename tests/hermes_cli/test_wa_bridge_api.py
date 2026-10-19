@@ -29,6 +29,8 @@ def wa_home(tmp_path, monkeypatch):
     wa = tmp_path / "whatsapp"
     wa.mkdir()
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    # Never read the host's real bridge units (a dev box may have some).
+    monkeypatch.setattr(api, "_systemctl", lambda *a, **k: _Proc())
 
     async def _as_owner(_request):
         return OWNER
