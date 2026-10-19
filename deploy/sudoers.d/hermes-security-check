@@ -1,0 +1,6 @@
+# Lets the dashboard (user hermes) read the server's security settings for
+# agent-home → Settings → Get ready → Security basics. The helper only reads
+# (sshd, automatic updates, firewall and open ports, `aquarium doctor`) and
+# takes no arguments: the "" below makes sudo refuse any. Points at the
+# root-owned copy only, never at the checkout. Install: root:root 0440.
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/hermes-security-check ""

@@ -44,6 +44,8 @@ def test_rules_are_found():
     # Tags such as SETENV: are skipped, so the command itself is still checked.
     assert "/usr/local/sbin/hermes-tools-exec" in cmds
     assert "/usr/local/sbin/hermes-tools-cli" in cmds
+    # "" = sudo refuses any argument to the security check helper.
+    assert '/usr/local/sbin/hermes-security-check ""' in cmds
 
 
 @pytest.mark.parametrize("where,cmd", list(_rules()))

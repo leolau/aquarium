@@ -10,7 +10,7 @@ service user through ``python -m hermes_cli.aquarium_probe``.
     aquarium update [--version vX.Y.Z | --channel stable|beta]
     aquarium backup [--to DIR]               encrypted backup (database, data, settings)
     aquarium restore <file> [--test] [--yes] put a backup back (or only test it)
-    aquarium doctor                          health checks with a plain-language fix each
+    aquarium doctor [--json]                 health checks with a plain-language fix each
     aquarium logs [service] [-n N] [-f]
     aquarium migrate-layout [--dry-run | --yes | --undo]
     aquarium uninstall [--yes] [--purge-data]
@@ -91,6 +91,7 @@ TOOLS_DIR = "/usr/local/lib/aquarium"  # the installer's pinned cosign lives her
 ROOT_HELPERS = [  # root-run copies that must match the release (reported, never auto-installed)
     ("/usr/local/sbin/hermes-vpn-helper", "deploy/hermes-vpn-helper", "VPN helper"),
     ("/usr/local/sbin/hermes-wa-bridge-add", "deploy/hermes-wa-bridge-add", "WhatsApp bridge helper"),
+    ("/usr/local/sbin/hermes-security-check", "deploy/hermes-security-check", "security check helper"),
 ]
 BUILD_CACHE = "/var/cache/aquarium"
 
@@ -197,7 +198,7 @@ def run(argv: Sequence[str], *, check: bool = True, capture: bool = True, input:
         env: Optional[Dict[str, str]] = None, cwd: Optional[Path] = None, timeout: Optional[float] = None,
         as_service: Optional[str] = None) -> subprocess.CompletedProcess:
     preexec = None
-    if as_service and os.geteuid() == 0:
+    if as_service and os.geteuid() == 0:  # windows-footgun: ok — POSIX-only root admin tooling
         pw = pwd.getpwnam(as_service)
 
         def preexec() -> None:  # drop root before anything from the release runs
@@ -236,7 +237,7 @@ def chown_tree(path: Path, user: str) -> None:
     """Give a whole tree to ``user`` (root for code, the service user for data).
 
     Without root (tests) ownership can't change, so this is skipped."""
-    if os.geteuid() != 0:
+    if os.geteuid() != 0:  # windows-footgun: ok — POSIX-only root admin tooling
         return
     pw = pwd.getpwnam(user)
     for root, dirs, files in os.walk(path):
@@ -778,7 +779,7 @@ def refresh_self(rel: Path) -> None:
     tmp = dest.with_name(".aquarium.new")
     shutil.copyfile(src, tmp)
     os.chmod(tmp, 0o755)
-    if os.geteuid() == 0:
+    if os.geteuid() == 0:  # windows-footgun: ok — POSIX-only root admin tooling
         os.chown(tmp, 0, 0)
     os.replace(tmp, dest)
     say(f"  updated {SELF_INSTALL} from the release")
@@ -810,7 +811,7 @@ def carry_forward(old: Path, new: Path) -> List[str]:
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dest)
             st = os.stat(src)
-            if os.geteuid() == 0:
+            if os.geteuid() == 0:  # windows-footgun: ok — POSIX-only root admin tooling
                 os.chown(dest, st.st_uid, st.st_gid)
             carried.append(os.path.relpath(src, old_root))
     return carried
@@ -2191,7 +2192,7 @@ def check_self(cfg: Dict[str, str]) -> List[Tuple[str, str, str]]:
             st = path.stat()
             if any(real(path).startswith(h.rstrip("/") + "/") for h in hermes_homes(cfg)):
                 continue  # $HERMES_HOME/.env is written by the app itself
-            if st.st_mode & 0o077 or (os.geteuid() == 0 and st.st_uid != 0):
+            if st.st_mode & 0o077 or (os.geteuid() == 0 and st.st_uid != 0):  # windows-footgun: ok — POSIX-only root admin tooling
                 rows.append((WARN, f"settings file {real(path)} is readable by others (mode {st.st_mode & 0o777:o})",
                              f"chown root:root {real(path)} && chmod 600 {real(path)} (systemd reads it as root)."))
     return rows
@@ -2223,6 +2224,8 @@ DOCTOR = [check_disk, check_self, check_services, check_db, check_http, check_ce
 
 def cmd_doctor(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
     failed = warned = 0
+    as_json = getattr(args, "json", False)
+    found: List[Dict[str, str]] = []
     for check in DOCTOR:
         try:
             rows = check(cfg)
@@ -2231,12 +2234,18 @@ def cmd_doctor(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
         except Exception as error:  # one broken check must not hide the others
             rows = [(WARN, f"{check.__name__}: could not run ({error.__class__.__name__}: {error})", "")]
         for status, text, fix in rows:
-            say(f"  {'ok  ' if status == OK else 'WARN' if status == WARN else 'FAIL'}  {text}")
-            if status != OK and fix:
-                say(f"        Fix: {fix}")
+            found.append({"status": status, "text": text, "fix": fix if status != OK else ""})
+            if not as_json:
+                say(f"  {'ok  ' if status == OK else 'WARN' if status == WARN else 'FAIL'}  {text}")
+                if status != OK and fix:
+                    say(f"        Fix: {fix}")
             failed += status == FAILED
             warned += status == WARN
-    say(f"\n{failed} problem(s), {warned} warning(s).")
+    if as_json:
+        # One line for deploy/hermes-security-check (Get ready → Security basics).
+        print(json.dumps({"rows": found, "failed": failed, "warned": warned}), flush=True)
+    else:
+        say(f"\n{failed} problem(s), {warned} warning(s).")
     return 1 if failed else 0
 
 
@@ -2571,7 +2580,8 @@ def parser() -> argparse.ArgumentParser:
     p = sub.add_parser("offsite", help="encrypted copies in S3-compatible storage (set up in Get ready)")
     p.add_argument("verb", choices=["status", "configure", "test", "run", "restore-test", "remove"])
     p.add_argument("--foreground", action="store_true", help=argparse.SUPPRESS)
-    sub.add_parser("doctor", help="check everything and say how to fix what fails")
+    p = sub.add_parser("doctor", help="check everything and say how to fix what fails")
+    p.add_argument("--json", action="store_true", help="print the results as one JSON line")
     p = sub.add_parser("logs", help="service logs")
     p.add_argument("service", nargs="?")
     p.add_argument("-n", "--lines", type=int, default=200)
@@ -2595,7 +2605,7 @@ COMMANDS = {"status": cmd_status, "update": cmd_update, "backup": cmd_backup, "r
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = parser().parse_args(argv)
-    if os.geteuid() != 0 and not test_mode():
+    if os.geteuid() != 0 and not test_mode():  # windows-footgun: ok — POSIX-only root admin tooling
         say("aquarium must run as root: sudo aquarium " + " ".join(sys.argv[1:]))
         return 2
     os.umask(0o022)
