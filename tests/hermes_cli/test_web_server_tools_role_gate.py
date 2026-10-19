@@ -113,6 +113,10 @@ def test_every_change_route_is_gated():
         methods = getattr(route, "methods", None) or set()
         if not path.startswith(("/api/mcp", "/api/tools")):
             continue
+        # A person's own servers: open to every signed-in person, scoped to the
+        # caller (tests/hermes_cli/test_personal_mcp.py, test_route_authorization.py).
+        if path.startswith("/api/mcp/personal"):
+            continue
         for method in methods - {"GET", "HEAD", "OPTIONS"}:
             deps = {d.call for d in route.dependant.dependencies}
             assert _require_tools_manager in deps, f"{method} {path} is not role-gated"
