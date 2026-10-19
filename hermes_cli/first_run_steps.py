@@ -56,6 +56,33 @@ def is_done(home: Optional[Path] = None) -> bool:
     return done_path(home).exists()
 
 
+def mark_existing_install_done(home: Optional[Path] = None) -> bool:
+    """Mark a profile that was in use before the first-run steps existed.
+
+    Run once per deploy (deploy/hermes-deploy.sh). A profile with chat history
+    is not a first run, so a later setup link (e.g. to reset the owner's
+    login) must not offer or accept the model / region / domain steps. A fresh
+    install has no chats before /setup, so it is left alone. Returns True when
+    the marker was written now.
+    """
+    import sqlite3
+
+    if is_done(home):
+        return False
+    db = (home or get_hermes_home()) / "state.db"
+    if not db.exists():
+        return False
+    try:
+        with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as conn:
+            row = conn.execute("SELECT 1 FROM sessions LIMIT 1").fetchone()
+    except sqlite3.Error:
+        return False
+    if row is None:
+        return False
+    mark_done(home)
+    return True
+
+
 def step_allowed(token: str, *, ip: str, home: Optional[Path] = None) -> bool:
     """May this request run a first-run step? Same answer for every refusal."""
     if not token or not STEP_THROTTLE.allow(ip=ip, token=token):

@@ -220,3 +220,42 @@ def test_normalize_host():
     assert first_run_steps.normalize_host("HTTPS://a.Example.com:443/x") == "a.example.com"
     for raw in ("", "localhost", "a..b", "-a.com", "a b.com"):
         assert first_run_steps.normalize_host(raw) == ""
+
+
+# ---------------------------------------------------------------- existing installs
+def _state_db(home, sessions: int) -> None:
+    import sqlite3
+
+    with sqlite3.connect(home / "state.db") as conn:
+        conn.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY)")
+        conn.executemany("INSERT INTO sessions VALUES (?)", [(f"s{i}",) for i in range(sessions)])
+
+
+def test_existing_install_with_chats_is_marked_done_so_a_reset_link_gets_no_steps(home, client):
+    _state_db(home, sessions=3)
+    assert first_run_steps.mark_existing_install_done(home) is True
+    link = first_run.mint("owner-1", ttl=3600, home=home)
+    assert client.post("/api/setup/check", json={"token": link.token}).json() == {
+        "ok": True,
+        "steps": False,
+    }
+    refused = client.post(
+        "/api/setup/region",
+        json={"token": link.token, "timezone": "UTC", "language": "en"},
+    )
+    assert refused.status_code == 400
+    assert first_run_steps.mark_existing_install_done(home) is False
+
+
+def test_fresh_install_is_not_marked_done(home):
+    assert first_run_steps.mark_existing_install_done(home) is False
+    _state_db(home, sessions=0)
+    assert first_run_steps.mark_existing_install_done(home) is False
+    assert not first_run_steps.is_done(home)
+
+
+def test_deploy_runs_the_first_run_marker_for_every_profile():
+    from pathlib import Path
+
+    script = (Path(__file__).resolve().parents[2] / "deploy" / "hermes-deploy.sh").read_text()
+    assert "scripts/mark_first_run_done.py" in script
