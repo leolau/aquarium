@@ -1282,6 +1282,35 @@ export interface WaBridge {
   qr_age_seconds: number | null;
   /** qr.txt older than Baileys' ~60s rotation — almost certainly dead. */
   qr_stale: boolean;
+  /** Plain state: waiting_for_qr | connected | not_linked | restarting | stopped | failed. */
+  status?: WaBridgeStatus;
+  /** The linked phone's own number, masked (only for the bridge's person). */
+  number?: string | null;
+}
+
+export type WaBridgeStatus =
+  | "waiting_for_qr"
+  | "connected"
+  | "not_linked"
+  | "restarting"
+  | "stopped"
+  | "failed";
+
+/** Someone else's bridge, as owner/admin see it: who and whether it works. */
+export interface WaBridgeOther {
+  name: string;
+  person: string;
+  person_display: string;
+  status: WaBridgeStatus;
+}
+
+export interface WaBridgesResponse {
+  /** The caller's own bridges. */
+  bridges: WaBridge[];
+  /** Other people's bridges (owner/admin only; empty for everyone else). */
+  others?: WaBridgeOther[];
+  /** Whether this server can add bridges (root helper installed). */
+  can_add?: boolean;
 }
 
 /** What the to-do filter chips can offer without leading to an empty list. */

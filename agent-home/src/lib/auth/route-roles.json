@@ -197,6 +197,7 @@
   "POST /api/wa-bridges": "signed-in",
   "POST /api/wa-bridges/[name]": "signed-in",
   "GET /api/wa-bridges/[name]/qr": "signed-in",
+  "POST /api/wa-bridges/[name]/test": "signed-in",
   "POST /api/webview/action": "signed-in",
   "POST /api/webview/approval/[approvalId]": "signed-in",
   "DELETE /api/webview/session": "signed-in",
