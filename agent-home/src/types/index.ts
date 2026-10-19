@@ -2848,6 +2848,70 @@ export interface ClarifyConfirmResult {
 }
 
 
+// -- offsite backups (Get ready item 10) -------------------------------------
+
+export type OffsiteProvider = "b2" | "s3" | "other";
+
+export type OffsiteBackupState =
+  | "unavailable"
+  | "not_configured"
+  | "running"
+  | "backup_failed"
+  | "needs_first_backup"
+  | "backup_late"
+  | "restore_test_failed"
+  | "needs_restore_test"
+  | "ok";
+
+export interface OffsiteRun {
+  at: string;
+  ok: boolean;
+  error?: string;
+  name?: string;
+  size?: number;
+  tables?: number;
+  files?: number;
+}
+
+export interface OffsiteBackupStatus {
+  available: boolean;
+  configured: boolean;
+  state: OffsiteBackupState;
+  target?: {
+    provider: OffsiteProvider;
+    bucket: string;
+    prefix: string;
+    endpoint: string;
+    region: string;
+    key_id_hint: string;
+  } | null;
+  schedule?: { enabled: boolean; time: string; keep_days: number };
+  running?: {
+    kind: "backup" | "restore-test";
+    phase: string;
+    percent: number;
+    started: string;
+  } | null;
+  last_backup?: OffsiteRun | null;
+  last_good_backup?: OffsiteRun | null;
+  last_restore_test?: OffsiteRun | null;
+  last_check?: { at: string; ok: boolean; error?: string } | null;
+  copies?: number | null;
+  key_exists?: boolean;
+}
+
+export interface OffsiteBackupSettings {
+  provider: OffsiteProvider;
+  bucket: string;
+  key_id: string;
+  secret: string;
+  endpoint?: string;
+  region?: string;
+  time?: string;
+  keep_days?: number;
+  schedule?: boolean;
+}
+
 /** Google step A: the install's OAuth client, as the owner sees it (no secret). */
 export interface GoogleClientStatus {
   configured: boolean;

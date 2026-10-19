@@ -52,6 +52,7 @@ import type {
   MembersResponse,
   MemoryDocumentsResponse,
   ModelInfo,
+  OffsiteBackupStatus,
   ModelOptionsResponse,
   ModelSetResponse,
   ModelTestResponse,
@@ -2393,6 +2394,31 @@ export class HermesApiClient {
       `/api/credentials/${encodeURIComponent(provider)}/${encodeURIComponent(name)}`,
       { method: "PUT", json: body },
     );
+  }
+
+  // -- offsite backups (Get ready item 10, owner only) ----------------------
+
+  /** Offsite backup status: target without secrets, progress, last results. */
+  async offsiteBackup(): Promise<OffsiteBackupStatus> {
+    return this.request("/api/backups/offsite");
+  }
+
+  /** Check the storage with this key and save it; `new_key` only the first time. */
+  async configureOffsiteBackup(
+    settings: Record<string, unknown>,
+  ): Promise<{ status: OffsiteBackupStatus; new_key?: string }> {
+    return this.request("/api/backups/offsite", { method: "PUT", json: settings });
+  }
+
+  /** Stop offsite backups; copies already in storage stay. */
+  async removeOffsiteBackup(): Promise<OffsiteBackupStatus> {
+    return this.request("/api/backups/offsite", { method: "DELETE" });
+  }
+
+  async offsiteBackupAction(
+    action: "test" | "run" | "restore-test",
+  ): Promise<OffsiteBackupStatus | { started: boolean; status: OffsiteBackupStatus }> {
+    return this.request(`/api/backups/offsite/${action}`, { method: "POST" });
   }
 
   // -- private networks (Settings → In&Out → Fortinet VPN) -----------------
