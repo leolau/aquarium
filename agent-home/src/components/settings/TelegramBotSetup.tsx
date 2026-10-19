@@ -17,7 +17,7 @@ import {
   pickLocale,
   translate,
   type TelegramBotKey,
-} from "@/components/getready/telegramBotMessages";
+} from "@/components/settings/telegramBotStrings";
 import { Spinner } from "@/components/ui/Spinner";
 import type { TelegramBotView } from "@/types";
 
@@ -39,7 +39,10 @@ async function call(path: string, method: string, body?: unknown): Promise<Teleg
   return data;
 }
 
-const noopSubscribe = () => () => {};
+function subscribeLanguage(onChange: () => void): () => void {
+  window.addEventListener("languagechange", onChange);
+  return () => window.removeEventListener("languagechange", onChange);
+}
 
 function Step({ n, text }: { n: number; text: string }) {
   return (
@@ -54,8 +57,8 @@ function Step({ n, text }: { n: number; text: string }) {
 
 export function TelegramBotSetup({ lang }: { lang?: string } = {}) {
   const pageLang = useSyncExternalStore(
-    noopSubscribe,
-    () => document.documentElement.lang,
+    subscribeLanguage,
+    () => navigator.languages?.find((l) => l.toLowerCase().startsWith("zh")) ?? navigator.language,
     () => "",
   );
   const locale = pickLocale(lang ?? pageLang);

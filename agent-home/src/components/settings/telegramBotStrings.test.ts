@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import en from "@/i18n/messages/en/telegramBot.json";
 import zhHant from "@/i18n/messages/zh-Hant/telegramBot.json";
-import { errorKey, pickLocale, translate } from "@/components/getready/telegramBotMessages";
+import { errorKey, pickLocale, translate } from "@/components/settings/telegramBotStrings";
 
 describe("telegramBot strings", () => {
   it("has the same keys in English and Traditional Chinese", () => {

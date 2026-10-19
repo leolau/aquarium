@@ -1,7 +1,7 @@
 /**
  * Strings for the Telegram block (namespace `telegramBot`). A tiny local
  * helper until the shared `useT()` hook lands in `@/i18n`: it reads the same
- * JSON files and picks zh-Hant when the page language is Chinese.
+ * JSON files and picks zh-Hant when the browser language is Chinese.
  */
 import en from "@/i18n/messages/en/telegramBot.json";
 import zhHant from "@/i18n/messages/zh-Hant/telegramBot.json";
