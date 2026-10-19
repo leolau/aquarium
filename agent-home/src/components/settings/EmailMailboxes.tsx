@@ -388,24 +388,24 @@ function ServerField({
   return (
     <div data-component="ServerField" className={labelCls}>
       <span>{label}</span>
-      <div className="flex gap-2">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-[minmax(0,1fr)_4.5rem_7rem]">
         <input
           aria-label={label}
-          className={`${inputCls} min-w-0 flex-1`}
+          className={`${inputCls} col-span-2 sm:col-span-1`}
           placeholder={placeholder}
           value={v[`${side}_host`]}
           onChange={(e) => setField(`${side}_host`, e.target.value)}
         />
         <input
           aria-label={`${label} ${t("port")}`}
-          className={`${inputCls} w-16 shrink-0`}
+          className={inputCls}
           inputMode="numeric"
           value={v[`${side}_port`]}
           onChange={(e) => setField(`${side}_port`, e.target.value)}
         />
         <select
           aria-label={`${label} ${t("security")}`}
-          className={`${inputCls} w-28 shrink-0 bg-[var(--color-surface)]`}
+          className={`${inputCls} bg-[var(--color-surface)]`}
           value={v[`${side}_security`]}
           onChange={(e) => setField(`${side}_security`, e.target.value)}
         >

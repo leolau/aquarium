@@ -73,7 +73,7 @@ describe("EmailMailboxes", () => {
     render(<EmailMailboxes />);
     const address = await screen.findByPlaceholderText("info@yourcompany.com");
     fireEvent.change(address, { target: { value: "Alice@Example.com" } });
-    fireEvent.click(screen.getByRole("button", { name: "Outlook / Microsoft 365" }));
+    fireEvent.click(screen.getByRole("button", { name: "Outlook" }));
     expect(screen.getByLabelText("Outgoing server (SMTP)")).toHaveProperty("value", "smtp.office365.com");
     fireEvent.change(screen.getByLabelText("Password or app password"), { target: { value: "s3cret" } });
     fireEvent.click(screen.getByRole("button", { name: "Save and test" }));

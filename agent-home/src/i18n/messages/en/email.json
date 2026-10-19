@@ -4,7 +4,7 @@
   "perPerson": "Only you can see and use your mailbox. The assistant files new mail for you alone.",
   "preset": "Provider",
   "presetGmail": "Gmail",
-  "presetOutlook": "Outlook / Microsoft 365",
+  "presetOutlook": "Outlook",
   "presetOther": "Other",
   "presetHint": "Gmail and Outlook need an app password when 2-step sign-in is on.",
   "address": "Email address",

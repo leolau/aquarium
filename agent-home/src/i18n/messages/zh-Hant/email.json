@@ -4,7 +4,7 @@
   "perPerson": "只有你可以查看及使用你的郵箱。助手只會為你一人整理新郵件。",
   "preset": "供應商",
   "presetGmail": "Gmail",
-  "presetOutlook": "Outlook / Microsoft 365",
+  "presetOutlook": "Outlook",
   "presetOther": "其他",
   "presetHint": "如已開啟兩步驗證，Gmail 及 Outlook 需要使用應用程式密碼。",
   "address": "電郵地址",
