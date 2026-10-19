@@ -452,6 +452,40 @@ class _PasswordLoginBody(BaseModel):
     username: str
     password: str
     next: str = ""
+    #: Second step for a login with two-factor on: an app or recovery code.
+    code: str = ""
+
+
+async def _two_factor_step(session, code: str, provider: str, ip: str):
+    """Ask for / check the second step when this login has two-factor on.
+
+    Returns ``None`` to go ahead and mint the session, or the response to send
+    instead: ``{"ok": false, "two_factor_required": true}`` when no code came
+    with the password (the form then asks for one and sends both again).
+    An install where nobody turned it on returns ``None`` without any lookup.
+    """
+    from hermes_cli import two_factor
+
+    if not two_factor.any_enabled():
+        return None
+    try:
+        user_id = await two_factor.principal_id_for_session(session)
+    except Exception as exc:  # noqa: BLE001 — fail closed, never skip the code
+        _log.warning("two-factor lookup failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Sign-in is unavailable. Try again shortly.")
+    if not user_id or not two_factor.is_enabled(user_id):
+        return None
+    if not (code or "").strip():
+        return JSONResponse({"ok": False, "two_factor_required": True})
+    try:
+        ok = two_factor.verify(user_id, code)
+    except two_factor.TwoFactorLocked:
+        audit_log(AuditEvent.LOGIN_FAILURE, provider=provider, reason="two_factor_locked", ip=ip)
+        raise HTTPException(status_code=429, detail="Too many wrong codes. Wait 15 minutes and try again.")
+    if not ok:
+        audit_log(AuditEvent.LOGIN_FAILURE, provider=provider, reason="two_factor_invalid", ip=ip)
+        raise HTTPException(status_code=401, detail="Invalid code")
+    return None
 
 
 @router.post("/auth/password-login", name="auth_password_login")
@@ -521,6 +555,10 @@ async def auth_password_login(request: Request, body: _PasswordLoginBody):
             ip=ip,
         )
         raise HTTPException(status_code=503, detail=f"Provider unreachable: {e}")
+
+    challenge = await _two_factor_step(session, body.code, body.provider, ip)
+    if challenge is not None:
+        return challenge
 
     audit_log(
         AuditEvent.LOGIN_SUCCESS,

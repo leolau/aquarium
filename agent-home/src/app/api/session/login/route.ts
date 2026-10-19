@@ -22,6 +22,8 @@ interface LoginBody {
   provider?: unknown;
   username?: unknown;
   password?: unknown;
+  /** Second step when the login has two-factor on: app or recovery code. */
+  code?: unknown;
 }
 
 /** Pull the upstream `hermes_session_at` value out of Set-Cookie headers. */
@@ -46,6 +48,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const provider = typeof body.provider === "string" ? body.provider : "";
   const username = typeof body.username === "string" ? body.username : "";
   const password = typeof body.password === "string" ? body.password : "";
+  const code = typeof body.code === "string" ? body.code.trim() : "";
   if (!provider || !username || !password) {
     return NextResponse.json(
       { error: "missing_fields", detail: "provider, username and password are required" },
@@ -58,7 +61,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     upstream = await fetch(`${hermesApiBaseUrl()}/auth/password-login`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ provider, username, password }),
+      body: JSON.stringify(code ? { provider, username, password, code } : { provider, username, password }),
       cache: "no-store",
     });
   } catch {
@@ -68,6 +71,18 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
+  if (upstream.status === 429) {
+    return NextResponse.json(
+      { error: "too_many_attempts", detail: "Too many tries. Wait a few minutes and try again." },
+      { status: 429 },
+    );
+  }
+  if (!upstream.ok && code && upstream.status === 401) {
+    return NextResponse.json(
+      { error: "invalid_code", detail: "That code doesn't match." },
+      { status: 401 },
+    );
+  }
   if (!upstream.ok) {
     // Mirror the Python endpoint's deliberately generic failures.
     const status = upstream.status === 401 ? 401 : upstream.status;
@@ -75,6 +90,15 @@ export async function POST(request: Request): Promise<NextResponse> {
       { error: "login_failed", detail: "Invalid credentials or provider." },
       { status },
     );
+  }
+
+  const answer = (await upstream.clone().json().catch(() => null)) as {
+    two_factor_required?: unknown;
+  } | null;
+  if (answer?.two_factor_required === true) {
+    // Password was right; this login has two-factor on. No session yet: the
+    // form asks for a code and sends the password again with it.
+    return NextResponse.json({ ok: false, two_factor_required: true });
   }
 
   const token = extractHermesToken(upstream.headers.getSetCookie());
