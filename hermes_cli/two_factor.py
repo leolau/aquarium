@@ -27,9 +27,14 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
-import pyotp
-
 from hermes_constants import get_hermes_home
+
+
+def _pyotp():
+    # Imported on use: sign-in for people without two-factor never needs it.
+    import pyotp
+
+    return pyotp
 
 ISSUER = "Aquarium"
 RECOVERY_CODE_COUNT = 10
@@ -148,11 +153,11 @@ def start(user_id: str, account_name: str, home: Optional[Path] = None) -> dict[
         record = _load(user_id, home)
         if _is_enabled(record):
             raise TwoFactorError("Two-factor login is already on. Turn it off first.")
-        secret = pyotp.random_base32()
+        secret = _pyotp().random_base32()
         record["pending_secret"] = secret
         record["pending_created"] = int(time.time())
         _write(_path(user_id, home), record)
-    uri = pyotp.TOTP(secret).provisioning_uri(
+    uri = _pyotp().TOTP(secret).provisioning_uri(
         name=account_name or user_id, issuer_name=ISSUER
     )
     return {"secret": secret, "otpauth_uri": uri}
@@ -168,7 +173,7 @@ def _check_totp(secret: str, code: str, record: dict[str, Any], now: float) -> b
     digits = _normalise_code(code)
     if len(digits) != 6 or not digits.isdigit():
         return False
-    totp = pyotp.TOTP(secret)
+    totp = _pyotp().TOTP(secret)
     last = int(record.get("last_step") or 0)
     current = int(now // totp.interval)
     for offset in range(-_VALID_WINDOW, _VALID_WINDOW + 1):
