@@ -268,6 +268,12 @@ class GatewayAuthorizationMixin:
         if person_bot is not None:
             return person_bot
 
+        # A person's own WhatsApp bridge answers only that person's own number.
+        person_wa_check = getattr(self, "_person_wa_authorization", None)
+        person_wa = person_wa_check(source) if person_wa_check else None
+        if person_wa is not None:
+            return person_wa
+
         # Relay (and any adapter whose authorization is enforced by a trusted
         # authenticated upstream): the Team Gateway connector authenticates this
         # gateway's WS with a per-instance secret and resolves owner-only author

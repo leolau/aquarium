@@ -283,6 +283,7 @@ async def restart_bridge(request: Request, name: str):
     name = _valid_name(name)
     await _require_bridge_person(request, name)
     _service_control(name, "restart")
+    owners.mark_changed()
     return {"bridge": _mine(name)}
 
 
@@ -291,6 +292,7 @@ async def stop_bridge(request: Request, name: str):
     name = _valid_name(name)
     await _require_bridge_person(request, name)
     _service_control(name, "stop")
+    owners.mark_changed()
     return {"bridge": _mine(name)}
 
 
@@ -313,6 +315,7 @@ async def rebind_bridge(request: Request, name: str):
     except OSError as exc:
         raise HTTPException(500, f"could not recreate session dir: {exc}")
     _service_control(name, "start")
+    owners.mark_changed()
     return {"bridge": _mine(name)}
 
 
@@ -412,4 +415,5 @@ async def add_bridge(request: Request):
     if person:
         match = re.search(r"on port (\d+)", out.stdout or "")
         owners.record_owner(name, person, port=int(match.group(1)) if match else None)
+    owners.mark_changed()
     return {"bridge": _mine(name)}

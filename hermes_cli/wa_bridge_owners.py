@@ -93,6 +93,19 @@ def record_owner(name: str, user_id: str, *, port: Optional[int] = None) -> None
             raise
 
 
+CHANGE_MARKER = "bridges.changed"
+
+
+def mark_changed() -> None:
+    """Tell the gateway to re-read the bridges now (it also polls)."""
+    try:
+        directory = whatsapp_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / CHANGE_MARKER).touch()
+    except OSError:
+        pass
+
+
 def own_number(name: str) -> Optional[str]:
     """Digits of the phone number linked to bridge ``name`` (from creds.json)."""
     try:

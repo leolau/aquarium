@@ -744,6 +744,13 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
             except Exception:
                 pass  # Bridge not running, start a new one
             
+            if getattr(getattr(self, "config", None), "extra", {}).get("external_bridge") is True:
+                # A bridge run by its own systemd unit: read it only while it
+                # is up and linked; never kill it or start a second one.
+                print(f"[{self.name}] Bridge on port {self._bridge_port} is not connected; not reading it yet")
+                self._release_platform_lock()
+                return False
+
             # Kill any orphaned bridge from a previous gateway run
             _kill_stale_bridge_by_pidfile(self._session_path)
             _kill_port_process(self._bridge_port)
