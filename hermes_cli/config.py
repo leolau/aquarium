@@ -2678,6 +2678,13 @@ DEFAULT_CONFIG = {
         # recent .md files and prunes older ones. 0 or negative disables
         # pruning (for operators who manage cleanup externally). Default 50.
         "output_retention": 50,
+        # Model for scheduled jobs that pin neither a provider nor a model.
+        # Empty = use the main ``model:`` setting. Example:
+        #   hermes config set cron.model.provider deepseek
+        #   hermes config set cron.model.default deepseek-v4-flash
+        # Jobs that follow this setting are not stopped by the
+        # provider/model-drift guard when it changes: it is an explicit choice.
+        "model": {"provider": "", "default": ""},
     },
 
     # Kanban multi-agent coordination — controls the dispatcher loop that
