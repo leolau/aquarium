@@ -133,3 +133,40 @@ describe("helpers", () => {
     expect(previewKind("x.xlsx")).toBe("none");
   });
 });
+
+describe("sorting and pages", () => {
+  it("keeps folders first and sorts each column both ways", async () => {
+    const { sortBrowse } = await import("@/components/files/BrowseView");
+    const list = [
+      entry({ name: "b.txt", path: "b.txt", size: 5, modified_at: "2026-01-02T00:00:00Z" }),
+      entry({ name: "Zed", path: "Zed", kind: "directory", size: null }),
+      entry({ name: "a10.txt", path: "a10.txt", size: 50, modified_at: "2026-01-01T00:00:00Z" }),
+      entry({ name: "a9.txt", path: "a9.txt", size: 1, modified_at: "2026-01-03T00:00:00Z" }),
+    ];
+    const names = (k: "name" | "size" | "modified", d: "asc" | "desc") =>
+      sortBrowse(list, k, d).map((e) => e.name);
+    expect(names("name", "asc")).toEqual(["Zed", "a9.txt", "a10.txt", "b.txt"]);
+    expect(names("name", "desc")).toEqual(["Zed", "b.txt", "a10.txt", "a9.txt"]);
+    expect(names("size", "desc")).toEqual(["Zed", "a10.txt", "b.txt", "a9.txt"]);
+    expect(names("modified", "desc")).toEqual(["Zed", "a9.txt", "b.txt", "a10.txt"]);
+  });
+
+  it("shows 50 rows a page and resorts from the column header", async () => {
+    LISTINGS["net-jensen:"] = [
+      entry({ name: "Offers", path: "Offers", kind: "directory", size: null }),
+      ...Array.from({ length: 120 }, (_, i) =>
+        entry({ name: `file-${String(i).padStart(3, "0")}.txt`, path: `f${i}`, size: i }),
+      ),
+    ];
+    render(<BrowseView />);
+    fireEvent.click((await screen.findAllByRole("button", { name: /Jensen-New/ }))[0]);
+    await screen.findByText(/Page 1 of 3/);
+    expect(document.querySelectorAll("tr[data-entry]")).toHaveLength(50);
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getByText(/Page 2 of 3 · 51–100 of 121/)).toBeTruthy();
+    fireEvent.click(document.querySelector('[data-sort="size"]') as HTMLElement);
+    expect(screen.getByText(/Page 1 of 3/)).toBeTruthy();
+    const rows = [...document.querySelectorAll("tr[data-entry]")].map((r) => r.getAttribute("data-entry"));
+    expect(rows.slice(0, 2)).toEqual(["Offers", "f119"]);
+  });
+});

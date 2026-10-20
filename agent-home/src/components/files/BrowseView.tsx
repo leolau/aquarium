@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ResizableTable } from "@/components/get-ready/ResizableTable";
 import { useLocale, useT } from "@/i18n";
@@ -68,12 +68,28 @@ export function serverFileUrl(place: string, path: string, download = false): st
   return `/api/browse/file?${qs.toString()}`;
 }
 
+export type SortKey = "name" | "size" | "modified";
+export type SortDir = "asc" | "desc";
+
+export const PAGE_SIZE = 50;
+
+/** Folders always come first; within each group, sort by the chosen column. */
+export function sortBrowse(entries: BrowseEntry[], key: SortKey, dir: SortDir): BrowseEntry[] {
+  const sign = dir === "asc" ? 1 : -1;
+  const byName = (a: BrowseEntry, b: BrowseEntry) =>
+    a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+  return [...entries].sort((a, b) => {
+    const kind = Number(a.kind !== "directory") - Number(b.kind !== "directory");
+    if (kind) return kind;
+    let diff = 0;
+    if (key === "size") diff = (a.size ?? -1) - (b.size ?? -1);
+    else if (key === "modified") diff = Date.parse(a.modified_at ?? "") - Date.parse(b.modified_at ?? "") || 0;
+    return sign * (diff || byName(a, b));
+  });
+}
+
 function sortEntries(entries: BrowseEntry[]): BrowseEntry[] {
-  return [...entries].sort(
-    (a, b) =>
-      Number(a.kind !== "directory") - Number(b.kind !== "directory") ||
-      a.name.toLowerCase().localeCompare(b.name.toLowerCase()),
-  );
+  return sortBrowse(entries, "name", "asc");
 }
 
 async function detailOf(res: Response, fallback: string): Promise<string> {
@@ -115,6 +131,9 @@ export function BrowseView() {
   const [path, setPath] = useState("");
   const [entries, setEntries] = useState<BrowseEntry[]>([]);
   const [truncated, setTruncated] = useState(false);
+  const [sortKey, setSortKey] = useState<SortKey>("name");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [page, setPage] = useState(1);
   const [opening, setOpening] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [selected, setSelected] = useState<BrowseEntry | null>(null);
@@ -226,6 +245,7 @@ export function BrowseView() {
         setPlaceKey(target.key);
         setPath(nextPath);
         setEntries(list);
+        setPage(1);
         setTruncated(cut);
         clearSelection();
         setNotice(null);
@@ -382,6 +402,35 @@ export function BrowseView() {
   ];
   const iconOf = (p: Place) => groups.find((g) => g.kind === p.kind)?.icon ?? "📁";
 
+  const sorted = useMemo(() => sortBrowse(entries, sortKey, sortDir), [entries, sortKey, sortDir]);
+  const pages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const current = Math.min(page, pages);
+  const pageEntries = sorted.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
+
+  function sortBy(key: SortKey) {
+    if (key === sortKey) setSortDir(sortDir === "asc" ? "desc" : "asc");
+    else {
+      setSortKey(key);
+      setSortDir(key === "name" ? "asc" : "desc");
+    }
+    setPage(1);
+  }
+
+  const sortHeader = (key: SortKey, label: string) => (
+    <button
+      type="button"
+      data-sort={key}
+      onClick={() => sortBy(key)}
+      aria-label={t("sort.by", { column: label })}
+      className="flex w-full items-center gap-1 text-left hover:text-[var(--color-text)]"
+    >
+      {label}
+      <span aria-hidden className={sortKey === key ? "text-[var(--color-text)]" : "opacity-40"}>
+        {sortKey === key && sortDir === "desc" ? "▼" : "▲"}
+      </span>
+    </button>
+  );
+
   const crumbs = path ? path.split("/") : [];
   // A network folder can take seconds per level: say so above the list.
   const openingSelf =
@@ -513,10 +562,14 @@ export function BrowseView() {
                 <div className="hidden md:block">
                   <ResizableTable
                     label={t("table.label")}
-                    columns={[t("col.name"), t("col.size"), t("col.modified")]}
+                    columns={[
+                      sortHeader("name", t("col.name")),
+                      sortHeader("size", t("col.size")),
+                      sortHeader("modified", t("col.modified")),
+                    ]}
                     initialWidths={[340, 100, 200]}
                   >
-                    {entries.map((e) => (
+                    {pageEntries.map((e) => (
                       <tr
                         key={e.path}
                         data-entry={e.path}
@@ -549,8 +602,28 @@ export function BrowseView() {
                     ))}
                   </ResizableTable>
                 </div>
+                <label className="mb-2 flex items-center gap-2 text-xs text-[var(--color-muted)] md:hidden">
+                  {t("sort.label")}
+                  <select
+                    value={`${sortKey}:${sortDir}`}
+                    onChange={(ev) => {
+                      const [k, d] = ev.target.value.split(":") as [SortKey, SortDir];
+                      setSortKey(k);
+                      setSortDir(d);
+                      setPage(1);
+                    }}
+                    className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[var(--color-text)]"
+                  >
+                    <option value="name:asc">{t("sort.nameAsc")}</option>
+                    <option value="name:desc">{t("sort.nameDesc")}</option>
+                    <option value="modified:desc">{t("sort.newest")}</option>
+                    <option value="modified:asc">{t("sort.oldest")}</option>
+                    <option value="size:desc">{t("sort.largest")}</option>
+                    <option value="size:asc">{t("sort.smallest")}</option>
+                  </select>
+                </label>
                 <ul className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] md:hidden">
-                  {entries.map((e) => (
+                  {pageEntries.map((e) => (
                     <li key={e.path} className="border-b border-[var(--color-border)] last:border-b-0">
                       <button
                         type="button"
@@ -575,6 +648,38 @@ export function BrowseView() {
                     </li>
                   ))}
                 </ul>
+                {pages > 1 ? (
+                  <nav
+                    data-component="BrowsePager"
+                    aria-label={t("pager.label")}
+                    className="mt-3 flex flex-wrap items-center gap-3 text-sm"
+                  >
+                    <button
+                      type="button"
+                      disabled={busy || current <= 1}
+                      onClick={() => setPage(current - 1)}
+                      className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 disabled:opacity-40"
+                    >
+                      {t("pager.prev")}
+                    </button>
+                    <span className="text-[var(--color-muted)]">
+                      {t("pager.page", { page: current, pages })} ·{" "}
+                      {t("pager.range", {
+                        from: (current - 1) * PAGE_SIZE + 1,
+                        to: Math.min(current * PAGE_SIZE, sorted.length),
+                        total: sorted.length,
+                      })}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={busy || current >= pages}
+                      onClick={() => setPage(current + 1)}
+                      className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 disabled:opacity-40"
+                    >
+                      {t("pager.next")}
+                    </button>
+                  </nav>
+                ) : null}
                 {truncated ? (
                   <p className="mt-2 text-xs text-[var(--color-muted)]">
                     {t("truncated", { count: entries.length })}
