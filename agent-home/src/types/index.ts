@@ -3087,3 +3087,44 @@ export interface GoogleClientSaveResult {
   check: GoogleClientCheck;
   client: GoogleClientStatus;
 }
+
+// -- Files → Browse ---------------------------------------------------------
+
+/** A server-side place the caller may browse (`/api/browse/places`). */
+export interface BrowsePlace {
+  /** `net-<slug>` for a network folder, `workspace` for the caller's own. */
+  id: string;
+  kind: "network" | "workspace";
+  name: string;
+  vpn?: string | null;
+  /** Someone else's network folder shared with the caller. */
+  shared?: boolean;
+  trusted_for_import?: boolean;
+  mounted?: boolean;
+  error?: string | null;
+}
+
+/** One entry of a folder listing; `path` is relative to the place. */
+export interface BrowseEntry {
+  name: string;
+  path: string;
+  kind: "file" | "directory";
+  size: number | null;
+  modified_at: string | null;
+}
+
+export interface BrowseListing {
+  place: string;
+  path: string;
+  entries: BrowseEntry[];
+  truncated: boolean;
+}
+
+/** `POST /api/browse/save` — the file copied into the caller's Files. */
+export interface BrowseSaveResult {
+  ok: boolean;
+  detail?: string;
+  assetId?: string;
+  filename?: string;
+  size?: number;
+}

@@ -1,7 +1,8 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
+import { takePendingAttachments } from "@/lib/chat/pending-attachments";
 import { UPLOAD_WARN_BYTES } from "@/lib/chat/upload-limit";
 import type { ChatAttachment } from "@/types";
 
@@ -44,6 +45,16 @@ export function Composer({
   const [oversizeFiles, setOversizeFiles] = useState<File[] | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const textRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // A file sent here from Files → Browse ("Ask the agent about this file").
+  // Read after mount (sessionStorage is browser-only, so not in the initial
+  // state: the server render must match the first client render).
+  useEffect(() => {
+    queueMicrotask(() => {
+      const pending = takePendingAttachments();
+      if (pending.length > 0) setAttachments((prev) => [...prev, ...pending]);
+    });
+  }, []);
 
   // Grow the input to fit its content (starting at one row) up to a max height,
   // then let it scroll. Runs on every text change and after clearing on send.

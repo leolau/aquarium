@@ -184,6 +184,13 @@ async def find_own_folder(principal: Any, name: str) -> Credential:
     raise FolderNotFound(f"no network folder named '{name}'")
 
 
+async def readable_folders(principal: Any) -> List[Credential]:
+    """Folders the caller added or that are shared with them."""
+    me = getattr(principal, "user_id", None)
+    entries = await default_credential_store().list(principal)
+    return [e for e in entries if _is_folder(e) and _readable_by(e, str(me))]
+
+
 async def _own_fortinet_entry(principal: Any, name: str) -> Optional[Credential]:
     me = getattr(principal, "user_id", None)
     for cred in await default_credential_store().list(principal):
@@ -599,15 +606,25 @@ async def import_file(fid: Any, path: Any, *, approved: bool, storage: Any = Non
     view = await ensure(cred, agent=True)
     if not view["status"]["mounted"]:
         return {"ok": False, "detail": view["status"]["error"] or "The network folder is not mounted"}
+    principal = await _principal_for(cred.owner_user_id)
+    result = await store_file(principal, view["mount_path"], path, label=cred.name,
+                              storage=storage, registry=registry)
+    if result.get("ok"):
+        result = {"ok": True, "folderId": fid, **{k: v for k, v in result.items() if k != "ok"}}
+    return result
+
+
+async def store_file(principal: Any, root: str, path: Any, *, label: str,
+                     storage: Any = None, registry: Any = None) -> Dict[str, Any]:
+    """Copy the regular file ``root/path`` into *principal*'s file store."""
     parts = split_rel(path)
     rel = "/".join(parts)
-    fd = await asyncio.to_thread(open_inside, view["mount_path"], rel)
+    fd = await asyncio.to_thread(open_inside, root, rel)
     try:
         size = os.fstat(fd).st_size
         digest = await asyncio.to_thread(_hash_fd, fd)
         filename = parts[-1]
         content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-        principal = await _principal_for(cred.owner_user_id)
         if storage is None:
             from hermes_cli.filestore import SupabaseStorage, StorageNotConfigured
 
@@ -645,7 +662,7 @@ async def import_file(fid: Any, path: Any, *, approved: bool, storage: Any = Non
             sha256=digest,
             storage_bucket=storage.bucket,
             storage_path=key,
-            conversation=f"{cred.name}/{rel}",
+            conversation=f"{label}/{rel}",
             sender_id=principal.user_id,
             sender_name=getattr(principal, "display", None) or principal.user_id,
         )
@@ -653,7 +670,6 @@ async def import_file(fid: Any, path: Any, *, approved: bool, storage: Any = Non
         os.close(fd)
     return {
         "ok": True,
-        "folderId": fid,
         "path": rel,
         "assetId": asset.id,
         "filename": asset.filename,
