@@ -46,5 +46,18 @@
   "file.savedLink": "Open Arrived",
   "file.confirmUntrusted": "\"{folder}\" isn't marked \"trusted for import\". Copy \"{name}\" into your files?",
   "file.failed": "That didn't work: {detail}",
-  "askDraft": "Please look at the attached file {name}."
+  "askDraft": "Please look at the attached file {name}.",
+  "sort.label": "Sort",
+  "sort.by": "Sort by {column}",
+  "sort.nameAsc": "Name A–Z",
+  "sort.nameDesc": "Name Z–A",
+  "sort.newest": "Newest first",
+  "sort.oldest": "Oldest first",
+  "sort.largest": "Largest first",
+  "sort.smallest": "Smallest first",
+  "pager.label": "Pages",
+  "pager.prev": "Previous",
+  "pager.next": "Next",
+  "pager.page": "Page {page} of {pages}",
+  "pager.range": "{from}–{to} of {total}"
 }

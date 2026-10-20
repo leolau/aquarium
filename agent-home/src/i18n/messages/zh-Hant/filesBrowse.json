@@ -46,5 +46,18 @@
   "file.savedLink": "開啟「已收到」",
   "file.confirmUntrusted": "「{folder}」未標記為「可信任匯入」。要將「{name}」複製到你的檔案嗎？",
   "file.failed": "操作失敗：{detail}",
-  "askDraft": "請查看附件 {name}。"
+  "askDraft": "請查看附件 {name}。",
+  "sort.label": "排序",
+  "sort.by": "按{column}排序",
+  "sort.nameAsc": "名稱 A–Z",
+  "sort.nameDesc": "名稱 Z–A",
+  "sort.newest": "最新優先",
+  "sort.oldest": "最舊優先",
+  "sort.largest": "最大優先",
+  "sort.smallest": "最小優先",
+  "pager.label": "分頁",
+  "pager.prev": "上一頁",
+  "pager.next": "下一頁",
+  "pager.page": "第 {page} 頁，共 {pages} 頁",
+  "pager.range": "第 {from}–{to} 項，共 {total} 項"
 }
