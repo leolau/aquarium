@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { Spinner } from "@/components/ui/Spinner";
 import { useT } from "@/i18n";
+import { useAction } from "@/lib/use-action";
 
 export interface ProviderOption {
   name: string;
@@ -75,10 +76,12 @@ export function LoginForm({ providers }: { providers: ProviderOption[] }) {
       setBusy(false);
     }
   }
+  // Enter pressed twice submits twice before `busy` renders; the lock stops it.
+  const { run: submitOnce } = useAction(submit);
 
   if (needsCode) {
     return (
-      <form data-component="LoginCodeForm" onSubmit={submit} aria-busy={busy} className="space-y-4">
+      <form data-component="LoginCodeForm" onSubmit={(e) => void submitOnce(e)} aria-busy={busy} className="space-y-4">
         <div>
           <h2 className="text-base font-semibold">{ta("loginCodeTitle")}</h2>
           <p className="mt-1 text-sm text-[var(--color-muted)]">{ta("loginCodeHelp")}</p>
@@ -137,7 +140,7 @@ export function LoginForm({ providers }: { providers: ProviderOption[] }) {
     // fix the field rather than wait behind an overlay.
     <form
       data-component="LoginForm"
-      onSubmit={submit}
+      onSubmit={(e) => void submitOnce(e)}
       aria-busy={busy}
       className="space-y-4"
     >

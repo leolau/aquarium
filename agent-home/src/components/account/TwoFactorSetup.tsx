@@ -10,6 +10,7 @@ import { groupKey, twoFactor } from "./api";
 import { RecoveryCodes } from "./RecoveryCodes";
 import { errorText, field, okBox, primary, secondary } from "./ui";
 import type { AccountT } from "./useAccountT";
+import { useAction } from "@/lib/use-action";
 
 type Step = "password" | "scan" | "codes";
 
@@ -60,6 +61,7 @@ export function TwoFactorSetup({
       setBusy(false);
     }
   }
+  const { run: startOnce } = useAction(start);
 
   useEffect(() => {
     // Only once, with the password the first-run form just set.
@@ -83,6 +85,8 @@ export function TwoFactorSetup({
       setBusy(false);
     }
   }
+  // Enter pressed twice submits twice before `busy` renders; the lock stops it.
+  const { run: confirmOnce } = useAction(confirm);
 
   async function copyKey() {
     try {
@@ -114,7 +118,7 @@ export function TwoFactorSetup({
         aria-busy={busy}
         onSubmit={(e) => {
           e.preventDefault();
-          void start(password);
+          void startOnce(password);
         }}
         className="flex flex-col gap-2"
       >
@@ -157,7 +161,7 @@ export function TwoFactorSetup({
       <div className="flex flex-col gap-2">
         <p className="font-semibold">{t("typeCode")}</p>
         {step === "scan" ? (
-          <form onSubmit={confirm} aria-busy={busy} className="flex flex-wrap gap-2">
+          <form onSubmit={(e) => void confirmOnce(e)} aria-busy={busy} className="flex flex-wrap gap-2">
             <input
               inputMode="numeric"
               autoComplete="one-time-code"

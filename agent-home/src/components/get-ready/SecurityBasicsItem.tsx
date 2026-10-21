@@ -15,6 +15,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import type { SecurityBasicsResult, SecurityCheck } from "@/lib/api/security-basics";
 
 import { type Lang, type Translate, useSecurityBasicsT } from "./securityBasicsT";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 type Row = {
   id: string;
@@ -375,16 +376,15 @@ export function SecurityBasicsItem({
             >
               {open ? t("close") : t("setUp")}
             </button>
-            <button
-              type="button"
-              onClick={runTest}
+            <ActionButton busyLabel={t("testing")}
+              onAction={runTest}
               disabled={busy}
               aria-busy={busy}
               className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1.5 text-xs font-medium disabled:opacity-60"
             >
               {busy ? <Spinner /> : null}
               {busy ? t("testing") : t("test")}
-            </button>
+            </ActionButton>
           </div>
           {busy ? (
             <p role="status" className="mt-2 text-xs text-[var(--color-muted)]">
