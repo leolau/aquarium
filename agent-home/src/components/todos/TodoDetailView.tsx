@@ -6,6 +6,8 @@ import { useState } from "react";
 import { surfaceGlyph } from "@/components/inbox/IncomingRow";
 import { AddToProjectSheet } from "@/components/projects/AddToProjectSheet";
 import { TodoCompleteForm } from "@/components/todos/TodoCompleteForm";
+import { ActionButton } from "@/components/ui/ActionButton";
+import { useAction } from "@/lib/use-action";
 import { STAGE_LABEL, sourceGlyph } from "@/components/todos/TodoRow";
 import { formatWhen } from "@/components/files/FilesView";
 import type { Todo, TodoDetail, TodoStage } from "@/types";
@@ -46,13 +48,18 @@ const SNOOZES: { label: string; hours: number }[] = [
  */
 export function TodoDetailView({ todo }: { todo: TodoDetail }) {
   const [current, setCurrent] = useState<TodoDetail>(todo);
-  const [busy, setBusy] = useState(false);
+  // One lock for the whole card: while one change is in flight, a click on any
+  // other button here is dropped instead of racing it.
+  const { run: exclusive, pending: busy } = useAction(
+    (work: () => Promise<void>) => work(),
+  );
   const [error, setError] = useState<string | null>(null);
   const [sessionLink, setSessionLink] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
 
-  async function post(path: string, body: unknown) {
-    setBusy(true);
+  const post = (path: string, body: unknown) => exclusive(() => postNow(path, body));
+
+  async function postNow(path: string, body: unknown) {
     setError(null);
     try {
       const res = await fetch(
@@ -71,8 +78,6 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
       setCurrent({ ...current, ...payload });
     } catch {
       setError("Couldn't reach the AI layer.");
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -119,15 +124,15 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
           {NEXT_STAGES[current.stage]
             .filter((stage) => stage !== "done")
             .map((stage) => (
-              <button
+              <ActionButton
                 key={stage}
-                type="button"
                 disabled={busy}
-                onClick={() => void post("/stage", { stage })}
+                busyLabel="Saving…"
+                onAction={() => post("/stage", { stage })}
                 className="rounded-lg border border-[var(--color-border)] px-2 py-1 text-[var(--color-muted)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
               >
                 {STAGE_VERB[stage]}
-              </button>
+              </ActionButton>
             ))}
           {/* "Add to project" (§13): the user is here when they realise the
               to-do belongs to something bigger — link it from both ends. */}
@@ -147,11 +152,9 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
             spawning if they prefer. */}
         {current.stage === "staged" || current.stage === "open" ? (
           <div className="mt-2">
-            <button
-              type="button"
+            <ActionButton
               disabled={busy}
-              onClick={async () => {
-                setBusy(true);
+              onAction={() => exclusive(async () => {
                 setError(null);
                 setSessionLink(null);
                 try {
@@ -178,14 +181,13 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
                   }
                 } catch {
                   setError("Couldn’t reach the AI layer.");
-                } finally {
-                  setBusy(false);
                 }
-              }}
+              })}
+              busyLabel="Starting…"
               className="rounded-lg border border-[var(--color-accent)] bg-[var(--color-accent)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-surface)] transition hover:opacity-90 disabled:opacity-50"
             >
-              {busy ? "Starting…" : "Work on this"}
-            </button>
+              Work on this
+            </ActionButton>
             {sessionLink ? (
               <Link
                 href={`/chat?session=${encodeURIComponent(sessionLink)}`}
@@ -203,13 +205,11 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
             it a to-do; promote makes it a card. */}
         {current.stage === "staged" || current.stage === "open" ? (
           <div className="mt-2">
-            <button
-              type="button"
+            <ActionButton
               disabled={busy}
-              onClick={async () => {
+              onAction={() => exclusive(async () => {
                 const project = window.prompt("Project slug:");
                 if (!project) return;
-                setBusy(true);
                 setError(null);
                 try {
                   const res = await fetch(
@@ -232,14 +232,13 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
                   }
                 } catch {
                   setError("Couldn’t reach the AI layer.");
-                } finally {
-                  setBusy(false);
                 }
-              }}
+              })}
+              busyLabel="Promoting…"
               className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-[11px] text-[var(--color-muted)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
             >
               Promote to a project card
-            </button>
+            </ActionButton>
           </div>
         ) : null}
 
@@ -256,12 +255,12 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
           <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--color-muted)]">
             <span>Snooze:</span>
             {SNOOZES.map((option) => (
-              <button
+              <ActionButton
                 key={option.hours}
-                type="button"
                 disabled={busy}
-                onClick={() =>
-                  void post("/snooze", {
+                busyLabel="Snoozing…"
+                onAction={() =>
+                  post("/snooze", {
                     until: new Date(
                       Date.now() + option.hours * 3_600_000,
                     ).toISOString(),
@@ -270,7 +269,7 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
                 className="rounded-lg border border-[var(--color-border)] px-2 py-1 transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
               >
                 {option.label}
-              </button>
+              </ActionButton>
             ))}
           </div>
         ) : null}

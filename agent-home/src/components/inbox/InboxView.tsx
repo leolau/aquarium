@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useAction } from "@/lib/use-action";
 
 import { ApprovalsList } from "@/components/inbox/ApprovalsList";
 import { ChangesList } from "@/components/inbox/ChangesList";
@@ -111,6 +112,10 @@ export function InboxView({
       // A stale list is non-fatal.
     }
   }
+
+  // One lock for the page: a second click while an answer or undo is in
+  // flight is dropped instead of being sent again.
+  const { run: exclusive } = useAction((work: () => Promise<void>) => work());
 
   async function answer(item: Notification, value: string) {
     setBusy(item.id);
@@ -262,13 +267,13 @@ export function InboxView({
             <ApprovalsList
               notifications={notifications}
               busyId={busy}
-              onAnswer={answer}
+              onAnswer={(item, value) => exclusive(() => answer(item, value))}
             />
           ) : (
             <ChangesList
               changes={changes}
               busyId={busy}
-              onOp={changeOp}
+              onOp={(change, op) => exclusive(() => changeOp(change, op))}
               blockedIds={blocked}
             />
           )}

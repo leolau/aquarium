@@ -85,7 +85,7 @@ const LiveTurn = memo(function LiveTurn({
 }) {
   const live = useLiveTurn(controller, turnKey);
   const resolve = useCallback(
-    (choice: string) => void controller.resolveApproval(turnKey, choice),
+    (choice: string) => controller.resolveApproval(turnKey, choice),
     [controller, turnKey],
   );
   if (!live) return null;

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { ActionButton } from "@/components/ui/ActionButton";
 import type { TodoCompletion, TodoDetail, TodoProposal } from "@/types";
 
 /**
@@ -155,14 +156,13 @@ export function TodoCompleteForm({
       ) : null}
 
       <div className="mt-3 flex gap-2 text-[11px]">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void submit()}
+        <ActionButton
+          onAction={submit}
+          busyLabel="Finishing…"
           className="rounded-lg border border-[var(--color-accent)] px-2 py-1 text-[var(--color-accent)] disabled:opacity-50"
         >
           {draft.trim() ? "Finish and propose" : "Finish"}
-        </button>
+        </ActionButton>
         <button
           type="button"
           disabled={busy}

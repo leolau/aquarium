@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ActionButton } from "@/components/ui/ActionButton";
+import { useAction } from "@/lib/use-action";
 
 import { takePendingAttachments } from "@/lib/chat/pending-attachments";
 import { UPLOAD_WARN_BYTES } from "@/lib/chat/upload-limit";
@@ -81,6 +83,10 @@ export function Composer({
       setAttachments(sentAttachments);
     }
   }
+
+  // Enter and the Send button share one lock, so a double Enter (or Enter
+  // then a click) before the cleared box renders cannot send the text twice.
+  const { run: sendOnce } = useAction(submit);
 
   function pickFiles(files: File[]) {
     setUploadError(null);
@@ -163,13 +169,14 @@ export function Composer({
               : `${oversizeFiles.filter((f) => f.size > UPLOAD_WARN_BYTES).length} files are over 100 MB — they may take a while to upload.`}
           </p>
           <div className="mt-2 flex gap-2">
-            <button
-              type="button"
-              onClick={() => void upload(oversizeFiles)}
+            <ActionButton
+              onAction={() => upload(oversizeFiles)}
+              busy={uploading}
+              busyLabel="Uploading…"
               className="rounded-lg bg-[var(--color-accent)] px-3 py-1.5 font-medium text-[var(--color-accent-fg)]"
             >
               Upload anyway
-            </button>
+            </ActionButton>
             <button
               type="button"
               onClick={() => {
@@ -215,7 +222,7 @@ export function Composer({
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              submit();
+              void sendOnce();
             }
           }}
           rows={1}
@@ -223,26 +230,26 @@ export function Composer({
           className="max-h-48 min-h-[46px] flex-1 resize-none overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3 text-sm"
         />
         {sending ? (
-          <button
-            type="button"
-            onClick={() => onStop?.()}
-            disabled={stopping}
+          <ActionButton
+            onAction={() => onStop?.()}
+            busy={stopping}
+            busyLabel="Stopping…"
             aria-label={stopping ? "Stopping the agent" : "Stop the agent"}
             title={stopping ? "Stopping the agent" : "Stop the agent"}
             className="flex items-center gap-1.5 rounded-xl bg-red-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
           >
             <span aria-hidden="true" className="h-3 w-3 rounded-[3px] bg-white" />
-            {stopping ? "Stopping…" : "Stop"}
-          </button>
+            Stop
+          </ActionButton>
         ) : (
-          <button
-            type="button"
-            onClick={submit}
+          <ActionButton
+            onAction={sendOnce}
             disabled={!canSend}
+            busyLabel="Sending…"
             className="rounded-xl bg-[var(--color-accent)] px-4 py-3 text-sm font-semibold text-[var(--color-accent-fg)] disabled:opacity-60"
           >
             Send
-          </button>
+          </ActionButton>
         )}
       </div>
     </div>

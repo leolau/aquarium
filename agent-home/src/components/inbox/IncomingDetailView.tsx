@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import { ActionButton } from "@/components/ui/ActionButton";
 import { useState } from "react";
 
 import { surfaceGlyph } from "@/components/inbox/IncomingRow";
 import { surfaceLabel } from "@/components/inbox/IncomingsFilters";
 import { formatSize, formatWhen } from "@/components/files/FilesView";
 import { AddToProjectSheet } from "@/components/projects/AddToProjectSheet";
-import { Spinner } from "@/components/ui/Spinner";
 import type { IncomingDetail } from "@/types";
 
 /**
@@ -141,24 +141,15 @@ export function IncomingDetailView({ item }: { item: IncomingDetail }) {
             See what it remembers
           </Link>
         ) : (
-          <button
-            type="button"
-            disabled={busy || !current.body}
-            onClick={() => void remember()}
+          <ActionButton
+            disabled={!current.body}
+            busy={busy}
+            onAction={remember}
+            busyLabel="Remembering…"
             className="inline-flex items-center gap-2 rounded-lg border border-[var(--color-accent)] px-3 py-1.5 text-[var(--color-accent)] disabled:opacity-40"
           >
-            {/* A single button owns its own wait: `disabled` already stops a
-             * second press, so it shows the spinner in place rather than
-             * pulling an overlay over one control. */}
-            {busy ? (
-              <>
-                <Spinner />
-                Remembering…
-              </>
-            ) : (
-              "Remember this"
-            )}
-          </button>
+            Remember this
+          </ActionButton>
         )}
         {/* The other direction of the same link the to-do detail page shows:
             an arrival is only half the story once triage acted on it. */}

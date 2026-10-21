@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 import type { ChatApprovalRequest } from "@/types";
 
@@ -18,7 +19,7 @@ export const CHOICE_ORDER: readonly string[] = ["once", "session", "always", "de
 export interface ApprovalModalProps {
   request: ChatApprovalRequest;
   busy: boolean;
-  onResolve(choice: string): void;
+  onResolve(choice: string): unknown;
 }
 
 /**
@@ -77,13 +78,13 @@ export function ApprovalModal({ request, busy, onResolve }: ApprovalModalProps) 
           {choices.map((choice, index) => {
             const isDeny = choice === "deny";
             return (
-              <button
+              <ActionButton
                 key={choice}
-                type="button"
                 data-appmcp-deny="consent"
-                disabled={busy}
+                busy={busy}
+                busyLabel="Submitting…"
                 autoFocus={index === 0}
-                onClick={() => onResolve(choice)}
+                onAction={() => onResolve(choice)}
                 className={`w-full rounded-xl px-4 py-3 text-sm font-semibold disabled:opacity-50 ${
                   isDeny
                     ? "mt-1 border border-[var(--color-border)] text-red-300"
@@ -93,7 +94,7 @@ export function ApprovalModal({ request, busy, onResolve }: ApprovalModalProps) 
                 }`}
               >
                 {CHOICE_LABELS[choice] ?? choice}
-              </button>
+              </ActionButton>
             );
           })}
         </div>
