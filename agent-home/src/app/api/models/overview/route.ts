@@ -30,6 +30,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       auxiliary,
       usage: analytics?.models ?? [],
       fallback: fallback?.providers,
+      last_resort: fallback?.last_resort ?? null,
     });
   } catch (err) {
     if (err instanceof HermesApiError) {

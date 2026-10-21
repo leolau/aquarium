@@ -38,6 +38,7 @@ export function ModelPickerSheet({
   currentMain,
   currentAssignment,
   fallbacks = [],
+  lastResort = null,
   profile,
   onClose,
   onChanged,
@@ -49,6 +50,8 @@ export function ModelPickerSheet({
   currentAssignment?: AuxTaskAssignment;
   /** The current backup list — a fallback slot edits one entry of it. */
   fallbacks?: FallbackModel[];
+  /** Built-in last step for "auto" roles (first provider with a key). */
+  lastResort?: FallbackModel | null;
   profile?: string;
   onClose: () => void;
   onChanged: () => void;
@@ -724,6 +727,14 @@ export function ModelPickerSheet({
                           : currentAssignment && currentAssignment.provider !== "auto"
                             ? `the Main model (${currentMain.model || "main"})`
                             : "the Main backup list",
+                        ...(slot.kind === "aux" &&
+                        (!currentAssignment || currentAssignment.provider === "auto")
+                          ? [
+                            lastResort
+                              ? `then any connected provider (${lastResort.provider}: ${lastResort.model})`
+                              : "then any connected provider (none has a key)",
+                          ]
+                          : []),
                       ].join(" → ")}
                     </p>
                     {backups.map((b, i) => (

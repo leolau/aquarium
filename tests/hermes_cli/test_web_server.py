@@ -4373,6 +4373,16 @@ class TestNewEndpoints:
                               json={"providers": [{"provider": "", "model": "x"}]})
         assert bad.status_code == 400
 
+    def test_fallback_reports_builtin_last_resort(self, monkeypatch):
+        """The built-in last step names the first provider with a saved key."""
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-deepseek")
+        for var in ("OPENROUTER_API_KEY",):
+            monkeypatch.delenv(var, raising=False)
+        data = self.client.get("/api/model/fallback").json()
+        assert "last_resort" in data
+        if data["last_resort"] is not None:
+            assert data["last_resort"]["provider"] and data["last_resort"]["model"]
+
     def test_role_backup_list_round_trip(self):
         """A task role's backup list lands in auxiliary.<task>.fallback_chain,
         reads back on /api/model/auxiliary, and leaves Main's list alone."""

@@ -601,6 +601,7 @@ export function ModelsView({
             slot.kind === "aux" ? assignments.get(slot.task) : undefined
           }
           fallbacks={fallbacks ?? []}
+          lastResort={data.last_resort ?? null}
           onRefresh={() => refresh()}
           profile={profile}
           onClose={() => setSlot(null)}

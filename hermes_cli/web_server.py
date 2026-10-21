@@ -6963,19 +6963,50 @@ class FallbackUpdate(BaseModel):
 _MAX_FALLBACK_PROVIDERS = 5
 
 
+def _builtin_last_resort() -> Optional[Dict[str, str]]:
+    """Which provider the built-in last step of an "auto" role would use.
+
+    Mirrors the API-key leg of ``auxiliary_client._get_provider_chain``:
+    the first API-key provider (registry order) with a saved key and a
+    known auxiliary model. OpenRouter comes first in that chain, so it is
+    reported first when its key is saved. Read-only: builds no client.
+    """
+    try:
+        from agent.auxiliary_client import _get_aux_model_for_provider
+        from hermes_cli.auth import PROVIDER_REGISTRY, resolve_api_key_provider_credentials
+    except Exception:
+        return None
+    order = ["openrouter"] + [p for p in PROVIDER_REGISTRY if p != "openrouter"]
+    for provider_id in order:
+        pconfig = PROVIDER_REGISTRY.get(provider_id)
+        if pconfig is None or pconfig.auth_type != "api_key" or provider_id == "anthropic":
+            continue
+        try:
+            creds = resolve_api_key_provider_credentials(provider_id)
+            model = _get_aux_model_for_provider(provider_id)
+        except Exception:
+            continue
+        if str(creds.get("api_key", "")).strip() and model:
+            return {"provider": provider_id, "model": str(model)}
+    return None
+
+
 @app.get("/api/model/fallback")
 def get_fallback_models(profile: Optional[str] = None):
-    """The backup models tried, in order, when the main model fails."""
+    """The backup models tried, in order, when the main model fails, plus
+    the built-in last step roles on "auto" fall back to after every list."""
     from hermes_cli.fallback_config import get_fallback_chain
 
     try:
         with _profile_scope(profile):
             cfg = load_config()
+            last_resort = _builtin_last_resort()
         chain = get_fallback_chain(cfg)
         return {
             "providers": [
                 {"provider": e["provider"], "model": e["model"]} for e in chain
-            ]
+            ],
+            "last_resort": last_resort,
         }
     except Exception:
         _log.exception("GET /api/model/fallback failed")
