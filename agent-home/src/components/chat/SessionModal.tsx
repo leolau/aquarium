@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 import { Spinner } from "@/components/ui/Spinner";
 import {
@@ -425,15 +426,14 @@ export function SessionModal({
                 >
                   {tag.name}
                   {onRemoveTag && (
-                    <button
-                      type="button"
-                      onClick={() => void removeTag(tag.id)}
+                    <ActionButton
+                      onAction={() => removeTag(tag.id)}
                       disabled={tagBusy}
                       className="ml-0.5 text-xs opacity-60 hover:opacity-100 disabled:opacity-30"
                       aria-label={`Remove tag ${tag.name}`}
                     >
                       ×
-                    </button>
+                    </ActionButton>
                   )}
                 </span>
               ))}
@@ -510,22 +510,20 @@ export function SessionModal({
                     )}
                   </div>
                   <div className="flex shrink-0 gap-1">
-                    <button
-                      type="button"
-                      onClick={() => void acceptSuggestion(s)}
+                    <ActionButton
+                      onAction={() => acceptSuggestion(s)}
                       disabled={tagBusy}
                       className="rounded-lg bg-[var(--color-accent)] px-2 py-0.5 text-xs font-medium text-[var(--color-accent-fg)] disabled:opacity-60"
                     >
                       Accept
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void dismissSuggestion(s)}
+                    </ActionButton>
+                    <ActionButton
+                      onAction={() => dismissSuggestion(s)}
                       disabled={tagBusy}
                       className="rounded-lg border border-[var(--color-border)] px-2 py-0.5 text-xs text-[var(--color-muted)] disabled:opacity-60"
                     >
                       Dismiss
-                    </button>
+                    </ActionButton>
                   </div>
                 </div>
               ))}
@@ -547,21 +545,15 @@ export function SessionModal({
         </div>
 
         <div className="mt-4 flex items-center justify-between gap-2">
-          <button
-            type="button"
-            onClick={archive}
+          <ActionButton
+            onAction={archive}
             disabled={busy}
+            busy={archiving}
+            busyLabel="Archiving…"
             className="inline-flex items-center gap-2 rounded-xl border border-[var(--color-border)] px-4 py-2 text-sm text-[var(--color-muted)] disabled:opacity-60"
           >
-            {archiving ? (
-              <>
-                <Spinner />
-                Archiving…
-              </>
-            ) : (
-              "Archive"
-            )}
-          </button>
+            Archive
+          </ActionButton>
           <div className="flex gap-2">
             <button
               type="button"
@@ -570,21 +562,15 @@ export function SessionModal({
             >
               Cancel
             </button>
-            <button
-              type="button"
-              onClick={save}
+            <ActionButton
+              onAction={save}
               disabled={busy}
+              busy={saving}
+              busyLabel="Saving…"
               className="inline-flex items-center gap-2 rounded-xl bg-[var(--color-accent)] px-4 py-2 text-sm font-semibold text-[var(--color-accent-fg)] disabled:opacity-60"
             >
-              {saving ? (
-                <>
-                  <Spinner />
-                  Saving…
-                </>
-              ) : (
-                "Save"
-              )}
-            </button>
+              Save
+            </ActionButton>
           </div>
         </div>
       </div>

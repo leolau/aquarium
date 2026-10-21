@@ -1,10 +1,11 @@
+import { ActionButton } from "@/components/ui/ActionButton";
 import { Pill } from "@/components/ui/Pill";
 import type { Change } from "@/types";
 
 export interface ChangesListProps {
   changes: Change[];
   busyId: string | null;
-  onOp: (change: Change, op: "undo" | "redo") => void;
+  onOp: (change: Change, op: "undo" | "redo") => unknown;
   /**
    * Ids the upstream engine reported it cannot replay (a 409 on undo/redo).
    * The row is `reversible` in the log, but its inverse op was recorded by a
@@ -66,23 +67,23 @@ export function ChangesList({
 
             {change.reversible && !blocked ? (
               change.undone ? (
-                <button
-                  type="button"
+                <ActionButton
                   disabled={busy}
-                  onClick={() => onOp(change, "redo")}
+                  busyLabel="Redoing…"
+                  onAction={() => onOp(change, "redo")}
                   className="min-h-11 w-fit rounded-xl bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent-fg)] disabled:opacity-50"
                 >
                   Redo
-                </button>
+                </ActionButton>
               ) : (
-                <button
-                  type="button"
+                <ActionButton
                   disabled={busy}
-                  onClick={() => onOp(change, "undo")}
+                  busyLabel="Undoing…"
+                  onAction={() => onOp(change, "undo")}
                   className="min-h-11 w-fit rounded-xl border border-[var(--color-border)] px-4 py-2 text-sm disabled:opacity-50"
                 >
                   Undo
-                </button>
+                </ActionButton>
               )
             ) : (
               <p className="text-xs text-[var(--color-muted)]">

@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ActionButton } from "@/components/ui/ActionButton";
+import { useAction } from "@/lib/use-action";
 
 import { Spinner } from "@/components/ui/Spinner";
 import { withProfileQuery } from "@/lib/chat/profile";
@@ -59,7 +61,6 @@ export function ArchivedModal({
   }, [profile]);
 
   async function unarchive(id: string) {
-    if (busyId) return;
     setBusyId(id);
     setError(null);
     try {
@@ -71,6 +72,8 @@ export function ArchivedModal({
       setBusyId(null);
     }
   }
+
+  const { run: unarchiveOnce } = useAction((id: string) => unarchive(id));
 
   return (
     <div
@@ -125,21 +128,15 @@ export function ArchivedModal({
                 {/* `unarchive` already refuses while another row is in flight;
                   * disabling every row makes that visible instead of silently
                   * swallowing the tap. */}
-                <button
-                  type="button"
-                  onClick={() => unarchive(s.id)}
+                <ActionButton
+                  onAction={() => unarchiveOnce(s.id)}
                   disabled={busyId !== null}
+                  busy={busyId === s.id}
+                  busyLabel="Restoring…"
                   className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs disabled:opacity-60"
                 >
-                  {busyId === s.id ? (
-                    <>
-                      <Spinner />
-                      <span className="sr-only">Restoring this conversation…</span>
-                    </>
-                  ) : (
-                    "Unarchive"
-                  )}
-                </button>
+                  Unarchive
+                </ActionButton>
               </div>
             ))
           )}

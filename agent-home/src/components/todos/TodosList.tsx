@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { TodoRow } from "@/components/todos/TodoRow";
+import { ActionButton } from "@/components/ui/ActionButton";
 import { TodosFilters } from "@/components/todos/TodosFilters";
 import {
   EMPTY_FILTERS,
@@ -195,13 +196,13 @@ export function TodosList({
         {loading ? (
           <span>Loading…</span>
         ) : cursor ? (
-          <button
-            type="button"
-            onClick={() => void fetchPage(filters, cursor)}
+          <ActionButton
+            onAction={() => fetchPage(filters, cursor)}
+            busyLabel="Loading…"
             className="rounded-lg border border-[var(--color-border)] px-3 py-1.5"
           >
             Load more
-          </button>
+          </ActionButton>
         ) : items.length > 0 ? (
           <span>That&apos;s everything.</span>
         ) : null}

@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 
+import { ActionButton } from "@/components/ui/ActionButton";
+
 import type { Todo, TodoStage } from "@/types";
 
 /** The stage vocabulary, in the order a to-do moves through it. */
@@ -74,7 +76,7 @@ export function TodoRow({
 }: {
   todo: Todo;
   /** Move the to-do along; the list owns the request and the optimism. */
-  onStage?: (todo: Todo, stage: TodoStage) => void;
+  onStage?: (todo: Todo, stage: TodoStage) => unknown;
   busy?: boolean;
 }) {
   const due = dueLabel(todo.due_at);
@@ -177,17 +179,17 @@ function Action({
   disabled,
 }: {
   label: string;
-  onClick: () => void;
+  onClick: () => unknown;
   disabled?: boolean;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <ActionButton
+      onAction={onClick}
       disabled={disabled}
+      busyLabel="Saving…"
       className="rounded-lg border border-[var(--color-border)] px-2 py-1 text-[var(--color-muted)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
     >
       {label}
-    </button>
+    </ActionButton>
   );
 }

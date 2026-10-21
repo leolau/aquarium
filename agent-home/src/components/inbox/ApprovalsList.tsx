@@ -1,10 +1,11 @@
+import { ActionButton } from "@/components/ui/ActionButton";
 import { Pill } from "@/components/ui/Pill";
 import type { Notification } from "@/types";
 
 export interface ApprovalsListProps {
   notifications: Notification[];
   busyId: string | null;
-  onAnswer: (item: Notification, value: string) => void;
+  onAnswer: (item: Notification, value: string) => unknown;
 }
 
 /**
@@ -64,32 +65,32 @@ export function ApprovalsList({
               <div className="flex flex-wrap gap-2" data-appmcp-deny="consent">
                 {item.kind === "approval" ? (
                   <>
-                    <button
-                      type="button"
+                    <ActionButton
                       disabled={busy}
-                      onClick={() => onAnswer(item, "approved")}
+                      busyLabel="Approving…"
+                      onAction={() => onAnswer(item, "approved")}
                       className="min-h-11 flex-1 rounded-xl bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent-fg)] disabled:opacity-50"
                     >
                       Approve
-                    </button>
-                    <button
-                      type="button"
+                    </ActionButton>
+                    <ActionButton
                       disabled={busy}
-                      onClick={() => onAnswer(item, "denied")}
+                      busyLabel="Denying…"
+                      onAction={() => onAnswer(item, "denied")}
                       className="min-h-11 flex-1 rounded-xl border border-[var(--color-border)] px-4 py-2 text-sm text-red-300 disabled:opacity-50"
                     >
                       Deny
-                    </button>
+                    </ActionButton>
                   </>
                 ) : (
-                  <button
-                    type="button"
+                  <ActionButton
                     disabled={busy}
-                    onClick={() => onAnswer(item, "acknowledged")}
+                    busyLabel="Saving…"
+                    onAction={() => onAnswer(item, "acknowledged")}
                     className="min-h-11 flex-1 rounded-xl bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent-fg)] disabled:opacity-50"
                   >
                     Acknowledge
-                  </button>
+                  </ActionButton>
                 )}
               </div>
             ) : (

@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { ActionButton } from "@/components/ui/ActionButton";
+import { useAction } from "@/lib/use-action";
 
 import { Spinner } from "@/components/ui/Spinner";
 
@@ -48,6 +50,8 @@ export function SessionSearchBar({
     }
   }, [query, onSearch]);
 
+  const { run: searchOnce } = useAction(search);
+
   const jump = useCallback(
     (dir: 1 | -1) => {
       if (results.length === 0) return;
@@ -73,7 +77,7 @@ export function SessionSearchBar({
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();
-              void search();
+              void searchOnce();
             } else if (e.key === "Escape") {
               onClose();
             }
@@ -91,21 +95,15 @@ export function SessionSearchBar({
           />
         )}
         {!showResults && (
-          <button
-            type="button"
-            onClick={() => void search()}
-            disabled={loading || !query.trim()}
+          <ActionButton
+            onAction={searchOnce}
+            busy={loading}
+            disabled={!query.trim()}
+            busyLabel="Searching…"
             className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm text-[var(--color-muted)] disabled:opacity-60"
           >
-            {loading ? (
-              <>
-                <Spinner />
-                <span className="sr-only">Searching…</span>
-              </>
-            ) : (
-              "Go"
-            )}
-          </button>
+            Go
+          </ActionButton>
         )}
       </div>
       {showResults && results.length > 0 && (
