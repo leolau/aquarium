@@ -4310,6 +4310,89 @@ class TestNewEndpoints:
         assert mini["success_rate"] == 1.0
         assert mini["caller_roles"] == ["compression"]
 
+    def test_models_performance_names_roles_and_failure_reasons(self):
+        """Cards use the configured model name (older rows that stored the
+        provider's own label are filed under it), tag scheduled jobs and
+        backup calls apart from Main, and say why calls failed."""
+        import time as _time
+        from hermes_state import SessionDB
+
+        now = _time.time()
+        db = SessionDB()
+        try:
+            db.record_api_call(ts=now, model="deepseek-v4-flash", provider="deepseek",
+                               served_model="deepseek-flash", caller="main",
+                               platform="api_server", duration_ms=900)
+            db.record_api_call(ts=now, model="deepseek-flash", provider="deepseek",
+                               caller="aux:compression", duration_ms=700)
+            db.record_api_call(ts=now, model="deepseek-v4-flash", provider="deepseek",
+                               caller="main", platform="cron", duration_ms=800)
+            for _ in range(2):
+                db.record_api_call(ts=now, model="qwen3.8-max", provider="alibaba",
+                                   caller="fallback", platform="cron", status="error",
+                                   error_type="PermissionDeniedError", status_code=403)
+        finally:
+            db.close()
+        data = self.client.get("/api/analytics/models/performance").json()
+        models = {(m["model"], m["provider"]): m for m in data["models"]}
+        assert ("deepseek-flash", "deepseek") not in models
+        ds = models[("deepseek-v4-flash", "deepseek")]
+        assert ds["calls"] == 3
+        assert ds["served_as"] == ["deepseek-flash"]
+        assert ds["caller_roles"] == ["compression", "main", "scheduled"]
+        qwen = models[("qwen3.8-max", "alibaba")]
+        assert qwen["caller_roles"] == ["backup"]
+        assert qwen["failure_reasons"] == [
+            {"status_code": 403, "error_type": "PermissionDeniedError", "count": 2}
+        ]
+        assert all(m["model"] != "deepseek-flash" for m in data["monthly"])
+
+    def test_fallback_models_round_trip(self):
+        """Backup models: the list reads back in order; saving replaces it
+        and drops the legacy single fallback_model key."""
+        from hermes_cli.config import load_config, save_config
+
+        cfg = load_config()
+        cfg["fallback_model"] = {"provider": "openrouter", "model": "legacy-x"}
+        save_config(cfg)
+        assert self.client.get("/api/model/fallback").json()["providers"] == [
+            {"provider": "openrouter", "model": "legacy-x"}
+        ]
+        resp = self.client.put("/api/model/fallback", json={"providers": [
+            {"provider": "deepseek", "model": "deepseek-v4-pro"},
+            {"provider": "opencode-go", "model": "qwen3.8-max"},
+            {"provider": "deepseek", "model": "deepseek-v4-pro"},
+        ]})
+        assert resp.status_code == 200
+        assert self.client.get("/api/model/fallback").json()["providers"] == [
+            {"provider": "deepseek", "model": "deepseek-v4-pro"},
+            {"provider": "opencode-go", "model": "qwen3.8-max"},
+        ]
+        assert "fallback_model" not in load_config()
+        bad = self.client.put("/api/model/fallback",
+                              json={"providers": [{"provider": "", "model": "x"}]})
+        assert bad.status_code == 400
+
+    def test_refresh_keys_clears_pool_failure_marks(self):
+        """"Refresh keys" reloads .env and clears the failure marks the
+        credential pool keeps, so the saved key is used on the next call."""
+        import json as _json
+        from hermes_cli.config import get_hermes_home
+
+        auth = get_hermes_home() / "auth.json"
+        auth.write_text(_json.dumps({"version": 1, "providers": {}, "credential_pool": {
+            "openrouter": [{
+                "id": "abc123", "label": "OPENROUTER_API_KEY", "auth_type": "api_key",
+                "priority": 0, "source": "env:OPENROUTER_API_KEY",
+                "last_status": "exhausted", "last_status_at": 9_999_999_999.0,
+                "last_error_code": 403,
+            }]}}))
+        resp = self.client.post("/api/providers/refresh-keys")
+        assert resp.status_code == 200
+        assert resp.json()["cleared"] == {"openrouter": 1}
+        row = _json.loads(auth.read_text())["credential_pool"]["openrouter"][0]
+        assert not row.get("last_error_code")
+
     def test_models_performance_monthly_backfills_from_sessions(self):
         """Months predating the ledger still show calls/tokens from the
         sessions table; latency/failures stay null until log data exists."""

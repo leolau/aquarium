@@ -139,6 +139,9 @@ import type {
   GetReadyPeopleResponse,
   GetReadyResponse,
   TelegramBotView,
+  FallbackModel,
+  FallbackModelsResponse,
+  RefreshKeysResponse,
 } from "@/types";
 
 /** Per-person Telegram bot actions forwarded to Hermes `/api/telegram-bot/*`. */
@@ -2885,6 +2888,21 @@ export class HermesApiClient {
   /** Per-model usage/cost analytics for the "In use" list. */
   async modelsAnalytics(days = 30): Promise<ModelsAnalyticsResponse> {
     return this.request(`/api/analytics/models?days=${days}`);
+  }
+
+  /** Backup models tried in order when the main model fails. */
+  async fallbackModels(): Promise<FallbackModelsResponse> {
+    return this.request("/api/model/fallback");
+  }
+
+  /** Replace the whole backup-model list (order = try order). */
+  async setFallbackModels(providers: FallbackModel[]): Promise<FallbackModelsResponse> {
+    return this.request("/api/model/fallback", { method: "PUT", json: { providers } });
+  }
+
+  /** Reload saved provider keys now and clear old "key failed" marks. */
+  async refreshProviderKeys(): Promise<RefreshKeysResponse> {
+    return this.request("/api/providers/refresh-keys", { method: "POST" });
   }
 
   /** Per-call latency/failure/token telemetry for the Performance section. */

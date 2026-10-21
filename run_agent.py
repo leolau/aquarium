@@ -2461,7 +2461,7 @@ class AIAgent:
                 session_id=self.session_id or "",
                 task_id=task_id,
                 platform=self.platform or "",
-                caller="main",
+                caller="fallback" if getattr(self, "_fallback_activated", False) else "main",
                 model=self.model,
                 provider=self.provider,
                 duration_ms=(ended - api_start_time) * 1000,

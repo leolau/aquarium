@@ -59,6 +59,27 @@ function roleLabel(role: string): string {
   return role === "main" ? "main" : role.replace(/_/g, " ");
 }
 
+function roleTone(role: string): "accent" | "warning" | "muted" {
+  if (role === "main") return "accent";
+  if (role === "backup") return "warning";
+  return "muted";
+}
+
+/** "key rejected (401)" — plain words for the most common failure causes. */
+function failureLabel(code: number | null, errorType: string): string {
+  const word =
+    code === 401 ? "key rejected"
+      : code === 402 ? "out of credit"
+        : code === 403 ? "access denied"
+          : code === 404 ? "model not found"
+            : code === 429 ? "rate limited or busy"
+              : code != null && code >= 500 ? "provider error"
+                : /timeout/i.test(errorType) ? "timed out"
+                  : /connection/i.test(errorType) ? "couldn't connect"
+                    : errorType || "error";
+  return code != null ? `${word} (${code})` : word;
+}
+
 function monthLabel(month: string): string {
   const names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -147,7 +168,7 @@ function ModelPerfCard({ entry }: { entry: ModelPerformanceEntry }) {
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="min-w-0 text-sm font-medium">{entry.model}</span>
         {entry.caller_roles.map((r) => (
-          <Pill key={r} tone={r === "main" ? "accent" : "muted"}>
+          <Pill key={r} tone={roleTone(r)}>
             {roleLabel(r)}
           </Pill>
         ))}
@@ -157,6 +178,11 @@ function ModelPerfCard({ entry }: { entry: ModelPerformanceEntry }) {
           </span>
         ) : null}
       </div>
+      {entry.served_as?.length ? (
+        <p className="mt-0.5 text-[11px] text-[var(--color-muted)]">
+          {entry.provider || "The provider"}&apos;s replies name it {entry.served_as.join(", ")}
+        </p>
+      ) : null}
       <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1.5 text-[13px]">
         <div>
           <dt className="text-[11px] text-[var(--color-muted)]">Calls</dt>
@@ -166,6 +192,12 @@ function ModelPerfCard({ entry }: { entry: ModelPerformanceEntry }) {
             {failed ? (
               <span className="text-[var(--color-warn-text)]">
                 {" "}· {entry.failures} failed
+                {entry.failure_reasons?.length
+                  ? `: ${entry.failure_reasons
+                    .slice(0, 2)
+                    .map((f) => failureLabel(f.status_code, f.error_type))
+                    .join(", ")}`
+                  : ""}
               </span>
             ) : null}
           </dd>

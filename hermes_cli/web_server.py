@@ -6941,6 +6941,75 @@ def get_auxiliary_models(profile: Optional[str] = None):
         raise HTTPException(status_code=500, detail="Failed to read auxiliary config")
 
 
+class FallbackEntry(BaseModel):
+    provider: str
+    model: str
+
+
+class FallbackUpdate(BaseModel):
+    providers: List[FallbackEntry] = []
+    profile: Optional[str] = None
+
+
+_MAX_FALLBACK_PROVIDERS = 5
+
+
+@app.get("/api/model/fallback")
+def get_fallback_models(profile: Optional[str] = None):
+    """The backup models tried, in order, when the main model fails."""
+    from hermes_cli.fallback_config import get_fallback_chain
+
+    try:
+        with _profile_scope(profile):
+            cfg = load_config()
+        chain = get_fallback_chain(cfg)
+        return {
+            "providers": [
+                {"provider": e["provider"], "model": e["model"]} for e in chain
+            ]
+        }
+    except Exception:
+        _log.exception("GET /api/model/fallback failed")
+        raise HTTPException(status_code=500, detail="Failed to read backup models")
+
+
+@app.put("/api/model/fallback", dependencies=_ADMIN)
+def set_fallback_models(body: FallbackUpdate, profile: Optional[str] = None):
+    """Replace the backup-model list (``fallback_providers``).
+
+    The page shows the merged chain, legacy ``fallback_model`` included, so
+    saving writes that whole list to ``fallback_providers`` and drops the
+    legacy key — otherwise a removed entry would come back from it.
+    """
+    entries: list = []
+    seen: set = set()
+    for e in body.providers:
+        provider = (e.provider or "").strip()
+        model = (e.model or "").strip()
+        if not provider or not model:
+            raise HTTPException(status_code=400, detail="Each backup needs a provider and a model")
+        ident = (provider.lower(), model.lower())
+        if ident in seen:
+            continue
+        seen.add(ident)
+        entries.append({"provider": provider, "model": model})
+    if len(entries) > _MAX_FALLBACK_PROVIDERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"At most {_MAX_FALLBACK_PROVIDERS} backup models",
+        )
+    try:
+        with _profile_scope(body.profile or profile):
+            cfg = load_config()
+            cfg["fallback_providers"] = entries
+            cfg.pop("fallback_model", None)
+            save_config(cfg)
+        return {"ok": True, "providers": entries}
+    except Exception:
+        _log.exception("PUT /api/model/fallback failed")
+        raise HTTPException(status_code=500, detail="Failed to save backup models")
+
+
 @app.get("/api/model/moa")
 def get_moa_models(profile: Optional[str] = None):
     """Return the configured Mixture-of-Agents provider/model slots."""
@@ -7674,11 +7743,76 @@ async def get_env_vars(profile: Optional[str] = None):
     return result
 
 
+def _refresh_provider_keys(env_key: Optional[str] = None) -> Dict[str, Any]:
+    """Make saved provider keys take effect now.
+
+    Re-reads ``.env`` into this process and clears the "this key failed"
+    marks the credential pool keeps in ``auth.json`` (a key that got a 401
+    stays out of rotation for a while, a 403 for an hour), so the next call
+    uses the key on disk. Other processes read ``.env`` and ``auth.json``
+    per call, so a running chat picks the key up on its next message.
+    ``env_key`` limits the reset to pool entries seeded from that variable.
+    """
+    from hermes_cli.auth import read_credential_pool
+    from hermes_cli.config import invalidate_env_cache, reload_env
+
+    invalidate_env_cache()
+    reloaded = reload_env()
+    cleared: Dict[str, int] = {}
+    try:
+        pool_store = read_credential_pool() or {}
+    except Exception:
+        pool_store = {}
+    for provider, entries in pool_store.items():
+        if not isinstance(entries, list):
+            continue
+        flagged = [
+            e for e in entries
+            if isinstance(e, dict)
+            and (e.get("last_status") or e.get("last_error_code"))
+            and (env_key is None or e.get("source") == f"env:{env_key}")
+        ]
+        if not flagged:
+            continue
+        try:
+            from agent.credential_pool import load_pool
+
+            count = load_pool(provider).reset_statuses()
+        except Exception:
+            _log.debug("refresh keys: reset %s failed", provider, exc_info=True)
+            continue
+        if count:
+            cleared[provider] = count
+            try:
+                from agent.auxiliary_client import _evict_cached_clients
+
+                _evict_cached_clients(provider)
+            except Exception:
+                pass
+    return {"reloaded": reloaded, "cleared": cleared}
+
+
+@app.post("/api/providers/refresh-keys", dependencies=_ADMIN)
+async def refresh_provider_keys(profile: Optional[str] = None):
+    """Settings → Models "Refresh keys": reload every saved key now."""
+    try:
+        with _profile_scope(profile):
+            result = _refresh_provider_keys()
+        return {"ok": True, **result}
+    except Exception:
+        _log.exception("POST /api/providers/refresh-keys failed")
+        raise HTTPException(status_code=500, detail="Couldn't refresh the keys")
+
+
 @app.put("/api/env", dependencies=_ADMIN)
 async def set_env_var(body: EnvVarUpdate, profile: Optional[str] = None):
     try:
         with _profile_scope(body.profile or profile):
             save_env_value(body.key, body.value)
+            try:
+                _refresh_provider_keys(body.key)
+            except Exception:
+                _log.debug("PUT /api/env: key refresh skipped", exc_info=True)
         return {"ok": True, "key": body.key}
     except ValueError as exc:
         # save_env_value raises ValueError for invalid names and for keys
@@ -16849,6 +16983,21 @@ def _has_table(conn, name: str) -> bool:
     ).fetchone() is not None
 
 
+def _perf_role(caller: Optional[str], platform: Optional[str]) -> str:
+    """Which part of Aquarium made a ledger call, as the Performance cards
+    tag it. The main loop logs every chat and scheduled job as ``main``;
+    a scheduled job (platform ``cron``) is tagged ``scheduled`` and a call
+    the backup chain made is ``backup``, so ``main`` means the Main role."""
+    caller = caller or ""
+    if caller.startswith("aux:"):
+        return caller[len("aux:"):]
+    if caller == "fallback":
+        return "backup"
+    if caller == "main" and (platform or "") == "cron":
+        return "scheduled"
+    return caller
+
+
 @app.get("/api/analytics/models/performance")
 async def get_models_performance(
     days: int = 7, months: int = 6, profile: Optional[str] = None
@@ -16878,9 +17027,13 @@ async def get_models_performance(
             if not _has_table(conn, "api_call_log"):
                 continue
             try:
+                cols = {r[1] for r in conn.execute("PRAGMA table_info(api_call_log)")}
+                served_col = "served_model" if "served_model" in cols else "NULL"
                 attempts.extend(conn.execute(
-                    """
+                    f"""
                     SELECT ts, model, provider, duration_ms, status, caller,
+                           platform, error_type, status_code,
+                           {served_col} AS served_model,
                            date(ts, 'unixepoch') AS day,
                            strftime('%Y-%m', ts, 'unixepoch') AS month,
                            input_tokens, output_tokens,
@@ -16927,15 +17080,30 @@ async def get_models_performance(
                 _log.debug("models/performance: sessions read failed", exc_info=True)
 
         # ── Aggregate attempts in Python ─────────────────────────────
+        # Older rows stored the provider's own label for the model
+        # (DeepSeek replies to `deepseek-v4-flash` as `deepseek-flash`).
+        # Newer rows carry both, so learn the label → configured name map
+        # from them and file the older rows under the configured name.
+        aliases: Dict[tuple, str] = {}
+        for r in attempts:
+            served = r["served_model"]
+            if served and served != r["model"]:
+                aliases[(r["provider"] or "", served)] = r["model"]
+
         per_model: Dict[str, Dict[str, Any]] = {}
         monthly_ledger: Dict[tuple, Dict[str, Any]] = {}
         for r in attempts:
-            key = f"{r['model']}\t{r['provider'] or ''}"
+            model_name = r["model"]
+            served = r["served_model"]
+            if not served and (r["provider"] or "", model_name) in aliases:
+                served = model_name
+                model_name = aliases[(r["provider"] or "", model_name)]
+            key = f"{model_name}\t{r['provider'] or ''}"
             tokens = (r["input_tokens"] or 0) + (r["output_tokens"] or 0) + (
                 r["cache_read_tokens"] or 0) + (r["reasoning_tokens"] or 0)
 
             m = monthly_ledger.setdefault(
-                (r["month"], r["model"]),
+                (r["month"], model_name),
                 {"calls": 0, "failures": 0, "tokens": 0, "durations": []},
             )
             m["calls"] += 1
@@ -16947,11 +17115,17 @@ async def get_models_performance(
             if r["ts"] < day_cutoff:
                 continue
             e = per_model.setdefault(key, {
-                "model": r["model"], "provider": r["provider"] or "",
+                "model": model_name, "provider": r["provider"] or "",
                 "calls": 0, "failures": 0, "durations": [],
                 "input": 0, "output": 0, "cache": 0, "reasoning": 0,
-                "roles": set(), "daily": {},
+                "roles": set(), "daily": {}, "served_as": set(),
+                "failure_reasons": {},
             })
+            if served and served != model_name:
+                e["served_as"].add(served)
+            if r["status"] == "error":
+                reason = (r["status_code"], r["error_type"] or "")
+                e["failure_reasons"][reason] = e["failure_reasons"].get(reason, 0) + 1
             e["calls"] += 1
             e["failures"] += 1 if r["status"] == "error" else 0
             if r["duration_ms"] is not None:
@@ -16960,8 +17134,9 @@ async def get_models_performance(
             e["output"] += r["output_tokens"] or 0
             e["cache"] += r["cache_read_tokens"] or 0
             e["reasoning"] += r["reasoning_tokens"] or 0
-            if r["caller"]:
-                e["roles"].add(r["caller"])
+            role = _perf_role(r["caller"], r["platform"])
+            if role:
+                e["roles"].add(role)
             d = e["daily"].setdefault(
                 r["day"], {"date": r["day"], "calls": 0, "failures": 0,
                            "tokens": 0, "durations": []}
@@ -16999,10 +17174,14 @@ async def get_models_performance(
             models.append({
                 "model": e["model"],
                 "provider": e["provider"],
-                "caller_roles": sorted(
-                    c[len("aux:"):] if c.startswith("aux:") else c
-                    for c in e["roles"]
-                ),
+                "caller_roles": sorted(e["roles"]),
+                "served_as": sorted(e["served_as"]),
+                "failure_reasons": [
+                    {"status_code": code, "error_type": etype, "count": n}
+                    for (code, etype), n in sorted(
+                        e["failure_reasons"].items(), key=lambda kv: -kv[1]
+                    )
+                ],
                 "calls": calls,
                 "failures": failures,
                 "success_rate": (calls - failures) / calls if calls else None,

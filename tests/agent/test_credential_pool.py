@@ -3282,3 +3282,34 @@ def test_sync_anthropic_entry_clears_all_error_fields(tmp_path, monkeypatch):
     assert synced.last_error_reason is None
     assert synced.last_error_message is None
     assert synced.last_error_reset_at is None
+
+
+def test_rotated_env_key_clears_the_old_keys_failure_mark(tmp_path, monkeypatch):
+    """A new key in .env must not inherit the 401 recorded for the old one."""
+    import hashlib
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    old_fp = "sha256:" + hashlib.sha256(b"old-key").hexdigest()[:16]
+    _write_auth_store(tmp_path, {
+        "version": 1,
+        "providers": {},
+        "credential_pool": {"openrouter": [{
+            "id": "abc123", "label": "OPENROUTER_API_KEY", "auth_type": "api_key",
+            "priority": 0, "source": "env:OPENROUTER_API_KEY",
+            "last_status": "exhausted", "last_status_at": 9_999_999_999.0,
+            "last_error_code": 401, "secret_fingerprint": old_fp,
+        }]},
+    })
+
+    from agent.credential_pool import load_pool
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "old-key")
+    assert load_pool("openrouter").select() is None  # still cooling down
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "new-key")
+    entry = load_pool("openrouter").select()
+    assert entry is not None and entry.access_token == "new-key"
+    persisted = json.loads((tmp_path / "hermes" / "auth.json").read_text())
+    row = persisted["credential_pool"]["openrouter"][0]
+    assert row.get("last_status") in (None, "ok")
+    assert row.get("last_error_code") is None

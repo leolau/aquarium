@@ -800,7 +800,11 @@ CREATE TABLE IF NOT EXISTS api_call_log (
     -- Board card (and its run) whose worker made the call — read from the
     -- worker's HERMES_KANBAN_TASK / HERMES_KANBAN_RUN_ID; NULL elsewhere.
     kanban_task_id TEXT,
-    kanban_run_id INTEGER
+    kanban_run_id INTEGER,
+    -- The model name the provider's reply carried when it differs from the
+    -- configured one (DeepSeek answers `deepseek-v4-flash` as
+    -- `deepseek-flash`); `model` is always the configured name.
+    served_model TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_api_call_log_ts ON api_call_log(ts);
@@ -2247,6 +2251,7 @@ class SessionDB:
         usage: Optional[Dict[str, Any]] = None,
         kanban_task_id: Optional[str] = None,
         kanban_run_id: Optional[int] = None,
+        served_model: Optional[str] = None,
     ) -> None:
         """Append one provider-call attempt to ``api_call_log``.
 
@@ -2271,8 +2276,8 @@ class SessionDB:
                 " caller, model, provider, duration_ms, status, finish_reason,"
                 " error_type, status_code, retry_count, input_tokens,"
                 " output_tokens, cache_read_tokens, reasoning_tokens,"
-                " kanban_task_id, kanban_run_id"
-                ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " kanban_task_id, kanban_run_id, served_model"
+                ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     request_id,
                     ts if ts is not None else time.time(),
@@ -2295,6 +2300,7 @@ class SessionDB:
                     int(usage.get("reasoning_tokens") or 0),
                     kanban_task_id or None,
                     kanban_run_id,
+                    served_model if served_model and served_model != model else None,
                 ),
             )
 

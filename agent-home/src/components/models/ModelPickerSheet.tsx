@@ -7,6 +7,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { withProfileBody, withProfileQuery } from "@/lib/chat/profile";
 import type {
   AuxTaskAssignment,
+  FallbackModel,
   ModelOptionsResponse,
   ModelSetResponse,
 } from "@/types";
@@ -36,6 +37,7 @@ export function ModelPickerSheet({
   slot,
   currentMain,
   currentAssignment,
+  fallbacks = [],
   profile,
   onClose,
   onChanged,
@@ -44,16 +46,29 @@ export function ModelPickerSheet({
   slot: ModelSlot;
   currentMain: { provider: string; model: string };
   currentAssignment?: AuxTaskAssignment;
+  /** The current backup list — a fallback slot edits one entry of it. */
+  fallbacks?: FallbackModel[];
   profile?: string;
   onClose: () => void;
   onChanged: () => void;
   onError: (message: string | null) => void;
 }) {
-  const title = slot.kind === "main" ? "Main model" : `${slot.label} model`;
+  const editedFallback =
+    slot.kind === "fallback" && slot.index != null ? fallbacks[slot.index] : undefined;
+  const title =
+    slot.kind === "main"
+      ? "Main model"
+      : slot.kind === "fallback"
+        ? slot.index == null
+          ? "Add a backup model"
+          : `Backup model ${slot.index + 1}`
+        : `${slot.label} model`;
   const subtitle =
     slot.kind === "main"
       ? "the brain every session starts with"
-      : `${slot.hint} · currently ${describeAssignment(currentAssignment, currentMain)}`;
+      : slot.kind === "fallback"
+        ? "tried in order when the main model fails"
+        : `${slot.hint} · currently ${describeAssignment(currentAssignment, currentMain)}`;
 
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const [options, setOptions] = useState<ModelOptionsResponse | null>(null);
@@ -93,12 +108,18 @@ export function ModelPickerSheet({
     const initial =
       slot.kind === "main"
         ? currentMain.provider || body.provider || body.providers[0]?.slug || ""
-        : currentAssignment && currentAssignment.provider !== "auto"
-          ? currentAssignment.provider
-          : body.provider || body.providers[0]?.slug || "";
+        : slot.kind === "fallback"
+          ? editedFallback?.provider || body.provider || body.providers[0]?.slug || ""
+          : currentAssignment && currentAssignment.provider !== "auto"
+            ? currentAssignment.provider
+            : body.provider || body.providers[0]?.slug || "";
     setProviderSlug(initial);
     setSelectedModel(
-      slot.kind === "main" ? currentMain.model : currentAssignment?.model ?? "",
+      slot.kind === "main"
+        ? currentMain.model
+        : slot.kind === "fallback"
+          ? editedFallback?.model ?? ""
+          : currentAssignment?.model ?? "",
     );
     setPhase({ kind: "ready" });
   };
@@ -118,12 +139,33 @@ export function ModelPickerSheet({
   const keyBased = provider?.auth_type === "api_key" && !!provider?.key_env;
   const needsEndpoint = !!provider?.base_url_env;
 
+  async function saveFallback(model: string) {
+    if (!provider || slot.kind !== "fallback") return;
+    const entry = { provider: provider.slug, model };
+    const next =
+      slot.index == null
+        ? [...fallbacks, entry]
+        : fallbacks.map((f, i) => (i === slot.index ? entry : f));
+    const res = await fetch("/api/models/fallback", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(withProfileBody({ providers: next }, profile)),
+    });
+    const body = (await res.json().catch(() => ({}))) as { detail?: string };
+    if (!res.ok) throw new Error(body.detail ?? "Couldn't save the backup model.");
+    onChanged();
+  }
+
   async function setModel(confirmExpensive: boolean) {
     const model = typedModel.trim() || selectedModel;
     if (!provider || !model || busy) return;
     setBusy("set");
     setNote(null);
     try {
+      if (slot.kind === "fallback") {
+        await saveFallback(model);
+        return;
+      }
       const res = await fetch("/api/models/set", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -626,15 +668,14 @@ export function ModelPickerSheet({
                     {testing ? <Spinner /> : null}
                     {testing ? "Testing…" : "Test"}
                   </ActionButton>
-                  <button
-                    type="button"
+                  <ActionButton
+                    busyLabel="Saving…"
                     disabled={(!selectedModel && !typedModel.trim()) || busy !== null || testing}
-                    onClick={() => void setModel(false)}
+                    onAction={() => setModel(false)}
                     className="inline-flex items-center gap-2 rounded-full bg-[var(--color-accent)] px-4 py-1.5 text-xs font-semibold text-[var(--color-accent-fg)] disabled:opacity-60"
                   >
-                    {busy === "set" ? <Spinner /> : null}
-                    Set model
-                  </button>
+                    {slot.kind === "fallback" ? "Save backup" : "Set model"}
+                  </ActionButton>
                 </div>
                 {authenticated && keyBased ? (
                   <div className="mt-3 space-y-2 border-t border-[var(--color-border)] pt-3">
@@ -655,15 +696,14 @@ export function ModelPickerSheet({
                           autoComplete="off"
                           className="min-w-0 flex-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 font-mono text-xs"
                         />
-                        <button
-                          type="button"
+                        <ActionButton
+                          busyLabel="Saving…"
                           disabled={!keyValue.trim() || busy !== null}
-                          onClick={() => void saveKey()}
+                          onAction={() => saveKey()}
                           className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] px-3.5 py-2 text-xs disabled:opacity-60"
                         >
-                          {busy === "key" ? <Spinner /> : null}
                           Save
-                        </button>
+                        </ActionButton>
                       </div>
                     ) : null}
                     <button
