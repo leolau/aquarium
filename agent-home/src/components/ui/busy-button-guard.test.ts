@@ -13,17 +13,10 @@ import { describe, expect, it } from "vitest";
 
 const SRC = path.resolve(__dirname, "../..");
 
-const PENDING = new Set([
+const PENDING = new Set<string>([
   // PR 4 — Settings, People
   // PR 5 — Sign-in, first-run, Account, Get ready
   // PR 6 — Files, Memory, Models, other
-  "components/coral/LeadChatHost.tsx",
-  "components/files/BrowseView.tsx",
-  "components/files/NetworkFolders.tsx",
-  "components/memory/MemoryView.tsx",
-  "components/models/ModelPickerSheet.tsx",
-  "components/models/ModelsView.tsx",
-  "components/webview/WebviewConsole.tsx",
 ]);
 
 const SENDS_CHANGE = /method:\s*"(POST|PUT|PATCH|DELETE)"|^\s*method,\s*$|method: method/m;

@@ -11,6 +11,7 @@ import type {
   ProfileSuggestionSummary,
   Role,
 } from "@/types";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 export interface ProfileSuggestionsViewProps {
   role: Role;
@@ -241,13 +242,12 @@ function SuggestionCard({
                 the same evidence.
               </p>
               <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => void dismiss()}
+                <ActionButton
+                  onAction={() => dismiss()}
                   className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 text-xs active:opacity-70"
                 >
                   Confirm dismiss
-                </button>
+                </ActionButton>
                 <button
                   type="button"
                   onClick={() => {
@@ -263,13 +263,12 @@ function SuggestionCard({
             </div>
           ) : (
             <div className="mt-4 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => void adopt()}
+              <ActionButton
+                onAction={() => adopt()}
                 className="rounded-lg bg-[var(--color-accent)] px-3 py-1 text-xs font-medium text-[var(--color-accent-fg)] active:opacity-70"
               >
                 Adopt
-              </button>
+              </ActionButton>
               <button
                 type="button"
                 onClick={() => void setDismissOpen(true)}

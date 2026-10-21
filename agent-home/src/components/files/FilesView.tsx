@@ -9,6 +9,7 @@ import type {
   FileAssetsResponse,
   FileSurfacesResponse,
 } from "@/types";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 /**
  * The `/files` view: everything that arrived, from any surface, with where it
@@ -227,25 +228,23 @@ export function FilesView({
               {total} file{total === 1 ? "" : "s"}
             </span>
             <span className="flex items-center gap-2">
-              <button
-                type="button"
+              <ActionButton busyLabel="Loading…"
                 disabled={offset === 0 || loading}
-                onClick={() => void load({ offset: Math.max(0, offset - limit) })}
+                onAction={() => load({ offset: Math.max(0, offset - limit) })}
                 className="rounded-lg border border-[var(--color-border)] px-2 py-1 disabled:opacity-40"
               >
                 Newer
-              </button>
+              </ActionButton>
               <span>
                 {page} / {pages}
               </span>
-              <button
-                type="button"
+              <ActionButton busyLabel="Loading…"
                 disabled={offset + limit >= total || loading}
-                onClick={() => void load({ offset: offset + limit })}
+                onAction={() => load({ offset: offset + limit })}
                 className="rounded-lg border border-[var(--color-border)] px-2 py-1 disabled:opacity-40"
               >
                 Older
-              </button>
+              </ActionButton>
             </span>
           </div>
         </div>

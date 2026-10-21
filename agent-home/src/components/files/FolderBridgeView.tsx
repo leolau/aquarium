@@ -24,6 +24,7 @@ import {
 } from "@/lib/folder-bridge/transport";
 import type { ImportProgress } from "@/lib/folder-bridge/transport";
 import type { ConnectionStatus, FolderRecord, SearchMatch } from "@/lib/folder-bridge/types";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
   disconnected: "Disconnected",
@@ -180,22 +181,20 @@ export function FolderBridgeView() {
             <span className={STATUS_TONE[status]}>{STATUS_LABEL[status]}</span>
           </div>
           {status === "disconnected" || status === "reconnecting" ? (
-            <button
-              type="button"
+            <ActionButton
               data-appmcp-deny="consent"
-              onClick={() => connectFolderBridge()}
+              onAction={() => connectFolderBridge()}
               className="rounded-xl bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent-fg)]"
             >
               Connect
-            </button>
+            </ActionButton>
           ) : (
-            <button
-              type="button"
-              onClick={() => disconnectFolderBridge()}
+            <ActionButton
+              onAction={() => disconnectFolderBridge()}
               className="rounded-xl border border-[var(--color-border)] px-4 py-2 text-sm"
             >
               Disconnect
-            </button>
+            </ActionButton>
           )}
         </div>
         <p className="mt-2 text-xs text-[var(--color-muted)]">
@@ -242,15 +241,14 @@ export function FolderBridgeView() {
           <h2 className="text-xs uppercase tracking-wide text-[var(--color-muted)]">
             Folders on this Mac
           </h2>
-          <button
-            type="button"
+          <ActionButton
             data-appmcp-deny="consent"
-            onClick={() => void handleAddFolder()}
+            onAction={() => handleAddFolder()}
             disabled={busy}
             className="rounded-xl border border-[var(--color-border)] px-3 py-1.5 text-xs disabled:opacity-50"
           >
             Add folder
-          </button>
+          </ActionButton>
         </div>
         {folders.length === 0 ? (
           <p className="mt-2 text-sm text-[var(--color-muted)]">
@@ -289,22 +287,20 @@ export function FolderBridgeView() {
                   Trusted for import
                 </label>
                 {folder.permission !== "granted" ? (
-                  <button
-                    type="button"
+                  <ActionButton
                     data-appmcp-deny="consent"
-                    onClick={() => void handleReapprove(folder.id)}
+                    onAction={() => handleReapprove(folder.id)}
                     className="rounded-lg border border-amber-400/50 px-2 py-1 text-xs text-[var(--color-warn-text)]"
                   >
                     Needs re-approval
-                  </button>
+                  </ActionButton>
                 ) : null}
-                <button
-                  type="button"
-                  onClick={() => void handleRemoveFolder(folder.id)}
+                <ActionButton
+                  onAction={() => handleRemoveFolder(folder.id)}
                   className="rounded-lg border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-muted)]"
                 >
                   Remove
-                </button>
+                </ActionButton>
               </li>
             ))}
           </ul>
@@ -336,14 +332,13 @@ export function FolderBridgeView() {
             placeholder="File or folder name, e.g. invoices, *.pdf or 2026/*.pdf"
             className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-[var(--color-accent)]"
           />
-          <button
-            type="button"
-            onClick={() => void handleSearch()}
+          <ActionButton
+            onAction={() => handleSearch()}
             disabled={busy || folders.length === 0}
             className="rounded-xl border border-[var(--color-border)] px-3 py-2 text-sm disabled:opacity-50"
           >
             Search
-          </button>
+          </ActionButton>
         </div>
 
         {error ? (

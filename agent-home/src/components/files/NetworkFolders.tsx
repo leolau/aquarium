@@ -18,6 +18,7 @@ import {
   normalizeSmbPath,
 } from "@/lib/folder-bridge/networkFolders";
 import type { NetworkFolderInput, NetworkFolderView, VpnState, VpnView } from "@/types";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 const POLL_MS = 30_000;
 
@@ -464,14 +465,13 @@ export function NetworkFolders() {
                       Trusted for import
                     </span>
                   ) : null}
-                  <button
-                    type="button"
+                  <ActionButton busyLabel="Testing…"
                     disabled={!!b}
-                    onClick={() => void runTest(folder.name)}
+                    onAction={() => runTest(folder.name)}
                     className={btnCls}
                   >
                     {b === "test" ? "Testing…" : "Test"}
-                  </button>
+                  </ActionButton>
                   <button
                     type="button"
                     disabled={!!b}
@@ -618,14 +618,13 @@ export function NetworkFolders() {
             </p>
           ) : null}
           <div className="mt-3 flex gap-2">
-            <button
-              type="button"
+            <ActionButton busyLabel="Saving…"
               disabled={!!saving}
-              onClick={() => void save()}
+              onAction={() => save()}
               className="rounded-xl bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent-fg)] disabled:opacity-50"
             >
               {saving === "saving" ? "Saving…" : saving === "testing" ? "Testing…" : "Save & test"}
-            </button>
+            </ActionButton>
             <button
               type="button"
               disabled={!!saving}

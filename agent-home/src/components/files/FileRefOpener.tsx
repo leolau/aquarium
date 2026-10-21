@@ -6,6 +6,7 @@ import { FileDetail } from "@/components/files/FilesView";
 import { friendlyFileName } from "@/components/projects/panels/LinkRow";
 import { mediaContentRef } from "@/lib/chat/media-ref";
 import type { FileAsset } from "@/types";
+import { useAction } from "@/lib/use-action";
 
 export interface FileRefTarget {
   /** The storage object path (`<user>/<scope>/<uuid>-<name>`). */
@@ -55,7 +56,10 @@ export function useFileRefOpener() {
     <FileRefFallback target={fallback} onClose={() => setFallback(null)} />
   ) : null;
 
-  return { open, resolving, dialog };
+  // A fast double click on a file link would fetch it twice.
+  const { run: openOnce } = useAction(open);
+
+  return { open: openOnce, resolving, dialog };
 }
 
 /** The no-registry-record dialog: view/download via the media content route. */

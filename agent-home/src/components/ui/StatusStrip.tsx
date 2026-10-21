@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { StatusSummary } from "@/types";
 import { useT } from "@/i18n";
+import { useAction } from "@/lib/use-action";
 
 const POLL_MS = 30_000;
 const AGE_TICK_MS = 1_000;
@@ -97,7 +98,8 @@ export function StatusStrip() {
     } finally {
       if (mounted.current) setRefreshing(false);
     }
-  }, [tick]);
+  }, [tick]);  const { run: refreshOnce } = useAction(refreshNow);
+
 
   useEffect(() => {
     mounted.current = true;
@@ -206,7 +208,7 @@ export function StatusStrip() {
         ) : null}
         <button
           type="button"
-          onClick={() => void refreshNow()}
+          onClick={() => void refreshOnce()}
           disabled={refreshing}
           aria-busy={refreshing || undefined}
           aria-label="Refresh now"

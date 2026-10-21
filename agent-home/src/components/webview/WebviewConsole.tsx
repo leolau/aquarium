@@ -13,6 +13,8 @@ import type {
   WebviewMode,
   WebviewSession,
 } from "@/types";
+import { ActionButton } from "@/components/ui/ActionButton";
+import { useAction } from "@/lib/use-action";
 
 export interface WebviewConsoleProps {
   initialConfigured: boolean;
@@ -142,6 +144,8 @@ export function WebviewConsole({
       setBusy(false);
     }
   }
+  const { run: requestOnce } = useAction(requestAction);
+  const { run: resolveOnce } = useAction(resolveApproval);
 
   return (
     <div data-component="WebviewConsole" className="flex flex-col gap-4">
@@ -210,26 +214,25 @@ export function WebviewConsole({
                   ))
                 )}
               </ul>
-              <button
-                type="button"
+              <ActionButton
                 disabled={busy}
-                onClick={() => void closeSession()}
+                onAction={() => closeSession()}
                 className="w-fit rounded-xl border border-[var(--color-border)] px-3 py-2 text-sm disabled:opacity-50"
               >
                 Close session
-              </button>
+              </ActionButton>
             </section>
 
             <ActionConsole
               busy={busy}
               lastResult={lastResult}
-              onRequest={requestAction}
+              onRequest={requestOnce}
             />
 
             <PendingApprovals
               pending={session.pending}
               busy={busy}
-              onResolve={resolveApproval}
+              onResolve={resolveOnce}
             />
           </>
         )}
