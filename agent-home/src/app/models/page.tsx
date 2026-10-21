@@ -26,13 +26,19 @@ export default async function Page({
   let error: string | null = null;
   try {
     const client = await apiClientForRequest({ profile });
-    const [info, auxiliary, analytics] = await Promise.all([
+    const [info, auxiliary, analytics, fallback] = await Promise.all([
       client.modelInfo(),
       client.auxiliaryModels(),
-      // Usage is additive — it must not blank the configuration sections.
+      // Usage and backups are additive — they must not blank the configuration sections.
       client.modelsAnalytics(30).catch(() => null),
+      client.fallbackModels().catch(() => null),
     ]);
-    data = { info, auxiliary, usage: analytics?.models ?? [] };
+    data = {
+      info,
+      auxiliary,
+      usage: analytics?.models ?? [],
+      fallback: fallback?.providers ?? [],
+    };
   } catch (err) {
     error = err instanceof Error ? err.message : "Failed to load models";
   }

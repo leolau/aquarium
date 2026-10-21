@@ -443,6 +443,9 @@ export function ModelsView({
                   {shown.provider ? (
                     <span className="block truncate text-[11px] text-[var(--color-muted)]">
                       {shown.provider}
+                      {a?.fallback_chain?.length
+                        ? ` · ${a.fallback_chain.length} backup${a.fallback_chain.length > 1 ? "s" : ""}`
+                        : ""}
                     </span>
                   ) : null}
                 </span>
@@ -598,6 +601,7 @@ export function ModelsView({
             slot.kind === "aux" ? assignments.get(slot.task) : undefined
           }
           fallbacks={fallbacks ?? []}
+          onRefresh={() => refresh()}
           profile={profile}
           onClose={() => setSlot(null)}
           onChanged={() => {

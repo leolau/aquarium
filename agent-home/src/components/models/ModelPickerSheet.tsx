@@ -41,6 +41,7 @@ export function ModelPickerSheet({
   profile,
   onClose,
   onChanged,
+  onRefresh,
   onError,
 }: {
   slot: ModelSlot;
@@ -51,8 +52,40 @@ export function ModelPickerSheet({
   profile?: string;
   onClose: () => void;
   onChanged: () => void;
+  /** Reload the page's data without closing the sheet (backup edits). */
+  onRefresh?: () => unknown;
   onError: (message: string | null) => void;
 }) {
+  const roleTask = slot.kind === "aux" ? slot.task : undefined;
+  const [backups, setBackups] = useState<FallbackModel[]>(
+    slot.kind === "main"
+      ? fallbacks
+      : slot.kind === "aux"
+        ? currentAssignment?.fallback_chain ?? []
+        : [],
+  );
+  const [backupNote, setBackupNote] = useState<string | null>(null);
+
+  async function saveBackups(next: FallbackModel[]) {
+    setBackupNote(null);
+    try {
+      const res = await fetch("/api/models/fallback", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(withProfileBody({ providers: next, task: roleTask }, profile)),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        providers?: FallbackModel[];
+        detail?: string;
+      };
+      if (!res.ok) throw new Error(body.detail ?? "Couldn't save the backups.");
+      setBackups(body.providers ?? next);
+      await onRefresh?.();
+    } catch (err) {
+      setBackupNote(err instanceof Error ? err.message : "Couldn't save the backups.");
+    }
+  }
+
   const editedFallback =
     slot.kind === "fallback" && slot.index != null ? fallbacks[slot.index] : undefined;
   const title =
@@ -677,6 +710,78 @@ export function ModelPickerSheet({
                     {slot.kind === "fallback" ? "Save backup" : "Set model"}
                   </ActionButton>
                 </div>
+                {slot.kind !== "fallback" ? (
+                  <div
+                    data-component="RoleBackups"
+                    className="mt-3 border-t border-[var(--color-border)] pt-3"
+                  >
+                    <div className="text-xs font-semibold">Backups for this role</div>
+                    <p className="mt-0.5 text-[11px] text-[var(--color-muted)]">
+                      If this role&apos;s model fails: {[
+                        ...backups.map((b) => b.model),
+                        slot.kind === "main"
+                          ? "the request fails"
+                          : currentAssignment && currentAssignment.provider !== "auto"
+                            ? `the Main model (${currentMain.model || "main"})`
+                            : "the Main backup list",
+                      ].join(" → ")}
+                    </p>
+                    {backups.map((b, i) => (
+                      <div key={`${b.provider}:${b.model}`} className="mt-1.5 flex items-center gap-2 text-xs">
+                        <span className="w-4 text-[var(--color-muted)]">{i + 1}.</span>
+                        <span className="min-w-0 truncate">
+                          {b.model} <span className="text-[var(--color-muted)]">· {b.provider}</span>
+                        </span>
+                        <span className="ml-auto flex shrink-0 gap-1">
+                          <ActionButton
+                            aria-label={`Move backup ${b.model} up`}
+                            busyLabel="…"
+                            disabled={i === 0}
+                            onAction={() => {
+                              const next = [...backups];
+                              [next[i - 1], next[i]] = [next[i], next[i - 1]];
+                              return saveBackups(next);
+                            }}
+                            className="rounded-full border border-[var(--color-border)] px-2 py-0.5 disabled:opacity-40"
+                          >
+                            ↑
+                          </ActionButton>
+                          <ActionButton
+                            aria-label={`Remove backup ${b.model}`}
+                            busyLabel="…"
+                            onAction={() => saveBackups(backups.filter((_, j) => j !== i))}
+                            className="rounded-full border border-[var(--color-border)] px-2 py-0.5 text-red-300"
+                          >
+                            Remove
+                          </ActionButton>
+                        </span>
+                      </div>
+                    ))}
+                    <ActionButton
+                      busyLabel="Adding…"
+                      disabled={
+                        !provider ||
+                        !(typedModel.trim() || selectedModel) ||
+                        backups.length >= 5 ||
+                        busy !== null
+                      }
+                      onAction={() =>
+                        provider
+                          ? saveBackups([
+                            ...backups,
+                            { provider: provider.slug, model: typedModel.trim() || selectedModel },
+                          ])
+                          : undefined
+                      }
+                      className="mt-2 rounded-full border border-[var(--color-border)] px-3 py-1 text-xs disabled:opacity-40"
+                    >
+                      + Add the model selected above as a backup
+                    </ActionButton>
+                    {backupNote ? (
+                      <p className="mt-1 text-[11px] text-red-300">{backupNote}</p>
+                    ) : null}
+                  </div>
+                ) : null}
                 {authenticated && keyBased ? (
                   <div className="mt-3 space-y-2 border-t border-[var(--color-border)] pt-3">
                     <button

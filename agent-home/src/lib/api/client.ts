@@ -2895,9 +2895,16 @@ export class HermesApiClient {
     return this.request("/api/model/fallback");
   }
 
-  /** Replace the whole backup-model list (order = try order). */
-  async setFallbackModels(providers: FallbackModel[]): Promise<FallbackModelsResponse> {
-    return this.request("/api/model/fallback", { method: "PUT", json: { providers } });
+  /** Replace a whole backup-model list (order = try order): Main's when
+   *  `task` is omitted, otherwise that task role's. */
+  async setFallbackModels(
+    providers: FallbackModel[],
+    task?: string,
+  ): Promise<FallbackModelsResponse> {
+    return this.request("/api/model/fallback", {
+      method: "PUT",
+      json: task ? { providers, task } : { providers },
+    });
   }
 
   /** Reload saved provider keys now and clear old "key failed" marks. */

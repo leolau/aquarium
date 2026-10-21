@@ -2276,6 +2276,8 @@ export interface AuxTaskAssignment {
   provider: string;
   model: string;
   base_url: string;
+  /** This role's own backup list, tried in order when its model fails. */
+  fallback_chain?: FallbackModel[];
 }
 
 export interface AuxiliaryModelsResponse {

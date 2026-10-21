@@ -6917,11 +6917,17 @@ def get_auxiliary_models(profile: Optional[str] = None):
         tasks = []
         for slot in _AUX_TASK_SLOTS:
             slot_cfg = aux_cfg.get(slot, {}) if isinstance(aux_cfg.get(slot), dict) else {}
+            chain = slot_cfg.get("fallback_chain")
             tasks.append({
                 "task": slot,
                 "provider": str(slot_cfg.get("provider", "auto") or "auto"),
                 "model": str(slot_cfg.get("model", "") or ""),
                 "base_url": str(slot_cfg.get("base_url", "") or ""),
+                "fallback_chain": [
+                    {"provider": str(e["provider"]), "model": str(e["model"])}
+                    for e in (chain if isinstance(chain, list) else [])
+                    if isinstance(e, dict) and e.get("provider") and e.get("model")
+                ],
             })
 
         model_cfg = cfg.get("model", {})
@@ -6948,6 +6954,9 @@ class FallbackEntry(BaseModel):
 
 class FallbackUpdate(BaseModel):
     providers: List[FallbackEntry] = []
+    # Empty = the Main role's list (``fallback_providers``); a task slot
+    # name = that role's ``auxiliary.<task>.fallback_chain``.
+    task: str = ""
     profile: Optional[str] = None
 
 
@@ -6975,7 +6984,8 @@ def get_fallback_models(profile: Optional[str] = None):
 
 @app.put("/api/model/fallback", dependencies=_ADMIN)
 def set_fallback_models(body: FallbackUpdate, profile: Optional[str] = None):
-    """Replace the backup-model list (``fallback_providers``).
+    """Replace a backup-model list: Main's ``fallback_providers``, or a
+    task role's ``auxiliary.<task>.fallback_chain`` when ``task`` is set.
 
     The page shows the merged chain, legacy ``fallback_model`` included, so
     saving writes that whole list to ``fallback_providers`` and drops the
@@ -6998,13 +7008,30 @@ def set_fallback_models(body: FallbackUpdate, profile: Optional[str] = None):
             status_code=400,
             detail=f"At most {_MAX_FALLBACK_PROVIDERS} backup models",
         )
+    task = (body.task or "").strip().lower()
+    if task and task not in _AUX_TASK_SLOTS:
+        raise HTTPException(status_code=400, detail=f"Unknown task role: {task}")
     try:
         with _profile_scope(body.profile or profile):
             cfg = load_config()
-            cfg["fallback_providers"] = entries
-            cfg.pop("fallback_model", None)
+            if task:
+                aux = cfg.get("auxiliary")
+                if not isinstance(aux, dict):
+                    aux = {}
+                    cfg["auxiliary"] = aux
+                slot_cfg = aux.get(task)
+                if not isinstance(slot_cfg, dict):
+                    slot_cfg = {}
+                    aux[task] = slot_cfg
+                if entries:
+                    slot_cfg["fallback_chain"] = entries
+                else:
+                    slot_cfg.pop("fallback_chain", None)
+            else:
+                cfg["fallback_providers"] = entries
+                cfg.pop("fallback_model", None)
             save_config(cfg)
-        return {"ok": True, "providers": entries}
+        return {"ok": True, "task": task, "providers": entries}
     except Exception:
         _log.exception("PUT /api/model/fallback failed")
         raise HTTPException(status_code=500, detail="Failed to save backup models")
