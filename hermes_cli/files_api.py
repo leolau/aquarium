@@ -15,6 +15,7 @@ Mounted by ``web_server.py`` beside the memory explorer router.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Optional
 
@@ -28,6 +29,29 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/registry/files")
 
 _DEFAULT_LIMIT = 50
+
+# Registries whose DDL already ran in this process. ``initialize`` drops and
+# recreates RLS policies and opens its own connection, so running it on every
+# upload made a 100-file upload burst exhaust the connection pool and race on
+# the policy DDL.
+_INITIALIZED_REGISTRIES: set[tuple[str, str, bool]] = set()
+_INITIALIZE_LOCK = asyncio.Lock()
+
+
+async def _initialize_once(registry) -> None:
+    store = registry._store
+    key = (
+        str(getattr(store, "dsn", "")),
+        str(getattr(store, "schema", "")),
+        bool(registry.role_reads),
+    )
+    if key in _INITIALIZED_REGISTRIES:
+        return
+    async with _INITIALIZE_LOCK:
+        if key in _INITIALIZED_REGISTRIES:
+            return
+        await registry.initialize()
+        _INITIALIZED_REGISTRIES.add(key)
 _MAX_LIMIT = 200
 
 
@@ -163,7 +187,7 @@ async def register_file(request: Request) -> dict[str, Any]:
         )
 
     registry = _registry()
-    await registry.initialize()
+    await _initialize_once(registry)
     asset = await registry.register(
         principal,
         surface=str(body.get("surface") or "agent_home"),

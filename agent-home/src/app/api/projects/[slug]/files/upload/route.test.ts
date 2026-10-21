@@ -37,7 +37,7 @@ vi.mock("@/lib/supabase/storage", () => ({
     (uploadChatMedia as (...a: unknown[]) => unknown)(...args),
 }));
 
-import { POST, __resetUploadReplays } from "./route";
+import { MAX_CONCURRENT_UPLOADS, POST, __resetUploadReplays } from "./route";
 
 const principal: Principal = {
   user_id: "leo",
@@ -122,6 +122,32 @@ describe("POST /api/projects/:slug/files/upload", () => {
     const retried = await post({ key: "k3" });
     expect(retried.status).toBe(200);
     expect(uploadChatMedia).toHaveBeenCalledTimes(2);
+  });
+
+  it("handles at most MAX_CONCURRENT_UPLOADS at once; the rest queue, none fail", async () => {
+    const gates: (() => void)[] = [];
+    const real = uploadChatMedia.getMockImplementation()!;
+    uploadChatMedia.mockImplementation(async (...args) => {
+      await new Promise<void>((resolve) => gates.push(resolve));
+      return real(...args);
+    });
+    const total = MAX_CONCURRENT_UPLOADS + 3;
+    const all = Promise.all(
+      Array.from({ length: total }, (_, i) => post({ key: `burst-${i}`, name: `f${i}.pdf` })),
+    );
+    await vi.waitFor(() => expect(gates).toHaveLength(MAX_CONCURRENT_UPLOADS));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(uploadChatMedia).toHaveBeenCalledTimes(MAX_CONCURRENT_UPLOADS);
+
+    let released = 0;
+    while (released < total) {
+      await vi.waitFor(() => expect(gates.length).toBeGreaterThan(released));
+      gates[released++]();
+    }
+    const answers = await all;
+    expect(answers.map((r) => r.status)).toEqual(Array(total).fill(200));
+    expect(uploadChatMedia).toHaveBeenCalledTimes(total);
+    uploadChatMedia.mockImplementation(real);
   });
 
   it("different keys upload separately", async () => {

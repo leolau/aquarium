@@ -8,7 +8,7 @@ import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { UploadFn } from "@/components/projects/inputs/uploadProjectFile";
-import { useUploadQueue } from "@/components/projects/inputs/useUploadQueue";
+import { MAX_PARALLEL_UPLOADS, useUploadQueue } from "@/components/projects/inputs/useUploadQueue";
 
 function file(name: string, lastModified = 1): File {
   return new File(["abc"], name, { lastModified });
@@ -89,6 +89,44 @@ describe("useUploadQueue", () => {
       expect(await result.current.uploadPending("proj")).toBe(true);
     });
     expect(upload).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends at most MAX_PARALLEL_UPLOADS at once; the rest wait their turn", async () => {
+    const { upload, pending } = deferredUpload();
+    const { result } = renderHook(() => useUploadQueue({ upload }));
+    const names = ["1", "2", "3", "4", "5"].map((n) => `${n}.pdf`);
+    act(() => {
+      result.current.add(names.map((n) => file(n)));
+    });
+    let all!: Promise<boolean>;
+    act(() => {
+      all = result.current.uploadPending("proj");
+    });
+    expect(upload).toHaveBeenCalledTimes(MAX_PARALLEL_UPLOADS);
+    expect(result.current.items.map((i) => Boolean(i.waiting))).toEqual([false, false, false, true, true]);
+    // Waiting files are locked like uploading ones.
+    act(() => result.current.remove(result.current.items[4].id));
+    expect(result.current.items).toHaveLength(5);
+
+    await act(async () => {
+      pending[0].resolve(true);
+    });
+    expect(upload).toHaveBeenCalledTimes(4);
+    expect(result.current.items[3].waiting).toBe(false);
+
+    await act(async () => {
+      for (let i = 1; i < names.length; i++) {
+        await Promise.resolve();
+        pending[i]?.resolve(true);
+      }
+    });
+    await act(async () => {
+      pending[4]?.resolve(true);
+      expect(await all).toBe(true);
+    });
+    expect(upload).toHaveBeenCalledTimes(5);
+    expect(upload.mock.calls.map(([r]) => r.file.name)).toEqual(names);
+    expect(result.current.items.every((i) => i.status === "done")).toBe(true);
   });
 
   it("a failure keeps the row with its error; retry re-sends the same key once", async () => {
