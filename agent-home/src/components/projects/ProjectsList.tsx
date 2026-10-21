@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * health and next-run move without anyone touching this page. */
 const AUTO_REFRESH_MS = 30_000;
 
+import { ActionButton } from "@/components/projects/ActionButton";
 import { ProjectRow } from "@/components/projects/ProjectRow";
 import { ProjectsFilters } from "@/components/projects/ProjectsFilters";
 import {
@@ -15,6 +16,7 @@ import {
   filtersToParams,
   type ProjectsFilterState,
 } from "@/components/projects/filters";
+import { useAction } from "@/lib/use-action";
 import type { ProjectListItem, ProjectsResponse } from "@/types";
 
 const PAGE_SIZE = 50;
@@ -145,6 +147,11 @@ export function ProjectsList({ initial }: { initial: ProjectsResponse }) {
 
   const narrowed = filters !== EMPTY_FILTERS && filters.view !== "active";
 
+
+  // The button is swapped for "Loading…" only after a render; the lock
+  // stops a fast second click from fetching the same page twice.
+  const { run: loadMore } = useAction(() => fetchPage(filters, cursor));
+
   return (
     <div data-component="ProjectsList" className="flex flex-col gap-3">
       {/* The create door (§13): the feature is unreachable if its only
@@ -204,13 +211,13 @@ export function ProjectsList({ initial }: { initial: ProjectsResponse }) {
         {loading ? (
           <span>Loading…</span>
         ) : cursor ? (
-          <button
-            type="button"
-            onClick={() => void fetchPage(filters, cursor)}
+          <ActionButton
+            busy={false}
+            onClick={() => void loadMore()}
             className="rounded-lg border border-[var(--color-border)] px-3 py-1.5"
           >
             Load more
-          </button>
+          </ActionButton>
         ) : items.length > 0 ? (
           <span>That&apos;s everything.</span>
         ) : null}
