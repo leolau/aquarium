@@ -49,7 +49,7 @@ a time (Leo merges; rebuild the next PR on the merged `develop`).
 
 | PR | Area | Files (from the guard's PENDING list + GET-only buttons) | Status |
 |---|---|---|---|
-| 1 | Building blocks + guard | `use-action.ts`, `ActionButton.tsx`, guard test | PR open |
+| 1 | Building blocks + guard | `use-action.ts`, `ActionButton.tsx`, guard test | PR open: https://github.com/leolau/aquarium/pull/606 |
 | 2 | Chat, Inbox, To-dos | chat/ChatPane, Composer, ArchivedModal, SessionModal, SessionSearchBar, MessageBubble; inbox/InboxView, IncomingDetailView, IncomingsList; todos/TodoCompleteForm, TodoDetailView, TodosList | not started |
 | 3 | Projects | all `components/projects/**` in PENDING, plus AddToProjectSheet, ProjectsList, changes/ChangeRequestSheet, panels/GuidancePanel, ask/AskOrChangeBox, dashboard/DashActionButton | not started |
 | 4 | Settings, People | all `components/settings/*` in PENDING, plus users/UsersView, InvitationLink, DirectoryPanel | not started |
