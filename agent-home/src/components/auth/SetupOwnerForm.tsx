@@ -8,6 +8,8 @@ import { Spinner } from "@/components/ui/Spinner";
 import { errorMessage, sendJson } from "@/components/users/api";
 import { useT, type Translator } from "@/i18n";
 import type { SetupDomainResult, SetupModelResult } from "@/lib/api/client";
+import { useAction } from "@/lib/use-action";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 /** Mirrors the server-side minimum; the server is still the authority. */
 const MIN_PASSWORD_LENGTH = 12;
@@ -270,6 +272,8 @@ export function SetupOwnerForm({
     setFinishing(false);
     setPhase(login?.ok ? "twoFactor" : "done");
   }
+  // Enter pressed twice submits twice before `busy` renders; the lock stops it.
+  const { run: finishOnce } = useAction(finish);
 
   if (phase === "checking") {
     return (
@@ -346,7 +350,7 @@ export function SetupOwnerForm({
   return (
     <form
       data-component="SetupOwnerForm"
-      onSubmit={finish}
+      onSubmit={(e) => void finishOnce(e)}
       aria-busy={finishing}
       className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-6"
     >
@@ -487,7 +491,7 @@ export function SetupOwnerForm({
                 </label>
               </div>
               <div className="flex flex-wrap items-center gap-3">
-                <button type="button" onClick={testModel} disabled={modelBusy || finishing} className={primary}>
+                <ActionButton busyLabel={t("testing")} onAction={testModel} disabled={modelBusy || finishing} className={primary}>
                   {modelBusy ? (
                     <>
                       <Spinner /> {t("testing")}
@@ -495,7 +499,7 @@ export function SetupOwnerForm({
                   ) : (
                     t("test")
                   )}
-                </button>
+                </ActionButton>
                 {modelBusy ? <span className="text-xs text-[var(--color-muted)]">{t("s3_testing")}</span> : null}
               </div>
               {model.kind === "ok" ? (
@@ -558,7 +562,7 @@ export function SetupOwnerForm({
                     onChange={(e) => setHost(e.target.value)}
                     className={`${field} min-w-0 flex-1`}
                   />
-                  <button type="button" onClick={checkDomain} disabled={domainBusy || finishing} className={btn}>
+                  <ActionButton busyLabel={t("checkingDomain")} onAction={checkDomain} disabled={domainBusy || finishing} className={btn}>
                     {domainBusy ? (
                       <>
                         <Spinner /> {t("checkingDomain")}
@@ -566,7 +570,7 @@ export function SetupOwnerForm({
                     ) : (
                       t("check")
                     )}
-                  </button>
+                  </ActionButton>
                 </span>
               </label>
               {domainResult ? (

@@ -9,6 +9,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { useT } from "@/i18n";
+import { useAction } from "@/lib/use-action";
 
 type PushSupport = "checking" | "supported" | "unsupported";
 type EnrollState = "off" | "on" | "busy" | "denied" | "unavailable";
@@ -104,7 +105,10 @@ export function PushEnroll() {
     }
   }, []);
 
+  const { run: toggleOnce } = useAction(() => (state === "on" ? disable() : enable()));
+
   if (support === "checking") return null;
+
 
   return (
     <section>
@@ -122,9 +126,10 @@ export function PushEnroll() {
           <button
             type="button"
             role="switch"
+            aria-busy={state === "busy"}
             aria-checked={state === "on"}
             disabled={state === "busy"}
-            onClick={() => void (state === "on" ? disable() : enable())}
+            onClick={() => void toggleOnce()}
             className={`relative h-7 w-12 rounded-full transition-colors ${
               state === "on" ? "bg-[var(--color-accent)]" : "bg-[var(--color-surface-2)]"
             }`}

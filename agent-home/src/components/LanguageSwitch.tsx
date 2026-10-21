@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { Spinner } from "@/components/ui/Spinner";
 import { htmlLang, LOCALE_LABELS, LOCALES, useLocale, useT, type Locale } from "@/i18n";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 /**
  * EN / 繁體中文 switch. Before sign-in it remembers the choice in this browser;
@@ -48,13 +49,12 @@ export function LanguageSwitch({ showNote = false }: { showNote?: boolean }) {
         {LOCALES.map((code) => {
           const active = code === locale;
           return (
-            <button
+            <ActionButton
               key={code}
-              type="button"
               lang={htmlLang(code)}
               aria-pressed={active}
               disabled={busy !== null}
-              onClick={() => void choose(code)}
+              onAction={() => choose(code)}
               className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm disabled:opacity-70 ${
                 active
                   ? "bg-[var(--color-accent)] font-semibold text-[var(--color-accent-fg)]"
@@ -63,7 +63,7 @@ export function LanguageSwitch({ showNote = false }: { showNote?: boolean }) {
             >
               {busy === code ? <Spinner /> : null}
               {LOCALE_LABELS[code]}
-            </button>
+            </ActionButton>
           );
         })}
       </div>

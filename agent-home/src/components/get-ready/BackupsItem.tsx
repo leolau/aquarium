@@ -19,6 +19,7 @@ import type {
   OffsiteBackupStatus,
   OffsiteProvider,
 } from "@/types";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 const API = "/api/backups/offsite";
 const POLL_MS = 2_000;
@@ -383,11 +384,10 @@ export function BackupsItem({
         >
           {open ? t("close") : t("setUp")}
         </button>
-        <button
-          type="button"
+        <ActionButton busyLabel={t("testing")}
           className={BTN}
           disabled={blocked || state === "unavailable"}
-          onClick={testNow}
+          onAction={testNow}
         >
           {busy === "test" ? (
             <>
@@ -396,7 +396,7 @@ export function BackupsItem({
           ) : (
             t("test")
           )}
-        </button>
+        </ActionButton>
       </div>
 
       {running ? (
@@ -554,7 +554,7 @@ export function BackupsItem({
               )}
 
               <div className="flex flex-wrap gap-2">
-                <button type="button" className={BTN_PRIMARY} disabled={blocked} onClick={save}>
+                <ActionButton busyLabel={t("testing")} className={BTN_PRIMARY} disabled={blocked} onAction={save}>
                   {busy === "save" ? (
                     <>
                       <Spinner /> {t("testing")}
@@ -562,25 +562,23 @@ export function BackupsItem({
                   ) : (
                     t("saveTest")
                   )}
-                </button>
-                <button
-                  type="button"
+                </ActionButton>
+                <ActionButton
                   className={BTN}
                   disabled={blocked || !configured}
-                  onClick={() => start("run")}
+                  onAction={() => start("run")}
                 >
                   {busy === "run" || running?.kind === "backup" ? <Spinner /> : null}
                   {good ? t("backupNow") : t("firstBackup")}
-                </button>
-                <button
-                  type="button"
+                </ActionButton>
+                <ActionButton
                   className={BTN}
                   disabled={blocked || !good}
-                  onClick={() => start("restore-test")}
+                  onAction={() => start("restore-test")}
                 >
                   {busy === "restore-test" || running?.kind === "restore-test" ? <Spinner /> : null}
                   {t("restoreTest")}
-                </button>
+                </ActionButton>
               </div>
               <p className="text-xs text-[var(--color-muted)]">{t("restoreNote")}</p>
 

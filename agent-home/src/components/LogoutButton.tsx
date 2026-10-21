@@ -6,6 +6,7 @@ import { useState } from "react";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Spinner } from "@/components/ui/Spinner";
 import { useT } from "@/i18n";
+import { useAction } from "@/lib/use-action";
 
 /** Clears the `agent-home` session then returns to the login page. */
 export function LogoutButton() {
@@ -24,6 +25,8 @@ export function LogoutButton() {
       router.refresh();
     }
   }
+  // The lock outlives the dialog, which closes as soon as sign-out starts.
+  const { run: signOutOnce } = useAction(signOut);
 
   return (
     <>
@@ -49,7 +52,7 @@ export function LogoutButton() {
           body={t("signOutConfirmBody")}
           confirmLabel={t("signOut")}
           onCancel={() => setConfirming(false)}
-          onConfirm={() => signOut()}
+          onConfirm={() => signOutOnce()}
         />
       )}
     </>

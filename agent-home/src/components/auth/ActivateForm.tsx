@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { errorMessage, sendJson } from "@/components/users/api";
+import { useAction } from "@/lib/use-action";
 
 /** Mirrors the server-side minimum; the server is still the authority. */
 const MIN_PASSWORD_LENGTH = 12;
@@ -48,6 +49,8 @@ export function ActivateForm({ token }: { token: string }) {
       setBusy(false);
     }
   }
+  // Enter pressed twice submits twice before `busy` renders; the lock stops it.
+  const { run: submitOnce } = useAction(submit);
 
   if (done) {
     return (
@@ -69,7 +72,7 @@ export function ActivateForm({ token }: { token: string }) {
   return (
     <form
       data-component="ActivateForm"
-      onSubmit={submit}
+      onSubmit={(e) => void submitOnce(e)}
       aria-busy={busy}
       className="flex flex-col gap-3"
     >

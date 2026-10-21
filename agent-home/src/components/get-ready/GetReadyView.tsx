@@ -30,6 +30,7 @@ import type {
   Toolset,
   OffsiteBackupStatus,
 } from "@/types";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 const GROUPS: GetReadyGroup[] = ["basics", "connections", "safety"];
 
@@ -141,9 +142,8 @@ export function GetReadyView({ initial, extras }: { initial: GetReadyResponse; e
           <p className="mt-2 text-xs text-[var(--color-muted)]">
             {t("summary", { attention: summary.attention, notStarted: summary.not_started })}
           </p>
-          <button
-            type="button"
-            onClick={() => void testAll()}
+          <ActionButton busyLabel={t("testingAll", { count: items.length })}
+            onAction={() => testAll()}
             disabled={busyAny}
             aria-busy={testingAll}
             className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--color-accent)] px-3 py-2 text-sm font-medium text-[var(--color-accent-fg)] disabled:opacity-60"
@@ -155,7 +155,7 @@ export function GetReadyView({ initial, extras }: { initial: GetReadyResponse; e
             ) : (
               t("testAll")
             )}
-          </button>
+          </ActionButton>
         </div>
         <nav className="hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-2 lg:block">
           {items.map((item) => (
@@ -207,7 +207,7 @@ export function GetReadyView({ initial, extras }: { initial: GetReadyResponse; e
                     testing={testing.has(item.id)}
                     disabled={testingAll}
                     onToggle={() => toggle(item.id)}
-                    onTest={() => void runTest(item.id)}
+                    onTest={() => runTest(item.id)}
                   >
                     {open === item.id ? <Panel item={item} t={t} isOwner={isOwner} canManage={initial.can_manage} extras={extras} /> : null}
                   </ItemRow>
@@ -238,7 +238,7 @@ function ItemRow({
   testing: boolean;
   disabled: boolean;
   onToggle: () => void;
-  onTest: () => void;
+  onTest: () => unknown;
   children: React.ReactNode;
 }) {
   const locale = useLocale();
@@ -297,9 +297,8 @@ function ItemRow({
             >
               {open ? t("close") : t("setup")}
             </button>
-            <button
-              type="button"
-              onClick={onTest}
+            <ActionButton busyLabel={t("testing")}
+              onAction={onTest}
               disabled={testing || disabled}
               aria-busy={testing}
               className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1.5 text-xs font-medium disabled:opacity-60"
@@ -311,7 +310,7 @@ function ItemRow({
               ) : (
                 t("test")
               )}
-            </button>
+            </ActionButton>
           </div>
         </div>
       </div>

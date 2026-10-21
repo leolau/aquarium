@@ -16,14 +16,6 @@ const SRC = path.resolve(__dirname, "../..");
 const PENDING = new Set([
   // PR 4 — Settings, People
   // PR 5 — Sign-in, first-run, Account, Get ready
-  "components/LanguageSwitch.tsx",
-  "components/LoginForm.tsx",
-  "components/LogoutButton.tsx",
-  "components/auth/ResetRequestForm.tsx",
-  "components/auth/SetupOwnerForm.tsx",
-  "components/get-ready/BackupsItem.tsx",
-  "components/get-ready/SecurityBasicsItem.tsx",
-  "components/push/PushEnroll.tsx",
   // PR 6 — Files, Memory, Models, other
   "components/coral/LeadChatHost.tsx",
   "components/files/BrowseView.tsx",

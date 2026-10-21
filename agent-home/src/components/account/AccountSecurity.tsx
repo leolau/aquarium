@@ -10,6 +10,7 @@ import { RecoveryCodes } from "./RecoveryCodes";
 import { TwoFactorSetup } from "./TwoFactorSetup";
 import { card, errorText, field, okBox, primary, secondary } from "./ui";
 import { useAccountT, type AccountT } from "./useAccountT";
+import { useAction } from "@/lib/use-action";
 
 const MIN_PASSWORD_LENGTH = 12;
 
@@ -159,9 +160,11 @@ function PasswordPanel({
       setBusy(false);
     }
   }
+  // Enter pressed twice submits twice before `busy` renders; the lock stops it.
+  const { run: submitOnce } = useAction(submit);
 
   return (
-    <form data-component="ChangePassword" onSubmit={submit} aria-busy={busy} className="grid gap-2 sm:grid-cols-2">
+    <form data-component="ChangePassword" onSubmit={(e) => void submitOnce(e)} aria-busy={busy} className="grid gap-2 sm:grid-cols-2">
       <Labeled label={t("currentPassword")}>
         <input type="password" required autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} className={field} />
       </Labeled>
@@ -222,9 +225,11 @@ function ConfirmPanel({
       setBusy(false);
     }
   }
+  // Enter pressed twice submits twice before `busy` renders; the lock stops it.
+  const { run: submitOnce } = useAction(submit);
 
   return (
-    <form onSubmit={submit} aria-busy={busy} className="grid gap-2 sm:grid-cols-2">
+    <form onSubmit={(e) => void submitOnce(e)} aria-busy={busy} className="grid gap-2 sm:grid-cols-2">
       <p className="text-xs text-[var(--color-muted)] sm:col-span-2">{help}</p>
       <Labeled label={t("currentPassword")}>
         <input type="password" required autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} className={field} />

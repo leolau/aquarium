@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { useT } from "@/i18n";
+import { useAction } from "@/lib/use-action";
 
 /**
  * "I can't sign in" — asks an administrator of the profile for a fresh link.
@@ -37,6 +38,8 @@ export function ResetRequestForm() {
       setEmail("");
     }
   }
+  // Enter pressed twice submits twice before `busy` renders; the lock stops it.
+  const { run: submitOnce } = useAction(submit);
 
   if (!open) {
     return (
@@ -54,7 +57,7 @@ export function ResetRequestForm() {
   return (
     <form
       data-component="ResetRequestForm"
-      onSubmit={submit}
+      onSubmit={(e) => void submitOnce(e)}
       className="mt-4 flex flex-col gap-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
     >
       <p className="text-xs text-[var(--color-muted)]">
