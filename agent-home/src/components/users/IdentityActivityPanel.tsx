@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { errorMessage } from "@/components/users/api";
 import type { IdentityActivityResponse, IdentityEvent } from "@/types";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 /**
  * Who did what to whom, read from the C5 change log rather than a private
@@ -44,14 +45,13 @@ export function IdentityActivityPanel() {
     >
       <div className="flex items-baseline justify-between gap-2">
         <h2 className="text-sm font-medium">Identity activity</h2>
-        <button
-          type="button"
+        <ActionButton
           disabled={busy}
-          onClick={load}
+          onAction={load}
           className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 text-xs disabled:opacity-50"
         >
           {busy ? "Loading…" : events ? "Refresh" : "Load"}
-        </button>
+        </ActionButton>
       </div>
       {error ? <p className="text-xs text-red-300">{error}</p> : null}
       {events ? (

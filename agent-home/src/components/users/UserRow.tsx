@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { ASSIGNABLE_ROLES } from "@/components/users/CreateUserForm";
 import type { Member, Role } from "@/types";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 /**
  * One roster row and its management controls.
@@ -39,11 +40,11 @@ export function UserRow({
   canDelete: boolean;
   busy: boolean;
   onChangeRole: (m: Member, r: Role) => void;
-  onSetEnrolled: (m: Member, enrolled: boolean) => void;
-  onInvite: (m: Member) => void;
-  onRevokeInvite: (m: Member) => void;
-  onRename: (m: Member, display: string) => void;
-  onLinkChannel: (m: Member, platform: string, channelUserId: string) => void;
+  onSetEnrolled: (m: Member, enrolled: boolean) => unknown;
+  onInvite: (m: Member) => unknown;
+  onRevokeInvite: (m: Member) => unknown;
+  onRename: (m: Member, display: string) => unknown;
+  onLinkChannel: (m: Member, platform: string, channelUserId: string) => unknown;
   onDelete: (m: Member) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -138,20 +139,18 @@ export function UserRow({
                   ))}
                 </select>
               </label>
-              <button
-                type="button"
+              <ActionButton
                 disabled={busy}
-                onClick={() => onSetEnrolled(member, !member.enrolled)}
+                onAction={() => onSetEnrolled(member, !member.enrolled)}
                 className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 text-xs disabled:opacity-50"
               >
                 {member.enrolled ? "Suspend" : "Restore"}
-              </button>
+              </ActionButton>
             </>
           )}
-          <button
-            type="button"
+          <ActionButton
             disabled={busy}
-            onClick={() => onInvite(member)}
+            onAction={() => onInvite(member)}
             className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 text-xs disabled:opacity-50"
           >
             {resetRequested
@@ -159,16 +158,15 @@ export function UserRow({
               : invitation
                 ? "Regenerate link"
                 : "Send link"}
-          </button>
+          </ActionButton>
           {invitation && invitation.status === "open" ? (
-            <button
-              type="button"
+            <ActionButton
               disabled={busy}
-              onClick={() => onRevokeInvite(member)}
+              onAction={() => onRevokeInvite(member)}
               className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 text-xs disabled:opacity-50"
             >
               Revoke link
-            </button>
+            </ActionButton>
           ) : null}
           <button
             type="button"
@@ -193,14 +191,13 @@ export function UserRow({
               onChange={(e) => setDisplay(e.target.value)}
               className="min-w-0 flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-xs"
             />
-            <button
-              type="button"
+            <ActionButton
               disabled={busy || !display.trim() || display === member.display}
-              onClick={() => onRename(member, display.trim())}
+              onAction={() => onRename(member, display.trim())}
               className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 text-xs disabled:opacity-50"
             >
               Rename
-            </button>
+            </ActionButton>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <select
@@ -223,17 +220,16 @@ export function UserRow({
               onChange={(e) => setHandle(e.target.value)}
               className="min-w-0 flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-xs"
             />
-            <button
-              type="button"
+            <ActionButton
               disabled={busy || !handle.trim()}
-              onClick={() => {
+              onAction={() => {
                 onLinkChannel(member, platform, handle.trim());
                 setHandle("");
               }}
               className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 text-xs disabled:opacity-50"
             >
               Link channel
-            </button>
+            </ActionButton>
           </div>
           {canDelete && !self ? (
             <button
