@@ -2382,6 +2382,8 @@ export interface FallbackModel {
 
 export interface FallbackModelsResponse {
   providers: FallbackModel[];
+  /** Provider the built-in last step of an "auto" role would use; null when none has a key. */
+  last_resort?: FallbackModel | null;
 }
 
 /** `POST /api/providers/refresh-keys` — keys reloaded from `.env`, and the
@@ -2423,6 +2425,8 @@ export interface ModelsOverviewResponse {
   usage: ModelUsageEntry[];
   /** Backup models in order; absent when the read failed. */
   fallback?: FallbackModel[];
+  /** See FallbackModelsResponse.last_resort. */
+  last_resort?: FallbackModel | null;
 }
 
 /** `POST /api/providers/validate` response. */

@@ -38,6 +38,7 @@ export default async function Page({
       auxiliary,
       usage: analytics?.models ?? [],
       fallback: fallback?.providers ?? [],
+      last_resort: fallback?.last_resort ?? null,
     };
   } catch (err) {
     error = err instanceof Error ? err.message : "Failed to load models";
