@@ -3,7 +3,7 @@
  * Backup models on ModelsView: the list shows in order, Remove and ↑ save
  * the whole new list, and "Refresh keys" reports which marks it cleared.
  */
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ModelsView } from "@/components/models/ModelsView";
@@ -43,42 +43,18 @@ function stubFetch() {
   return fetchMock;
 }
 
-function putBodies(fetchMock: ReturnType<typeof vi.fn>) {
-  return fetchMock.mock.calls
-    .filter(([u, init]) => String(u).includes("/api/models/fallback") && (init as RequestInit)?.method === "PUT")
-    .map(([, init]) => JSON.parse(String((init as RequestInit).body)).providers);
-}
-
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
 
 describe("ModelsView backup models", () => {
-  it("lists the backups in order", () => {
+  it("shows Main as a role with its backups under its model", () => {
     stubFetch();
     const { container } = render(<ModelsView initial={OVERVIEW} />);
-    const text = container.querySelector('[data-component="BackupModels"]')?.textContent ?? "";
-    expect(text.indexOf("qwen3.8-max")).toBeLessThan(text.indexOf("deepseek-v4.1-flash"));
-  });
-
-  it("Remove saves the list without that entry", async () => {
-    const fetchMock = stubFetch();
-    const { getAllByRole } = render(<ModelsView initial={OVERVIEW} />);
-    fireEvent.click(getAllByRole("button", { name: "Remove" })[0]);
-    await waitFor(() => expect(putBodies(fetchMock)).toHaveLength(1));
-    expect(putBodies(fetchMock)[0]).toEqual([{ provider: "opencode-go", model: "deepseek-v4.1-flash" }]);
-  });
-
-  it("moving the second backup up swaps the order", async () => {
-    const fetchMock = stubFetch();
-    const { getByRole } = render(<ModelsView initial={OVERVIEW} />);
-    fireEvent.click(getByRole("button", { name: "Move deepseek-v4.1-flash up" }));
-    await waitFor(() => expect(putBodies(fetchMock)).toHaveLength(1));
-    expect(putBodies(fetchMock)[0].map((f: { model: string }) => f.model)).toEqual([
-      "deepseek-v4.1-flash",
-      "qwen3.8-max",
-    ]);
+    expect(container.querySelector('[data-component="BackupModels"]')).toBeNull();
+    const line = container.querySelector('[data-component="RoleBackupLine"]')?.textContent ?? "";
+    expect(line).toBe("backup: qwen3.8-max · alibaba, deepseek-v4.1-flash · opencode-go");
   });
 
   it("Refresh keys reports the providers it cleared", async () => {
