@@ -14,14 +14,6 @@ import { describe, expect, it } from "vitest";
 const SRC = path.resolve(__dirname, "../..");
 
 const PENDING = new Set([
-  // PR 2 — Chat, Inbox, To-dos
-  "components/chat/ChatPane.tsx",
-  "components/chat/Composer.tsx",
-  "components/inbox/InboxView.tsx",
-  "components/inbox/IncomingDetailView.tsx",
-  "components/todos/TodoCompleteForm.tsx",
-  "components/todos/TodoDetailView.tsx",
-  "components/todos/TodosList.tsx",
   // PR 3 — Projects
   "components/projects/CardActions.tsx",
   "components/projects/CardApprovals.tsx",

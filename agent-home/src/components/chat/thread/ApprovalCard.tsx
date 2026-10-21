@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef } from "react";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 import {
   CHOICE_LABELS,
@@ -48,13 +49,13 @@ export function ApprovalCard({ request, busy, onResolve }: ApprovalModalProps) {
         {choices.map((choice, index) => {
           const isDeny = choice === "deny";
           return (
-            <button
+            <ActionButton
               key={choice}
-              type="button"
               data-appmcp-deny="consent"
-              disabled={busy}
+              busy={busy}
+              busyLabel="Submitting…"
               autoFocus={index === 0}
-              onClick={() => onResolve(choice)}
+              onAction={() => onResolve(choice)}
               className={`rounded-xl px-3 py-2 text-sm font-semibold disabled:opacity-50 ${
                 isDeny
                   ? "border border-[var(--color-border)] text-red-300"
@@ -64,7 +65,7 @@ export function ApprovalCard({ request, busy, onResolve }: ApprovalModalProps) {
               }`}
             >
               {CHOICE_LABELS[choice] ?? choice}
-            </button>
+            </ActionButton>
           );
         })}
       </div>

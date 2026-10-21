@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useAction } from "@/lib/use-action";
 
 import { useRouter } from "next/navigation";
 
@@ -603,6 +604,10 @@ export function ChatPane({
     }
   }
 
+  // Approve and Deny share one lock: a second press before the first answer
+  // lands is dropped, so the server never gets two decisions for one request.
+  const { run: resolveApprovalOnce } = useAction(resolveApproval);
+
   // Stop the in-flight turn for the conversation currently on screen. Closing
   // the connection alone would NOT stop the server-side turn (it survives a
   // closed tab by design), so ask the server to interrupt the agent and keep
@@ -1116,7 +1121,7 @@ export function ChatPane({
         <ApprovalModal
           request={selApproval}
           busy={resolvingApproval}
-          onResolve={resolveApproval}
+          onResolve={resolveApprovalOnce}
         />
       ) : null}
     </div>
