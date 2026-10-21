@@ -21,6 +21,7 @@ import type {
   WaBridgeStatus,
   WaBridgesResponse,
 } from "@/types";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,30}$/;
 //: Baileys rotates the QR payload about every 60s; poll often enough to
@@ -303,14 +304,13 @@ export function WhatsAppBridges() {
                         {qrFor === b.name ? t("hideQr") : t("showQr")}
                       </button>
                     )}
-                    <button
-                      type="button"
+                    <ActionButton busyLabel={t("working")}
                       className={GHOST}
                       disabled={busy !== null}
-                      onClick={() => void act(b.name, "restart")}
+                      onAction={() => act(b.name, "restart")}
                     >
                       {busy === `${b.name}:restart` ? t("working") : t("restart")}
-                    </button>
+                    </ActionButton>
                     <button
                       type="button"
                       className={`${GHOST} text-[var(--color-accent)]`}
@@ -361,22 +361,20 @@ export function WhatsAppBridges() {
               aria-label={t("newName")}
               className={`${INPUT} max-w-[240px]`}
             />
-            <button
-              type="button"
+            <ActionButton busyLabel={t("adding")}
               className={BTN_PRIMARY}
               disabled={busy !== null || !newName.trim()}
-              onClick={() => void add()}
+              onAction={() => add()}
             >
               {busy === "add" ? t("adding") : t("add")}
-            </button>
-            <button
-              type="button"
+            </ActionButton>
+            <ActionButton
               className={BTN}
               disabled={busy !== null}
-              onClick={() => void reload()}
+              onAction={() => reload()}
             >
               {t("refresh")}
-            </button>
+            </ActionButton>
           </div>
         ) : (
           <p className="text-xs text-[var(--color-muted)]">{t("noHelper")}</p>
@@ -393,14 +391,13 @@ export function WhatsAppBridges() {
             <span className="text-xs">
               {t("sendsTo", { name: b.name, number: b.number ?? "" })}
             </span>
-            <button
-              type="button"
+            <ActionButton busyLabel={t("sending")}
               className={BTN}
               disabled={busy !== null}
-              onClick={() => void sendTest(b.name)}
+              onAction={() => sendTest(b.name)}
             >
               {busy === `${b.name}:test` ? t("sending") : t("sendTest")}
-            </button>
+            </ActionButton>
           </div>
         ))}
         {!statuses.includes("connected") && (
@@ -470,7 +467,7 @@ export function WhatsAppBridges() {
           onConfirm={() => {
             const { name, action } = confirm;
             setConfirm(null);
-            void act(name, action);
+            return act(name, action);
           }}
         />
       )}

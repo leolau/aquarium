@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -267,26 +267,34 @@ describe("VpnConnections", () => {
     fireEvent.click(await screen.findByText("+ Add a Fortinet VPN"));
     const form = screen.getByText("Add a Fortinet VPN").closest("div")!;
     const q = within(form);
-    fireEvent.click(q.getByText("Save & test connection"));
+    await act(async () => {
+      fireEvent.click(q.getByText("Save & test connection"));
+    });
     expect(q.getByText(/Give the VPN a name/)).toBeTruthy();
 
     fireEvent.change(q.getByPlaceholderText("Office files"), { target: { value: "Office files" } });
     fireEvent.change(q.getByPlaceholderText("vpn.example-office.com"), {
       target: { value: "https://vpn.example.com/remote" },
     });
-    fireEvent.click(q.getByText("Save & test connection"));
+    await act(async () => {
+      fireEvent.click(q.getByText("Save & test connection"));
+    });
     expect(q.getByText(/no https:\/\//)).toBeTruthy();
 
     fireEvent.change(q.getByPlaceholderText("vpn.example-office.com"), {
       target: { value: "vpn.example.com" },
     });
-    fireEvent.click(q.getByText("Save & test connection"));
+    await act(async () => {
+      fireEvent.click(q.getByText("Save & test connection"));
+    });
     expect(q.getByText(/VPN username/)).toBeTruthy();
 
     fireEvent.change(q.getByText("Username").parentElement!.querySelector("input")!, {
       target: { value: "leolau" },
     });
-    fireEvent.click(q.getByText("Save & test connection"));
+    await act(async () => {
+      fireEvent.click(q.getByText("Save & test connection"));
+    });
     expect(q.getByText(/VPN password/)).toBeTruthy();
 
     expect(calls.some((c) => c.method === "PUT")).toBe(false);
@@ -340,7 +348,9 @@ describe("VpnConnections", () => {
     fireEvent.change(q.getByText("Password").parentElement!.querySelector("input")!, {
       target: { value: "s3cret" },
     });
-    fireEvent.click(q.getByText("Save & test connection"));
+    await act(async () => {
+      fireEvent.click(q.getByText("Save & test connection"));
+    });
     await waitFor(() =>
       expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/test"))).toBe(true),
     );
@@ -378,7 +388,9 @@ describe("VpnConnections", () => {
     const pw = q.getByText("Password").parentElement!.querySelector("input")!;
     expect(pw.value).toBe("");
     expect(pw.getAttribute("placeholder")).toBe("unchanged");
-    fireEvent.click(q.getByText("Save & test connection"));
+    await act(async () => {
+      fireEvent.click(q.getByText("Save & test connection"));
+    });
     await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
     const put = calls.find((c) => c.method === "PUT")!;
     const payload = (put.body as { payload: Record<string, unknown> }).payload;

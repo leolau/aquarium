@@ -668,7 +668,7 @@ export function NetworkFolders() {
           onConfirm={() => {
             const folder = confirmRemove;
             setConfirmRemove(null);
-            void remove(folder);
+            return remove(folder);
           }}
         />
       ) : null}

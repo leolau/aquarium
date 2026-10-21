@@ -20,6 +20,7 @@ import type {
   MembersResponse,
   Role,
 } from "@/types";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 
 export interface UsersViewProps {
@@ -381,34 +382,32 @@ export function UsersView({
             data-component="UsersPager"
             className="flex items-center justify-between gap-2 text-xs text-[var(--color-muted)]"
           >
-            <button
-              type="button"
+            <ActionButton
               disabled={offset === 0}
-              onClick={() => {
+              onAction={() => {
                 const next = Math.max(0, offset - PAGE_SIZE);
                 setOffset(next);
-                void load({ offset: next });
+                return load({ offset: next });
               }}
               className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 disabled:opacity-50"
             >
               Previous
-            </button>
+            </ActionButton>
             <span>
               {total === 0 ? "0" : `${offset + 1}–${Math.min(offset + PAGE_SIZE, total)}`}{" "}
               of {total}
             </span>
-            <button
-              type="button"
+            <ActionButton
               disabled={offset + PAGE_SIZE >= total}
-              onClick={() => {
+              onAction={() => {
                 const next = offset + PAGE_SIZE;
                 setOffset(next);
-                void load({ offset: next });
+                return load({ offset: next });
               }}
               className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 disabled:opacity-50"
             >
               Next
-            </button>
+            </ActionButton>
           </div>
 
           <CsvImportPanel profile={profile} />
@@ -443,7 +442,7 @@ function RemoveUserDialog({
   member: Member;
   candidates: Member[];
   onCancel: () => void;
-  onConfirm: (m: Member, strategy: "transfer" | "purge", transferTo: string) => void;
+  onConfirm: (m: Member, strategy: "transfer" | "purge", transferTo: string) => unknown;
 }) {
   const [strategy, setStrategy] = useState<"transfer" | "purge">("transfer");
   const [transferTo, setTransferTo] = useState(candidates[0]?.user_id ?? "");
@@ -491,14 +490,13 @@ function RemoveUserDialog({
         </label>
       ) : null}
       <div className="mt-3 flex gap-2">
-        <button
-          type="button"
+        <ActionButton
           disabled={strategy === "transfer" && !transferTo}
-          onClick={() => onConfirm(member, strategy, strategy === "transfer" ? transferTo : "")}
+          onAction={() => onConfirm(member, strategy, strategy === "transfer" ? transferTo : "")}
           className="rounded-lg bg-red-500/20 px-3 py-1 text-xs text-red-200 disabled:opacity-50"
         >
           Remove
-        </button>
+        </ActionButton>
         <button
           type="button"
           onClick={onCancel}

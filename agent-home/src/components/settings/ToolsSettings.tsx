@@ -8,6 +8,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { useRefresh } from "@/components/ui/useRefresh";
 import { TOOLS_MANAGE_DENIED } from "@/lib/auth/roles";
 import type { McpOAuthFlowState, McpServer, Toolset } from "@/types";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 /**
  * Settings → Tools & Integrations. Lists the MCP servers and `hermes tools`
@@ -186,14 +187,13 @@ function OAuthSheet({
                 placeholder="http://127.0.0.1:…/callback?code=…&state=…"
                 className="min-w-0 flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-xs"
               />
-              <button
-                type="button"
-                onClick={() => void submitRedirect()}
+              <ActionButton busyLabel="Sending…"
+                onAction={() => submitRedirect()}
                 disabled={submitting || !redirectUrl.trim()}
                 className="shrink-0 rounded-lg bg-[var(--color-accent)] px-3 py-2 text-xs font-medium text-[var(--color-accent-fg)] disabled:opacity-50"
               >
                 {submitting ? "Sending…" : "Complete"}
-              </button>
+              </ActionButton>
             </div>
           </div>
         ) : null}
@@ -226,13 +226,12 @@ function OAuthSheet({
               Done
             </button>
           ) : (
-            <button
-              type="button"
-              onClick={() => void cancel()}
+            <ActionButton
+              onAction={() => cancel()}
               className="rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-xs font-medium"
             >
               Cancel
-            </button>
+            </ActionButton>
           )}
         </div>
       </div>
@@ -251,7 +250,7 @@ function McpServerRow({
 }: {
   server: McpServer;
   pending: string | null;
-  onAction: (action: string) => void;
+  onAction: (action: string) => unknown;
   testResult: TestResult;
   readOnly: boolean;
 }) {
@@ -288,40 +287,36 @@ function McpServerRow({
       ) : null}
       {readOnly ? null : (
       <div className="mt-3 flex flex-wrap gap-2">
-        <button
-          type="button"
+        <ActionButton busyLabel="Testing…"
           disabled={busy}
-          onClick={() => onAction("test")}
+          onAction={() => onAction("test")}
           className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1.5 text-xs font-medium disabled:opacity-50"
         >
           {pending === "test" ? "Testing…" : "Test connection"}
-        </button>
+        </ActionButton>
         {server.auth === "oauth" ? (
-          <button
-            type="button"
+          <ActionButton
             disabled={busy}
-            onClick={() => onAction("reauth")}
+            onAction={() => onAction("reauth")}
             className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1.5 text-xs font-medium disabled:opacity-50"
           >
             Re-authenticate
-          </button>
+          </ActionButton>
         ) : null}
-        <button
-          type="button"
+        <ActionButton
           disabled={busy}
-          onClick={() => onAction(server.enabled ? "disable" : "enable")}
+          onAction={() => onAction(server.enabled ? "disable" : "enable")}
           className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1.5 text-xs font-medium disabled:opacity-50"
         >
           {server.enabled ? "Disable" : "Enable"}
-        </button>
-        <button
-          type="button"
+        </ActionButton>
+        <ActionButton
           disabled={busy}
-          onClick={() => onAction("remove")}
+          onAction={() => onAction("remove")}
           className="rounded-lg px-3 py-1.5 text-xs font-medium text-red-400 disabled:opacity-50"
         >
           Remove
-        </button>
+        </ActionButton>
       </div>
       )}
     </li>
@@ -336,7 +331,7 @@ function ToolsetRow({
 }: {
   toolset: Toolset;
   pending: boolean;
-  onToggle: (enabled: boolean) => void;
+  onToggle: (enabled: boolean) => unknown;
   readOnly: boolean;
 }) {
   return (
@@ -360,15 +355,14 @@ function ToolsetRow({
         </p>
       ) : null}
       <div className="mt-3">
-        <button
-          type="button"
+        <ActionButton
           disabled={pending || readOnly}
           title={readOnly ? TOOLS_MANAGE_DENIED : undefined}
-          onClick={() => onToggle(!toolset.enabled)}
+          onAction={() => onToggle(!toolset.enabled)}
           className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1.5 text-xs font-medium disabled:opacity-50"
         >
           {toolset.enabled ? "Disable" : "Enable"}
-        </button>
+        </ActionButton>
       </div>
     </li>
   );
@@ -527,7 +521,7 @@ export function ToolsSettings({
                 pending={busyKey(server.name)}
                 testResult={testResults[server.name] ?? null}
                 readOnly={readOnly}
-                onAction={(action) => void mcpAction(server.name, action)}
+                onAction={(action) => mcpAction(server.name, action)}
               />
             ))}
           </ul>
@@ -564,7 +558,7 @@ export function ToolsSettings({
                 toolset={toolset}
                 pending={tsPending === toolset.name || refreshing}
                 readOnly={readOnly}
-                onToggle={(enabled) => void toggleToolset(toolset.name, enabled)}
+                onToggle={(enabled) => toggleToolset(toolset.name, enabled)}
               />
             ))}
           </ul>
@@ -577,7 +571,7 @@ export function ToolsSettings({
           body="The server's entry is deleted from the profile config. Enabled skills or playbooks that rely on its tools will stop working until it's re-added."
           confirmLabel="Remove"
           busy={pending[removing.name] === "remove"}
-          onConfirm={() => void confirmRemove()}
+          onConfirm={() => confirmRemove()}
           onCancel={() => setRemoving(null)}
         />
       ) : null}

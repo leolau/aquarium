@@ -3,6 +3,7 @@
 import { type FormEvent, useState } from "react";
 
 import type { Role } from "@/types";
+import { useAction } from "@/lib/use-action";
 
 /** Roles assignable here — never `owner` (ownership moves via the CLI). */
 export const ASSIGNABLE_ROLES: readonly Role[] = ["admin", "member", "viewer"] as const;
@@ -50,10 +51,13 @@ export function CreateUserForm({
     setRole("member");
   }
 
+  // Enter pressed twice submits twice before `busy` renders; the lock stops it.
+  const { run: submitOnce } = useAction(submit);
+
   return (
     <form
       data-component="CreateUserForm"
-      onSubmit={submit}
+      onSubmit={(evt) => void submitOnce(evt)}
       className="flex flex-col gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
     >
       <p className="text-sm font-medium">Add a user</p>

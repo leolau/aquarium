@@ -27,6 +27,7 @@ import {
 } from "@/lib/theme";
 import { usePersistentState } from "@/lib/use-persistent-state";
 import { useT } from "@/i18n";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 /** Tag colours — same set used in SessionModal. */
 const TAG_COLORS = [
@@ -332,9 +333,8 @@ function TagsSection() {
             </option>
           ))}
         </select>
-        <button
-          type="button"
-          onClick={() => void createTag()}
+        <ActionButton
+          onAction={() => createTag()}
           disabled={creating || !name.trim()}
           className="shrink-0 rounded-lg bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent-fg)] disabled:opacity-60"
         >
@@ -346,7 +346,7 @@ function TagsSection() {
           ) : (
             "Create"
           )}
-        </button>
+        </ActionButton>
       </div>
 
       {error && (
@@ -382,14 +382,13 @@ function TagsSection() {
                     ({String(tag.session_count)})
                   </span>
                 )}
-                <button
-                  type="button"
-                  onClick={() => void deleteTag(tag.id, tag.name)}
+                <ActionButton
+                  onAction={() => deleteTag(tag.id, tag.name)}
                   className="ml-0.5 text-xs opacity-60 hover:opacity-100"
                   aria-label={`Delete tag ${tag.name}`}
                 >
                   ×
-                </button>
+                </ActionButton>
               </span>
             ))}
           </div>

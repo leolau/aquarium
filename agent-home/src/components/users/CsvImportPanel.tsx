@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { activationUrl, errorMessage, sendJson } from "@/components/users/api";
 import type { MemberImportResponse } from "@/types";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 /**
  * Bulk enrolment from `email,display,role` CSV.
@@ -60,22 +61,20 @@ export function CsvImportPanel({ profile }: { profile: string }) {
         className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-xs"
       />
       <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
+        <ActionButton
           disabled={busy || !csv.trim()}
-          onClick={() => run(true)}
+          onAction={() => run(true)}
           className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 text-xs disabled:opacity-50"
         >
           {busy ? "Working…" : "Preview"}
-        </button>
-        <button
-          type="button"
+        </ActionButton>
+        <ActionButton
           disabled={busy || !result || !result.dry_run}
-          onClick={() => run(false)}
+          onAction={() => run(false)}
           className="rounded-lg bg-[var(--color-accent)] px-3 py-1 text-xs font-medium text-[var(--color-accent-fg)] disabled:opacity-50"
         >
           Apply
-        </button>
+        </ActionButton>
       </div>
       {error ? <p className="text-xs text-red-300">{error}</p> : null}
       {result ? (

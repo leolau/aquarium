@@ -13,6 +13,7 @@ import type {
   GoogleClientSaveResult,
   GoogleClientStatus,
 } from "@/types";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 type TickStep = "1" | "2" | "3" | "4" | "5";
 const TICK_STEPS: TickStep[] = ["1", "2", "3", "4", "5"];
@@ -121,7 +122,7 @@ function Step({
   n: number;
   title: string;
   done: boolean;
-  onToggle?: () => void;
+  onToggle?: () => unknown;
   disabled?: boolean;
   t: GoogleClientT;
   children: ReactNode;
@@ -338,16 +339,15 @@ export function GoogleClientSetup() {
             </p>
           )}
           <div className="mt-2 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={test}
+            <ActionButton busyLabel={t("checking")}
+              onAction={test}
               disabled={busy !== null}
               aria-busy={busy === "test"}
               className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 text-sm disabled:opacity-50"
             >
               {busy === "test" && <Spinner />}
               {busy === "test" ? t("checking") : t("test")}
-            </button>
+            </ActionButton>
             <button
               type="button"
               onClick={() => {
@@ -492,16 +492,15 @@ export function GoogleClientSetup() {
             </label>
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={save}
+            <ActionButton busyLabel={t("checking")}
+              onAction={save}
               disabled={!canSave}
               aria-busy={busy === "save"}
               className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-[var(--color-accent)] px-3 text-sm font-medium text-[var(--color-accent-fg)] disabled:opacity-50"
             >
               {busy === "save" && <Spinner />}
               {busy === "save" ? t("checking") : t("saveAndTest")}
-            </button>
+            </ActionButton>
             {replacing && (
               <button
                 type="button"

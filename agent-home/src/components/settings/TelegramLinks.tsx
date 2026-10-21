@@ -17,6 +17,8 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Spinner } from "@/components/ui/Spinner";
 import type { Member, MembersResponse } from "@/types";
+import { ActionButton } from "@/components/ui/ActionButton";
+import { useAction } from "@/lib/use-action";
 
 const PLATFORM = "telegram";
 const PREFIX = `${PLATFORM}:`;
@@ -159,6 +161,8 @@ export function TelegramLinks({
     }
   }
 
+  const { run: linkOnce } = useAction(link);
+
   return (
     <section data-component="TelegramLinks" data-section="telegram">
       <h2 className="text-sm font-semibold">Telegram</h2>
@@ -180,9 +184,9 @@ export function TelegramLinks({
       ) : loadError ? (
         <p role="alert" className="text-xs text-[var(--color-danger)]">
           Could not load members: {loadError}{" "}
-          <button type="button" className="underline" onClick={load}>
+          <ActionButton className="underline" onAction={load}>
             Retry
-          </button>
+          </ActionButton>
         </p>
       ) : !configured ? (
         <p className="text-xs text-[var(--color-muted)]">
@@ -222,12 +226,11 @@ export function TelegramLinks({
                           className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] px-2 py-0.5 font-mono text-xs"
                         >
                           {id}
-                          <button
-                            type="button"
+                          <ActionButton
                             aria-label={`Unlink Telegram ${id}`}
                             title="Unlink"
                             disabled={busy !== null}
-                            onClick={() => void unlink(m, id)}
+                            onAction={() => unlink(m, id)}
                             className="text-[var(--color-muted)] hover:text-[var(--color-danger)] disabled:opacity-50"
                           >
                             {rowBusy &&
@@ -237,7 +240,7 @@ export function TelegramLinks({
                             ) : (
                               "×"
                             )}
-                          </button>
+                          </ActionButton>
                         </span>
                       ))
                     )}
@@ -247,7 +250,7 @@ export function TelegramLinks({
                   className="flex items-center gap-2"
                   onSubmit={(e) => {
                     e.preventDefault();
-                    void link(m);
+                    void linkOnce(m);
                   }}
                 >
                   <input
