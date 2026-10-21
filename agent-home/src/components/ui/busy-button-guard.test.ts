@@ -14,26 +14,6 @@ import { describe, expect, it } from "vitest";
 const SRC = path.resolve(__dirname, "../..");
 
 const PENDING = new Set([
-  // PR 3 — Projects
-  "components/projects/CardActions.tsx",
-  "components/projects/CardApprovals.tsx",
-  "components/projects/CardEditor.tsx",
-  "components/projects/EditBriefSheet.tsx",
-  "components/projects/NewProjectForm.tsx",
-  "components/projects/ProjectDetailView.tsx",
-  "components/projects/ProjectLifecycleMenu.tsx",
-  "components/projects/board/NeedsYouCard.tsx",
-  "components/projects/board/NeedsYouStrip.tsx",
-  "components/projects/board/NewCardForm.tsx",
-  "components/projects/inputs/InputRow.tsx",
-  "components/projects/outputs/ClosureOffer.tsx",
-  "components/projects/outputs/DeliverableCard.tsx",
-  "components/projects/panels/BoardPanel.tsx",
-  "components/projects/panels/OutputsPanel.tsx",
-  "components/projects/panels/PeoplePanel.tsx",
-  "components/projects/panels/PlanPanel.tsx",
-  "components/projects/panels/SettingsPanel.tsx",
-  "components/projects/panels/ToolsPanel.tsx",
   // PR 4 — Settings, People
   "components/settings/ConnectedAccounts.tsx",
   "components/settings/EmailMailboxes.tsx",
@@ -67,7 +47,10 @@ const PENDING = new Set([
 ]);
 
 const SENDS_CHANGE = /method:\s*"(POST|PUT|PATCH|DELETE)"|^\s*method,\s*$|method: method/m;
-const USES_BUSY_BUTTON = /from "@\/components\/ui\/ActionButton"|from "@\/lib\/use-action"/;
+// `useProjectAction` takes the same synchronous lock (plus an idempotency key)
+// and pairs with `projects/ActionButton` for the busy look.
+const USES_BUSY_BUTTON =
+  /from "@\/components\/ui\/ActionButton"|from "@\/lib\/use-action"|from "@\/components\/projects\/useProjectAction"/;
 
 function componentFiles(): string[] {
   return ["components", "app"].flatMap((dir) =>

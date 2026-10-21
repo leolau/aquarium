@@ -37,6 +37,7 @@ import {
   useProjectAction,
 } from "@/components/projects/useProjectAction";
 import { BusyRegion } from "@/components/ui/BusyRegion";
+import { useAction } from "@/lib/use-action";
 import type { MemoryRow, ProjectAutonomy, ProjectCadence } from "@/types";
 
 /** The §2.2 mandatory fields a 422's `missing` list can name. */
@@ -347,6 +348,8 @@ export function NewProjectForm({
             : planChoice(plan).create;
 
   const pendingLabel = created ? "Attaching inputs…" : "Creating the project…";
+
+  const { run: finishOnce, pending: finishing } = useAction(finish);
 
   return (
     <BusyRegion busy={busy} label={pendingLabel}>
@@ -734,14 +737,15 @@ export function NewProjectForm({
                   Retry them, or go to the project and add them from its
                   Inputs tab.
                 </p>
-                <button
-                  type="button"
+                <ActionButton
+                  busy={finishing}
+                  pendingLabel="Opening…"
                   disabled={busy}
-                  onClick={() => void finish(createdSlug)}
+                  onClick={() => void finishOnce(createdSlug)}
                   className="self-start text-xs underline disabled:opacity-50"
                 >
                   Go to the project without them
-                </button>
+                </ActionButton>
               </div>
             ) : null}
           </>

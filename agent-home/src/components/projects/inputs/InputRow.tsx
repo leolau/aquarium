@@ -130,9 +130,14 @@ export function InputRow({
       {action.error ? (
         <p role="alert" className="flex items-center gap-2 text-xs text-red-400">
           {action.error}
-          <button type="button" onClick={() => void action.retry()} className="underline">
+          <ActionButton
+            busy={action.busy}
+            pendingLabel="Retrying…"
+            onClick={() => void action.retry()}
+            className="underline"
+          >
             Retry
-          </button>
+          </ActionButton>
         </p>
       ) : null}
     </li>

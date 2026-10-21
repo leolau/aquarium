@@ -8,6 +8,7 @@ import { ActionButton } from "@/components/projects/ActionButton";
 import { ActionError } from "@/components/projects/ActionError";
 import { useProjectAction } from "@/components/projects/useProjectAction";
 import { BusyRegion } from "@/components/ui/BusyRegion";
+import { useAction } from "@/lib/use-action";
 import type { ProjectDirective, ProjectDirectivesResponse } from "@/types";
 
 /**
@@ -71,6 +72,8 @@ export function GuidancePanel({
       setLoadingRetired(false);
     }
   };
+
+  const { run: loadRetiredOnce } = useAction(loadRetired);
 
   return (
     <section
@@ -198,14 +201,14 @@ export function GuidancePanel({
           )}
 
           {retired == null ? (
-            <button
-              type="button"
-              onClick={() => void loadRetired()}
-              disabled={loadingRetired}
-              className="mt-3 text-xs text-[var(--color-muted)] underline"
+            <ActionButton
+              busy={loadingRetired}
+              pendingLabel="Loading…"
+              onClick={() => void loadRetiredOnce()}
+              className="mt-3 self-start text-xs text-[var(--color-muted)] underline"
             >
-              {loadingRetired ? "Loading…" : "Show retired instructions"}
-            </button>
+              Show retired instructions
+            </ActionButton>
           ) : retired.length > 0 ? (
             <ul className="mt-2 flex flex-col gap-1.5" data-component="RetiredDirectives">
               {retired.map((directive) => (

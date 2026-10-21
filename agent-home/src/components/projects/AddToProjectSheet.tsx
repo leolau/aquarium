@@ -244,15 +244,16 @@ export function AddToProjectSheet({
           <p className="flex flex-wrap items-center gap-2 text-sm text-red-400" role="alert">
             {error ?? writeError}
             {writeError ? (
-              <button
-                type="button"
+              <ActionButton
+                busy={linkAction.busy || promoteAction.busy}
+                pendingLabel="Retrying…"
                 onClick={() =>
                   void (linkAction.error ? linkAction.retry() : promoteAction.retry())
                 }
                 className="text-xs underline"
               >
                 Retry
-              </button>
+              </ActionButton>
             ) : null}
           </p>
         ) : null}
