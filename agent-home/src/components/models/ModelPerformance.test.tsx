@@ -54,6 +54,30 @@ describe("ModelPerformance", () => {
     expect(html).toContain('data-component="PerfDailyBars"');
   });
 
+  it("names the provider's own label, tags backup calls and says why calls failed", () => {
+    const html = renderToStaticMarkup(
+      <ModelPerformance
+        perf={{
+          ...PERF,
+          models: [
+            { ...ENTRY, model: "deepseek-v4-flash", provider: "deepseek", served_as: ["deepseek-flash"] },
+            {
+              ...ENTRY,
+              model: "qwen3.8-max",
+              provider: "alibaba",
+              caller_roles: ["backup"],
+              failures: 12,
+              failure_reasons: [{ status_code: 403, error_type: "PermissionDeniedError", count: 12 }],
+            },
+          ],
+        }}
+      />,
+    );
+    expect(html).toContain("replies name it deepseek-flash");
+    expect(html).toContain("backup");
+    expect(html).toContain("12 failed: access denied (403)");
+  });
+
   it("shows the collecting note when the ledger is still empty", () => {
     const html = renderToStaticMarkup(
       <ModelPerformance perf={{ ...PERF, models: [], collecting: true }} />,

@@ -10,6 +10,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { withProfileBody, withProfileQuery } from "@/lib/chat/profile";
 import type {
   AuxTaskAssignment,
+  FallbackModel,
   ModelsOverviewResponse,
   ModelsPerformanceResponse,
   ModelUsageEntry,
@@ -20,7 +21,12 @@ import { ActionButton } from "@/components/ui/ActionButton";
 /** Which slot the picker is editing — the main card or one aux role. */
 export type ModelSlot =
   | { kind: "main" }
-  | { kind: "aux"; task: string; label: string; hint: string };
+  | { kind: "aux"; task: string; label: string; hint: string }
+  /** A backup model: `index` is its place in the list, null when adding. */
+  | { kind: "fallback"; index: number | null };
+
+/** Most backup models the page lets you list (the server enforces it too). */
+const MAX_FALLBACKS = 5;
 
 /** Display metadata per auxiliary task slot (order = display order). */
 const AUX_ROLES: readonly { task: string; label: string; hint: string; top: boolean }[] = [
@@ -105,6 +111,8 @@ export function ModelsView({
   const [perf, setPerf] = useState<ModelsPerformanceResponse | null>(null);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [fallbackBusy, setFallbackBusy] = useState(false);
+  const [keysNote, setKeysNote] = useState<{ ok: boolean; text: string } | null>(null);
 
   const testMain = useCallback(async () => {
     if (testing) return;
@@ -203,6 +211,57 @@ export function ModelsView({
     }
   }, [profile]);
 
+  const fallbacks = data.fallback;
+
+  async function saveFallbacks(next: FallbackModel[]) {
+    setFallbackBusy(true);
+    try {
+      const res = await fetch("/api/models/fallback", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(withProfileBody({ providers: next }, profile)),
+      });
+      const body = (await res.json().catch(() => ({}))) as { detail?: string };
+      if (!res.ok) throw new Error(body.detail ?? "Couldn't save the backup models.");
+      setError(null);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't save the backup models.");
+    } finally {
+      setFallbackBusy(false);
+    }
+  }
+
+  function moveFallback(list: FallbackModel[], from: number, to: number): FallbackModel[] {
+    const next = [...list];
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item);
+    return next;
+  }
+
+  async function refreshKeys() {
+    setKeysNote(null);
+    try {
+      const res = await fetch(withProfileQuery("/api/models/refresh-keys", profile), {
+        method: "POST",
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        cleared?: Record<string, number>;
+        detail?: string;
+      };
+      if (!res.ok) throw new Error(body.detail ?? "Couldn't refresh the keys.");
+      const cleared = Object.keys(body.cleared ?? {});
+      setKeysNote({
+        ok: true,
+        text: cleared.length
+          ? `Keys reloaded. Cleared the old "key failed" mark for ${cleared.join(", ")}.`
+          : "Keys reloaded. No key had a failure mark to clear.",
+      });
+    } catch (err) {
+      setKeysNote({ ok: false, text: err instanceof Error ? err.message : "Couldn't refresh the keys." });
+    }
+  }
+
   const assignments = useMemo(() => {
     const map = new Map<string, AuxTaskAssignment>();
     for (const t of data.auxiliary.tasks) map.set(t.task, t);
@@ -272,6 +331,85 @@ export function ModelsView({
           </p>
         ) : null}
       </section>
+
+      {/* ── Backup models (fallback_providers) ── */}
+      {fallbacks ? (
+        <section data-component="BackupModels">
+          <h2 className="mb-2 px-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+            Backup models
+          </h2>
+          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3">
+            {fallbacks.length === 0 ? (
+              <p className="py-3 text-sm text-[var(--color-muted)]">
+                None. If the main model fails, the request fails.
+              </p>
+            ) : (
+              fallbacks.map((f, i) => (
+                <div
+                  key={`${f.provider}:${f.model}`}
+                  className="flex items-center gap-2 border-b border-[var(--color-border)] py-2.5"
+                >
+                  <span className="w-5 shrink-0 text-xs text-[var(--color-muted)]">{i + 1}.</span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm">{f.model}</span>
+                    <span className="block truncate text-[11px] text-[var(--color-muted)]">
+                      {f.provider}
+                    </span>
+                  </span>
+                  <span className="ml-auto flex shrink-0 items-center gap-1">
+                    <ActionButton
+                      aria-label={`Move ${f.model} up`}
+                      busyLabel="…"
+                      disabled={fallbackBusy || i === 0}
+                      onAction={() => saveFallbacks(moveFallback(fallbacks, i, i - 1))}
+                      className="rounded-full border border-[var(--color-border)] px-2 py-1 text-xs disabled:opacity-40"
+                    >
+                      ↑
+                    </ActionButton>
+                    <ActionButton
+                      aria-label={`Move ${f.model} down`}
+                      busyLabel="…"
+                      disabled={fallbackBusy || i === fallbacks.length - 1}
+                      onAction={() => saveFallbacks(moveFallback(fallbacks, i, i + 1))}
+                      className="rounded-full border border-[var(--color-border)] px-2 py-1 text-xs disabled:opacity-40"
+                    >
+                      ↓
+                    </ActionButton>
+                    <button
+                      type="button"
+                      disabled={fallbackBusy}
+                      onClick={() => setSlot({ kind: "fallback", index: i })}
+                      className="rounded-full border border-[var(--color-border)] px-2.5 py-1 text-xs disabled:opacity-40"
+                    >
+                      Change
+                    </button>
+                    <ActionButton
+                      busyLabel="Removing…"
+                      disabled={fallbackBusy}
+                      onAction={() => saveFallbacks(fallbacks.filter((_, j) => j !== i))}
+                      className="rounded-full border border-[var(--color-border)] px-2.5 py-1 text-xs text-red-300 disabled:opacity-40"
+                    >
+                      Remove
+                    </ActionButton>
+                  </span>
+                </div>
+              ))
+            )}
+            <button
+              type="button"
+              disabled={fallbackBusy || fallbacks.length >= MAX_FALLBACKS}
+              onClick={() => setSlot({ kind: "fallback", index: null })}
+              className="flex w-full items-center gap-2 py-3 text-left text-sm text-[var(--color-accent)] disabled:opacity-40"
+            >
+              + Add backup model
+            </button>
+          </div>
+          <p className="mt-1 px-1 text-[11px] text-[var(--color-muted)]">
+            Tried in this order when the main model fails, for example when its
+            key is rejected or it&apos;s overloaded. Up to {MAX_FALLBACKS}.
+          </p>
+        </section>
+      ) : null}
 
       {/* ── Task roles ── */}
       <section>
@@ -410,6 +548,38 @@ export function ModelsView({
         </p>
       ) : null}
 
+      <section
+        data-component="ProviderKeys"
+        className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
+      >
+        <div className="flex items-center gap-3">
+          <div className="min-w-0">
+            <div className="text-sm">Provider keys</div>
+            <div className="text-[11px] text-[var(--color-muted)]">
+              Changed a key outside this page? Refresh so every chat uses it on its next message.
+            </div>
+          </div>
+          <ActionButton
+            busyLabel="Refreshing…"
+            onAction={() => refreshKeys()}
+            className="ml-auto shrink-0 rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3.5 py-1.5 text-xs disabled:opacity-60"
+          >
+            Refresh keys
+          </ActionButton>
+        </div>
+        {keysNote ? (
+          <p
+            className={`mt-2 rounded-lg px-3 py-1.5 text-xs ${
+              keysNote.ok
+                ? "bg-[var(--color-surface-2)] text-[var(--color-muted)]"
+                : "bg-red-500/10 text-red-300"
+            }`}
+          >
+            {keysNote.text}
+          </p>
+        ) : null}
+      </section>
+
       <p className="px-1 text-xs text-[var(--color-muted)]">
         Changes apply to new sessions — running workers keep their current
         model.
@@ -427,6 +597,7 @@ export function ModelsView({
           currentAssignment={
             slot.kind === "aux" ? assignments.get(slot.task) : undefined
           }
+          fallbacks={fallbacks ?? []}
           profile={profile}
           onClose={() => setSlot(null)}
           onChanged={() => {

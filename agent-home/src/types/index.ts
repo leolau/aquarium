@@ -2365,6 +2365,29 @@ export interface ModelPerformanceEntry {
   /** Session-table cost over the same window, keyed by model. */
   cost_usd: number;
   daily: ModelPerfDaily[];
+  /** Other names the provider's replies used for this model
+   * (DeepSeek answers `deepseek-v4-flash` as `deepseek-flash`). */
+  served_as?: string[];
+  /** Why calls failed, most common first. */
+  failure_reasons?: { status_code: number | null; error_type: string; count: number }[];
+}
+
+/** One backup model, tried in order when the main model fails. */
+export interface FallbackModel {
+  provider: string;
+  model: string;
+}
+
+export interface FallbackModelsResponse {
+  providers: FallbackModel[];
+}
+
+/** `POST /api/providers/refresh-keys` — keys reloaded from `.env`, and the
+ * providers whose "this key failed" marks were cleared. */
+export interface RefreshKeysResponse {
+  ok: boolean;
+  reloaded: number;
+  cleared: Record<string, number>;
 }
 
 /**
@@ -2396,6 +2419,8 @@ export interface ModelsOverviewResponse {
   info: ModelInfo;
   auxiliary: AuxiliaryModelsResponse;
   usage: ModelUsageEntry[];
+  /** Backup models in order; absent when the read failed. */
+  fallback?: FallbackModel[];
 }
 
 /** `POST /api/providers/validate` response. */

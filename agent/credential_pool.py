@@ -1707,6 +1707,30 @@ def _upsert_entry(entries: List[PooledCredential], provider: str, source: str, p
         return True
 
     existing = entries[existing_idx]
+    status_cleared = False
+    new_secret = payload.get("access_token")
+    old_fingerprint = existing.extra.get("secret_fingerprint")
+    if (
+        new_secret
+        and old_fingerprint
+        and (existing.last_status or existing.last_error_code)
+    ):
+        from agent.credential_persistence import _fingerprint_value
+
+        # A different key in .env is a fresh credential: the failure
+        # recorded against the old key must not keep it out of rotation.
+        if _fingerprint_value(new_secret) != old_fingerprint:
+            existing = replace(
+                existing,
+                last_status=None,
+                last_status_at=None,
+                last_error_code=None,
+                last_error_reason=None,
+                last_error_message=None,
+                last_error_reset_at=None,
+            )
+            entries[existing_idx] = existing
+            status_cleared = True
     field_updates = {}
     extra_updates = {}
     _field_names = {f.name for f in fields(existing)}
@@ -1729,8 +1753,8 @@ def _upsert_entry(entries: List[PooledCredential], provider: str, source: str, p
         # Runtime-only borrowed secret updates should refresh the in-memory
         # entry without forcing auth.json churn when the disk-safe payload is
         # unchanged (for example env keys with the same fingerprint).
-        return existing.to_dict() != updated.to_dict()
-    return False
+        return status_cleared or existing.to_dict() != updated.to_dict()
+    return status_cleared
 
 
 def _normalize_pool_priorities(provider: str, entries: List[PooledCredential]) -> bool:

@@ -19,15 +19,17 @@ export async function GET(request: Request): Promise<NextResponse> {
     const client = await apiClientForRequest({ profile: profileFromUrl(request.url) });
     // Analytics is additive — a usage read failing must not blank the
     // configuration the page exists to show.
-    const [info, auxiliary, analytics] = await Promise.all([
+    const [info, auxiliary, analytics, fallback] = await Promise.all([
       client.modelInfo(),
       client.auxiliaryModels(),
       client.modelsAnalytics(30).catch(() => null),
+      client.fallbackModels().catch(() => null),
     ]);
     return NextResponse.json({
       info,
       auxiliary,
       usage: analytics?.models ?? [],
+      fallback: fallback?.providers,
     });
   } catch (err) {
     if (err instanceof HermesApiError) {
