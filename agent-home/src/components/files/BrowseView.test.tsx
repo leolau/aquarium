@@ -97,7 +97,7 @@ describe("BrowseView", () => {
     expect(calls.some((c) => c.url === "/api/browse/save")).toBe(false);
 
     confirm.mockReturnValue(true);
-    fireEvent.click(screen.getByRole("button", { name: "Save to my files" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Save to my files" }));
     await screen.findByText(/Saved to Files/);
     const save = calls.find((c) => c.url === "/api/browse/save");
     expect(JSON.parse(String(save?.init?.body))).toEqual({ place: "net-jensen", path: "quote.zip" });

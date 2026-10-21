@@ -10,6 +10,7 @@ import type {
   ModelOptionsResponse,
   ModelSetResponse,
 } from "@/types";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 type Phase =
   | { kind: "loading" }
@@ -379,13 +380,12 @@ export function ModelPickerSheet({
               <p className="text-sm text-[var(--color-muted)]">
                 Couldn't load providers.
               </p>
-              <button
-                type="button"
-                onClick={() => void loadInitial()}
+              <ActionButton
+                onAction={() => loadInitial()}
                 className="rounded-lg bg-[var(--color-accent)] px-4 py-2 text-sm text-white"
               >
                 Try again
-              </button>
+              </ActionButton>
             </div>
           ) : (
             <p
@@ -410,19 +410,18 @@ export function ModelPickerSheet({
               >
                 Back
               </button>
-              <button
-                type="button"
+              <ActionButton
                 disabled={busy !== null}
-                onClick={() => {
+                onAction={() => {
                   setPhase({ kind: "ready" });
-                  void (isCustomEndpoint
+                  return (isCustomEndpoint
                     ? setCustomEndpoint(true)
                     : setModel(true));
                 }}
                 className="ml-auto rounded-full bg-[var(--color-accent)] px-4 py-1.5 text-xs font-semibold text-[var(--color-accent-fg)] disabled:opacity-60"
               >
                 Use it anyway
-              </button>
+              </ActionButton>
             </div>
           </div>
         ) : phase.kind === "confirm-disconnect" && provider ? (
@@ -439,15 +438,14 @@ export function ModelPickerSheet({
               >
                 Keep it
               </button>
-              <button
-                type="button"
+              <ActionButton
                 disabled={busy !== null}
-                onClick={() => void disconnect()}
+                onAction={() => disconnect()}
                 className="ml-auto inline-flex items-center gap-2 rounded-full bg-red-500/80 px-4 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
               >
                 {busy === "disconnect" ? <Spinner /> : null}
                 Disconnect
-              </button>
+              </ActionButton>
             </div>
           </div>
         ) : (
@@ -514,15 +512,14 @@ export function ModelPickerSheet({
                   >
                     Cancel
                   </button>
-                  <button
-                    type="button"
+                  <ActionButton
                     disabled={!endpointUrl.trim() || !customModel.trim() || busy !== null}
-                    onClick={() => void setCustomEndpoint(false)}
+                    onAction={() => setCustomEndpoint(false)}
                     className="ml-auto inline-flex items-center gap-2 rounded-full bg-[var(--color-accent)] px-4 py-1.5 text-xs font-semibold text-[var(--color-accent-fg)] disabled:opacity-60"
                   >
                     {busy === "set" ? <Spinner /> : null}
                     Set model
-                  </button>
+                  </ActionButton>
                 </div>
               </div>
             ) : provider && !authenticated && keyBased ? (
@@ -558,15 +555,14 @@ export function ModelPickerSheet({
                   >
                     Cancel
                   </button>
-                  <button
-                    type="button"
+                  <ActionButton
                     disabled={!keyValue.trim() || busy !== null}
-                    onClick={() => void saveKey()}
+                    onAction={() => saveKey()}
                     className="ml-auto inline-flex items-center gap-2 rounded-full bg-[var(--color-accent)] px-4 py-1.5 text-xs font-semibold text-[var(--color-accent-fg)] disabled:opacity-60"
                   >
                     {busy === "key" ? <Spinner /> : null}
                     Save key
-                  </button>
+                  </ActionButton>
                 </div>
               </div>
             ) : provider && !authenticated && !keyBased ? (
@@ -613,25 +609,23 @@ export function ModelPickerSheet({
                 />
                 <div className="mt-3 flex gap-2">
                   {slot.kind === "aux" ? (
-                    <button
-                      type="button"
+                    <ActionButton
                       disabled={busy !== null || testing}
-                      onClick={() => void resetToAuto()}
+                      onAction={() => resetToAuto()}
                       className="inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] px-4 py-1.5 text-xs disabled:opacity-60"
                     >
                       {busy === "reset" ? <Spinner /> : null}
                       Reset to auto
-                    </button>
+                    </ActionButton>
                   ) : null}
-                  <button
-                    type="button"
+                  <ActionButton busyLabel="Testing…"
                     disabled={(!selectedModel && !typedModel.trim()) || busy !== null || testing}
-                    onClick={() => void testSelection()}
+                    onAction={() => testSelection()}
                     className="ml-auto inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] px-4 py-1.5 text-xs disabled:opacity-60"
                   >
                     {testing ? <Spinner /> : null}
                     {testing ? "Testing…" : "Test"}
-                  </button>
+                  </ActionButton>
                   <button
                     type="button"
                     disabled={(!selectedModel && !typedModel.trim()) || busy !== null || testing}

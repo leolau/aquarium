@@ -17,6 +17,7 @@ import {
 } from "@/lib/folder-bridge/handles";
 import type { FolderPermission } from "@/lib/folder-bridge/types";
 import type { BrowseEntry, BrowsePlace, ChatAttachment } from "@/types";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 /** A place on the left: a folder on this computer, a network folder or the workspace. */
 export interface Place {
@@ -514,13 +515,12 @@ export function BrowseView() {
         ) : place.source === "local" && place.permission !== "granted" ? (
           <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm">
             <p className="mb-3">{t("local.needsPermission", { name: place.name })}</p>
-            <button
-              type="button"
-              onClick={() => void reapprove(place)}
+            <ActionButton
+              onAction={() => reapprove(place)}
               className="rounded-lg bg-[var(--color-accent)] px-3 py-1.5 text-[var(--color-accent-fg)]"
             >
               {t("local.reapprove")}
-            </button>
+            </ActionButton>
           </div>
         ) : (
           <>
@@ -716,22 +716,20 @@ export function BrowseView() {
             </div>
             <div className="mt-3">{renderPreview(preview, t)}</div>
             <div className="mt-3 flex flex-col gap-2">
-              <button
-                type="button"
+              <ActionButton busyLabel={t("file.attaching")}
                 disabled={action !== null}
-                onClick={() => void ask(place, selected)}
+                onAction={() => ask(place, selected)}
                 className="rounded-lg bg-[var(--color-accent)] px-3 py-2 text-sm text-[var(--color-accent-fg)] disabled:opacity-60"
               >
                 {action === "ask" ? t("file.attaching") : t("file.ask")}
-              </button>
-              <button
-                type="button"
+              </ActionButton>
+              <ActionButton busyLabel={t("file.saving")}
                 disabled={action !== null}
-                onClick={() => void save(place, selected)}
+                onAction={() => save(place, selected)}
                 className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm disabled:opacity-60"
               >
                 {action === "save" ? t("file.saving") : t("file.save")}
-              </button>
+              </ActionButton>
               {fileLinks(place, selected, localUrl, t)}
             </div>
             {notice ? (

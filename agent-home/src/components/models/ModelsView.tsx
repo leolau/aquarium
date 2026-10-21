@@ -15,6 +15,7 @@ import type {
   ModelUsageEntry,
   PinnedModelCard,
 } from "@/types";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 /** Which slot the picker is editing — the main card or one aux role. */
 export type ModelSlot =
@@ -249,15 +250,14 @@ export function ModelsView({
           >
             Change
           </button>
-          <button
-            type="button"
-            onClick={() => void testMain()}
+          <ActionButton busyLabel="Testing…"
+            onAction={() => testMain()}
             disabled={testing}
             className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3.5 py-1.5 text-xs disabled:opacity-60"
           >
             {testing ? <Spinner /> : null}
             {testing ? "Testing…" : "Test"}
-          </button>
+          </ActionButton>
         </div>
         {testResult ? (
           <p

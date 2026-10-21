@@ -29,6 +29,7 @@ import {
 } from "@/lib/chat/turn-activity";
 import { usePersistentState } from "@/lib/use-persistent-state";
 import type { ChatApprovalRequest, ChatAttachment, ChatMessage } from "@/types";
+import { useAction } from "@/lib/use-action";
 
 /** Where the floating panel sits and how big it is, once the user moves it. */
 interface LeadChatRect {
@@ -407,6 +408,7 @@ export function LeadChatHost({
       setResolvingApproval(false);
     }
   }
+  const { run: resolveOnce } = useAction(resolveApproval);
 
   // Stop the in-flight turn. Closing the connection alone would NOT stop the
   // server-side turn (it survives a closed tab by design), so ask the server
@@ -571,7 +573,7 @@ export function LeadChatHost({
         <ApprovalModal
           request={approval}
           busy={resolvingApproval}
-          onResolve={(choice) => void resolveApproval(choice)}
+          onResolve={(choice) => resolveOnce(choice)}
         />
       ) : null}
     </div>

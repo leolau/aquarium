@@ -13,6 +13,7 @@ import type {
   MemoryRowsResponse,
   MemorySummary,
 } from "@/types";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 /**
  * FG-23 A2/A4 — the phone memory view. Server-rendered with the first page of
@@ -259,9 +260,8 @@ export function MemoryView({
             placeholder="Place a query on the map…"
             className="flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm"
           />
-          <button
-            type="button"
-            onClick={placeQuery}
+          <ActionButton
+            onAction={placeQuery}
             disabled={queryLoading || !queryText.trim()}
             className="inline-flex items-center gap-2 rounded-lg bg-[var(--color-accent)] px-3 py-2 text-sm font-medium text-white disabled:opacity-40"
           >
@@ -273,7 +273,7 @@ export function MemoryView({
             ) : (
               "Place"
             )}
-          </button>
+          </ActionButton>
         </div>
         {queryText.trim() && (
           <p className="text-xs text-[var(--color-muted)]">
@@ -367,9 +367,8 @@ export function MemoryView({
 
         {/* Load more */}
         {offset + limit < total && (
-          <button
-            type="button"
-            onClick={loadMore}
+          <ActionButton
+            onAction={loadMore}
             disabled={loading}
             className="flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--color-border)] py-2 text-sm text-[var(--color-muted)] disabled:opacity-40"
           >
@@ -381,7 +380,7 @@ export function MemoryView({
             ) : (
               "Load more"
             )}
-          </button>
+          </ActionButton>
         )}
       </aside>
     </div>
