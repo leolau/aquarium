@@ -14,6 +14,8 @@ import type {
 } from "@/types";
 
 import { useExtraToolsT } from "./extraToolsStrings";
+import { ActionButton } from "@/components/ui/ActionButton";
+import { useAction } from "@/lib/use-action";
 
 /**
  * "Your own tools" (Get ready item 8): the signed-in person's own MCP
@@ -198,7 +200,7 @@ export function PersonalMcpServers({ onCount }: { onCount?: (count: number) => v
                   server={s}
                   busy={busy[s.name] ?? null}
                   result={results[s.name] ?? null}
-                  onTest={() => void runTest(s.name)}
+                  onTest={() => runTest(s.name)}
                   onRemove={() => setRemoving(s)}
                   onSignedIn={() => void load()}
                 />
@@ -212,7 +214,7 @@ export function PersonalMcpServers({ onCount }: { onCount?: (count: number) => v
               onChange={setForm}
               saving={saving}
               error={formError}
-              onSave={() => void save(form)}
+              onSave={() => save(form)}
               onCancel={() => {
                 setForm(null);
                 setFormError(null);
@@ -228,9 +230,9 @@ export function PersonalMcpServers({ onCount }: { onCount?: (count: number) => v
               >
                 {t("add")}
               </button>
-              <button type="button" className={btnCls} onClick={() => void toggleCatalog()}>
+              <ActionButton className={btnCls} onAction={() => toggleCatalog()}>
                 {catalogOpen ? t("hideCatalog") : t("catalog")}
-              </button>
+              </ActionButton>
             </div>
           )}
           {atLimit ? (
@@ -260,7 +262,7 @@ export function PersonalMcpServers({ onCount }: { onCount?: (count: number) => v
           confirmLabel={t("remove")}
           cancelLabel={t("cancel")}
           busy={busy[removing.name] === "remove"}
-          onConfirm={() => void confirmRemove()}
+          onConfirm={() => confirmRemove()}
           onCancel={() => setRemoving(null)}
         />
       ) : null}
@@ -279,7 +281,7 @@ function ServerRow({
   server: PersonalMcpServer;
   busy: "test" | "remove" | null;
   result: McpServerTestResult | null;
-  onTest: () => void;
+  onTest: () => unknown;
   onRemove: () => void;
   onSignedIn: () => void;
 }) {
@@ -319,7 +321,7 @@ function ServerRow({
       ) : null}
       {server.auth === "oauth" ? <SignIn name={server.name} onDone={onSignedIn} /> : null}
       <div className="mt-3 flex flex-wrap gap-2">
-        <button type="button" className={btnCls} disabled={busy !== null} onClick={onTest}>
+        <ActionButton busyLabel={t("testing")} className={btnCls} disabled={busy !== null} onAction={onTest}>
           {busy === "test" ? (
             <span className="inline-flex items-center gap-1">
               <Spinner /> {t("testing")}
@@ -327,7 +329,7 @@ function ServerRow({
           ) : (
             t("test")
           )}
-        </button>
+        </ActionButton>
         <button
           type="button"
           className="rounded-lg px-3 py-1.5 text-xs font-medium text-red-400 disabled:opacity-50"
@@ -401,9 +403,9 @@ function SignIn({ name, onDone }: { name: string; onDone: () => void }) {
   return (
     <div data-component="PersonalMcpSignIn" className="mt-3 space-y-2">
       {!active ? (
-        <button type="button" className={btnCls} onClick={() => void start()}>
+        <ActionButton className={btnCls} onAction={() => start()}>
           {t("signIn")}
-        </button>
+        </ActionButton>
       ) : null}
       {flow?.status === "starting" ? (
         <p className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
@@ -428,21 +430,20 @@ function SignIn({ name, onDone }: { name: string; onDone: () => void }) {
               placeholder={t("pastePh")}
               className={`${inputCls} min-w-0 flex-1 font-mono text-xs`}
             />
-            <button
-              type="button"
+            <ActionButton busyLabel={t("finishing")}
               className={primaryBtnCls}
               disabled={sending || !redirect.trim()}
-              onClick={() => void finish()}
+              onAction={() => finish()}
             >
               {sending ? t("finishing") : t("finish")}
-            </button>
+            </ActionButton>
           </div>
         </div>
       ) : null}
       {active ? (
-        <button type="button" className={btnCls} onClick={() => void cancel()}>
+        <ActionButton className={btnCls} onAction={() => cancel()}>
           {t("cancelSignIn")}
-        </button>
+        </ActionButton>
       ) : null}
       {flow?.status === "success" ? <p className="text-xs text-emerald-400">{t("signInDone")}</p> : null}
       {flow?.status === "error" ? (
@@ -465,18 +466,20 @@ function AddForm({
   onChange: (v: FormValues) => void;
   saving: boolean;
   error: string | null;
-  onSave: () => void;
+  onSave: () => unknown;
   onCancel: () => void;
 }) {
   const t = useExtraToolsT();
   const set = (k: keyof FormValues, v: string | boolean) => onChange({ ...values, [k]: v });
+  const { run: saveOnce } = useAction(() => onSave());
+
   return (
     <form
       data-component="PersonalMcpAddForm"
       className="space-y-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
       onSubmit={(e) => {
         e.preventDefault();
-        onSave();
+        void saveOnce();
       }}
     >
       <div className="grid gap-3 sm:grid-cols-2">

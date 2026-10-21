@@ -6,6 +6,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Pill } from "@/components/ui/Pill";
 import { Spinner } from "@/components/ui/Spinner";
 import type { RoleLimit, RoleLimitsResponse, RoleToolGroup } from "@/types";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 /**
  * Settings → Tools & Integrations → "What each role can use". Shows, per role,
@@ -38,7 +39,7 @@ function GroupRow({
   role: RoleLimit;
   group: RoleToolGroup;
   disabled: boolean;
-  onToggle: () => void;
+  onToggle: () => unknown;
 }) {
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -88,8 +89,8 @@ function RoleCard({
   canEdit: boolean;
   saving: boolean;
   error: string | null;
-  onToggle: (group: RoleToolGroup) => void;
-  onReset: () => void;
+  onToggle: (group: RoleToolGroup) => unknown;
+  onReset: () => unknown;
 }) {
   const [showAll, setShowAll] = useState(false);
   const editable = canEdit && !role.locked;
@@ -148,14 +149,13 @@ function RoleCard({
               </button>
             ) : null}
             {editable && role.customised ? (
-              <button
-                type="button"
+              <ActionButton
                 disabled={saving}
-                onClick={onReset}
+                onAction={onReset}
                 className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1.5 text-xs font-medium disabled:opacity-50"
               >
                 Reset to defaults
-              </button>
+              </ActionButton>
             ) : null}
           </div>
         </>
@@ -260,7 +260,7 @@ export function RoleLimitsSection({ canEdit }: { canEdit: boolean }) {
               saving={saving === r.role}
               error={errors[r.role] ?? null}
               onToggle={(g) => toggle(r, g)}
-              onReset={() => void save(r, { reset: true })}
+              onReset={() => save(r, { reset: true })}
             />
           ))}
         </ul>

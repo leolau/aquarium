@@ -443,7 +443,7 @@ function RemoveUserDialog({
   member: Member;
   candidates: Member[];
   onCancel: () => void;
-  onConfirm: (m: Member, strategy: "transfer" | "purge", transferTo: string) => void;
+  onConfirm: (m: Member, strategy: "transfer" | "purge", transferTo: string) => unknown;
 }) {
   const [strategy, setStrategy] = useState<"transfer" | "purge">("transfer");
   const [transferTo, setTransferTo] = useState(candidates[0]?.user_id ?? "");

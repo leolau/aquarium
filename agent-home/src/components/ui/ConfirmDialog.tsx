@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 
-import { Spinner } from "@/components/ui/Spinner";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 export interface ConfirmDialogProps {
   title: string;
@@ -11,7 +11,8 @@ export interface ConfirmDialogProps {
   confirmLabel: string;
   cancelLabel?: string;
   busy?: boolean;
-  onConfirm(): void;
+  /** Return the promise: the button stays busy and locked until it settles. */
+  onConfirm(): unknown;
   onCancel(): void;
 }
 
@@ -80,16 +81,15 @@ export function ConfirmDialog({
           >
             {cancelLabel}
           </button>
-          <button
-            type="button"
-            disabled={busy}
+          <ActionButton
+            busy={busy}
+            busyLabel={confirmLabel}
             autoFocus
-            onClick={onConfirm}
+            onAction={onConfirm}
             className="ml-auto inline-flex items-center gap-2 rounded-full bg-red-500/80 px-4 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
           >
-            {busy ? <Spinner /> : null}
             {confirmLabel}
-          </button>
+          </ActionButton>
         </div>
       </div>
     </div>

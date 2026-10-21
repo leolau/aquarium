@@ -49,7 +49,7 @@ export function LogoutButton() {
           body={t("signOutConfirmBody")}
           confirmLabel={t("signOut")}
           onCancel={() => setConfirming(false)}
-          onConfirm={() => void signOut()}
+          onConfirm={() => signOut()}
         />
       )}
     </>

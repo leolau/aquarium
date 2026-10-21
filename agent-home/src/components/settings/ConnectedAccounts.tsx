@@ -13,6 +13,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import type { CredentialEntry, EmailPollerAccount } from "@/types";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 type ConnectPhase = "idle" | "consent" | "busy";
 
@@ -504,14 +505,13 @@ export function ConnectedAccounts() {
             placeholder="Google account email (optional — pre-fills Google's sign-in)"
             className="w-full rounded border border-[var(--color-surface-2)] bg-transparent px-2 py-1 text-xs"
           />
-          <button
-            type="button"
+          <ActionButton busyLabel="Connecting…"
             disabled={services.length === 0}
-            onClick={() => void start()}
+            onAction={() => start()}
             className="rounded bg-[var(--color-accent)] px-2 py-1 text-xs font-semibold text-black"
           >
             Connect Google account
-          </button>
+          </ActionButton>
         </div>
       )}
 
@@ -552,14 +552,13 @@ export function ConnectedAccounts() {
               className="w-full rounded border border-[var(--color-surface-2)] bg-transparent px-2 py-1"
             />
             <div className="flex gap-2">
-              <button
-                type="button"
+              <ActionButton
                 disabled={phase === "busy" || !pasted.trim()}
-                onClick={() => void complete()}
+                onAction={() => complete()}
                 className="rounded bg-[var(--color-accent)] px-2 py-1 font-semibold text-black"
               >
                 {phase === "busy" ? "Working…" : "Complete"}
-              </button>
+              </ActionButton>
               <button
                 type="button"
                 disabled={phase === "busy"}
@@ -590,7 +589,7 @@ export function ConnectedAccounts() {
           onConfirm={() => {
             const entry = confirmEntry;
             setConfirmEntry(null);
-            void disconnect(entry);
+            return disconnect(entry);
           }}
         />
       )}

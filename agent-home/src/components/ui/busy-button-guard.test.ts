@@ -15,18 +15,6 @@ const SRC = path.resolve(__dirname, "../..");
 
 const PENDING = new Set([
   // PR 4 — Settings, People
-  "components/settings/ConnectedAccounts.tsx",
-  "components/settings/EmailMailboxes.tsx",
-  "components/settings/EntityGoalSection.tsx",
-  "components/settings/GoogleClientSetup.tsx",
-  "components/settings/PersonalMcpServers.tsx",
-  "components/settings/RoleLimitsSection.tsx",
-  "components/settings/SettingsView.tsx",
-  "components/settings/TelegramBotSetup.tsx",
-  "components/settings/TelegramLinks.tsx",
-  "components/settings/ToolsSettings.tsx",
-  "components/settings/VpnConnections.tsx",
-  "components/settings/WhatsAppBridges.tsx",
   // PR 5 — Sign-in, first-run, Account, Get ready
   "components/LanguageSwitch.tsx",
   "components/LoginForm.tsx",

@@ -16,6 +16,8 @@ import { errorKey, type TelegramBotKey } from "@/components/settings/telegramBot
 import { useT } from "@/i18n";
 import { Spinner } from "@/components/ui/Spinner";
 import type { TelegramBotView } from "@/types";
+import { ActionButton } from "@/components/ui/ActionButton";
+import { useAction } from "@/lib/use-action";
 
 type Busy = "save" | "test" | "linkStart" | "linkCheck" | "unlink" | "remove" | null;
 
@@ -131,6 +133,9 @@ export function TelegramBotSetup() {
   const showTokenForm = !view?.configured || replacing;
   const testFailed = view?.configured && view.last_test_ok === false;
 
+  // Enter pressed twice submits twice before `busy` renders; the lock stops it.
+  const { run: saveOnce } = useAction(save);
+
   return (
     <section data-component="TelegramBotSetup" data-section="telegram-bot" className="space-y-4" aria-busy={busy !== null}>
       <div>
@@ -144,9 +149,9 @@ export function TelegramBotSetup() {
         loadError ? (
           <p role="alert" className="text-xs text-[var(--color-danger)]">
             {t("loadFailed")}{" "}
-            <button type="button" className="underline" onClick={load}>
+            <ActionButton className="underline" onAction={load}>
               {t("retry")}
-            </button>
+            </ActionButton>
           </p>
         ) : (
           <p className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
@@ -162,7 +167,7 @@ export function TelegramBotSetup() {
                 className="flex flex-col gap-2 sm:flex-row sm:items-end"
                 onSubmit={(e) => {
                   e.preventDefault();
-                  void save();
+                  void saveOnce();
                 }}
               >
                 <label className="flex min-w-0 flex-1 flex-col gap-1 text-xs text-[var(--color-muted)]">
@@ -202,15 +207,15 @@ export function TelegramBotSetup() {
                   ) : null}
                 </div>
                 <div className="flex flex-wrap gap-2 sm:shrink-0">
-                  <button type="button" className={BTN} disabled={busy !== null} onClick={() => void test()}>
+                  <ActionButton busyLabel={t("testing")} className={BTN} disabled={busy !== null} onAction={() => test()}>
                     {label("test", "test", "testing")}
-                  </button>
+                  </ActionButton>
                   <button type="button" className={BTN} disabled={busy !== null} onClick={() => setReplacing(true)}>
                     {t("replaceToken")}
                   </button>
-                  <button type="button" className={`${BTN} text-[var(--color-danger)]`} disabled={busy !== null} onClick={() => void remove()}>
+                  <ActionButton busyLabel={t("removing")} className={`${BTN} text-[var(--color-danger)]`} disabled={busy !== null} onAction={() => remove()}>
                     {label("remove", "remove", "removing")}
-                  </button>
+                  </ActionButton>
                 </div>
               </div>
             )}
@@ -222,12 +227,12 @@ export function TelegramBotSetup() {
               <div className="flex flex-col gap-2 rounded-lg border border-[var(--color-border)] p-3 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-sm">✓ {t("linked", { who: view.linked_username ? `@${view.linked_username}` : "Telegram" })}</p>
                 <div className="flex flex-wrap gap-2 sm:shrink-0">
-                  <button type="button" className={BTN} disabled={busy !== null} onClick={() => void linkStart()}>
+                  <ActionButton busyLabel={t("linkStarting")} className={BTN} disabled={busy !== null} onAction={() => linkStart()}>
                     {label("linkStart", "relink", "linkStarting")}
-                  </button>
-                  <button type="button" className={BTN} disabled={busy !== null} onClick={() => void unlink()}>
+                  </ActionButton>
+                  <ActionButton busyLabel={t("unlinking")} className={BTN} disabled={busy !== null} onAction={() => unlink()}>
                     {label("unlink", "unlink", "unlinking")}
-                  </button>
+                  </ActionButton>
                 </div>
               </div>
             ) : linkUrl ? (
@@ -236,14 +241,14 @@ export function TelegramBotSetup() {
                   {t("linkOpen")}
                 </a>
                 <p className="text-xs text-[var(--color-muted)]">{t("linkHelp")}</p>
-                <button type="button" className={BTN_PRIMARY} disabled={busy !== null} onClick={() => void linkCheck()}>
+                <ActionButton busyLabel={t("linkChecking")} className={BTN_PRIMARY} disabled={busy !== null} onAction={() => linkCheck()}>
                   {label("linkCheck", "linkCheck", "linkChecking")}
-                </button>
+                </ActionButton>
               </div>
             ) : (
-              <button type="button" className={BTN_PRIMARY} disabled={busy !== null || testFailed} onClick={() => void linkStart()}>
+              <ActionButton busyLabel={t("linkStarting")} className={BTN_PRIMARY} disabled={busy !== null || testFailed} onAction={() => linkStart()}>
                 {label("linkStart", "linkStart", "linkStarting")}
-              </button>
+              </ActionButton>
             )}
           </div>
         </>

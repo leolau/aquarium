@@ -6,6 +6,7 @@ import { BusyRegion } from "@/components/ui/BusyRegion";
 import { Spinner } from "@/components/ui/Spinner";
 import type { EntityGoal, EntityGoalResponse } from "@/types";
 import { useT } from "@/i18n";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 /**
  * The entity goal — the one goal every sub-goal ladders into.
@@ -114,9 +115,8 @@ export function EntityGoalSection({
               </p>
             ) : (
               <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => void save()}
+                <ActionButton
+                  onAction={() => save()}
                   disabled={saving || !title.trim()}
                   className="shrink-0 rounded-lg bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent-fg)] disabled:opacity-60"
                 >
@@ -128,7 +128,7 @@ export function EntityGoalSection({
                   ) : (
                     "Save goal"
                   )}
-                </button>
+                </ActionButton>
                 {saved ? (
                   <span className="text-xs text-[var(--color-muted)]">
                     Saved. New conversations will see it.

@@ -19,6 +19,8 @@ import type {
   EmailSecurity,
   EmailServerSettings,
 } from "@/types";
+import { ActionButton } from "@/components/ui/ActionButton";
+import { useAction } from "@/lib/use-action";
 
 type Key = keyof typeof en;
 type T = (key: Key, vars?: Record<string, string>) => string;
@@ -251,6 +253,9 @@ export function EmailMailboxes() {
   }
 
   const v = shown?.values;
+  // Enter pressed twice submits twice before `busy` renders; the lock stops it.
+  const { run: saveOnce } = useAction(saveAndTest);
+
   return (
     <section data-component="EmailMailboxes">
       <h2 className="text-sm font-semibold">{t("title")}</h2>
@@ -266,7 +271,7 @@ export function EmailMailboxes() {
               mailbox={m}
               t={t}
               busy={busy}
-              onTest={() => void runTest(m.address)}
+              onTest={() => runTest(m.address)}
               onEdit={() => setForm({ values: fromMailbox(m), editing: true })}
               onRemove={() => setRemoving(m.address)}
             />
@@ -289,7 +294,7 @@ export function EmailMailboxes() {
           className="space-y-3 rounded border border-[var(--color-surface-2)] p-3"
           onSubmit={(e) => {
             e.preventDefault();
-            void saveAndTest();
+            void saveOnce();
           }}
         >
           <div className="flex flex-wrap items-center gap-2 text-xs" role="group" aria-label={t("preset")}>
@@ -367,7 +372,7 @@ export function EmailMailboxes() {
           confirmLabel={t("remove")}
           cancelLabel={t("cancel")}
           busy={busy === removing}
-          onConfirm={() => void remove(removing)}
+          onConfirm={() => remove(removing)}
           onCancel={() => setRemoving(null)}
         />
       )}
@@ -423,8 +428,8 @@ function MailboxRow({
   mailbox: EmailMailbox;
   t: T;
   busy: string | null;
-  onTest: () => void;
-  onEdit: () => void;
+  onTest: () => unknown;
+  onEdit: () => unknown;
   onRemove: () => void;
 }) {
   const test = m.last_test;
@@ -452,9 +457,9 @@ function MailboxRow({
         <p className="mt-1 text-red-400">{t("readProblem", { reason: m.last_poll.error })}</p>
       )}
       <div className="mt-2 flex flex-wrap gap-2">
-        <button type="button" className={btnCls} disabled={!!busy} aria-busy={testing} onClick={onTest}>
+        <ActionButton busyLabel={t("testing")} className={btnCls} disabled={!!busy} aria-busy={testing} onAction={onTest}>
           {testing ? t("testing") : t("test")}
-        </button>
+        </ActionButton>
         <button type="button" className={btnCls} disabled={!!busy} onClick={onEdit}>
           {t("edit")}
         </button>

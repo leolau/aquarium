@@ -19,6 +19,7 @@ import type {
   VpnState,
   VpnView,
 } from "@/types";
+import { ActionButton } from "@/components/ui/ActionButton";
 
 const PROVIDER = "fortinet";
 const KIND = "fortinet-vpn";
@@ -446,11 +447,11 @@ export function VpnConnections() {
                   delete next[vpn.name];
                   return next;
                 });
-                void runAction(vpn.name, "connect");
+                return runAction(vpn.name, "connect");
               }}
-              onDisconnect={() => void runAction(vpn.name, "disconnect")}
-              onTest={() => void runAction(vpn.name, "test")}
-              onEdit={() => void openEdit(vpn)}
+              onDisconnect={() => runAction(vpn.name, "disconnect")}
+              onTest={() => runAction(vpn.name, "test")}
+              onEdit={() => openEdit(vpn)}
               onRemove={() => setConfirmRemove(vpn)}
               onAutoConnect={(on) => void setAutoConnect(vpn, on)}
             >
@@ -460,7 +461,7 @@ export function VpnConnections() {
                   cert={cert}
                   busy={!!busy[vpn.name]}
                   onTrust={() =>
-                    void runAction(vpn.name, "trust", {
+                    runAction(vpn.name, "trust", {
                       sha256: normalizeFingerprint(cert.sha256),
                     })
                   }
@@ -577,14 +578,13 @@ export function VpnConnections() {
           </p>
           {formProblem && <p className="text-xs text-red-400">{formProblem}</p>}
           <div className="flex gap-2">
-            <button
-              type="button"
+            <ActionButton busyLabel="Saving…"
               disabled={saving}
-              onClick={() => void save()}
+              onAction={() => save()}
               className={primaryBtnCls}
             >
               {saving ? "Saving…" : "Save & test connection"}
-            </button>
+            </ActionButton>
             <button
               type="button"
               disabled={saving}
@@ -614,7 +614,7 @@ export function VpnConnections() {
           onConfirm={() => {
             const vpn = confirmRemove;
             setConfirmRemove(null);
-            void remove(vpn);
+            return remove(vpn);
           }}
         />
       )}
@@ -768,30 +768,28 @@ function VpnCard({
 
       <div className="mt-2 flex flex-wrap gap-2">
         {connected ? (
-          <button type="button" disabled={!!busy} onClick={onDisconnect} className={btnCls}>
+          <ActionButton busyLabel="Disconnecting…" disabled={!!busy} onAction={onDisconnect} className={btnCls}>
             {busy === "disconnect" ? "Disconnecting…" : "Disconnect"}
-          </button>
+          </ActionButton>
         ) : (
-          <button
-            type="button"
+          <ActionButton busyLabel="Connecting…"
             disabled={!!busy || connecting}
-            onClick={onConnect}
+            onAction={onConnect}
             className={primaryBtnCls}
           >
             {connecting ? "Connecting…" : "Connect"}
-          </button>
+          </ActionButton>
         )}
-        <button
-          type="button"
+        <ActionButton busyLabel="Testing…"
           disabled={!!busy || connecting}
-          onClick={onTest}
+          onAction={onTest}
           className={btnCls}
         >
           {busy === "test" ? "Testing…" : "Test again"}
-        </button>
-        <button type="button" disabled={!!busy} onClick={onEdit} className={btnCls}>
+        </ActionButton>
+        <ActionButton disabled={!!busy} onAction={onEdit} className={btnCls}>
           Edit
-        </button>
+        </ActionButton>
       </div>
     </li>
   );
@@ -860,9 +858,9 @@ function CertPanel({
         certificate warning on your own computer) before trusting it.
       </p>
       <div className="flex gap-2">
-        <button type="button" disabled={busy} onClick={onTrust} className={primaryBtnCls}>
+        <ActionButton disabled={busy} onAction={onTrust} className={primaryBtnCls}>
           Trust and connect
-        </button>
+        </ActionButton>
         <button type="button" disabled={busy} onClick={onReject} className={btnCls}>
           Don&apos;t trust
         </button>
