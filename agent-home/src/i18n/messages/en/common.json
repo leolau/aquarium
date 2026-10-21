@@ -6,5 +6,6 @@
   "signingOut": "Signing out…",
   "signOutConfirmTitle": "Sign out?",
   "signOutConfirmBody": "You'll need to log in again on this device.",
-  "cancel": "Cancel"
+  "cancel": "Cancel",
+  "working": "Working…"
 }

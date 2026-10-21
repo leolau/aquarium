@@ -1,0 +1,62 @@
+# Busy buttons — every button that calls the server shows it is working and can't be clicked twice
+
+Requested by Leo, 2026-10-20 (approved; "do them one after another"):
+
+> Whenever a button is clicked two things should happen: 1) the button should
+> indicate to the user that it is processing; 2) the same button should be
+> blocked from user clicking it again.
+
+**Next agent: start at "Progress" below, take the first row that is not done,
+and update this file in the same PR.** Each area PR goes into `develop`, one at
+a time (Leo merges; rebuild the next PR on the merged `develop`).
+
+## The building blocks (PR 1)
+
+- `agent-home/src/lib/use-action.ts` — `useAction(fn)` returns `{ run, pending }`.
+  A ref lock is taken synchronously on the first call, so a fast double-click
+  or double Enter calls `fn` once (React's `disabled` only lands after the next
+  render, which a fast double-click beats). `pending` drives the busy look.
+- `agent-home/src/components/ui/ActionButton.tsx` — the one button for server
+  work. `onAction` runs through `useAction`; while busy it shows `Spinner` plus
+  `busyLabel` (default `common.working` = "Working…" / "處理中…"), is
+  `disabled`, sets `aria-busy`, and drops clicks. For forms: run the submit with
+  `useAction` in `onSubmit` and pass `busy={pending}` to a `type="submit"`
+  `ActionButton`.
+- Guard test `agent-home/src/components/ui/busy-button-guard.test.ts` — any
+  `.tsx` under `src/components` or `src/app` that sends POST/PUT/PATCH/DELETE
+  must import `ActionButton` or `useAction`. Its `PENDING` list holds the files
+  not converted yet, grouped by area PR; remove a file from it when you convert
+  it (the test fails if a listed file is already converted or no longer sends).
+
+## How to convert a component
+
+1. Every button whose click calls the server (directly, through a helper such
+   as `call()`, or through `router.refresh()` after a write) becomes an
+   `ActionButton` with a specific `busyLabel` ("Saving…", "Testing…",
+   "Sending…"), in EN and 繁中 in that area's messages file.
+2. Keep any existing view-level `busy` flag: pass it as `busy` so sibling
+   buttons stay blocked while one runs, and keep `BusyRegion` where present.
+   Hold busy across `useRefresh().refreshing` if the view refreshes after a write.
+3. Forms: `useAction` around the submit; Enter must not send twice.
+4. Buttons that only load data (Load more, Refresh, Search, Open file) also get
+   a busy state and lock — the guard only checks writes, so review by hand.
+5. Purely local buttons (Cancel, Close, Copy, tab switches) stay as they are.
+6. Add or update a test for the area: double-click sends once; the button shows
+   the busy label and is disabled until the server answers.
+7. Run `npx tsc -p . --noEmit`, `npx eslint <files>`, `npx vitest run <area>`.
+
+## Progress
+
+| PR | Area | Files (from the guard's PENDING list + GET-only buttons) | Status |
+|---|---|---|---|
+| 1 | Building blocks + guard | `use-action.ts`, `ActionButton.tsx`, guard test | PR open: https://github.com/leolau/aquarium/pull/606 |
+| 2 | Chat, Inbox, To-dos | chat/ChatPane, Composer, ArchivedModal, SessionModal, SessionSearchBar, MessageBubble; inbox/InboxView, IncomingDetailView, IncomingsList; todos/TodoCompleteForm, TodoDetailView, TodosList | not started |
+| 3 | Projects | all `components/projects/**` in PENDING, plus AddToProjectSheet, ProjectsList, changes/ChangeRequestSheet, panels/GuidancePanel, ask/AskOrChangeBox, dashboard/DashActionButton | not started |
+| 4 | Settings, People | all `components/settings/*` in PENDING, plus users/UsersView, InvitationLink, DirectoryPanel | not started |
+| 5 | Sign-in, first-run, Account, Get ready | LoginForm, LogoutButton, LanguageSwitch, auth/*, get-ready/*, account/* (TwoFactorSetup, RecoveryCodes, AccountSecurity), push/PushEnroll | not started |
+| 6 | Files, Memory, Models, other | files/BrowseView, NetworkFolders, FolderBridgeView, FilesView, FileRefOpener; memory/MemoryView; models/ModelsView, ModelPickerSheet; profiles/ProfileSuggestionsView; coral/LeadChatHost; webview/WebviewConsole; ui/StatusStrip | not started |
+| 7 | Deploy to Hetzner | normal `/opt/data/deploy-hermes.sh develop` after a backup + snapshot (see aquarium-ops `production/PRODUCTION.md`); no settings change | not started |
+
+Audit numbers at the start (2026-10-20, `develop` 840ce6da9): 59 components send
+changes or load on click; 38 had a server button with no `disabled`; 52 had no
+lock against a fast double-click.
