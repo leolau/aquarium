@@ -42,7 +42,7 @@ export async function PUT(request: Request): Promise<NextResponse> {
   if (!canAdminister(principal)) {
     return NextResponse.json({ error: "forbidden", detail: ADMIN_ONLY_DENIED }, { status: 403 });
   }
-  let body: { providers?: unknown; profile?: string };
+  let body: { providers?: unknown; task?: unknown; profile?: string };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -64,7 +64,8 @@ export async function PUT(request: Request): Promise<NextResponse> {
   }
   try {
     const client = await apiClientForRequest({ profile: profileFromBody(body) });
-    return NextResponse.json(await client.setFallbackModels(providers));
+    const task = typeof body.task === "string" && body.task ? body.task : undefined;
+    return NextResponse.json(await client.setFallbackModels(providers, task));
   } catch (err) {
     return errorBody(err);
   }

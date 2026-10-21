@@ -11,11 +11,9 @@ const getPrincipal = vi.fn<() => Promise<Principal | null>>();
 const fallbackModels = vi.fn(
   async (): Promise<FallbackModelsResponse> => ({ providers: [] }),
 );
-const setFallbackModels = vi.fn(
-  async (providers: { provider: string; model: string }[]): Promise<FallbackModelsResponse> => ({
-    providers,
-  }),
-);
+const setFallbackModels = vi.fn<
+  (providers: { provider: string; model: string }[], task?: string) => Promise<FallbackModelsResponse>
+>(async (providers) => ({ providers }));
 
 vi.mock("@/lib/auth/principal", () => ({
   getPrincipal: () => getPrincipal(),
@@ -63,7 +61,14 @@ describe("/api/models/fallback", () => {
     ];
     const res = await put({ providers });
     expect(res.status).toBe(200);
-    expect(setFallbackModels).toHaveBeenCalledWith(providers);
+    expect(setFallbackModels).toHaveBeenCalledWith(providers, undefined);
+  });
+
+  it("forwards a task role's list with its task", async () => {
+    const providers = [{ provider: "deepseek", model: "deepseek-v4-pro" }];
+    const res = await put({ task: "vision", providers });
+    expect(res.status).toBe(200);
+    expect(setFallbackModels).toHaveBeenCalledWith(providers, "vision");
   });
 
   it("rejects a malformed entry", async () => {

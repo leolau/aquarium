@@ -4373,6 +4373,27 @@ class TestNewEndpoints:
                               json={"providers": [{"provider": "", "model": "x"}]})
         assert bad.status_code == 400
 
+    def test_role_backup_list_round_trip(self):
+        """A task role's backup list lands in auxiliary.<task>.fallback_chain,
+        reads back on /api/model/auxiliary, and leaves Main's list alone."""
+        from hermes_cli.config import load_config
+
+        resp = self.client.put("/api/model/fallback", json={
+            "task": "vision",
+            "providers": [{"provider": "deepseek", "model": "deepseek-v4-pro"}],
+        })
+        assert resp.status_code == 200
+        cfg = load_config()
+        assert cfg["auxiliary"]["vision"]["fallback_chain"] == [
+            {"provider": "deepseek", "model": "deepseek-v4-pro"}
+        ]
+        tasks = {t["task"]: t for t in self.client.get("/api/model/auxiliary").json()["tasks"]}
+        assert tasks["vision"]["fallback_chain"] == [{"provider": "deepseek", "model": "deepseek-v4-pro"}]
+        assert tasks["compression"]["fallback_chain"] == []
+        assert self.client.put("/api/model/fallback", json={"task": "vision", "providers": []}).status_code == 200
+        assert "fallback_chain" not in load_config()["auxiliary"]["vision"]
+        assert self.client.put("/api/model/fallback", json={"task": "nope", "providers": []}).status_code == 400
+
     def test_refresh_keys_clears_pool_failure_marks(self):
         """"Refresh keys" reloads .env and clears the failure marks the
         credential pool keeps, so the saved key is used on the next call."""
