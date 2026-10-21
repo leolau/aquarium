@@ -25,8 +25,6 @@ export type ModelSlot =
   /** A backup model: `index` is its place in the list, null when adding. */
   | { kind: "fallback"; index: number | null };
 
-/** Most backup models the page lets you list (the server enforces it too). */
-const MAX_FALLBACKS = 5;
 
 /** Display metadata per auxiliary task slot (order = display order). */
 const AUX_ROLES: readonly { task: string; label: string; hint: string; top: boolean }[] = [
@@ -95,6 +93,16 @@ function slotTagFor(
   return hit ? hit.task.replace(/_/g, " ") : "not configured";
 }
 
+/** "backup: qwen3.8-max · alibaba, …" under a role's main model. */
+function BackupLine({ backups }: { backups?: FallbackModel[] }) {
+  if (!backups?.length) return null;
+  return (
+    <span data-component="RoleBackupLine" className="block truncate text-[11px] text-[var(--color-warn-text)]">
+      backup: {backups.map((b) => `${b.model} · ${b.provider}`).join(", ")}
+    </span>
+  );
+}
+
 export function ModelsView({
   initial,
   profile,
@@ -111,7 +119,6 @@ export function ModelsView({
   const [perf, setPerf] = useState<ModelsPerformanceResponse | null>(null);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
-  const [fallbackBusy, setFallbackBusy] = useState(false);
   const [keysNote, setKeysNote] = useState<{ ok: boolean; text: string } | null>(null);
 
   const testMain = useCallback(async () => {
@@ -213,32 +220,6 @@ export function ModelsView({
 
   const fallbacks = data.fallback;
 
-  async function saveFallbacks(next: FallbackModel[]) {
-    setFallbackBusy(true);
-    try {
-      const res = await fetch("/api/models/fallback", {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(withProfileBody({ providers: next }, profile)),
-      });
-      const body = (await res.json().catch(() => ({}))) as { detail?: string };
-      if (!res.ok) throw new Error(body.detail ?? "Couldn't save the backup models.");
-      setError(null);
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't save the backup models.");
-    } finally {
-      setFallbackBusy(false);
-    }
-  }
-
-  function moveFallback(list: FallbackModel[], from: number, to: number): FallbackModel[] {
-    const next = [...list];
-    const [item] = next.splice(from, 1);
-    next.splice(to, 0, item);
-    return next;
-  }
-
   async function refreshKeys() {
     setKeysNote(null);
     try {
@@ -332,91 +313,32 @@ export function ModelsView({
         ) : null}
       </section>
 
-      {/* ── Backup models (fallback_providers) ── */}
-      {fallbacks ? (
-        <section data-component="BackupModels">
-          <h2 className="mb-2 px-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
-            Backup models
-          </h2>
-          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3">
-            {fallbacks.length === 0 ? (
-              <p className="py-3 text-sm text-[var(--color-muted)]">
-                None. If the main model fails, the request fails.
-              </p>
-            ) : (
-              fallbacks.map((f, i) => (
-                <div
-                  key={`${f.provider}:${f.model}`}
-                  className="flex items-center gap-2 border-b border-[var(--color-border)] py-2.5"
-                >
-                  <span className="w-5 shrink-0 text-xs text-[var(--color-muted)]">{i + 1}.</span>
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm">{f.model}</span>
-                    <span className="block truncate text-[11px] text-[var(--color-muted)]">
-                      {f.provider}
-                    </span>
-                  </span>
-                  <span className="ml-auto flex shrink-0 items-center gap-1">
-                    <ActionButton
-                      aria-label={`Move ${f.model} up`}
-                      busyLabel="…"
-                      disabled={fallbackBusy || i === 0}
-                      onAction={() => saveFallbacks(moveFallback(fallbacks, i, i - 1))}
-                      className="rounded-full border border-[var(--color-border)] px-2 py-1 text-xs disabled:opacity-40"
-                    >
-                      ↑
-                    </ActionButton>
-                    <ActionButton
-                      aria-label={`Move ${f.model} down`}
-                      busyLabel="…"
-                      disabled={fallbackBusy || i === fallbacks.length - 1}
-                      onAction={() => saveFallbacks(moveFallback(fallbacks, i, i + 1))}
-                      className="rounded-full border border-[var(--color-border)] px-2 py-1 text-xs disabled:opacity-40"
-                    >
-                      ↓
-                    </ActionButton>
-                    <button
-                      type="button"
-                      disabled={fallbackBusy}
-                      onClick={() => setSlot({ kind: "fallback", index: i })}
-                      className="rounded-full border border-[var(--color-border)] px-2.5 py-1 text-xs disabled:opacity-40"
-                    >
-                      Change
-                    </button>
-                    <ActionButton
-                      busyLabel="Removing…"
-                      disabled={fallbackBusy}
-                      onAction={() => saveFallbacks(fallbacks.filter((_, j) => j !== i))}
-                      className="rounded-full border border-[var(--color-border)] px-2.5 py-1 text-xs text-red-300 disabled:opacity-40"
-                    >
-                      Remove
-                    </ActionButton>
-                  </span>
-                </div>
-              ))
-            )}
-            <button
-              type="button"
-              disabled={fallbackBusy || fallbacks.length >= MAX_FALLBACKS}
-              onClick={() => setSlot({ kind: "fallback", index: null })}
-              className="flex w-full items-center gap-2 py-3 text-left text-sm text-[var(--color-accent)] disabled:opacity-40"
-            >
-              + Add backup model
-            </button>
-          </div>
-          <p className="mt-1 px-1 text-[11px] text-[var(--color-muted)]">
-            Tried in this order when the main model fails, for example when its
-            key is rejected or it&apos;s overloaded. Up to {MAX_FALLBACKS}.
-          </p>
-        </section>
-      ) : null}
-
       {/* ── Task roles ── */}
       <section>
         <h2 className="mb-2 px-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
           Task roles
         </h2>
         <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3">
+          <button
+            type="button"
+            onClick={() => setSlot({ kind: "main" })}
+            className="flex w-full items-center gap-3 border-b border-[var(--color-border)] py-3 text-left"
+          >
+            <span className="min-w-0">
+              <span className="block text-sm">Main</span>
+              <span className="block text-[11px] text-[var(--color-muted)]">chats and scheduled jobs</span>
+            </span>
+            <span className="ml-auto min-w-0 text-right">
+              <span className="block truncate text-[13px] text-[var(--color-accent)]">
+                {data.info.model || "—"}
+              </span>
+              <span className="block truncate text-[11px] text-[var(--color-muted)]">
+                {data.info.provider}
+              </span>
+              <BackupLine backups={fallbacks} />
+            </span>
+            <span className="text-[var(--color-muted)]">›</span>
+          </button>
           {roles.map((role) => {
             const a = assignments.get(role.task);
             const isAuto = !a || a.provider === "auto" || !a.provider;
@@ -443,11 +365,10 @@ export function ModelsView({
                   {shown.provider ? (
                     <span className="block truncate text-[11px] text-[var(--color-muted)]">
                       {shown.provider}
-                      {a?.fallback_chain?.length
-                        ? ` · ${a.fallback_chain.length} backup${a.fallback_chain.length > 1 ? "s" : ""}`
-                        : ""}
+                     
                     </span>
                   ) : null}
+                  <BackupLine backups={a?.fallback_chain} />
                 </span>
                 <span className="text-[var(--color-muted)]">›</span>
               </button>
