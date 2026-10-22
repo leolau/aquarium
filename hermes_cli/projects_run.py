@@ -1258,7 +1258,8 @@ def continue_run(
     cost_reader: Optional[Callable] = None,
 ) -> Dict[str, Any]:
     """The human passes a checkpoint or answers a budget stop (§12):
-    release the held successors and resume a ``waiting`` run."""
+    release the held successors, move a blocked checkpoint card back to
+    ready, and resume a ``waiting`` run."""
     if run["status"] in ("done", "failed", "cancelled"):
         raise ValueError(f"run {run['run_no']} is already {run['status']}")
     playbook = projects_db.get_playbook(pconn, project.id, rev=run["playbook_rev"])
@@ -1279,10 +1280,48 @@ def continue_run(
     if run["status"] == "waiting":
         gate = budget_gate(project, run, reader=cost_reader)
         if gate:
-            return {"run": run, "promoted": promoted, "budget_gate": gate}
+            return {
+                "run": run, "promoted": promoted, "unblocked": [],
+                "budget_gate": gate,
+            }
         projects_db.update_project_run(pconn, run["id"], status="running")
         updated = projects_db.get_project_run_by_id(pconn, run["id"])
-    return {"run": updated, "promoted": promoted, "budget_gate": None}
+    unblocked = release_blocked_checkpoints(pconn, bconn, run=run, steps=steps)
+    return {
+        "run": updated, "promoted": promoted, "unblocked": unblocked,
+        "budget_gate": None,
+    }
+
+
+def release_blocked_checkpoints(
+    pconn, bconn, *, run: dict, steps: Sequence[dict],
+) -> List[str]:
+    """Move the run's ``blocked`` checkpoint cards back to ready.
+
+    A review checkpoint's worker often stops the card itself ("review
+    requested — press Continue to approve"), and :func:`checkpoint_wait_info`
+    then shows the run as waiting on Continue. Continue must release that
+    card too, or it only re-promotes successors that still depend on it and
+    nothing moves (found in production 2026-10-22: three Continue presses did
+    nothing until the card's own Make ready). A card blocked on a pending
+    tool approval is left alone: answering the approval is what releases it.
+    """
+    checkpoints = {s["key"] for s in steps if s.get("checkpoint")}
+    if not checkpoints:
+        return []
+    blocked = [
+        c["task_id"]
+        for c in run_cards_brief(pconn, bconn, run)
+        if c.get("step_key") in checkpoints and c.get("status") == "blocked"
+    ]
+    if not blocked:
+        return []
+    pending = kanban_db.list_task_approvals(bconn, blocked)
+    return [
+        task_id
+        for task_id in blocked
+        if not pending.get(task_id) and kanban_db.unblock_task(bconn, task_id)
+    ]
 
 
 def resume_run(

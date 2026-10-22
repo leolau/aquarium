@@ -296,6 +296,92 @@ def test_continue_releases_checkpoint_successors(stores):
         assert kanban_db.get_task(bconn, result["cards"]["send"]).status == "todo"
 
 
+def _block_checkpoint(project_id):
+    """Start a run and leave its review checkpoint ("approve") blocked by
+    its worker, the way a review card asks the owner to look."""
+    _save_playbook(project_id)
+    with projects_db.connect_closing() as conn:
+        projects_db.activate_playbook_rev(conn, project_id, 1)
+    result = _start(project_id)
+    approve = result["cards"]["approve"]
+    with kanban_db.connect_closing() as bconn:
+        for key in ("gather", "draft"):
+            bconn.execute(
+                "UPDATE tasks SET status = 'done' WHERE id = ?",
+                (result["cards"][key],),
+            )
+        bconn.execute("UPDATE tasks SET status = 'running' WHERE id = ?", (approve,))
+        bconn.commit()
+        assert kanban_db.block_task(
+            bconn, approve, reason="Review requested. Press Continue.",
+            kind="needs_input",
+        )
+    return result
+
+
+def _continue(project_id, run):
+    with projects_db.connect_closing() as conn:
+        with kanban_db.connect_closing() as bconn:
+            fresh = projects_db.get_project(conn, project_id)
+            return projects_run.continue_run(conn, bconn, project=fresh, run=run)
+
+
+def test_continue_releases_a_blocked_review_checkpoint(stores):
+    """Production 2026-10-22: the review card blocked itself asking for
+    Continue, and Continue left it blocked until the card's Make ready."""
+    project, _ = _make_project(max_in_progress=4)
+    result = _block_checkpoint(project.id)
+    approve = result["cards"]["approve"]
+    with projects_db.connect_closing() as conn:
+        with kanban_db.connect_closing() as bconn:
+            cards = projects_run.run_cards_brief(conn, bconn, result["run"])
+            fresh = projects_db.get_project(conn, project.id)
+            wait = projects_run.checkpoint_wait_info(conn, fresh, result["run"], cards)
+    assert wait and wait["checkpoint_task_id"] == approve
+
+    out = _continue(project.id, result["run"])
+
+    assert out["unblocked"] == [approve]
+    with kanban_db.connect_closing() as bconn:
+        assert kanban_db.get_task(bconn, approve).status in ("ready", "todo")
+
+
+def test_continue_leaves_a_checkpoint_waiting_on_an_approval(stores):
+    project, _ = _make_project(max_in_progress=4)
+    result = _block_checkpoint(project.id)
+    approve = result["cards"]["approve"]
+    with kanban_db.connect_closing() as bconn:
+        kanban_db.request_task_approval(
+            bconn, approve, [("recursive delete", "Delete a folder")]
+        )
+        assert kanban_db.list_task_approvals(bconn, [approve]).get(approve)
+
+    out = _continue(project.id, result["run"])
+
+    assert out["unblocked"] == []
+    with kanban_db.connect_closing() as bconn:
+        assert kanban_db.get_task(bconn, approve).status == "blocked"
+
+
+def test_continue_never_unblocks_a_non_checkpoint_card(stores):
+    project, _ = _make_project(max_in_progress=4)
+    _save_playbook(project.id)
+    with projects_db.connect_closing() as conn:
+        projects_db.activate_playbook_rev(conn, project.id, 1)
+    result = _start(project.id)
+    gather = result["cards"]["gather"]
+    with kanban_db.connect_closing() as bconn:
+        bconn.execute("UPDATE tasks SET status = 'running' WHERE id = ?", (gather,))
+        bconn.commit()
+        assert kanban_db.block_task(bconn, gather, reason="error", kind="transient")
+
+    out = _continue(project.id, result["run"])
+
+    assert out["unblocked"] == []
+    with kanban_db.connect_closing() as bconn:
+        assert kanban_db.get_task(bconn, gather).status == "blocked"
+
+
 def test_max_in_progress_caps_promotion(stores):
     project, _ = _make_project(autonomy="autonomous", max_in_progress=1)
     steps = [{"key": f"s{i}", "title": f"Step {i}"} for i in range(3)]

@@ -1,7 +1,7 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { MobileShell } from "@/components/MobileShell";
+import { BackToProject } from "@/components/projects/BackToProject";
 import { RunView } from "@/components/projects/RunView";
 import { HermesApiError } from "@/lib/api/client";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
@@ -14,18 +14,6 @@ export const dynamic = "force-dynamic";
  * **One run's page** (§7): the cards it moved, what it delivered, its cost
  * and its retro — the record a score gets pinned to (score-it lands in 9b).
  */
-function BackToProject({ slug, name }: { slug: string; name?: string }) {
-  return (
-    <Link
-      href={`/projects/${encodeURIComponent(slug)}`}
-      data-component="BackToProject"
-      className="mb-3 inline-flex max-w-full items-center gap-1 truncate text-sm text-[var(--color-accent)] hover:underline"
-    >
-      ← Back to {name ? name : "project"}
-    </Link>
-  );
-}
-
 export default async function Page({
   params,
 }: {
