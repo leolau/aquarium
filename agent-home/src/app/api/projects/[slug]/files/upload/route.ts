@@ -48,6 +48,31 @@ function pruneReplays(now: number) {
   }
 }
 
+/**
+ * Uploads this process handles at once; the rest wait their turn. Each one
+ * holds several database connections in turn and the pool is small, so a
+ * burst (100+ files, several tabs) must queue here instead of failing.
+ */
+export const MAX_CONCURRENT_UPLOADS = 4;
+let activeUploads = 0;
+const uploadWaiters: (() => void)[] = [];
+
+async function withUploadSlot<T>(run: () => Promise<T>): Promise<T> {
+  if (activeUploads >= MAX_CONCURRENT_UPLOADS) {
+    // A finishing upload hands its slot straight to the next waiter.
+    await new Promise<void>((resolve) => uploadWaiters.push(resolve));
+  } else {
+    activeUploads += 1;
+  }
+  try {
+    return await run();
+  } finally {
+    const next = uploadWaiters.shift();
+    if (next) next();
+    else activeUploads -= 1;
+  }
+}
+
 /** Test seam: forget every remembered upload. */
 export function __resetUploadReplays() {
   replays.clear();
@@ -77,7 +102,7 @@ export async function POST(
   }
 
   const idemKey = request.headers.get("idempotency-key")?.trim();
-  if (!idemKey) return handleUpload(request, principal, slug);
+  if (!idemKey) return withUploadSlot(() => handleUpload(request, principal, slug));
 
   const replayKey = `${principal.user_id}\u0000${slug}\u0000${idemKey}`;
   const now = Date.now();
@@ -87,7 +112,7 @@ export async function POST(
     const { status, body } = await existing.answer;
     return NextResponse.json(body, { status });
   }
-  const answer = handleUpload(request, principal, slug).then(async (res) => ({
+  const answer = withUploadSlot(() => handleUpload(request, principal, slug)).then(async (res) => ({
     status: res.status,
     body: await res.clone().json().catch(() => ({})),
   }));

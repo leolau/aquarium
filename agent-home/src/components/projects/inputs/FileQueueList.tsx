@@ -11,6 +11,7 @@ import type { UploadItem } from "@/components/projects/inputs/useUploadQueue";
 function statusLine(item: UploadItem, waitingCopy: string) {
   switch (item.status) {
     case "uploading":
+      if (item.waiting) return <span>Waiting to upload…</span>;
       return (
         <span className="inline-flex items-center gap-1.5">
           <span

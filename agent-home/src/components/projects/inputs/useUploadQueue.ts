@@ -18,6 +18,13 @@ import { newIdempotencyKey } from "@/components/projects/useProjectAction";
 
 export type UploadStatus = "queued" | "uploading" | "done" | "failed";
 
+/**
+ * Files sent at once per queue. Each upload holds several database
+ * connections in turn on the server, and the box's pool is small (20), so
+ * sending 100+ files at once made most of them fail with a 500.
+ */
+export const MAX_PARALLEL_UPLOADS = 3;
+
 export interface UploadItem {
   id: string;
   identity: string;
@@ -26,6 +33,8 @@ export interface UploadItem {
   status: UploadStatus;
   /** 0..1 while uploading. */
   progress: number;
+  /** Started but waiting for a free upload slot. */
+  waiting?: boolean;
   error: string | null;
   /** Fixed per file: a retry re-sends the same key. */
   key: string;
@@ -47,7 +56,8 @@ export interface UploadQueue {
 }
 
 /**
- * One upload per file, ever: each file has a synchronous in-flight lock and a
+ * At most {@link MAX_PARALLEL_UPLOADS} files go up at once; the rest wait
+ * their turn. One upload per file, ever: each file has a synchronous in-flight lock and a
  * fixed idempotency key, a finished file is never sent again, and a second
  * drop of the same file is ignored. With `autoUploadSlug` files go up as soon
  * as they are added (the Inputs tab); without it they wait for
@@ -67,6 +77,8 @@ export function useUploadQueue({
 } = {}): UploadQueue {
   const itemsRef = useRef<UploadItem[]>([]);
   const inFlight = useRef(new Map<string, Promise<boolean>>());
+  const activeUploads = useRef(0);
+  const slotWaiters = useRef<(() => void)[]>([]);
   const [items, setItems] = useState<UploadItem[]>([]);
   const onUploadedRef = useRef(onUploaded);
   useEffect(() => {
@@ -85,6 +97,32 @@ export function useUploadQueue({
     [commit],
   );
 
+  const sendOne = useCallback(
+    async (slug: string, id: string, item: UploadItem): Promise<boolean> => {
+      const res = await upload({
+        slug,
+        file: item.file,
+        kind: roleToLinkKind(item.role),
+        idempotencyKey: item.key,
+        onProgress: (fraction) => patch(id, { progress: fraction }),
+      });
+      if (!res.ok || !res.data) {
+        patch(id, { status: "failed", error: res.error ?? "Could not upload the file." });
+        return false;
+      }
+      const link = res.data;
+      const done = { ...item, status: "done" as const, progress: 1, error: null, link };
+      if (dropDone) {
+        commit(itemsRef.current.filter((i) => i.id !== id));
+      } else {
+        patch(id, { status: "done", progress: 1, error: null, link });
+      }
+      onUploadedRef.current?.(link, done);
+      return true;
+    },
+    [commit, dropDone, patch, upload],
+  );
+
   const uploadOne = useCallback(
     (slug: string, id: string): Promise<boolean> => {
       const running = inFlight.current.get(id);
@@ -92,29 +130,24 @@ export function useUploadQueue({
       const item = itemsRef.current.find((i) => i.id === id);
       if (!item) return Promise.resolve(false);
       if (item.status === "done") return Promise.resolve(true);
-      patch(id, { status: "uploading", progress: 0, error: null });
+      const mustWait = activeUploads.current >= MAX_PARALLEL_UPLOADS;
+      patch(id, { status: "uploading", progress: 0, error: null, waiting: mustWait });
       const promise = (async () => {
         try {
-          const res = await upload({
-            slug,
-            file: item.file,
-            kind: roleToLinkKind(item.role),
-            idempotencyKey: item.key,
-            onProgress: (fraction) => patch(id, { progress: fraction }),
-          });
-          if (!res.ok || !res.data) {
-            patch(id, { status: "failed", error: res.error ?? "Could not upload the file." });
-            return false;
-          }
-          const link = res.data;
-          const done = { ...item, status: "done" as const, progress: 1, error: null, link };
-          if (dropDone) {
-            commit(itemsRef.current.filter((i) => i.id !== id));
+          if (mustWait) {
+            // A finishing upload hands its slot straight to the next waiter.
+            await new Promise<void>((resolve) => slotWaiters.current.push(resolve));
+            patch(id, { waiting: false });
           } else {
-            patch(id, { status: "done", progress: 1, error: null, link });
+            activeUploads.current += 1;
           }
-          onUploadedRef.current?.(link, done);
-          return true;
+          try {
+            return await sendOne(slug, id, item);
+          } finally {
+            const next = slotWaiters.current.shift();
+            if (next) next();
+            else activeUploads.current -= 1;
+          }
         } finally {
           inFlight.current.delete(id);
         }
@@ -122,7 +155,7 @@ export function useUploadQueue({
       inFlight.current.set(id, promise);
       return promise;
     },
-    [commit, dropDone, patch, upload],
+    [patch, sendOne],
   );
 
   const add = useCallback(
