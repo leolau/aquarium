@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { MobileShell } from "@/components/MobileShell";
@@ -13,6 +14,18 @@ export const dynamic = "force-dynamic";
  * **One run's page** (§7): the cards it moved, what it delivered, its cost
  * and its retro — the record a score gets pinned to (score-it lands in 9b).
  */
+function BackToProject({ slug, name }: { slug: string; name?: string }) {
+  return (
+    <Link
+      href={`/projects/${encodeURIComponent(slug)}`}
+      data-component="BackToProject"
+      className="mb-3 inline-flex max-w-full items-center gap-1 truncate text-sm text-[var(--color-accent)] hover:underline"
+    >
+      ← Back to {name ? name : "project"}
+    </Link>
+  );
+}
+
 export default async function Page({
   params,
 }: {
@@ -37,18 +50,18 @@ export default async function Page({
 
   const client = await apiClientForRequest();
   // Fetch under the try, render outside it. The run is the page; the
-  // project read only carries the `archived` flag for RunView — if it
-  // fails the page renders unflagged, and the router refuses the writes
-  // anyway.
+  // project read only carries the `archived` flag for RunView and the
+  // back link's name — if it fails the page renders unflagged, and the
+  // router refuses the writes anyway.
   let run: ProjectRun | null = null;
-  let archived = false;
+  let project: { archived: boolean; name?: string } = { archived: false };
   try {
-    [run, archived] = await Promise.all([
+    [run, project] = await Promise.all([
       client.projectRun(slug, runNoInt),
       client
         .project(slug)
-        .then((p) => Boolean(p.archived))
-        .catch(() => false),
+        .then((p) => ({ archived: Boolean(p.archived), name: p.name }))
+        .catch(() => ({ archived: false })),
     ]);
   } catch (err) {
     // 404 = no such run (or no such project for this caller) — Next's
@@ -59,6 +72,7 @@ export default async function Page({
   if (!run) {
     return (
       <MobileShell title="Run">
+        <BackToProject slug={slug} name={project.name} />
         <div
           data-component="RunPageError"
           className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
@@ -71,7 +85,8 @@ export default async function Page({
 
   return (
     <MobileShell title={`Run ${runNoInt}`}>
-      <RunView slug={slug} run={run} archived={archived} />
+      <BackToProject slug={slug} name={project.name} />
+      <RunView slug={slug} run={run} archived={project.archived} />
     </MobileShell>
   );
 }

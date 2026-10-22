@@ -21,6 +21,13 @@ export function durationLabel(seconds: number | null | undefined): string {
   return `${hours}h ${minutes % 60}m`;
 }
 
+/** "950", "957.5K", "1.45M" — a token count at a glance. */
+export function tokenCountLabel(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}K`;
+  return `${(n / 1_000_000).toFixed(2)}M`;
+}
+
 /** "12 Aug, 14:05" — when the day matters more than the distance. */
 export function dateTimeLabel(epochSeconds: number | null): string {
   if (epochSeconds == null) return "—";

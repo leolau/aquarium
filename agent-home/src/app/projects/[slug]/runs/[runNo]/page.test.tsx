@@ -101,6 +101,22 @@ describe("the run page's project fetch", () => {
     expect(queryByText(/Couldn't load run/)).toBeNull();
   });
 
+  it("links back to its project, by name", async () => {
+    projectRunMock.mockResolvedValue(RUN);
+    projectMock.mockResolvedValue({ archived: false, name: "Monday digest" });
+    const { getByRole } = render(await Page({ params: PARAMS }));
+    const back = getByRole("link", { name: "← Back to Monday digest" });
+    expect(back.getAttribute("href")).toBe("/projects/monday-digest");
+  });
+
+  it("still links back when the project fetch fails", async () => {
+    projectRunMock.mockResolvedValue(RUN);
+    projectMock.mockRejectedValue(new HermesApiError(500, "upstream blew up"));
+    const { getByRole } = render(await Page({ params: PARAMS }));
+    const back = getByRole("link", { name: "← Back to project" });
+    expect(back.getAttribute("href")).toBe("/projects/monday-digest");
+  });
+
   it("404s when the run itself is missing", async () => {
     projectRunMock.mockRejectedValue(new HermesApiError(404, "no such run"));
     projectMock.mockResolvedValue({ archived: false });

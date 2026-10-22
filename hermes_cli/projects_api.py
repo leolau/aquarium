@@ -63,7 +63,7 @@ from hermes_cli import (
     run_activity,
 )
 from hermes_cli.profiles import normalize_profile_name, resolve_profile_env
-from hermes_state import kanban_task_call_stats
+from hermes_state import kanban_task_call_stats, kanban_tasks_token_totals
 
 logger = logging.getLogger(__name__)
 
@@ -918,6 +918,13 @@ def _detail_sync(project, principal, *, include_address: bool) -> dict:
         for tid in recent_task_ids:
             for ev in kanban_db.list_events(bconn, tid)[-5:]:
                 events.append(_event_dict(ev))
+        project_cards = [
+            (row[0], row[1])
+            for row in bconn.execute(
+                "SELECT id, assignee FROM tasks WHERE project_id = ?",
+                (project.id,),
+            )
+        ]
 
     progress = _derive_progress(
         project, outputs, deliveries, rollup,
@@ -932,6 +939,7 @@ def _detail_sync(project, principal, *, include_address: bool) -> dict:
         # the cron store stays authoritative.
         next_run_at = projects_schedule.refresh_next_run(conn, project)
         clarify = projects_db.clarify_summary(conn, project.id)
+        all_runs = projects_db.list_project_runs(conn, project.id, limit=100_000)
 
     detail = _project_payload(project)
     detail.update(
@@ -950,6 +958,7 @@ def _detail_sync(project, principal, *, include_address: bool) -> dict:
             "card_rollup": rollup,
             "recent_events": events,
             "clarify": clarify,
+            "usage": _project_usage(all_runs, project_cards),
         }
     )
     return detail
@@ -1980,6 +1989,46 @@ def _card_payload(bconn, project: projects_db.Project, task_id: str, *, principa
         ).get(task_id, [])
     payload["model_calls"] = _card_model_calls(bconn, task)
     return payload
+
+
+def _project_usage(runs: list[dict], cards: list[tuple]) -> dict:
+    """What the whole project has used so far: every run's wall-clock time
+    (a live run counts up to now) and every card's model tokens.
+
+    Tokens come from each worker profile's ``api_call_log`` (workers run
+    under ``-p <assignee>``, as in :func:`_card_model_calls`). ``tokens`` is
+    None when no profile's ledger could be read — "not recorded", not zero.
+    """
+    now = int(time.time())
+    run_seconds = 0
+    for run in runs:
+        if run.get("started_at"):
+            end = run.get("ended_at") or now
+            run_seconds += max(0, int(end) - int(run["started_at"]))
+
+    by_home: dict[str, list[str]] = {}
+    for task_id, assignee in cards:
+        try:
+            home = resolve_profile_env(normalize_profile_name(assignee or "default"))
+        except (FileNotFoundError, ValueError):
+            continue
+        by_home.setdefault(str(home), []).append(task_id)
+
+    tokens: Optional[dict] = None
+    if not cards:
+        tokens = dict(calls=0, input_tokens=0, output_tokens=0,
+                      cache_read_tokens=0, reasoning_tokens=0)
+    for home, task_ids in by_home.items():
+        part = kanban_tasks_token_totals(Path(home) / "state.db", task_ids)
+        if part is None:
+            continue
+        if tokens is None:
+            tokens = dict.fromkeys(part, 0)
+        for key, value in part.items():
+            tokens[key] += value
+    if tokens is not None:
+        tokens["total"] = tokens["input_tokens"] + tokens["output_tokens"]
+    return {"runs": len(runs), "run_seconds": run_seconds, "tokens": tokens}
 
 
 def _card_model_calls(bconn, task) -> Optional[dict]:

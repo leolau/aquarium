@@ -870,17 +870,31 @@ export interface MemorySummary {
   recall_use: {
     never_used: number;
     used_7d: number;
-    top: { id: string; text: string; truncated: boolean; uses: number;
-           last_used: string | null }[];
+    top: {
+      id: string;
+      text: string;
+      truncated: boolean;
+      uses: number;
+      last_used: string | null;
+    }[];
   };
 }
 
 /** A single memory row from `/api/memory/explorer/rows`. */
 export interface MemoryRow {
-  id: string; owner_user_id: string; visibility: string; kind: string;
-  topic: string | null; text: string; truncated: boolean;
-  created_at: string | null; uses: number; last_used: string | null;
-  elevated: boolean; provenance: string; score: number | null;
+  id: string;
+  owner_user_id: string;
+  visibility: string;
+  kind: string;
+  topic: string | null;
+  text: string;
+  truncated: boolean;
+  created_at: string | null;
+  uses: number;
+  last_used: string | null;
+  elevated: boolean;
+  provenance: string;
+  score: number | null;
   // Citation fields — where this row came from. `source_session` is set on
   // memories written during a chat; the document fields are set on
   // `kind === "chunk"` rows, which come from an ingested file or Drive doc.
@@ -891,19 +905,28 @@ export interface MemoryRow {
   source_kind?: string | null;
   source_ref?: string | null;
   ordinal?: number;
-  file_asset_id?: string | null;  // set when this chunk's document was ingested from a registered file
+  file_asset_id?: string | null; // set when this chunk's document was ingested from a registered file
 }
 
 /** Paginated rows response. */
 export interface MemoryRowsResponse {
-  rows: MemoryRow[]; total: number; limit: number; offset: number;
+  rows: MemoryRow[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 /** One point on the fitted 2-D map. */
 export interface MemoryProjectionPoint {
-  id: string; x: number; y: number; owner_user_id: string;
-  topic: string | null; kind: string; elevated: boolean;
-  provenance: string; label: string;
+  id: string;
+  x: number;
+  y: number;
+  owner_user_id: string;
+  topic: string | null;
+  kind: string;
+  elevated: boolean;
+  provenance: string;
+  label: string;
   // Same citation fields as `MemoryRow`, so a clicked dot can say where it
   // came from without a second fetch.
   source_session?: string | null;
@@ -912,38 +935,45 @@ export interface MemoryProjectionPoint {
   section?: string | null;
   source_kind?: string | null;
   source_ref?: string | null;
-  file_asset_id?: string | null;  // set when this point's chunk was ingested from a registered file
+  file_asset_id?: string | null; // set when this point's chunk was ingested from a registered file
 }
 
 /** The `/api/memory/explorer/projection` response. */
 export interface MemoryProjection {
-  algorithm: string | null;        // "pca" | "umap" | null when never fitted
+  algorithm: string | null; // "pca" | "umap" | null when never fitted
   computed_at: string | null;
-  stale: boolean;                  // model mismatch OR unprojected rows
+  stale: boolean; // model mismatch OR unprojected rows
   unprojected_count: number;
   points: MemoryProjectionPoint[];
-  sampled?: boolean;               // true when the point set was deterministically downsampled
-  total_points?: number;           // the unsampled count, present when sampled
+  sampled?: boolean; // true when the point set was deterministically downsampled
+  total_points?: number; // the unsampled count, present when sampled
 }
 
 /** The `/api/memory/explorer/projection/query` response. */
 export interface MemoryQueryPlacement {
-  x: number | null; y: number | null;                    // null ⇒ no position
+  x: number | null;
+  y: number | null; // null ⇒ no position
   nearest: { id: string; score: number }[];
-  degraded?: boolean;                                    // UMAP basis unloadable
+  degraded?: boolean; // UMAP basis unloadable
 }
 
 /** A RAG document from `/api/memory/explorer/documents`. */
 export interface MemoryDocument {
-  id: string; owner_user_id: string; visibility: string; source_kind: string;
-  source_ref: string; title: string; chunk_count: number;
+  id: string;
+  owner_user_id: string;
+  visibility: string;
+  source_kind: string;
+  source_ref: string;
+  title: string;
+  chunk_count: number;
   ingested_at: string | null;
-  file_asset_id?: string | null;  // set when this document was ingested from a registered file
+  file_asset_id?: string | null; // set when this document was ingested from a registered file
 }
 
 /** Paginated documents response. */
 export interface MemoryDocumentsResponse {
-  documents: MemoryDocument[]; total: number;
+  documents: MemoryDocument[];
+  total: number;
 }
 
 /**
@@ -958,9 +988,9 @@ export interface FileAsset {
   id: string;
   owner_user_id: string;
   visibility: string;
-  surface: string;                 // agent_home | telegram | whatsapp | email | calendar | …
-  account_id: string | null;       // the receiving inbox/bot identity
-  conversation: string | null;     // chat/thread/event this arrived in
+  surface: string; // agent_home | telegram | whatsapp | email | calendar | …
+  account_id: string | null; // the receiving inbox/bot identity
+  conversation: string | null; // chat/thread/event this arrived in
   sender_id: string | null;
   sender_name: string | null;
   message_id: string | null;
@@ -969,7 +999,7 @@ export interface FileAsset {
   content_type: string;
   byte_size: number;
   sha256: string;
-  storage_path: string;            // an object key, never a path on the box
+  storage_path: string; // an object key, never a path on the box
   document_id: string | null;
   remembered_at: string | null;
   remembered_by: string | null;
@@ -996,10 +1026,10 @@ export interface IncomingItem {
   id: string;
   owner_user_id: string;
   visibility: string;
-  surface: string;                 // whatsapp | email | calendar | telegram | …
-  account_id: string | null;       // the receiving inbox/number/calendar
-  external_id: string;             // the channel's own id, stable across re-polls
-  kind: string;                    // message | event | …
+  surface: string; // whatsapp | email | calendar | telegram | …
+  account_id: string | null; // the receiving inbox/number/calendar
+  external_id: string; // the channel's own id, stable across re-polls
+  kind: string; // message | event | …
   conversation: string | null;
   conversation_name: string | null;
   sender_id: string | null;
@@ -1007,7 +1037,7 @@ export interface IncomingItem {
   subject: string | null;
   body: string;
   occurred_at: string | null;
-  ends_at: string | null;          // calendar arrivals only
+  ends_at: string | null; // calendar arrivals only
   registered_at: string | null;
   importance: string | null;
   has_attachments: boolean;
@@ -1072,16 +1102,16 @@ export interface Todo {
   title: string;
   description: string;
   stage: TodoStage;
-  status: string;                  // FG-06 status, kept in lockstep with stage
+  status: string; // FG-06 status, kept in lockstep with stage
   priority: TodoPriority;
-  origin: string;                  // explicit | discovered | triage
+  origin: string; // explicit | discovered | triage
   current_state: string;
   trigger_state: string;
   completion_state: string;
   due_at: string | null;
-  source_kind: string | null;      // inbound | analysis | user | agent | cron
-  source_ref: string | null;       // the inbound_items row, when it has one
-  source_note: string | null;      // provenance when the arrival is unlinked
+  source_kind: string | null; // inbound | analysis | user | agent | cron
+  source_ref: string | null; // the inbound_items row, when it has one
+  source_note: string | null; // provenance when the arrival is unlinked
   notified_at: string | null;
   snoozed_until: string | null;
   closed_at: string | null;
@@ -1092,10 +1122,10 @@ export interface Todo {
 
 /** One recorded move along the lifecycle, from `task_transitions`. */
 export interface TodoTransition {
-  from: string;                    // e.g. "stage:staged"
-  to: string;                      // e.g. "stage:open"
+  from: string; // e.g. "stage:staged"
+  to: string; // e.g. "stage:open"
   at: string | null;
-  actor: string;                   // "user:leo", "skill:email-triage", …
+  actor: string; // "user:leo", "skill:email-triage", …
 }
 
 /**
@@ -1285,7 +1315,12 @@ export interface EmailMailbox extends EmailServerSettings {
     imap: { ok: boolean; error?: string };
     smtp: { ok: boolean; error?: string };
   } | null;
-  last_poll: { at?: string; ok?: boolean; error?: string | null; new_count?: number } | null;
+  last_poll: {
+    at?: string;
+    ok?: boolean;
+    error?: string | null;
+    new_count?: number;
+  } | null;
 }
 
 /** Body of `PUT /api/email/mailboxes/{address}`; empty password keeps the saved one. */
@@ -1907,6 +1942,28 @@ export interface ProjectDetail extends Project {
   recent_events: TaskEventRow[];
   /** Scope clarification state; absent on older servers. */
   clarify?: ClarifySummary | null;
+  /** Everything the project has used so far; absent on older servers. */
+  usage?: ProjectUsage;
+}
+
+/** Model tokens the project's cards recorded, summed across every run. */
+export interface ProjectTokenTotals {
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  /** Prompt tokens re-read from the provider's cache; not in `total`. */
+  cache_read_tokens: number;
+  reasoning_tokens: number;
+  /** input + output. */
+  total: number;
+}
+
+export interface ProjectUsage {
+  runs: number;
+  /** Wall-clock time of every run; a live run counts up to now. */
+  run_seconds: number;
+  /** Null when no worker's call log could be read ("not recorded"). */
+  tokens: ProjectTokenTotals | null;
 }
 
 /** §8.1: the project's derived score, recomputed on every read. */
@@ -2119,7 +2176,16 @@ export interface ProjectBoardView {
 export interface CreateProjectPayload {
   goal: string;
   description: string;
-  outputs: (string | { title: string; spec?: string; kind?: ProjectOutputKind; required?: boolean; recurring?: boolean })[];
+  outputs: (
+    | string
+    | {
+        title: string;
+        spec?: string;
+        kind?: ProjectOutputKind;
+        required?: boolean;
+        recurring?: boolean;
+      }
+  )[];
   host_profile: string;
   name?: string;
   slug?: string;
@@ -2371,7 +2437,11 @@ export interface ModelPerformanceEntry {
    * (DeepSeek answers `deepseek-v4-flash` as `deepseek-flash`). */
   served_as?: string[];
   /** Why calls failed, most common first. */
-  failure_reasons?: { status_code: number | null; error_type: string; count: number }[];
+  failure_reasons?: {
+    status_code: number | null;
+    error_type: string;
+    count: number;
+  }[];
 }
 
 /** One backup model, tried in order when the main model fails. */
@@ -2590,7 +2660,13 @@ export interface McpServerTestResult {
 
 /** Live state of a browser-driven MCP OAuth flow. */
 export interface McpOAuthFlowState {
-  status: "idle" | "starting" | "waiting_user" | "success" | "error" | "cancelled";
+  status:
+    | "idle"
+    | "starting"
+    | "waiting_user"
+    | "success"
+    | "error"
+    | "cancelled";
   name?: string;
   authorization_url?: string | null;
   error?: string | null;
@@ -2603,7 +2679,11 @@ export interface StatusSummary {
   cpu_pct: number | null;
   mem_pct: number | null;
   disk_pct: number | null;
-  tokens_month: { input: number; output: number; cost_usd: number | null } | null;
+  tokens_month: {
+    input: number;
+    output: number;
+    cost_usd: number | null;
+  } | null;
   active_conversations: number | null;
   running_cards: number | null;
   cron_total: number;
@@ -2697,7 +2777,11 @@ export interface AskProjectResponse {
 export type ProjectArtifactKind = "deliverable" | "draft" | "note";
 
 /** Where the artifacts read found the file. */
-export type ProjectArtifactSource = "delivery" | "card_file" | "attachment" | "link";
+export type ProjectArtifactSource =
+  | "delivery"
+  | "card_file"
+  | "attachment"
+  | "link";
 
 /** `GET /api/registry/projects/:slug/artifacts` — one produced file, newest
  * first. `output_id` is null when no declared output owns the file. */
@@ -2741,7 +2825,12 @@ export interface ProjectRunBrief {
 
 // ── Projects redesign: changes ──
 /** What a requirement change is about (the sheet's kind chips). */
-export type ProjectChangeKind = "add" | "direction" | "output" | "attach" | "memory";
+export type ProjectChangeKind =
+  | "add"
+  | "direction"
+  | "output"
+  | "attach"
+  | "memory";
 /** When a change applies: stop the open run now, queue it, or only record it. */
 export type ProjectChangeApply = "now" | "next" | "record";
 
@@ -2940,7 +3029,6 @@ export interface ClarifyConfirmResult {
   plan_draft: { status: string; detail?: string | null } | null;
 }
 
-
 // ---------------------------------------------------------------------------
 // P2 "Get ready" checklist (GET /api/get-ready, /api/get-ready/people)
 // ---------------------------------------------------------------------------
@@ -2987,10 +3075,21 @@ export interface GetReadyResponse {
   role: string;
   can_manage: boolean;
   items: GetReadyItem[];
-  summary: { total: number; done: number; attention: number; not_started: number };
+  summary: {
+    total: number;
+    done: number;
+    attention: number;
+    not_started: number;
+  };
 }
 
-export type GetReadyConnection = "google" | "whatsapp" | "telegram" | "email" | "tools" | "vpn";
+export type GetReadyConnection =
+  | "google"
+  | "whatsapp"
+  | "telegram"
+  | "email"
+  | "tools"
+  | "vpn";
 
 export interface GetReadyConnectionCell {
   state: "set" | "waiting" | "not_set" | "coming";
