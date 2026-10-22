@@ -44,6 +44,7 @@ export function UnattachedWarning({
   archived,
   onAttached,
   onOpenFile,
+  onDownloadFile,
   resolving,
 }: {
   slug: string;
@@ -52,6 +53,7 @@ export function UnattachedWarning({
   archived: boolean;
   onAttached: (file: ProjectArtifact, result: AttachResult) => void;
   onOpenFile?: OpenFile;
+  onDownloadFile?: OpenFile;
   resolving?: string | null;
 }) {
   const groups = unattachedByRun(artifacts);
@@ -72,7 +74,7 @@ export function UnattachedWarning({
           archived={archived}
           quiet={quiet}
           onAttached={onAttached}
-          onOpenFile={onOpenFile}
+          onOpenFile={onOpenFile} onDownloadFile={onDownloadFile}
           resolving={resolving}
         />
       ))}
@@ -271,6 +273,7 @@ function AttachRow({
   quiet,
   onAttached,
   onOpenFile,
+  onDownloadFile,
   resolving,
 }: {
   slug: string;
@@ -281,6 +284,7 @@ function AttachRow({
   quiet: boolean;
   onAttached: (file: ProjectArtifact, result: AttachResult) => void;
   onOpenFile?: OpenFile;
+  onDownloadFile?: OpenFile;
   resolving?: string | null;
 }) {
   const action = useProjectAction<AttachResult>();
@@ -293,7 +297,7 @@ function AttachRow({
       <div className="flex flex-wrap items-center gap-2">
         <FileBadge file={file} />
         <span className="min-w-0 flex-1 break-all text-sm">{file.title}</span>
-        <OpenArtifact file={file} onOpenFile={onOpenFile} resolving={resolving} />
+        <OpenArtifact file={file} onOpenFile={onOpenFile} onDownloadFile={onDownloadFile} resolving={resolving} />
       </div>
       {!archived && target ? (
         <div className="mt-1.5 flex flex-wrap items-center gap-2">

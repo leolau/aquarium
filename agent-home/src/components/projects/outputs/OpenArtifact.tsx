@@ -1,9 +1,70 @@
 "use client";
 
+import type { ReactNode } from "react";
+
 import type { FileRefTarget } from "@/components/files/FileRefOpener";
 import type { ProjectArtifact } from "@/types";
 
 export type OpenFile = (target: FileRefTarget) => Promise<void>;
+
+/** A file-route href asking for a download instead of inline viewing;
+ * null for external links (a Google Doc, a web page). */
+export function downloadHref(href: string | null | undefined): string | null {
+  if (!href || !href.startsWith("/api/")) return null;
+  return `${href}${href.includes("?") ? "&" : "?"}download=1`;
+}
+
+/**
+ * Open and Download for a produced file (Download only where the file's
+ * bytes come through this app).
+ */
+export function OpenArtifact(
+  props: Parameters<typeof OpenOnly>[0] & { onDownloadFile?: OpenFile },
+) {
+  const { file, onDownloadFile, resolving, className } = props;
+  const open = <OpenOnly {...props} />;
+  const label = `Download ${file.title}`;
+  const cls =
+    className ??
+    "rounded-lg border border-[var(--color-border)] px-2.5 py-1 text-xs";
+  const href = downloadHref(file.href);
+  let download: ReactNode = null;
+  if (href) {
+    download = (
+      <a href={href} download aria-label={label} className={cls}>
+        Download
+      </a>
+    );
+  } else if (
+    !file.href &&
+    file.link_kind === "file" &&
+    file.link_ref &&
+    onDownloadFile
+  ) {
+    const ref = file.link_ref;
+    download = (
+      <button
+        type="button"
+        aria-label={label}
+        onClick={() => void onDownloadFile({ ref, label: file.title })}
+        disabled={resolving === ref}
+        className={`${cls} disabled:opacity-50`}
+      >
+        Download
+      </button>
+    );
+  }
+  if (!download) return open;
+  return (
+    <span
+      data-component="FileActions"
+      className="flex shrink-0 items-center gap-1.5"
+    >
+      {open}
+      {download}
+    </span>
+  );
+}
 
 /**
  * The one Open control for a produced file: a link when the file has an
@@ -11,7 +72,7 @@ export type OpenFile = (target: FileRefTarget) => Promise<void>;
  * note when the file no longer exists, and a disabled button (with the
  * reason) when it cannot be reached from here.
  */
-export function OpenArtifact({
+function OpenOnly({
   file,
   onOpenFile,
   resolving,
@@ -26,7 +87,13 @@ export function OpenArtifact({
   const label = `Open ${file.title}`;
   if (file.href) {
     return (
-      <a href={file.href} target="_blank" rel="noreferrer" aria-label={label} className={className}>
+      <a
+        href={file.href}
+        target="_blank"
+        rel="noreferrer"
+        aria-label={label}
+        className={className}
+      >
         Open
       </a>
     );
@@ -57,7 +124,9 @@ export function OpenArtifact({
         }
         className="text-xs text-[var(--color-muted)]"
       >
-        {fromWorkspace ? "Deleted when its card finished" : "No longer on the server"}
+        {fromWorkspace
+          ? "Deleted when its card finished"
+          : "No longer on the server"}
       </span>
     );
   }

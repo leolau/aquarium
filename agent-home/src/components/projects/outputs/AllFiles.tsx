@@ -38,12 +38,14 @@ export function AllFiles({
   loading,
   fallback,
   onOpenFile,
+  onDownloadFile,
   resolving,
 }: {
   artifacts: ProjectArtifact[];
   loading: boolean;
   fallback: boolean;
   onOpenFile?: OpenFile;
+  onDownloadFile?: OpenFile;
   resolving?: string | null;
 }) {
   const [filter, setFilter] = useState<Filter>("all");
@@ -108,7 +110,7 @@ export function AllFiles({
                 </span>
               </span>
               <Pill tone={KIND_TONE[file.kind]}>{KIND_LABEL[file.kind]}</Pill>
-              <OpenArtifact file={file} onOpenFile={onOpenFile} resolving={resolving} />
+              <OpenArtifact file={file} onOpenFile={onOpenFile} onDownloadFile={onDownloadFile} resolving={resolving} />
             </li>
           ))}
         </ul>

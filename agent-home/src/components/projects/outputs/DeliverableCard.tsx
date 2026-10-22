@@ -50,6 +50,7 @@ export function DeliverableCard({
   onRemoved,
   onChangeRequest,
   onOpenFile,
+  onDownloadFile,
   resolving,
 }: {
   slug: string;
@@ -61,6 +62,7 @@ export function DeliverableCard({
   onRemoved: (outputId: string) => void;
   onChangeRequest?: (text?: string) => void;
   onOpenFile?: OpenFile;
+  onDownloadFile?: OpenFile;
   resolving?: string | null;
 }) {
   const accept = useProjectAction<AcceptEnvelope>();
@@ -124,7 +126,7 @@ export function DeliverableCard({
                         {middleEllipsize(name)}
                       </span>
                       {delivery.link_ref || artifact?.href ? (
-                        <OpenArtifact file={{ ...file, title: name }} onOpenFile={onOpenFile} resolving={resolving} />
+                        <OpenArtifact file={{ ...file, title: name }} onOpenFile={onOpenFile} onDownloadFile={onDownloadFile} resolving={resolving} />
                       ) : null}
                     </li>
                   );

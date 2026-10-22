@@ -94,6 +94,11 @@ export function FilesPanel({
                   ? (l) => void fileOpener.open({ ref: l.ref, label: l.label })
                   : undefined
               }
+              onDownload={
+                link.kind === "file" || link.kind === "sample" || link.kind === "reference"
+                  ? (l) => void fileOpener.download({ ref: l.ref, label: l.label })
+                  : undefined
+              }
               opening={fileOpener.resolving === link.ref}
             />
           ))}

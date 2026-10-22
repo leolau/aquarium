@@ -113,6 +113,7 @@ export function OutputsTab({
           archived={archived}
           onAttached={onAttached}
           onOpenFile={opener.open}
+          onDownloadFile={opener.download}
           resolving={opener.resolving}
         />
       ) : null}
@@ -149,6 +150,7 @@ export function OutputsTab({
                 onRemoved={onRemoved}
                 onChangeRequest={onChangeRequest}
                 onOpenFile={opener.open}
+          onDownloadFile={opener.download}
                 resolving={opener.resolving}
               />
             ))}
@@ -169,6 +171,7 @@ export function OutputsTab({
         loading={files.loading}
         fallback={files.fallback}
         onOpenFile={opener.open}
+          onDownloadFile={opener.download}
         resolving={opener.resolving}
       />
       {opener.dialog}
