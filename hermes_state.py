@@ -6682,3 +6682,54 @@ def kanban_task_call_stats(
             for r in rows
         ],
     }
+
+
+_TOKEN_TOTAL_KEYS = (
+    "calls", "input_tokens", "output_tokens", "cache_read_tokens",
+    "reasoning_tokens",
+)
+
+
+def kanban_tasks_token_totals(
+    db_path: Path, kanban_task_ids: List[str]
+) -> Optional[Dict[str, int]]:
+    """Summed ``api_call_log`` token counters for a set of cards, read-only.
+
+    ``None`` when the store or ledger isn't there, so a caller can tell
+    "never recorded" from "recorded zero".
+    """
+    if not Path(db_path).exists():
+        return None
+    try:
+        conn = sqlite3.connect(
+            f"file:{db_path}?mode=ro", uri=True, timeout=2.0
+        )
+    except sqlite3.Error:
+        return None
+    totals = dict.fromkeys(_TOKEN_TOTAL_KEYS, 0)
+    try:
+        cols = {
+            r[1] for r in conn.execute("PRAGMA table_info(api_call_log)")
+        }
+        if "kanban_task_id" not in cols:
+            return None
+        ids = list(dict.fromkeys(kanban_task_ids))
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            marks = ",".join("?" * len(chunk))
+            row = conn.execute(
+                "SELECT COUNT(*), COALESCE(SUM(input_tokens), 0),"
+                " COALESCE(SUM(output_tokens), 0),"
+                " COALESCE(SUM(cache_read_tokens), 0),"
+                " COALESCE(SUM(reasoning_tokens), 0)"
+                f" FROM api_call_log WHERE kanban_task_id IN ({marks})",
+                chunk,
+            ).fetchone()
+            for key, value in zip(_TOKEN_TOTAL_KEYS, row):
+                totals[key] += int(value or 0)
+    except sqlite3.Error:
+        logger.debug("kanban_tasks_token_totals failed", exc_info=True)
+        return None
+    finally:
+        conn.close()
+    return totals

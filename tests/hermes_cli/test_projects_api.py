@@ -956,3 +956,83 @@ def test_links_delete_detaches_the_pointer(env):
     ).status_code == 200
     detail = client.get(f"/api/registry/projects/{slug}").json()
     assert detail["links"].get("reference", []) == []
+
+
+def test_detail_usage_totals_every_run_and_only_this_projects_tokens(env):
+    """The project page's "used so far" line: all runs' time (a live run
+    counts up to now) and the tokens its own cards' workers recorded —
+    never another project's."""
+    import os
+    import sqlite3
+    import time as _time
+    from pathlib import Path
+
+    from hermes_state import SessionDB
+
+    client, _state = env
+    project = _create(env)
+    _activate(env, project)
+    other = _create(env, body={"goal": "Another project entirely"})
+    _activate(env, other)
+    slug = project["slug"]
+
+    mine = client.post(
+        f"/api/registry/projects/{slug}/cards", json={"title": "Draft"}
+    ).json()["task_id"]
+    theirs = client.post(
+        f"/api/registry/projects/{other['slug']}/cards", json={"title": "X"}
+    ).json()["task_id"]
+
+    db_path = Path(os.environ["HERMES_HOME"]) / "state.db"
+    SessionDB(db_path=db_path)
+    with sqlite3.connect(db_path) as conn:
+        for task_id, inp, out, cache in (
+            (mine, 1000, 200, 5000),
+            (mine, 500, 100, 0),
+            (theirs, 9999, 9999, 9999),
+        ):
+            conn.execute(
+                "INSERT INTO api_call_log (ts, kanban_task_id, input_tokens,"
+                " output_tokens, cache_read_tokens) VALUES (?, ?, ?, ?, ?)",
+                (_time.time(), task_id, inp, out, cache),
+            )
+
+    now = int(_time.time())
+    with projects_db.connect_closing() as conn:
+        done = projects_db.open_project_run(
+            conn, project_id=project["id"], trigger="manual", profile="default"
+        )
+        conn.execute(
+            "UPDATE project_runs SET status = 'done', started_at = ?,"
+            " ended_at = ? WHERE id = ?",
+            (now - 4000, now - 400, done["id"]),
+        )
+        conn.commit()
+        live = projects_db.open_project_run(
+            conn, project_id=project["id"], trigger="manual", profile="default"
+        )
+        conn.execute(
+            "UPDATE project_runs SET started_at = ? WHERE id = ?",
+            (now - 60, live["id"]),
+        )
+        conn.commit()
+
+    usage = client.get(f"/api/registry/projects/{slug}").json()["usage"]
+    assert usage["runs"] == 2
+    assert 3600 + 60 <= usage["run_seconds"] <= 3600 + 60 + 30
+    tokens = usage["tokens"]
+    assert tokens["calls"] == 2
+    assert tokens["input_tokens"] == 1500
+    assert tokens["output_tokens"] == 300
+    assert tokens["cache_read_tokens"] == 5000
+    assert tokens["total"] == 1800
+
+
+def test_detail_usage_tokens_read_not_recorded_without_a_call_log(env):
+    client, _state = env
+    project = _create(env)
+    _activate(env, project)
+    slug = project["slug"]
+    client.post(f"/api/registry/projects/{slug}/cards", json={"title": "Draft"})
+    usage = client.get(f"/api/registry/projects/{slug}").json()["usage"]
+    assert usage == {"runs": 0, "run_seconds": 0, "tokens": None}

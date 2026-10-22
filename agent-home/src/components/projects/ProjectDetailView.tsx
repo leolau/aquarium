@@ -2,15 +2,18 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useState, useTransition, type ComponentType } from "react";
+import {
+  useCallback,
+  useState,
+  useTransition,
+  type ComponentType,
+} from "react";
 
 import { ActionButton } from "@/components/projects/ActionButton";
 import { ActionError } from "@/components/projects/ActionError";
 import { useProjectAction } from "@/components/projects/useProjectAction";
 
-import {
-  AddToProjectSheet,
-} from "@/components/projects/AddToProjectSheet";
+import { AddToProjectSheet } from "@/components/projects/AddToProjectSheet";
 import { EditBriefSheet } from "@/components/projects/EditBriefSheet";
 import { ProjectLifecycleMenu } from "@/components/projects/ProjectLifecycleMenu";
 import { ReadinessChecklist } from "@/components/projects/ReadinessChecklist";
@@ -19,7 +22,12 @@ import {
   isRunnable,
   readinessItems,
 } from "@/components/projects/readiness";
-import { agoLabel, dayDistance } from "@/components/projects/format";
+import {
+  agoLabel,
+  dayDistance,
+  durationLabel,
+  tokenCountLabel,
+} from "@/components/projects/format";
 import { SummariseSheet } from "@/components/projects/SummariseSheet";
 import {
   CADENCE_GLYPH,
@@ -55,6 +63,7 @@ import type {
   ProjectDoctorDetail,
   ProjectHealth,
   ProjectPlaybookResponse,
+  ProjectUsage,
 } from "@/types";
 
 const HEALTH_TONE: Record<ProjectHealth, Tone> = {
@@ -108,12 +117,18 @@ export function ProjectDetailView({
   const { refresh, refreshing } = useRefresh();
   // Header writes: one lock each, held from the click until the refreshed
   // page (or the new run page) has landed.
-  const runNowAction = useProjectAction<{ run?: { run_no?: number }; run_no?: number }>();
+  const runNowAction = useProjectAction<{
+    run?: { run_no?: number };
+    run_no?: number;
+  }>();
   const activateAction = useProjectAction();
   const continueAction = useProjectAction();
   const [navigating, startNavigation] = useTransition();
   const headerBusy =
-    runNowAction.busy || activateAction.busy || continueAction.busy || navigating;
+    runNowAction.busy ||
+    activateAction.busy ||
+    continueAction.busy ||
+    navigating;
   const busy = headerBusy || refreshing;
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -141,9 +156,9 @@ export function ProjectDetailView({
     (run) => run.status === "running" || run.status === "waiting",
   );
   const blockedCards: ProjectBoardTask[] =
-    board?.columns.flatMap((column) => column.tasks).filter(
-      (task) => task.status === "blocked",
-    ) ?? [];
+    board?.columns
+      .flatMap((column) => column.tasks)
+      .filter((task) => task.status === "blocked") ?? [];
 
   const [tab, setTab] = useState<ProjectTab>(() => parseProjectTab(initialTab));
   const selectTab = useCallback((next: ProjectTab) => {
@@ -196,7 +211,9 @@ export function ProjectDetailView({
         const runNo = data.run?.run_no ?? data.run_no;
         if (typeof runNo === "number") {
           startNavigation(() =>
-            router.push(`/projects/${encodeURIComponent(project.slug)}/runs/${runNo}`),
+            router.push(
+              `/projects/${encodeURIComponent(project.slug)}/runs/${runNo}`,
+            ),
           );
         } else {
           refresh();
@@ -207,7 +224,10 @@ export function ProjectDetailView({
   // Runs require status=active; the backend gate names whatever is missing
   // (outputs / members / profiles) in its 409 detail, shown under the header.
   const activate = () =>
-    activateAction.run(slugPath, { method: "PATCH", body: { status: "active" } });
+    activateAction.run(slugPath, {
+      method: "PATCH",
+      body: { status: "active" },
+    });
 
   const meta = [
     project.status,
@@ -223,7 +243,10 @@ export function ProjectDetailView({
 
   return (
     <div data-component="ProjectDetailView" className="flex flex-col gap-4">
-      <BusyRegion busy={busy} label={busy ? "Talking to the agent…" : undefined}>
+      <BusyRegion
+        busy={busy}
+        label={busy ? "Talking to the agent…" : undefined}
+      >
         <div className="flex flex-col gap-4">
           {/* ── Header ─────────────────────────────────────────────── */}
           <header
@@ -232,7 +255,10 @@ export function ProjectDetailView({
             className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
           >
             <div className="flex items-center gap-2">
-              <span aria-hidden className="text-lg leading-none text-[var(--color-muted)]">
+              <span
+                aria-hidden
+                className="text-lg leading-none text-[var(--color-muted)]"
+              >
                 {CADENCE_GLYPH[project.cadence]}
               </span>
               <h1 className="min-w-0 flex-1 truncate text-lg font-semibold">
@@ -253,6 +279,7 @@ export function ProjectDetailView({
               </p>
             ) : null}
             <p className="mt-1 text-xs text-[var(--color-muted)]">{meta}</p>
+            {project.usage ? <ProjectUsageLine usage={project.usage} /> : null}
             {project.summary ? (
               <div
                 data-component="ProjectSummary"
@@ -273,84 +300,84 @@ export function ProjectDetailView({
                   This project is archived — restore it (⋯) to run it again.
                 </p>
               ) : (
-              <>
-              {project.status === "active" ? (
-                <ActionButton
-                  data-action="run-now"
-                  busy={runNowAction.busy || navigating}
-                  pendingLabel="Starting run…"
-                  onClick={() => void runNow()}
-                  disabled={busy || !runnable || openRun !== undefined}
-                  title={
-                    openRun
-                      ? `Run ${openRun.run_no} is still open — one run at a time.`
-                      : runnable
-                        ? undefined
-                        : "See the checklist below."
-                  }
-                  className="rounded-xl bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent-fg)] disabled:opacity-50"
-                >
-                  Run now
-                </ActionButton>
-              ) : (
-                <ActionButton
-                  data-action="activate"
-                  busy={activateAction.busy}
-                  pendingLabel="Activating…"
-                  onClick={() => void activate()}
-                  disabled={busy}
-                  className="rounded-xl bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent-fg)] disabled:opacity-50"
-                >
-                  Activate
-                </ActionButton>
-              )}
-              {waitingRun ? (
-                <ActionButton
-                  data-action="continue-run"
-                  busy={continueAction.busy}
-                  pendingLabel="Continuing…"
-                  onClick={() =>
-                    void continueAction.run(
-                      `${slugPath}/runs/${waitingRun.run_no}/continue`,
-                    )
-                  }
-                  disabled={busy}
-                  className="rounded-xl border border-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent)] disabled:opacity-50"
-                >
-                  Continue run {waitingRun.run_no}
-                </ActionButton>
-              ) : openRun ? (
-                <Link
-                  href={`/projects/${encodeURIComponent(project.slug)}/runs/${openRun.run_no}`}
-                  className="rounded-xl border border-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent)]"
-                >
-                  Run {openRun.run_no} in progress
-                </Link>
-              ) : null}
-              <button
-                type="button"
-                onClick={() => setAddOpen(true)}
-                className="rounded-xl border border-[var(--color-border)] px-4 py-2 text-sm disabled:opacity-50"
-              >
-                Add
-              </button>
-              {canLead ? (
-                <button
-                  type="button"
-                  onClick={() => setEditOpen(true)}
-                  className="rounded-xl border border-[var(--color-border)] px-4 py-2 text-sm disabled:opacity-50"
-                >
-                  Edit
-                </button>
-              ) : null}
-              <button
-                type="button"
-                onClick={() => setSummariseOpen(true)}
-                className="rounded-xl border border-[var(--color-border)] px-4 py-2 text-sm disabled:opacity-50"
-              >
-                {project.summary ? "Update summary" : "Summarise"}
-              </button>
-              </>
+                <>
+                  {project.status === "active" ? (
+                    <ActionButton
+                      data-action="run-now"
+                      busy={runNowAction.busy || navigating}
+                      pendingLabel="Starting run…"
+                      onClick={() => void runNow()}
+                      disabled={busy || !runnable || openRun !== undefined}
+                      title={
+                        openRun
+                          ? `Run ${openRun.run_no} is still open — one run at a time.`
+                          : runnable
+                            ? undefined
+                            : "See the checklist below."
+                      }
+                      className="rounded-xl bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent-fg)] disabled:opacity-50"
+                    >
+                      Run now
+                    </ActionButton>
+                  ) : (
+                    <ActionButton
+                      data-action="activate"
+                      busy={activateAction.busy}
+                      pendingLabel="Activating…"
+                      onClick={() => void activate()}
+                      disabled={busy}
+                      className="rounded-xl bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent-fg)] disabled:opacity-50"
+                    >
+                      Activate
+                    </ActionButton>
+                  )}
+                  {waitingRun ? (
+                    <ActionButton
+                      data-action="continue-run"
+                      busy={continueAction.busy}
+                      pendingLabel="Continuing…"
+                      onClick={() =>
+                        void continueAction.run(
+                          `${slugPath}/runs/${waitingRun.run_no}/continue`,
+                        )
+                      }
+                      disabled={busy}
+                      className="rounded-xl border border-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent)] disabled:opacity-50"
+                    >
+                      Continue run {waitingRun.run_no}
+                    </ActionButton>
+                  ) : openRun ? (
+                    <Link
+                      href={`/projects/${encodeURIComponent(project.slug)}/runs/${openRun.run_no}`}
+                      className="rounded-xl border border-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent)]"
+                    >
+                      Run {openRun.run_no} in progress
+                    </Link>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => setAddOpen(true)}
+                    className="rounded-xl border border-[var(--color-border)] px-4 py-2 text-sm disabled:opacity-50"
+                  >
+                    Add
+                  </button>
+                  {canLead ? (
+                    <button
+                      type="button"
+                      onClick={() => setEditOpen(true)}
+                      className="rounded-xl border border-[var(--color-border)] px-4 py-2 text-sm disabled:opacity-50"
+                    >
+                      Edit
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => setSummariseOpen(true)}
+                    className="rounded-xl border border-[var(--color-border)] px-4 py-2 text-sm disabled:opacity-50"
+                  >
+                    {project.summary ? "Update summary" : "Summarise"}
+                  </button>
+                </>
               )}
             </div>
 
@@ -367,8 +394,7 @@ export function ProjectDetailView({
             <ActionError action={activateAction} />
             <ActionError action={continueAction} />
           </header>
-
-          </div>
+        </div>
       </BusyRegion>
 
       {/* ── Live status: sticky, above every tab ───────────────── */}
@@ -380,7 +406,11 @@ export function ProjectDetailView({
 
       <ProjectTabsNav active={tab} onSelect={selectTab} badges={tabBadges} />
 
-      <div data-component="ProjectTabPanel" role="tabpanel" data-active-tab={tab}>
+      <div
+        data-component="ProjectTabPanel"
+        role="tabpanel"
+        data-active-tab={tab}
+      >
         <ActiveTab {...tabProps} />
       </div>
 
@@ -429,5 +459,43 @@ export function ProjectDetailView({
         />
       ) : null}
     </div>
+  );
+}
+
+/**
+ * "Used so far: 1h 37m over 2 runs · 1.45M tokens" — the project's basic
+ * cost at a glance. Tokens are what the model read and wrote; prompt text
+ * re-read from the provider's cache is billed far cheaper, so it is shown
+ * apart instead of inflating the total.
+ */
+export function ProjectUsageLine({ usage }: { usage: ProjectUsage }) {
+  const runs = `${usage.runs} run${usage.runs === 1 ? "" : "s"}`;
+  const tokens = usage.tokens;
+  return (
+    <p
+      data-component="ProjectUsage"
+      className="mt-1 text-xs text-[var(--color-muted)]"
+    >
+      <span className="font-medium text-[var(--color-fg)]">Used so far:</span>{" "}
+      {usage.runs === 0
+        ? "no runs yet"
+        : `${durationLabel(usage.run_seconds)} over ${runs}`}
+      {" · "}
+      {tokens == null ? (
+        "tokens not recorded"
+      ) : (
+        <span
+          title={`${tokens.input_tokens.toLocaleString()} read, ${tokens.output_tokens.toLocaleString()} written, ${tokens.cache_read_tokens.toLocaleString()} re-read from cache, in ${tokens.calls.toLocaleString()} model calls`}
+        >
+          {tokenCountLabel(tokens.total)} tokens
+          {tokens.total > 0
+            ? ` (${tokenCountLabel(tokens.input_tokens)} read, ${tokenCountLabel(tokens.output_tokens)} written)`
+            : ""}
+          {tokens.cache_read_tokens > 0
+            ? ` + ${tokenCountLabel(tokens.cache_read_tokens)} re-read from cache`
+            : ""}
+        </span>
+      )}
+    </p>
   );
 }
