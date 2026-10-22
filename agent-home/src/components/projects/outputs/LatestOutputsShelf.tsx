@@ -93,7 +93,8 @@ export function LatestOutputsShelf({
                     <span className="truncate">{where || file.output_title || ""}</span>
                   </span>
                 </span>
-                <OpenArtifact file={file} onOpenFile={opener.open} resolving={opener.resolving} />
+                <OpenArtifact file={file} onOpenFile={opener.open}
+          onDownloadFile={opener.download} resolving={opener.resolving} />
               </li>
             );
           })}

@@ -344,6 +344,18 @@ def _servable(path_str: str, roots: list[Path]) -> Optional[Path]:
     return None
 
 
+def _served_or_kept(path_str: str, task, roots: list[Path]) -> Optional[Path]:
+    """The file itself, else the copy kept when its card's scratch
+    workspace was wiped (:func:`kanban_db.kept_copy`)."""
+    found = _servable(path_str, roots)
+    ws = getattr(task, "workspace_path", None)
+    if found is None and ws:
+        kept = kanban_db.kept_copy(ws, path_str)
+        if kept is not None:
+            found = _servable(str(kept), roots)
+    return found
+
+
 def _uploaded_copy(uploaded: dict[str, str], name: str) -> Optional[str]:
     """The remote copy a run recorded for a local file: same file name, or
     a native document (no extension) named after the file's stem — a
@@ -474,7 +486,7 @@ def _files_by_id(project, ctx: dict) -> dict[str, dict]:
         for f in _claimed_files(task, ctx["task_runs"].get(tid, [])):
             aid = f"f:{tid}:{_short_hash(f['path'])}"
             claims.setdefault(f["path"], []).append(
-                (aid, {**f, "task": task, "serve": _servable(f["path"], roots)})
+                (aid, {**f, "task": task, "serve": _served_or_kept(f["path"], task, roots)})
             )
         for att in ctx["attachments"].get(tid, []):
             aid = f"att:{att.id}"

@@ -43,6 +43,7 @@ export function InputRow({
   archived = false,
   onRemoved,
   onOpen,
+  onDownload,
   opening = false,
   icon,
 }: {
@@ -53,6 +54,7 @@ export function InputRow({
   onRemoved?: (link: ProjectLink) => void;
   /** Files open in the file viewer. */
   onOpen?: (link: ProjectLink) => void;
+  onDownload?: (link: ProjectLink) => void;
   opening?: boolean;
   icon?: string;
 }) {
@@ -109,6 +111,17 @@ export function InputRow({
             {inputMeta(link, callerUserId)}
           </span>
         </div>
+        {onDownload ? (
+          <button
+            type="button"
+            onClick={() => onDownload(link)}
+            disabled={opening}
+            aria-label={`Download ${title}`}
+            className="shrink-0 text-xs text-[var(--color-accent)] underline disabled:opacity-40"
+          >
+            Download
+          </button>
+        ) : null}
         {archived ? null : (
           <ActionButton
             busy={action.busy}

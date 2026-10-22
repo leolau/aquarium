@@ -474,6 +474,88 @@ def test_a_file_wiped_with_its_scratch_workspace_reads_missing(env):
     assert item["location"] == "card workspace"
 
 
+def _scratch_card(project, *, title, files, result=None, artifacts=None):
+    """A project card on a real scratch workspace: write ``files`` into it,
+    then complete it (which wipes the workspace)."""
+    with kanban_db.connect_closing() as bconn:
+        tid = kanban_db.create_task(
+            bconn, title=title, assignee="default", project_id=project["id"],
+        )
+        ws = kanban_db.resolve_workspace(kanban_db.get_task(bconn, tid))
+        kanban_db.set_workspace_path(bconn, tid, ws)
+        paths = {}
+        for rel, data in files.items():
+            path = ws / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            paths[rel] = path
+        assert kanban_db.claim_task(bconn, tid, claimer="test:1")
+        names = [str(paths[r]) for r in (artifacts or [])]
+        assert kanban_db.complete_task(
+            bconn, tid, result=result, summary=result,
+            metadata={"artifacts": names} if names else None,
+        )
+    assert not ws.exists()
+    return tid, ws, paths
+
+
+def test_a_reported_file_survives_its_scratch_workspace(env):
+    client, _state, _tmp = env
+    project = _project(env)
+    _tid, _ws, paths = _scratch_card(
+        project, title="Build the sheet",
+        files={"out/sheet.xlsx": b"xlsx-bytes", "out/scratch.tmp": b"junk", "NOTES.md": b"notes"},
+        artifacts=["out/sheet.xlsx"],
+    )
+    items = {i["title"]: i for i in _artifacts(env, project["slug"])}
+    sheet = items["sheet.xlsx"]
+    assert sheet["missing"] is False and sheet["href"]
+    assert sheet["location"] == "card workspace / out"
+    got = client.get(sheet["href"].replace("/api/projects/", "/api/registry/projects/"))
+    assert got.status_code == 200 and got.content == b"xlsx-bytes"
+    kept = kanban_db.kept_copy(paths["out/sheet.xlsx"].parent.parent, paths["out/sheet.xlsx"])
+    assert kept is not None and kept.read_bytes() == b"xlsx-bytes"
+    # Only what the card reported is kept; the rest of the workspace goes.
+    assert not kanban_db.kept_copy(
+        paths["out/scratch.tmp"].parent.parent, paths["out/scratch.tmp"]
+    ).exists()
+
+
+def test_a_delivery_of_a_kept_file_opens_after_the_wipe(env):
+    client, _state, _tmp = env
+    project = _project(env)
+    tid, _ws, paths = _scratch_card(
+        project, title="Build the sheet", files={"out/final.xlsx": b"final"},
+        artifacts=["out/final.xlsx"],
+    )
+    output_id = project["outputs"][0]["id"]
+    with projects_db.connect_closing() as conn:
+        projects_db.record_output_delivery(
+            conn, output_id=output_id, task_id=tid, link_kind="workspace",
+            link_ref=str(paths["out/final.xlsx"]), profile="default",
+        )
+    item = next(i for i in _artifacts(env, project["slug"]) if i["kind"] == "deliverable")
+    assert item["missing"] is False and item["href"]
+    got = client.get(item["href"].replace("/api/projects/", "/api/registry/projects/"))
+    assert got.status_code == 200 and got.content == b"final"
+
+
+def test_a_symlink_out_of_the_workspace_is_not_kept(env, tmp_path):
+    _client, _state, _tmp = env
+    project = _project(env)
+    secret = tmp_path / "secret.txt"
+    secret.write_text("secret")
+    with kanban_db.connect_closing() as bconn:
+        tid = kanban_db.create_task(bconn, title="Leak", assignee="default", project_id=project["id"])
+        ws = kanban_db.resolve_workspace(kanban_db.get_task(bconn, tid))
+        kanban_db.set_workspace_path(bconn, tid, ws)
+        link = ws / "leak.txt"
+        link.symlink_to(secret)
+        assert kanban_db.claim_task(bconn, tid, claimer="test:1")
+        assert kanban_db.complete_task(bconn, tid, metadata={"artifacts": [str(link)]})
+    assert not kanban_db.kept_copy(ws, link).exists()
+
+
 def test_a_wiped_docx_opens_the_google_doc_made_from_it(env):
     """A run that converts ``Quote v1.0.docx`` into the Google Doc
     ``Quote v1.0`` records ``name`` + ``doc_url``; the wiped local docx

@@ -56,10 +56,41 @@ export function useFileRefOpener() {
     <FileRefFallback target={fallback} onClose={() => setFallback(null)} />
   ) : null;
 
+  /** Download without the dialog: through the registry row when there is
+   * one, else straight from storage (the route still checks the caller). */
+  const download = async (target: FileRefTarget) => {
+    setResolving(target.ref);
+    let url = `${mediaContentRef(target.ref)}&download=1`;
+    try {
+      const res = await fetch(
+        `/api/files/by-path?path=${encodeURIComponent(target.ref)}`,
+      );
+      if (res.ok) {
+        const file = (await res.json()) as FileAsset;
+        url = `/api/files/${encodeURIComponent(file.id)}/content?download=1`;
+      }
+    } catch {
+      // keep the storage route
+    } finally {
+      setResolving(null);
+    }
+    startDownload(url);
+  };
+
   // A fast double click on a file link would fetch it twice.
   const { run: openOnce } = useAction(open);
+  const { run: downloadOnce } = useAction(download);
 
-  return { open: openOnce, resolving, dialog };
+  return { open: openOnce, download: downloadOnce, resolving, dialog };
+}
+
+function startDownload(url: string) {
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 /** The no-registry-record dialog: view/download via the media content route. */

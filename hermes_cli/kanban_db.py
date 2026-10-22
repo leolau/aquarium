@@ -4700,6 +4700,65 @@ def _is_managed_scratch_path(p: Path) -> bool:
     return False
 
 
+KEPT_FILE_MAX_BYTES = 200 * 1024 * 1024
+KEPT_TASK_MAX_BYTES = 1024 * 1024 * 1024
+
+
+def kept_files_dir(workspace_path: "str | Path") -> Path:
+    """Where a finished project card's reported files are kept once its
+    scratch workspace is wiped: ``<root>/artifacts/kept/<task-id>`` beside
+    ``<root>/workspaces/<task-id>`` (inside the project files' served roots)."""
+    ws = Path(os.path.normpath(str(workspace_path)))
+    return ws.parent.parent / "artifacts" / "kept" / ws.name
+
+
+def kept_copy(workspace_path: "str | Path", path: "str | Path") -> Optional[Path]:
+    """The kept copy of ``path`` (a file inside ``workspace_path``), or None
+    when ``path`` is not inside that workspace."""
+    ws = Path(os.path.normpath(str(workspace_path)))
+    try:
+        rel = Path(os.path.normpath(str(path))).relative_to(ws)
+    except ValueError:
+        return None
+    if not rel.parts or ".." in rel.parts:
+        return None
+    return kept_files_dir(ws) / rel
+
+
+def _keep_reported_files(conn: sqlite3.Connection, task_id: str, wp: Path) -> None:
+    """Copy the files a project card reported (its runs' ``artifacts``, the
+    paths its summaries and result name) out of its scratch workspace before
+    the workspace is removed, so the project page can still open them."""
+    try:
+        task = get_task(conn, task_id)
+        if task is None or not task.project_id:
+            return
+        import shutil
+        from hermes_cli.projects_outputs_api import _DENY_NAMES, _claimed_files
+
+        base = wp.resolve()
+        budget = KEPT_TASK_MAX_BYTES
+        for item in _claimed_files(task, list_runs(conn, task_id)):
+            target = kept_copy(wp, item["path"])
+            if target is None:
+                continue
+            try:
+                real = Path(item["path"]).resolve(strict=True)
+            except (OSError, RuntimeError):
+                continue
+            if not real.is_file() or real.name in _DENY_NAMES or not real.is_relative_to(base):
+                continue
+            size = real.stat().st_size
+            if size > KEPT_FILE_MAX_BYTES or size > budget:
+                _log.warning("Not keeping %s for task %s: too large (%d bytes)", real, task_id, size)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(real, target)
+            budget -= size
+    except Exception:
+        _log.warning("Could not keep the reported files of task %s", task_id, exc_info=True)
+
+
 def _cleanup_workspace(conn: sqlite3.Connection, task_id: str) -> None:
     """Remove a task's scratch workspace dir and kill its stale tmux session.
 
@@ -4749,6 +4808,7 @@ def _cleanup_workspace(conn: sqlite3.Connection, task_id: str) -> None:
             # completion would unconditionally ``shutil.rmtree`` that path
             # and silently delete the user's source data.
             if _is_managed_scratch_path(wp):
+                _keep_reported_files(conn, task_id, wp)
                 shutil.rmtree(wp, ignore_errors=True)
                 _log.debug("Removed scratch workspace: %s", wp)
             else:
@@ -4803,6 +4863,7 @@ def _try_cleanup_parent_workspaces(conn: sqlite3.Connection, task_id: str) -> No
             import shutil
             wp = Path(row["workspace_path"])
             if wp.is_dir() and _is_managed_scratch_path(wp):
+                _keep_reported_files(conn, parent_id, wp)
                 shutil.rmtree(wp, ignore_errors=True)
                 _log.debug("Deferred cleanup: removed parent %s scratch workspace: %s", parent_id, wp)
     except Exception:
