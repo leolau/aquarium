@@ -1335,14 +1335,22 @@ async def deliver_output(request: Request, output_id: str) -> dict[str, Any]:
         body = {}
 
     def _deliver_sync() -> dict:
+        from hermes_cli.projects_outputs_api import retain_delivery
+
+        try:
+            link_kind, link_ref = retain_delivery(
+                project, body.get("link_kind"), body.get("link_ref")
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
         with projects_db.connect_closing() as conn:
             did = projects_db.record_output_delivery(
                 conn,
                 output_id=output_id,
                 run_id=body.get("run_id"),
                 task_id=body.get("task_id"),
-                link_kind=body.get("link_kind"),
-                link_ref=body.get("link_ref"),
+                link_kind=link_kind,
+                link_ref=link_ref,
                 profile=body.get("profile"),
                 label=body.get("label"),
                 note=body.get("note"),

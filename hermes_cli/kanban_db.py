@@ -4625,35 +4625,8 @@ def complete_task(
 # Workspace / tmux cleanup
 # ---------------------------------------------------------------------------
 
-def _is_managed_scratch_path(p: Path) -> bool:
-    """Return True iff *p* is a strict descendant of a kanban-managed scratch root.
-
-    A managed root is exclusively a ``workspaces/`` directory — never the
-    broader kanban home, a board root, or sibling subtrees like ``logs/`` or
-    ``boards/<slug>/`` itself. Allowed roots:
-
-    * ``HERMES_KANBAN_WORKSPACES_ROOT`` when set (worker-side override
-      injected by the dispatcher).
-    * ``<kanban_home>/kanban/workspaces`` — legacy default-board scratch root.
-    * ``<kanban_home>/kanban/boards/<slug>/workspaces`` for each board slug
-      that currently exists on disk.
-
-    The check requires strict descendancy: a path equal to one of these
-    roots is NOT managed (deleting the workspaces root would wipe every
-    task's scratch dir at once), and a path that resolves to ``<kanban_home>
-    /kanban`` itself, ``<kanban_home>/kanban/logs``, or
-    ``<kanban_home>/kanban/boards/<slug>`` is rejected because those
-    subtrees hold Hermes' own DB, metadata, and logs, not task workspaces.
-
-    Used by :func:`_cleanup_workspace` to refuse to ``shutil.rmtree`` paths
-    outside Hermes-managed storage. A board ``default_workdir`` pointing at a
-    real source tree can otherwise pair with ``workspace_kind='scratch'`` and
-    cause task completion to delete user data (#28818).
-    """
-    try:
-        p_abs = p.resolve(strict=False)
-    except OSError:
-        return False
+def _managed_scratch_roots() -> list[Path]:
+    """The kanban-managed scratch roots (see :func:`_is_managed_scratch_path`)."""
     roots: list[Path] = []
     override = os.environ.get("HERMES_KANBAN_WORKSPACES_ROOT", "").strip()
     if override:
@@ -4689,6 +4662,39 @@ def _is_managed_scratch_path(p: Path) -> bool:
                     roots.append((entry / "workspaces").resolve(strict=False))
                 except OSError:
                     continue
+    return roots
+
+
+def _is_managed_scratch_path(p: Path) -> bool:
+    """Return True iff *p* is a strict descendant of a kanban-managed scratch root.
+
+    A managed root is exclusively a ``workspaces/`` directory — never the
+    broader kanban home, a board root, or sibling subtrees like ``logs/`` or
+    ``boards/<slug>/`` itself. Allowed roots:
+
+    * ``HERMES_KANBAN_WORKSPACES_ROOT`` when set (worker-side override
+      injected by the dispatcher).
+    * ``<kanban_home>/kanban/workspaces`` — legacy default-board scratch root.
+    * ``<kanban_home>/kanban/boards/<slug>/workspaces`` for each board slug
+      that currently exists on disk.
+
+    The check requires strict descendancy: a path equal to one of these
+    roots is NOT managed (deleting the workspaces root would wipe every
+    task's scratch dir at once), and a path that resolves to ``<kanban_home>
+    /kanban`` itself, ``<kanban_home>/kanban/logs``, or
+    ``<kanban_home>/kanban/boards/<slug>`` is rejected because those
+    subtrees hold Hermes' own DB, metadata, and logs, not task workspaces.
+
+    Used by :func:`_cleanup_workspace` to refuse to ``shutil.rmtree`` paths
+    outside Hermes-managed storage. A board ``default_workdir`` pointing at a
+    real source tree can otherwise pair with ``workspace_kind='scratch'`` and
+    cause task completion to delete user data (#28818).
+    """
+    try:
+        p_abs = p.resolve(strict=False)
+    except OSError:
+        return False
+    roots = _managed_scratch_roots()
     for root in roots:
         if p_abs == root:
             continue
@@ -4725,36 +4731,99 @@ def kept_copy(workspace_path: "str | Path", path: "str | Path") -> Optional[Path
     return kept_files_dir(ws) / rel
 
 
+def scratch_workspace_of(path: "str | Path") -> Optional[Path]:
+    """The scratch workspace (``<managed root>/<task-id>``) that ``path``
+    lies inside, or None when it is not under a managed scratch root."""
+    try:
+        p = Path(path).expanduser().resolve(strict=False)
+    except (OSError, RuntimeError):
+        return None
+    for root in _managed_scratch_roots():
+        try:
+            rel = p.relative_to(root)
+        except ValueError:
+            continue
+        if len(rel.parts) >= 2:
+            return root / rel.parts[0]
+    return None
+
+
+def keep_file(workspace_path: "str | Path", path: "str | Path",
+              budget: int = KEPT_FILE_MAX_BYTES) -> Optional[Path]:
+    """Copy ``path`` (a regular file inside the scratch workspace
+    ``workspace_path``) to its kept copy and return that copy; None when it
+    is not such a file or is over ``budget``/:data:`KEPT_FILE_MAX_BYTES`."""
+    from hermes_cli.projects_outputs_api import _DENY_NAMES
+
+    wp = Path(workspace_path)
+    target = kept_copy(wp, path)
+    if target is None:
+        return None
+    try:
+        base = wp.resolve(strict=True)
+        real = Path(path).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    if not real.is_file() or real.name in _DENY_NAMES or not real.is_relative_to(base):
+        return None
+    size = real.stat().st_size
+    if size > KEPT_FILE_MAX_BYTES or size > budget:
+        _log.warning("Not keeping %s: too large (%d bytes)", real, size)
+        return None
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(real, target)
+    return target
+
+
+def _metadata_paths(value: Any, wp: Path, depth: int = 0) -> list[str]:
+    """Paths of existing files inside ``wp`` named by any string in a run's
+    metadata (``output``, ``files``, ...), absolute or workspace-relative."""
+    out: list[str] = []
+    if depth > 4:
+        return out
+    if isinstance(value, dict):
+        for v in value.values():
+            out.extend(_metadata_paths(v, wp, depth + 1))
+    elif isinstance(value, (list, tuple)):
+        for v in value[:200]:
+            out.extend(_metadata_paths(v, wp, depth + 1))
+    elif isinstance(value, str) and 0 < len(value) < 1024 and "\n" not in value:
+        cand = Path(value.strip())
+        if not cand.is_absolute():
+            cand = wp / cand
+        try:
+            if cand.is_file():
+                out.append(str(cand))
+        except OSError:
+            pass
+    return out
+
+
 def _keep_reported_files(conn: sqlite3.Connection, task_id: str, wp: Path) -> None:
     """Copy the files a project card reported (its runs' ``artifacts``, the
-    paths its summaries and result name) out of its scratch workspace before
-    the workspace is removed, so the project page can still open them."""
+    paths its summaries, result and run metadata name) out of its scratch
+    workspace before the workspace is removed, so the project page can
+    still open them."""
     try:
         task = get_task(conn, task_id)
         if task is None or not task.project_id:
             return
-        import shutil
-        from hermes_cli.projects_outputs_api import _DENY_NAMES, _claimed_files
+        from hermes_cli.projects_outputs_api import _claimed_files
 
-        base = wp.resolve()
+        runs = list_runs(conn, task_id)
+        paths = [item["path"] for item in _claimed_files(task, runs)]
+        for run in runs:
+            if isinstance(run.metadata, dict):
+                paths.extend(_metadata_paths(run.metadata, wp))
         budget = KEPT_TASK_MAX_BYTES
-        for item in _claimed_files(task, list_runs(conn, task_id)):
-            target = kept_copy(wp, item["path"])
-            if target is None:
+        seen: set[str] = set()
+        for path in paths:
+            if path in seen:
                 continue
-            try:
-                real = Path(item["path"]).resolve(strict=True)
-            except (OSError, RuntimeError):
-                continue
-            if not real.is_file() or real.name in _DENY_NAMES or not real.is_relative_to(base):
-                continue
-            size = real.stat().st_size
-            if size > KEPT_FILE_MAX_BYTES or size > budget:
-                _log.warning("Not keeping %s for task %s: too large (%d bytes)", real, task_id, size)
-                continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(real, target)
-            budget -= size
+            seen.add(path)
+            kept = keep_file(wp, path, budget)
+            if kept is not None:
+                budget -= kept.stat().st_size
     except Exception:
         _log.warning("Could not keep the reported files of task %s", task_id, exc_info=True)
 

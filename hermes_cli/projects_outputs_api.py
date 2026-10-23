@@ -406,6 +406,59 @@ def _claimed_files(task, runs) -> list[dict]:
     return out
 
 
+def _workspace_kind(project, ws: Path) -> Optional[str]:
+    """The ``workspace_kind`` of the card that owns workspace ``ws``, or
+    None when no card on the project's board owns it."""
+    try:
+        with _board_conn(project) as bconn:
+            row = bconn.execute(
+                "SELECT workspace_kind FROM tasks WHERE workspace_path = ? OR id = ? "
+                "ORDER BY workspace_path = ? DESC LIMIT 1",
+                (str(ws), ws.name, str(ws)),
+            ).fetchone()
+    except Exception:
+        return None
+    return row["workspace_kind"] if row else None
+
+
+def retain_delivery(
+    project, link_kind: Optional[str], link_ref: Optional[str]
+) -> tuple[Optional[str], Optional[str]]:
+    """The ``(link_kind, link_ref)`` to record for a delivery. A file in a
+    card's scratch workspace (deleted when the card completes) is copied
+    to its kept copy and the kept copy is delivered instead; a local path
+    that does not resolve is refused (ValueError), so an output is never
+    marked delivered on bytes that are already gone."""
+    ref = str(link_ref or "").strip()
+    if (
+        not ref or link_kind not in (None, "", "workspace")
+        or _is_web_url(ref) or not os.path.isabs(ref)
+    ):
+        return link_kind, link_ref
+    ws = kanban_db.scratch_workspace_of(ref)
+    if ws is not None and _workspace_kind(project, ws) not in (None, "scratch"):
+        ws = None
+    if ws is not None:
+        path = Path(ref).resolve(strict=False)
+        kept = kanban_db.keep_file(ws, path)
+        if kept is None:
+            existing = kanban_db.kept_copy(ws, path)
+            if existing is not None and existing.is_file():
+                kept = existing
+        if kept is None:
+            raise ValueError(
+                f"{ref} is in a card's scratch workspace, which is deleted when "
+                "the card completes, and there is no file there to keep. Deliver "
+                "a kept artifact or a Files download URL instead."
+            )
+        return "workspace", str(kept)
+    if not os.path.isfile(ref):
+        raise ValueError(
+            f"{ref} does not exist. Deliver a file that resolves or a download URL."
+        )
+    return link_kind, link_ref
+
+
 def _card_links(task, runs) -> list[dict]:
     out: list[dict] = []
     seen: set[str] = set()
@@ -512,6 +565,7 @@ def collect_artifacts(project, principal) -> list[dict]:
 
 def build_artifacts(project, ctx: dict) -> list[dict]:
     slug = project.slug
+    board = project.board_slug or None
     files = _files_by_id(project, ctx)
     path_to_id = {f["path"]: aid for aid, f in files.items() if aid.startswith("f:")}
     versions = assign_versions(ctx["deliveries"])
@@ -552,6 +606,11 @@ def build_artifacts(project, ctx: dict) -> list[dict]:
                 name = uploaded_names.get(_doc_url_key(ref)) or _url_meta(ref)[0]
         elif kind == "workspace" and ref:
             file_id = path_to_id.get(ref)
+            if file_id is None and _servable(ref, _managed_roots(task, board)):
+                href = _content_href(slug, f"d:{d['id']}")
+                location = (
+                    "kept artifacts" if "/artifacts/kept/" in ref else _location(ref, task)
+                )
         elif kind == "attachment" and ref:
             file_id = f"att:{ref}" if f"att:{ref}" in files else None
         elif kind == "file" and ref:
@@ -573,8 +632,8 @@ def build_artifacts(project, ctx: dict) -> list[dict]:
                 href = remote
                 location = urlparse(remote).hostname
         missing = (
-            href is None and kind == "workspace" and bool(ref)
-            and not os.path.lexists(ref)
+            href is None and kind in ("workspace", None) and bool(ref)
+            and os.path.isabs(ref) and not os.path.lexists(ref)
         )
         fname = (
             f["filename"] if file_id and files[file_id].get("filename")
@@ -691,6 +750,9 @@ def resolve_content(project, principal, artifact_id: str) -> Optional[Path]:
                 (f for aid, f in files.items() if aid.startswith("f:") and f["path"] == ref),
                 None,
             )
+            if match is None and ref:
+                task = ctx["tasks"].get(delivery.get("task_id") or "")
+                return _servable(ref, _managed_roots(task, project.board_slug or None))
         elif delivery.get("link_kind") == "attachment":
             match = files.get(f"att:{ref}")
         else:
