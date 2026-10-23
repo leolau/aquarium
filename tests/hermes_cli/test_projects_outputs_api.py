@@ -692,3 +692,124 @@ def test_agent_written_html_downloads_sandboxed_and_pdf_stays_inline(env):
     resp = client.get(f"/api/registry/projects/{slug}/artifacts/{by_title['mou.pdf']['id']}/content")
     assert resp.headers["content-disposition"].startswith("inline;")
     assert resp.headers["content-security-policy"].startswith("sandbox;")
+
+
+# ---------------------------------------------------------------------------
+# A delivery never points at a scratch path that completion deletes
+# ---------------------------------------------------------------------------
+
+
+def _deliver(env, project, body):
+    client, _state, _tmp = env
+    oid = project["outputs"][0]["id"]
+    return client.post(
+        f"/api/registry/projects/{project['slug']}/outputs/{oid}/deliver", json=body
+    )
+
+
+def _output_status(project):
+    with projects_db.connect_closing() as conn:
+        return projects_db.get_project_outputs(conn, project["id"])[0]["status"]
+
+
+def test_delivering_a_scratch_file_delivers_its_kept_copy(env):
+    client, _state, _tmp = env
+    project = _project(env)
+    with kanban_db.connect_closing() as bconn:
+        tid = kanban_db.create_task(
+            bconn, title="Build the book", assignee="default", project_id=project["id"],
+        )
+        ws = kanban_db.resolve_workspace(kanban_db.get_task(bconn, tid))
+        kanban_db.set_workspace_path(bconn, tid, ws)
+        book = ws / "out" / "book.xlsx"
+        book.parent.mkdir(parents=True)
+        book.write_bytes(b"book-bytes")
+        assert kanban_db.claim_task(bconn, tid, claimer="test:1")
+    # Delivered mid-run, the way the CLI does it: a bare path, no kind.
+    resp = _deliver(env, project, {"link_ref": str(book), "task_id": tid})
+    assert resp.status_code == 200, resp.text
+    with projects_db.connect_closing() as conn:
+        (d,) = projects_db.get_output_deliveries(conn, project_id=project["id"])
+    kept = kanban_db.kept_copy(ws, book)
+    assert d["link_kind"] == "workspace" and d["link_ref"] == str(kept)
+    assert kept.read_bytes() == b"book-bytes"
+    # The card completes without listing the file; the workspace goes.
+    with kanban_db.connect_closing() as bconn:
+        assert kanban_db.complete_task(bconn, tid, summary="built the book")
+    assert not ws.exists()
+    item = next(i for i in _artifacts(env, project["slug"]) if i["kind"] == "deliverable")
+    assert item["missing"] is False and item["href"]
+    assert item["location"] == "kept artifacts"
+    got = client.get(item["href"].replace("/api/projects/", "/api/registry/projects/"))
+    assert got.status_code == 200 and got.content == b"book-bytes"
+
+
+def test_a_delivery_of_a_wiped_scratch_path_is_refused(env):
+    project = _project(env)
+    tid, _ws, paths = _scratch_card(
+        project, title="Build the book", files={"out/book.xlsx": b"x"},
+    )
+    resp = _deliver(env, project, {
+        "link_kind": "workspace", "link_ref": str(paths["out/book.xlsx"]),
+        "task_id": tid,
+    })
+    assert resp.status_code == 422
+    assert "scratch workspace" in resp.json()["detail"]
+    assert _output_status(project) != "delivered"
+    with projects_db.connect_closing() as conn:
+        assert projects_db.get_output_deliveries(conn, project_id=project["id"]) == []
+
+
+def test_a_wiped_scratch_path_whose_copy_was_kept_delivers_the_copy(env):
+    project = _project(env)
+    tid, ws, paths = _scratch_card(
+        project, title="Build the book", files={"out/book.xlsx": b"x"},
+        artifacts=["out/book.xlsx"],
+    )
+    resp = _deliver(env, project, {"link_ref": str(paths["out/book.xlsx"]), "task_id": tid})
+    assert resp.status_code == 200, resp.text
+    with projects_db.connect_closing() as conn:
+        (d,) = projects_db.get_output_deliveries(conn, project_id=project["id"])
+    assert d["link_ref"] == str(kanban_db.kept_copy(ws, paths["out/book.xlsx"]))
+
+
+def test_a_local_path_that_does_not_resolve_is_refused(env, tmp_path):
+    project = _project(env)
+    resp = _deliver(env, project, {"link_ref": str(tmp_path / "nowhere.xlsx")})
+    assert resp.status_code == 422
+    assert _output_status(project) != "delivered"
+
+
+def test_urls_and_non_paths_are_delivered_as_given(env):
+    project = _project(env)
+    url = "https://home.example/api/files/abc/content?download=1"
+    assert _deliver(env, project, {"link_ref": url}).status_code == 200
+    assert _deliver(env, project, {"link_kind": "file", "link_ref": "fa_123"}).status_code == 200
+    with projects_db.connect_closing() as conn:
+        refs = {(d["link_kind"], d["link_ref"]) for d in
+                projects_db.get_output_deliveries(conn, project_id=project["id"])}
+    assert refs == {("url", url), ("file", "fa_123")}
+    assert _output_status(project) == "delivered"
+
+
+def test_a_file_named_only_in_run_metadata_survives_the_wipe(env):
+    project = _project(env)
+    with kanban_db.connect_closing() as bconn:
+        tid = kanban_db.create_task(
+            bconn, title="Build the book", assignee="default", project_id=project["id"],
+        )
+        ws = kanban_db.resolve_workspace(kanban_db.get_task(bconn, tid))
+        kanban_db.set_workspace_path(bconn, tid, ws)
+        (ws / "out").mkdir()
+        (ws / "out" / "book.xlsx").write_bytes(b"book")
+        (ws / "out" / "unmatched.csv").write_bytes(b"csv")
+        assert kanban_db.claim_task(bconn, tid, claimer="test:1")
+        assert kanban_db.complete_task(
+            bconn, tid, summary="built it",
+            metadata={"output": str(ws / "out" / "book.xlsx"),
+                      "companions": ["out/unmatched.csv"]},
+        )
+    assert not ws.exists()
+    kept = kanban_db.kept_files_dir(ws)
+    assert (kept / "out" / "book.xlsx").read_bytes() == b"book"
+    assert (kept / "out" / "unmatched.csv").read_bytes() == b"csv"

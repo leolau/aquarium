@@ -107,7 +107,10 @@ record.
 `outputs add` is proposable by the agent; `outputs accept` will refuse you
 ("accepting an output is a human act — no verified session"). Deliver what
 you made — `outputs deliver <id> --ref <where it lives>` — then ask the user
-to accept it. A run that produced nothing must close `no_output` rather than
+to accept it. A file in your scratch workspace is deleted when the card
+completes: deliver its path and the server delivers a kept copy instead (or
+refuses a path that no longer exists), or publish it to Files and deliver the
+download URL. List the file in `kanban_complete(artifacts=[...])` too. A run that produced nothing must close `no_output` rather than
 narrate effort.
 
 ### 4. Human acts refuse you — checkpoints, activation, autonomy
