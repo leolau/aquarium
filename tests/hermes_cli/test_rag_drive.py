@@ -235,6 +235,17 @@ def test_accounts_come_from_the_credential_store_not_config(tmp_path: Path) -> N
     ]
 
 
+def test_the_credential_stores_own_files_are_not_accounts(tmp_path: Path) -> None:
+    """A pending consent leaves ``oauth_states.json`` beside the accounts."""
+    _write_credential(tmp_path, "leolau@joyaether.com")
+    (tmp_path / "oauth_states.json").write_text(
+        json.dumps({"e8b1": {"session_id": "s"}}), "utf-8"
+    )
+
+    assert discover_accounts(tmp_path) == ["leolau@joyaether.com"]
+    assert accounts_to_ingest(tmp_path, []) == ["leolau@joyaether.com"]
+
+
 def test_an_account_with_no_credentials_is_an_error_not_a_no_op(
     tmp_path: Path,
 ) -> None:
