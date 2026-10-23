@@ -12,3 +12,16 @@ export function BackToProject({ slug, name }: { slug: string; name?: string }) {
     </Link>
   );
 }
+
+/** "← Projects" at the top of a project's page, back to the projects list. */
+export function BackToProjects() {
+  return (
+    <Link
+      href="/projects"
+      data-component="BackToProjects"
+      className="mb-3 inline-flex max-w-full items-center gap-1 truncate text-sm text-[var(--color-accent)] hover:underline"
+    >
+      ← Projects
+    </Link>
+  );
+}

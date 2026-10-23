@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { MobileShell } from "@/components/MobileShell";
+import { BackToProjects } from "@/components/projects/BackToProject";
 import { ProjectDetailView } from "@/components/projects/ProjectDetailView";
 import { HermesApiError } from "@/lib/api/client";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
@@ -50,6 +51,7 @@ export default async function Page({
   if (!project) {
     return (
       <MobileShell title="Project">
+        <BackToProjects />
         <div
           data-component="ProjectPageError"
           className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
@@ -73,6 +75,7 @@ export default async function Page({
 
   return (
     <MobileShell title={project.name}>
+      <BackToProjects />
       <ProjectDetailView
         project={project}
         board={board}
