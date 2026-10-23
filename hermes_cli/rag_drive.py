@@ -122,14 +122,18 @@ def discover_accounts(credentials_dir: Path | str) -> List[str]:
     """Accounts with a credential file, so a run needs no account list.
 
     The deployment adds accounts by completing consent, not by editing config;
-    reading the directory keeps those two from drifting apart.
+    reading the directory keeps those two from drifting apart. The store also
+    keeps its own bookkeeping there (``oauth_states.json`` while a consent is
+    pending), so only email-named files count as accounts.
     """
     directory = Path(credentials_dir).expanduser()
     if not directory.is_dir():
         return []
     accounts: List[str] = []
     for path in sorted(directory.glob("*.json")):
-        accounts.append(urllib.parse.unquote(path.stem))
+        name = urllib.parse.unquote(path.stem)
+        if "@" in name:
+            accounts.append(name)
     return accounts
 
 
