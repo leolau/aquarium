@@ -1,0 +1,50 @@
+# FG-33 local apps (B2, decisions 1/2/18): the Postgres cluster that holds every local app's databases.
+#
+# Two instances of this file run, each as its own compose project and network, never on Aquarium's
+# own Supabase stack or network:
+#   prod -> container supabase-apps-db      (127.0.0.1:54330), every app's `_prod` database
+#   dev  -> container supabase-apps-dev-db  (127.0.0.1:54331), the separate dev-testing instance
+#           (decision 18): every app's `_dev` database and all dev-testing database use
+# `aquarium apps cluster up <prod|dev>` (deploy/aquarium.py) starts them; it sets every variable
+# below from /etc/aquarium/aquarium.conf (APPS_*) and the root-only /etc/aquarium/apps-db-<target>.env.
+# Databases, roles and DSNs are made only by `aquarium apps db create <slug> <mode>`.
+# The image is the pinned Supabase Postgres from deploy/install/supabase-images.lock; only Postgres
+# runs here (Auth/PostgREST/Storage are opt-in per app sidecars, Realtime is not offered).
+services:
+  db:
+    image: supabase/postgres:17.6.1.136@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00
+    container_name: ${APPS_DB_CONTAINER:?set by aquarium apps cluster up}
+    restart: unless-stopped
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+      - -c
+      - max_connections=${APPS_DB_MAX_CONNECTIONS:-100}
+      - -c
+      - log_min_messages=fatal
+      - -c
+      - log_statement=none
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set by aquarium apps cluster up}
+      POSTGRES_HOST: /var/run/postgresql
+      PGPORT: "5432"
+      POSTGRES_PORT: "5432"
+      PGDATABASE: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "127.0.0.1:${APPS_DB_PORT:?set by aquarium apps cluster up}:5432"
+    volumes:
+      - ${APPS_DB_DATA:?set by aquarium apps cluster up}:/var/lib/postgresql/data
+    mem_limit: ${APPS_DB_MEM:-512m}
+    cgroup_parent: ${APPS_DB_CGROUP_PARENT:-}
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - apps
+
+networks:
+  apps: {}
