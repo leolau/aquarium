@@ -851,3 +851,35 @@ async def test_importance_cannot_be_stamped_across_principals(
         )
         is False
     )
+
+
+@pytest.mark.asyncio
+async def test_owner_page_reads_off_the_occurred_index(postgres_dsn: str) -> None:
+    """The owner's scope predicate is ``TRUE``, so no ``owner_user_id`` equality
+    reaches the planner: the newest-first page must still come off an index
+    rather than a full scan and sort of every arrival."""
+    await _registry(postgres_dsn)
+    conn = await asyncpg.connect(dsn=postgres_dsn, ssl=False)
+    try:
+        await conn.execute("SET search_path TO app_prod")
+        indexdef = await conn.fetchval(
+            "SELECT indexdef FROM pg_indexes WHERE schemaname = 'app_prod' "
+            "AND indexname = $1",
+            f"{INBOUND_ITEMS_TABLE}_occurred_idx",
+        )
+        assert indexdef is not None
+        assert "(occurred_at DESC, id DESC)" in indexdef
+
+        async with conn.transaction():
+            await conn.execute("SET LOCAL enable_seqscan = off")
+            plan = "\n".join(
+                r[0]
+                for r in await conn.fetch(
+                    f"""EXPLAIN SELECT * FROM {INBOUND_ITEMS_TABLE}
+                         WHERE TRUE ORDER BY occurred_at DESC, id DESC LIMIT 51"""
+                )
+            )
+        assert f"{INBOUND_ITEMS_TABLE}_occurred_idx" in plan
+        assert "Sort" not in plan
+    finally:
+        await conn.close()
