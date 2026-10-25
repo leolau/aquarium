@@ -54,6 +54,12 @@ MAX_ARG_LEN = 256 * 1024
 
 V = True   # option takes a value
 F = False  # flag
+#: An option whose value must be one of a fixed set (enum flags, never paths).
+MODES = frozenset({"dev", "prod"})
+TEMPLATES = frozenset({"minimal", "nextjs-supabase"})
+HOSTINGS = frozenset({"local", "external"})
+PROVIDERS = frozenset({"vercel", "railway", "aws_amplify", "alibaba_fc"})
+_APP = {"--mode": MODES}
 
 _KANBAN_LIST = {"--mine": F, "--assignee": V, "--status": V, "--tenant": V,
                 "--session": V, "--archived": F, "--json": F, "--sort": V,
@@ -73,13 +79,23 @@ COMMANDS = {
         "show": {},
         "transfer": {"--actor": V, "--approve": F, "--demote-to": V},
     }},
-    "tool": {"opts": {"--mode": V}, "subs": {
-        "new": {"--shared": F},
+    "tool": {"opts": {"--mode": MODES}, "subs": {
+        "new": {"--shared": F, "--template": TEMPLATES, "--hosting": HOSTINGS,
+                "--provider": PROVIDERS},
         "list": {},
         "enable": {},
         "disable": {},
         "config": {"--json": V},
         "promote": {},
+        # FG-33 local apps; prod instances only move through the API's checks.
+        "build": _APP,
+        "start": _APP,
+        "stop": _APP,
+        "restart": _APP,
+        "logs": {**_APP, "--lines": re.compile(r"[0-9]{1,4}")},
+        "status": _APP,
+        "preview": _APP,
+        "doctor": {"--json": F},
     }},
     "cron": {"subs": {
         "list": {"--all": F},
@@ -129,17 +145,27 @@ class Refused(Exception):
     pass
 
 
+def _check_value(name, spec, value):
+    if isinstance(spec, frozenset) and value not in spec:
+        raise Refused(f"{name} must be one of {', '.join(sorted(spec))}")
+    if isinstance(spec, re.Pattern) and not spec.fullmatch(value):
+        raise Refused(f"{name} has an invalid value")
+
+
 def _option(argv, i, opts):
-    name, eq, _ = argv[i].partition("=")
+    name, eq, value = argv[i].partition("=")
     if name not in opts:
         raise Refused(f"option {name!r} is not allowed here")
+    spec = opts[name]
     if eq:
-        if not opts[name]:
+        if spec is F:
             raise Refused(f"{name} takes no value")
+        _check_value(name, spec, value)
         return i + 1
-    if opts[name]:
+    if spec is not F:
         if i + 1 >= len(argv) or argv[i + 1].startswith("-"):
             raise Refused(f"{name} needs a value (write {name}=VALUE if it starts with '-')")
+        _check_value(name, spec, argv[i + 1])
         return i + 2
     return i + 1
 
