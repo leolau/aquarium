@@ -325,6 +325,7 @@ from hermes_cli.backup_offsite_api import router as _backup_offsite_router  # no
 from hermes_cli.security_basics_api import router as _security_basics_router  # noqa: E402
 from hermes_cli.goals_api import router as _goals_router  # noqa: E402
 from hermes_cli.projects_api import router as _projects_router  # noqa: E402
+from hermes_cli.projects_categories_api import router as _projects_categories_router  # noqa: E402
 from hermes_cli.projects_ask_api import router as _projects_ask_router  # noqa: E402
 from hermes_cli.projects_clarify_api import router as _projects_clarify_router  # noqa: E402
 from hermes_cli.projects_outputs_api import router as _projects_outputs_router  # noqa: E402
@@ -352,6 +353,7 @@ app.include_router(_backup_offsite_router)
 app.include_router(_security_basics_router)
 app.include_router(_goals_router)
 app.include_router(_projects_router)
+app.include_router(_projects_categories_router)
 app.include_router(_projects_ask_router)
 app.include_router(_projects_clarify_router)
 app.include_router(_projects_outputs_router)
