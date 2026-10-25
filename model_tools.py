@@ -923,6 +923,7 @@ def handle_function_call(
     session_id: Optional[str] = None,
     principal_user_id: Optional[str] = None,
     principal_role: Optional[str] = None,
+    principal_trusted_local: bool = True,
     turn_id: Optional[str] = None,
     api_request_id: Optional[str] = None,
     user_task: Optional[str] = None,
@@ -966,7 +967,9 @@ def handle_function_call(
     from tools.access_policy import acting_as as _acting_as
     from tools.access_policy import blocked_tool_error, denied_tools
 
-    if function_name in denied_tools(principal_user_id, principal_role):
+    if function_name in denied_tools(
+        principal_user_id, principal_role, trusted_local=principal_trusted_local
+    ):
         return json.dumps({"error": blocked_tool_error(function_name)}, ensure_ascii=False)
     from tools.personal_mcp import blocked_call_error
 
@@ -1042,6 +1045,7 @@ def handle_function_call(
                 session_id=session_id,
                 principal_user_id=principal_user_id,
                 principal_role=principal_role,
+                principal_trusted_local=principal_trusted_local,
                 user_task=user_task,
                 enabled_tools=enabled_tools,
                 skip_pre_tool_call_hook=skip_pre_tool_call_hook,
@@ -1169,7 +1173,12 @@ def handle_function_call(
                 # the parent's tool set via the process-global.
                 sandbox_enabled = enabled_tools if enabled_tools is not None else _last_resolved_tool_names
                 def _dispatch(next_args: Dict[str, Any]) -> Any:
-                    with _acting_as(principal_user_id, principal_role):
+                    with _acting_as(
+                        principal_user_id,
+                        principal_role,
+                        trusted_local=principal_trusted_local,
+                        session_key=session_id or task_id,
+                    ):
                         return registry.dispatch(
                             function_name, next_args,
                             task_id=task_id,
@@ -1179,7 +1188,12 @@ def handle_function_call(
                         )
             else:
                 def _dispatch(next_args: Dict[str, Any]) -> Any:
-                    with _acting_as(principal_user_id, principal_role):
+                    with _acting_as(
+                        principal_user_id,
+                        principal_role,
+                        trusted_local=principal_trusted_local,
+                        session_key=session_id or task_id,
+                    ):
                         return registry.dispatch(
                             function_name, next_args,
                             task_id=task_id,

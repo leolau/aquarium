@@ -1525,9 +1525,13 @@ updates:
 # Owner and admin keep every tool. By default members and viewers can't use the
 # terminal, run code, schedule jobs or edit skills, and their file tools only
 # work inside $HERMES_HOME/workspaces/<user_id>/ (viewers also can't write).
-# Sessions with no logged-in person (CLI, cron) are not limited here.
+# Local sessions with no logged-in person (CLI, TUI, cron, ACP) are not limited
+# here. A gateway session whose sender has no person (when a principal store is
+# configured) gets `unresolved_role` (viewer or member, default viewer) and a
+# per-session folder under $HERMES_HOME/workspaces/_unresolved/.
 # Override per role with tool or toolset names; `deny_tools` replaces the default.
 # access:
+#   unresolved_role: viewer
 #   roles:
 #     member:
 #       deny_tools: [terminal, process, read_terminal, close_terminal, execute_code, cronjob, skill_manage]

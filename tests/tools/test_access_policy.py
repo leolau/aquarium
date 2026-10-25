@@ -44,7 +44,7 @@ def test_default_role_limits(home):
     assert {"write_file", "patch"} <= denied_tools("vic", "viewer")
     assert denied_tools("ann", "admin") == frozenset()
     assert denied_tools("root", "owner") == frozenset()
-    assert denied_tools(None, None) == frozenset()
+    assert denied_tools(None, None, trusted_local=True) == frozenset()
     # An enrolled-but-unresolved role degrades to member limits.
     assert "terminal" in denied_tools("x", None)
 

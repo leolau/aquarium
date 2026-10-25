@@ -2108,6 +2108,7 @@ def invoke_tool(agent, function_name: str, function_args: dict, effective_task_i
                     owner_user_id=_owner_scope_for(
                         getattr(agent, "_internal_user_id", None),
                         getattr(agent, "_internal_user_role", None),
+                        trusted_local=getattr(agent, "_trusted_local", True),
                     ),
                 ),
                 next_args,
@@ -2174,6 +2175,7 @@ def invoke_tool(agent, function_name: str, function_args: dict, effective_task_i
                 session_id=agent.session_id or "",
                 principal_user_id=getattr(agent, "_internal_user_id", None),
                 principal_role=getattr(agent, "_internal_user_role", None),
+                principal_trusted_local=getattr(agent, "_trusted_local", True),
                 turn_id=getattr(agent, "_current_turn_id", "") or "",
                 api_request_id=getattr(agent, "_current_api_request_id", "") or "",
                 enabled_tools=list(agent.valid_tool_names) if agent.valid_tool_names else None,

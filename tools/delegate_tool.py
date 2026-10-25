@@ -1325,6 +1325,7 @@ def _build_child_agent(
         parent_session_id=getattr(parent_agent, "session_id", None),
         internal_user_id=getattr(parent_agent, "_internal_user_id", None),
         internal_user_role=getattr(parent_agent, "_internal_user_role", None),
+        trusted_local=getattr(parent_agent, "_trusted_local", True),
         providers_allowed=child_providers_allowed,
         providers_ignored=child_providers_ignored,
         providers_order=child_providers_order,

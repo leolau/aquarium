@@ -257,6 +257,7 @@ def init_agent(
     gateway_session_key: str = None,
     internal_user_id: Optional[str] = None,
     internal_user_role: Optional[str] = None,
+    trusted_local: bool = True,
     session_task: Optional[str] = None,
     skip_context_files: bool = False,
     load_soul_identity: bool = False,
@@ -349,6 +350,8 @@ def init_agent(
     # falls back to the least-privileged role, so an unenrolled or
     # failed-to-resolve identity can never read more than its own data.
     agent._internal_user_role = normalize_role(internal_user_role)
+    # Only local entry points (CLI, TUI, cron, ACP) run unlimited with no person.
+    agent._trusted_local = bool(trusted_local)
     agent._session_task = session_task
     # Pluggable print function — CLI replaces this with _cprint so that
     # raw ANSI status lines are routed through prompt_toolkit's renderer
@@ -1106,7 +1109,11 @@ def init_agent(
     )
     from tools.access_policy import denied_tools as _denied_tools
 
-    _denied = _denied_tools(agent._internal_user_id, agent._internal_user_role)
+    _denied = _denied_tools(
+        agent._internal_user_id,
+        agent._internal_user_role,
+        trusted_local=agent._trusted_local,
+    )
     if _denied and agent.tools:
         agent.tools = [t for t in agent.tools if t["function"]["name"] not in _denied]
     
@@ -1272,7 +1279,11 @@ def init_agent(
 
     _apply_personal_mcp(agent)
     if agent._personal_mcp_defs:
-        _denied = _denied_tools(agent._internal_user_id, agent._internal_user_role)
+        _denied = _denied_tools(
+            agent._internal_user_id,
+            agent._internal_user_role,
+            trusted_local=agent._trusted_local,
+        )
         if _denied:
             agent._personal_mcp_defs = [
                 t for t in agent._personal_mcp_defs if t["function"]["name"] not in _denied

@@ -4,11 +4,14 @@ Owner and admin keep every tool. Members and viewers lose the tools that run
 arbitrary commands (a command denylist can't hold: ``python3 -c`` reads any
 file the service account can), and their file tools are confined to their own
 folder under ``$HERMES_HOME/workspaces/``. An agent with no logged-in person
-(CLI, cron, operator) is not limited here.
+is unlimited only when it is trusted local (CLI, TUI, cron, ACP); any other
+unresolved session gets ``access.unresolved_role`` (default ``viewer``) and a
+per-session folder under ``$HERMES_HOME/workspaces/_unresolved/``.
 
 Overrides live in config.yaml::
 
     access:
+      unresolved_role: viewer                       # or member
       roles:
         member:
           deny_tools: [terminal, code_execution]   # tool or toolset names
@@ -23,6 +26,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import hashlib
 import re
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, Iterable, Iterator, List, Optional, Tuple
@@ -70,14 +74,33 @@ _SUMMARY_PHRASES: Tuple[Tuple[FrozenSet[str], str], ...] = (
 
 _TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 
-_principal: contextvars.ContextVar[Tuple[Optional[str], Optional[str]]] = (
-    contextvars.ContextVar("tool_access_principal", default=(None, None))
-)
+_UNRESOLVED_ROLES = frozenset({"member", "viewer"})
+_DEFAULT_UNRESOLVED_ROLE = "viewer"
+_UNRESOLVED_FOLDER = "_unresolved"
+
+#: ``(user_id, role, trusted_local, session_key)``. Outside any tool call the
+#: process itself is the caller, which is local.
+_principal: contextvars.ContextVar[
+    Tuple[Optional[str], Optional[str], bool, Optional[str]]
+] = contextvars.ContextVar("tool_access_principal", default=(None, None, True, None))
 
 
-def _role(user_id: Optional[str], role: Optional[str]) -> Optional[str]:
+def unresolved_role(config: Optional[Dict[str, Any]] = None) -> str:
+    """Role applied to an untrusted session with no resolved person."""
+    try:
+        if config is None:
+            from hermes_cli.config import load_config_readonly
+
+            config = load_config_readonly()
+        value = (config.get("access") or {}).get("unresolved_role")
+    except Exception:
+        value = None
+    return value if value in _UNRESOLVED_ROLES else _DEFAULT_UNRESOLVED_ROLE
+
+
+def _role(user_id: Optional[str], role: Optional[str], trusted_local: bool = False) -> Optional[str]:
     if not user_id:
-        return None
+        return None if trusted_local else unresolved_role()
     from hermes_cli.access import normalize_role
 
     return normalize_role(role)
@@ -111,9 +134,11 @@ def _expand(names) -> FrozenSet[str]:
     return frozenset(out)
 
 
-def denied_tools(user_id: Optional[str], role: Optional[str]) -> FrozenSet[str]:
+def denied_tools(
+    user_id: Optional[str], role: Optional[str], *, trusted_local: bool = False
+) -> FrozenSet[str]:
     """Tool names *user_id* (holding *role*) may not call; empty when unlimited."""
-    r = _role(user_id, role)
+    r = _role(user_id, role, trusted_local)
     if r is None:
         return frozenset()
     return role_denied_tools(r)
@@ -140,22 +165,48 @@ def _folder_name(user_id: str) -> str:
     return name or "_"
 
 
-def files_root(user_id: Optional[str], role: Optional[str]) -> Optional[Path]:
-    """The only folder *user_id*'s file tools may use, or ``None`` for anywhere."""
-    r = _role(user_id, role)
-    if r is None or role_files_rule(r) == "any":
+def _unresolved_folder(session_key: Optional[str]) -> Path:
+    digest = hashlib.sha256(str(session_key or "").encode("utf-8")).hexdigest()[:16]
+    return Path(_UNRESOLVED_FOLDER) / digest
+
+
+def files_root(
+    user_id: Optional[str],
+    role: Optional[str],
+    *,
+    trusted_local: bool = False,
+    session_key: Optional[str] = None,
+) -> Optional[Path]:
+    """The only folder *user_id*'s file tools may use, or ``None`` for anywhere.
+
+    An untrusted session with no person always gets a per-session folder.
+    """
+    r = _role(user_id, role, trusted_local)
+    if r is None:
         return None
+    if user_id:
+        if role_files_rule(r) == "any":
+            return None
+        folder = Path(_folder_name(str(user_id)))
+    else:
+        folder = _unresolved_folder(session_key)
     from hermes_constants import get_hermes_home
 
-    root = Path(get_hermes_home()) / "workspaces" / _folder_name(str(user_id))
+    root = Path(get_hermes_home()) / "workspaces" / folder
     root.mkdir(parents=True, exist_ok=True)
     return root.resolve()
 
 
 @contextlib.contextmanager
-def acting_as(user_id: Optional[str], role: Optional[str]) -> Iterator[None]:
+def acting_as(
+    user_id: Optional[str],
+    role: Optional[str],
+    *,
+    trusted_local: bool = False,
+    session_key: Optional[str] = None,
+) -> Iterator[None]:
     """Bind the person a tool call runs for, for the duration of the call."""
-    token = _principal.set((user_id, role))
+    token = _principal.set((user_id, role, bool(trusted_local), session_key))
     try:
         yield
     finally:
@@ -164,11 +215,13 @@ def acting_as(user_id: Optional[str], role: Optional[str]) -> Iterator[None]:
 
 def current_principal() -> Tuple[Optional[str], Optional[str]]:
     """``(user_id, role)`` of the person the current tool call runs for."""
-    return _principal.get()
+    user_id, role, _trusted, _key = _principal.get()
+    return user_id, role
 
 
 def current_files_root() -> Optional[Path]:
-    return files_root(*_principal.get())
+    user_id, role, trusted_local, session_key = _principal.get()
+    return files_root(user_id, role, trusted_local=trusted_local, session_key=session_key)
 
 
 def check_file_access(path: Path) -> Optional[str]:

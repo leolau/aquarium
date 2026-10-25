@@ -11,7 +11,11 @@ import json
 
 import pytest
 
-from tools.session_search_tool import owner_scope_for, session_search
+from tools.session_search_tool import (
+    UNRESOLVED_OWNER_SCOPE,
+    owner_scope_for,
+    session_search,
+)
 
 
 @pytest.fixture
@@ -40,7 +44,9 @@ def _sids(payload: str) -> set:
 
 
 def test_owner_scope():
-    assert owner_scope_for(None, None) is None
+    assert owner_scope_for(None, None, trusted_local=True) is None
+    assert owner_scope_for(None, None) == UNRESOLVED_OWNER_SCOPE
+    assert owner_scope_for(None, "owner") == UNRESOLVED_OWNER_SCOPE
     assert owner_scope_for("root", "owner") is None
     assert owner_scope_for("mia", "member") == "mia"
     assert owner_scope_for("ann", "admin") == "ann"
@@ -71,3 +77,12 @@ def test_read_and_scroll_refuse_other_peoples_chats(db, sid):
 def test_owner_reads_any_chat(db):
     assert json.loads(session_search(session_id="s-tom", db=db))["success"] is True
     assert json.loads(session_search(session_id="s-mia", db=db, owner_user_id="mia"))["success"] is True
+
+
+def test_untrusted_unresolved_session_sees_no_foreign_chats(db):
+    scope = owner_scope_for(None, "member")
+    assert _sids(session_search(query="salary", limit=10, db=db, owner_user_id=scope)) == set()
+    browse = json.loads(session_search(db=db, limit=10, owner_user_id=scope))
+    assert browse.get("results", []) == []
+    read = json.loads(session_search(db=db, session_id="s-tom", owner_user_id=scope))
+    assert read.get("success") is False
