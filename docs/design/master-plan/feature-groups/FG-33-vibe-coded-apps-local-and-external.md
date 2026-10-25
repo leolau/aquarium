@@ -1269,26 +1269,19 @@ State when this was written. Re-check each item before acting on it.
 **Where things are**
 
 - `develop` has every merged PR for P8-0, P8-1 and P8-2, and CI is green (`101739410`, after #660).
-- Production (`root@188.245.219.105:/opt/data/hermes-agent`) runs `develop` @ `3117f72ca`: P8-0 and P8-1 are deployed, P8-2 is **not**. Deploy with `/opt/data/deploy-hermes.sh develop`. Until the box setup below is done, a deploy ships code but no local app can run.
-- The 2.x rows above are merged code only. None of P8-0, P8-1 or P8-2 has passed its system test.
+- Production runs `develop` @ `3117f72ca`: P8-0 and P8-1 are deployed, P8-2 is **not**. The host, the access method and how the box looks are in the private `leolau/aquarium-ops` (`production/PRODUCTION.md` and `handoffs/FG-33-local-apps-2026-10-25.md`); read those before touching production.
+- The 2.x rows below are merged code only. None of P8-0, P8-1 or P8-2 has passed its system test.
 
-**Box setup still to do (Leo / ops; never through the agent's own tools).** What the box looked like at hand-off:
+**Box setup still to do (Leo / ops; never through the agent's own tools).** These are the P8-0.2, 0.7, 1.7 and P8-2 install steps. What is actually installed on the box is in the aquarium-ops hand-off:
 
-- `/etc/sudoers.d/` has no `hermes-tools` and no `aquarium-apps` file, and `config.yaml` has no `terminal.run_as`. The agent shell still runs as `hermes`, so the 0.4 principal-ticket checks are not enforced (0.2, decision 19).
-- `/etc/aquarium/app-quotas.yaml` does not exist (1.6).
-- The deploy reports `/usr/local/sbin/aquarium` and `/opt/data/deploy-hermes.sh` as stale against the repo, and `docs/deployment/README.md` as stale.
-- Not yet installed or started:
-  - the runtime units and slices (`deploy/aquarium-*.{service,timer,slice}`);
-  - the `aquarium-app-helper` and `aquarium-app-egress` helpers;
-  - the Caddy `import /etc/caddy/apps.d/*.caddy`;
-  - `AGENT_HOME_APPS_TICKET_SECRET`;
-  - `supabase-apps-db` and the separate dev instance `supabase-apps-dev-db` (1.3, decision 18);
-  - the `aquarium-apps-watch` timer (2.4);
-  - `aquarium-app-egress enable` (2.6);
-  - the coder profiles (`python -m hermes_cli.app_coder install`, 2.9).
-- After the helper is reinstalled, check that app routes strip the `__Host-` agent-home cookie (2.12).
+- `terminal.run_as: hermes-tools`, plus the `hermes-tools` and `aquarium-apps` sudoers files (0.2, decision 19);
+- `/etc/aquarium/app-quotas.yaml` (1.6);
+- the runtime units, slices and helpers (`deploy/aquarium-*`), and the updated `aquarium` admin command and deploy script;
+- the Caddy `import /etc/caddy/apps.d/*.caddy` and `AGENT_HOME_APPS_TICKET_SECRET`;
+- `supabase-apps-db` and the separate dev instance `supabase-apps-dev-db` (1.3, decision 18);
+- the `aquarium-apps-watch` timer (2.4), `aquarium-app-egress enable` (2.6) and the coder profiles (`python -m hermes_cli.app_coder install`, 2.9);
+- after the helper is reinstalled, a check that app routes strip the `__Host-` agent-home cookie (2.12);
 - 0.7: the idle-RSS measurements and the GoTrue/PostgREST spike.
-- `hermes-secret-backup.service` was already failing before FG-33 (the box key is not registered on GitHub). It is unrelated, but it is still red.
 
 **Code not built yet (good next PRs, one each, off `develop`)**
 
@@ -1375,6 +1368,7 @@ State when this was written. Re-check each item before acting on it.
 | 2026-10-25 | 11 | devin (for Yan) | FG-33 | Recorded Yan's second round: accepted 2, 3, 5, 6, 16, 19, 20; 4 = path routing for local apps (with CSP/cookie/origin mitigations); 7 = one prod + one dev Node process per tool, dev idle-stopped; 8 = defaults + Settings limits panel; 9 = members do everything within limits; 14 = Settings GitHub token, local git otherwise; 17 = every visible app; 18 = separate Supabase instance for all dev DBs; 21 = Settings storage location. Design sections that conflict are superseded by §Decisions recorded. | Yan's answers, 2026-10-25 |
 | 2026-10-25 | 12 | devin (for Yan) | FG-33 | P8-2: 2.1, 2.3–2.12 merged (#647–#657); 2.10 Settings panels, 2.11 Next bump, 2.12 cookie/CSP added as new items (decisions 8/14/21 and P8-1 follow-ups). Cross-review fix #659 (gitignored `logs/route.ts`, secrets form mounted, 2.1↔2.2 health/quota field contract) and 2.2 #658 still open. Yan clarified decision 9: agent-started releases keep the member's C6 Approve card. Open: Leo's box installs (apps-watch timer, helper reinstall for `__Host-` stripping, `aquarium-app-egress enable`, coder profiles), `publish_app_source` not yet called, archive DB dump, CPU sampling, P8-2 system test. | 2.2 ticked when #658 merges. |
 | 2026-10-25 | 13 | devin (for Yan) | FG-33 | P8-2.2 merged (#658) with cross-review fix #659; `develop` green. Added §Handoff for the next agent: deploy state (prod on P8-1 `3117f72ca`), box setup still missing, unbuilt code follow-ups, working rules. | Yan asked for the remaining work to be handed to another agent. |
+| 2026-10-25 | 14 | devin (for Yan) | FG-33 | Handoff: moved the prod host/path and the observed box state into `leolau/aquarium-ops` `handoffs/FG-33-local-apps-2026-10-25.md`; the public doc now lists only the install steps. | AGENTS.md: this repo is public, and box details belong in aquarium-ops. |
 
 ## Cloud-agent prompts (one per phase)
 
