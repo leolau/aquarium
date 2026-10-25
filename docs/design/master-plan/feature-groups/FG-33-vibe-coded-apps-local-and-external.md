@@ -1,6 +1,6 @@
 # FG-33 — Vibe-coded apps: local and external
 
-**Wave:** P8 (Phase 8; phases P8-0 → P8-4 below; needs FG-07, FG-08, FG-11, FG-12, FG-13, FG-14, FG-20, FG-31 and FG-32 merged, all of which are) · **Owner agent:** _unassigned_ (design: devin:workflow) · **Status:** PLAN — not started. Twenty-one open decisions are listed for Leo/Yan in §Open decisions; every phase is written so it can start once the decisions it names are answered.
+**Wave:** P8 (Phase 8; phases P8-0 → P8-4 below; needs FG-07, FG-08, FG-11, FG-12, FG-13, FG-14, FG-20, FG-31 and FG-32 merged, all of which are) · **Owner agent:** _unassigned_ (design: devin:workflow) · **Status:** PLAN — not started. Twenty-one open decisions are listed for Leo/Yan in §Open decisions; Yan answered 1, 10, 13 and 15 on 2026-10-25 (§Decisions recorded), the rest are still open; every phase is written so it can start once the decisions it names are answered.
 
 ## Summary
 
@@ -49,6 +49,15 @@ template, local runtime, local database, MCP access, Tools-page UX, external
 hosting, five provider deep dives, security, quotas, operations). Where those
 sections disagreed, the choice below follows what the code supports today and
 the disagreement is listed as an open decision.
+
+## Decisions recorded (Yan, 2026-10-25)
+
+Yan's answers to the first four open decisions (verbatim in the audit log):
+
+1. **Decision 1: its own Supabase *database*, not its own Supabase instance.** Option A (a full stack per app) is out. Each local app gets its own database per mode. The design is B2: a dedicated apps cluster on the same pinned Supabase Postgres image, with one database per app per mode. B (databases inside the existing `supabase-db`) is the fallback if Leo wants no new container. §3.4.
+2. **Decision 10: default accounts plus bring-your-own.** Aquarium has one owner-managed **default** account for each of Vercel, Railway, AWS and Alibaba Cloud, plus a default supabase.com org, because every external app's database is on supabase.com (§4). For each external tool, its author picks **default** or **own** account, separately for hosting and for the database. "Own" uses the author's own credential row of the same kind. Leo has to do the signup, billing and token creation for the default accounts himself (P8-3.7 / P8-4.0 ops); the agent cannot create them. §4.2.
+3. **Decision 13: a spending cap per project and another per account.** Each external app (= one project; linked to its FG-32 project when there is one) has a monthly cap, and each connected provider account, default or own, has a monthly cap too. Both are enforced by Aquarium. Where the provider offers a hard limit it is also set on the provider. §4.7.
+4. **Decision 15: two coder profiles.** New Hermes profiles `internal-coder` (local apps) and `external-coder` (external apps) are the default kanban assignees for an app's build cards. Each tool can override the default with its own `coder_profile`. §10.
 
 ## Decisions applied
 
@@ -182,7 +191,8 @@ Verified on `develop`:
 4. **Build loop.** The chat session is the orchestrator. Each slice of work is
    a **kanban card** on the project's board with `--workspace
    dir:$HERMES_HOME/tools/<slug>`, run by a dispatcher-spawned Hermes worker
-   using **its own** terminal and file tools. Why kanban: it survives a gateway
+   assigned to the app's **coder profile** (`internal-coder` for local, `external-coder` for
+   external, or the tool's `coder_profile` override, §10), using **its own** terminal and file tools. Why kanban: it survives a gateway
    restart (`delegate_task` does not), shows on `/projects/[slug]`, logs to
    `kanban/logs/<task>.log`, and runs as `hermes-tools` inside the path C7/C2
    already cover. One-line tweaks may be done inline (FG-32 `mode:'inline'`).
@@ -369,7 +379,7 @@ Restart=on-failure RestartSec=5 StartLimitBurst=5
   lifetime), never alongside a build. Prod is always-on by default; an owner-only
   `always_on=false` lets prod sleep too (open decision 7).
 
-#### 3.4 Database — "its own supabase database instance"
+#### 3.4 Database — its own Supabase database (decision 1: database, not instance)
 
 Yan's words leave a real choice. Costs on probe-cx43-nbg1 (~9 GB RAM available,
 44 GB disk free at 70% used). RAM figures are **estimates of idle RSS for the
@@ -390,7 +400,7 @@ Capacity here uses the **one admission number** derived in §6
 P8-0 row 0.7 measures it): **~6 local apps** on this box as it is today, bound by
 disk, not RAM. Growing past that needs more disk (open decision 21).
 
-**Recommendation (open decision 1): B2**, with Supabase APIs opt-in per app
+**Decision 1 (Yan): its own Supabase database, not its own instance → B2**, with Supabase APIs opt-in per app
 (open decision 2) and **A** available only as a per-app upgrade on a resized or
 second box. C is rejected as a default (one anon key and one `auth.users`
 across Aquarium and every app undoes D16). B is acceptable if Leo prefers zero
@@ -539,15 +549,25 @@ spend and publish gates.
   `ExternalId`, 1 h sessions), `alibaba-cloud` (RAM user limited to
   `sts:AssumeRole`, 900 s sessions with an inline session policy). Add a
   `hosting` service so an entry is used only after its owner opts it in.
-- **Whose accounts (open decision 10).** Recommendation: v1 uses **dedicated,
+- **Default or own account (decision 10, Yan).** Every external tool row
+  stores `account_source` (`default`|`own`) for hosting and
+  `db_account_source` for its supabase.com database. The author chooses in the
+  build clarify step and on the tool sheet. `default` resolves
+  `credential_ref` to the owner-managed default account for that provider
+  (a `hosting_accounts` row with `is_default`). `own` resolves it to the
+  author's own credential row of the same kind, which they connect in
+  Settings → Connected accounts, and only they can use it. Changing the
+  account of a live app counts as a redeploy to a new target: C6, with
+  the data-move warning. Members can use the default accounts only within the
+  caps of §4.7.
+- **Whose default accounts (decision 10).** v1 uses **dedicated,
   owner-managed Aquarium accounts per provider** (a Vercel `aquarium-apps` team,
   a Supabase org, a Railway workspace, an AWS Organizations member account, an
   Alibaba International-site account in `cn-hongkong`), so the blast radius of a
   leaked token and of a workspace-wide hard limit is contained and Leo's
   existing projects are out of reach. Credentials are owned by the owner
   principal; members' apps deploy into these accounts under per-app quotas.
-  Bring-your-own per-user accounts come later via the same kinds with
-  `credential_ref` = the requester's own row.
+  Bring-your-own accounts are in v1 too (above), using the same kinds.
 - Connecting happens in agent-home **Settings → Connected accounts**
   (`ConnectedAccounts.tsx`, new "Hosting" group); the agent has no path to it.
 - **Fix the existing leaks first:** move `optional-skills/devops/supabase-cli`'s
@@ -612,6 +632,30 @@ usage, Railway usage, AWS Cost Explorer, Alibaba BSS, Supabase). Cost is shown
 as "provider-reported, up to 48 h late", or "not available" — never estimated.
 An auth failure shows the tile as `unknown`, not `down`. It also lists provider
 resources tagged `aquarium:app` that have no registry row (orphans).
+
+#### 4.7 Spend caps: per project and per account (decision 13)
+
+- **Per project.** `tool_hosting.spend_cap_usd` is the monthly cap for one
+  external app (its hosting and its supabase.com projects together). When the app
+  is linked to an FG-32 project, the project shows it, and
+  `budget_usd_per_run` still bounds a single deploy run. It defaults to the
+  owner-set value in `/etc/aquarium/app-quotas.yaml` (sections proposed
+  USD 20–50) and cannot be 0 for a paid resource.
+- **Per account.** `hosting_accounts.monthly_cap_usd` caps everything Aquarium
+  deploys into one provider account, default or own. A tool's cap cannot be
+  set higher than what is left of its account's cap. Where the provider offers
+  it, the account cap is also set on the provider: Vercel Spend Management,
+  Railway workspace hard limit, Supabase spend cap, or an AWS Budgets deny
+  action. Alibaba only has alert-only budgets, so its cap is enforced by
+  Aquarium alone, together with concurrency caps.
+- **Enforcement.** Admission (`app_quota.check_admission`) refuses a paid
+  create or deploy if the estimate would pass either cap. The status/spend poll
+  (§4.6) warns at 80%, and at 100% suspends the app's dev targets and blocks
+  new deploys of that app (project cap) or of every app in that account
+  (account cap). Prod stays up unless the owner chooses "suspend prod too",
+  because a hard stop is the provider's hard limit. Raising either cap is a C6
+  approval (§4.4 gate 5), and only the account's owner can raise an own
+  account's cap.
 
 ### 5. Agent access to each app (MCP)
 
@@ -877,6 +921,33 @@ never publish or delete. Every act emits C5 and C8.
   migrations, copy Storage objects, move the app's auth users if it had its own
   GoTrue, re-point env, flip the row to `external` with C5) — later phase.
 
+### 10. Coder profiles (decision 15)
+
+- Two new Hermes profiles (`hermes_cli/profiles.py`: each is its own
+  HERMES_HOME with `config.yaml`, `SOUL.md`, skills and memory):
+  - **`internal-coder`**: builds local apps. Its skills are the template, the
+    apps-cluster migrations, `hermes tool build|start|logs`, and the local
+    definition of done (§1 step 4). It has no hosting credential kinds.
+  - **`external-coder`**: builds external apps. It has the same coding skills,
+    plus the hosting adapters' allowlisted verbs (`deploy --target preview`,
+    status, logs) and supabase.com migrations through the adapter. It never
+    holds raw provider tokens (credentials stay `materialize=False`, §4.2).
+- Both are created from versioned definitions in the repo (SOUL, config
+  overlay, skill list) by an ops step, `hermes profile create <name>` plus
+  the overlay, on the system-test box first. Neither profile gets a channel
+  or gateway of its own; they only run as kanban workers.
+- **Assignment.** `hermes_cli/app_coder.py::coder_profile_for(tool)` returns
+  `tools.coder_profile` if set, otherwise `internal-coder` or
+  `external-coder` by `hosting`. The `vibe-code-app` skill (2.3) creates every
+  build card with `--assignee <that profile>`. The override is set on the tool
+  sheet or with `hermes tool set <slug> --coder-profile <name>`, can only name
+  an existing profile, and is a C5 change. The override is owner/admin-only
+  for shared tools, and the tool's author can set it for private ones.
+- **Why profiles:** model, prompt and skills for coding are tuned once per mode
+  and kept out of the main assistant's prompt (prompt-cache safety).
+  Kanban already routes cards by assignee profile
+  (`hermes_cli/kanban_db.py` `assignee`).
+
 ## Data model
 
 All additive (`ALTER TABLE … ADD COLUMN IF NOT EXISTS`, constraint swap for the
@@ -899,6 +970,7 @@ field so future columns cannot silently drop.
 | `build_state CHECK IN ('draft','building','ready','failed')` | coarse state for the tile |
 | `always_on BOOL`, `limits_json JSONB` | owner-only; effective limits materialised by the helper |
 | `secret_names TEXT[]` | names only |
+| `coder_profile TEXT` | NULL = default by `hosting` (`internal-coder` / `external-coder`, §10); otherwise an existing profile name |
 
 Reserved names refused: `mcp, personal-mcp, toolsets, changes, computer-use,
 apps, health, quota` (sibling routes would shadow them). Name uniqueness stays
@@ -917,7 +989,8 @@ app_databases(id PK, tool_id FK→tools ON DELETE RESTRICT, mode, cluster DEFAUL
 -- external hosting binding (no secrets; credentials resolve via credential_ref at call time)
 tool_hosting(tool_id PK FK→tools ON DELETE RESTRICT, provider CHECK IN ('vercel','railway','aws_amplify','alibaba_fc') /* = PROVIDERS keys = CLI --provider */,
   credential_ref, provider_project_id, region, db_provider CHECK IN ('supabase_com','railway_pg'),
-  db_credential_ref, db_project_refs JSONB /* {dev,prod} */, domains JSONB, spend_cap_usd NUMERIC,
+  db_credential_ref, db_project_refs JSONB /* {dev,prod} */, domains JSONB, spend_cap_usd NUMERIC /* per-project monthly cap, §4.7 */,
+  account_source CHECK IN ('default','own'), db_account_source CHECK IN ('default','own'),
   state CHECK IN ('draft','provisioning','live','failed','suspended','torn_down'));
 
 -- one row per build/release/deploy, local and external
@@ -933,6 +1006,11 @@ tool_runtime(tool_id PK FK, runtime CHECK IN ('local','external'), unit, port, h
 
 app_usage_samples(tool_id, ts, mem_bytes, cpu_ns, disk_bytes, db_bytes)   -- 31-day retention
 quota_overrides(user_id, key, value, set_by, approval_ref, change_ref, ts) -- owner-only writes
+
+-- connected provider accounts (no secrets; the token is the credential row)
+hosting_accounts(id PK, provider /* PROVIDERS keys + 'supabase_com' */, owner_user_id, is_default BOOL,
+  credential_ref, monthly_cap_usd NUMERIC NOT NULL, provider_cap_set BOOL, month_spend_usd, spend_synced_at,
+  UNIQUE(provider) WHERE is_default)
 ```
 
 No new audit table: C5 `changes` (`target_kind` `code`/`config`/`data`), C6
@@ -1094,6 +1172,7 @@ Needs open decisions 9, 15, 16, 17.
 | 2.6 | Egress + supply chain: helper-owned nftables table per cgroup, allowlisting proxy, C6 egress flow (the `PUT …/egress` route is 2.2's); fail-closed OSV mode over a lockfile | `deploy/aquarium-app-egress` (new), `deploy/sudoers.d/aquarium-apps` (the `aquarium-app-egress` argv lines only), `tools/osv_check.py`, `tests/deploy/test_aquarium_app_egress.py`, `tests/tools/test_osv_check.py` |
 | 2.7 | Secrets form: agent-home secret entry (values never shown to the agent) → BFF → 2.2's `PUT /api/tools/{name}/secrets` → helper `set-secret`; Save button carries `data-appmcp-deny` | `agent-home/src/components/apps-secrets/**` (new), `agent-home/src/app/api/tools/apps/[name]/secrets/route.ts` (its `route-roles.json` entry is added by 2.1) |
 | 2.8 | Projects link: app ↔ project (`project_links(kind='tool')`, `project_outputs kind='code'` deliveries `link_kind=url`), project `toolsets` attach `mcp-la-<slug>` | `hermes_cli/projects_links_apps.py` (new helper used by the skill), `tests/hermes_cli/test_fg33_project_link.py` |
+| 2.9 | Coder profiles (§10): versioned `internal-coder` / `external-coder` definitions (SOUL, config overlay, skill list), `coder_profile_for`, the `tool set --coder-profile` verb, and the install runbook step | `deploy/profiles/internal-coder/**` (new), `deploy/profiles/external-coder/**` (new), `hermes_cli/app_coder.py` (new), `tests/hermes_cli/test_fg33_coder_profiles.py` (new); the `tool set` argparse lines in `hermes_cli/tool_cmd.py` are added through 2.4, which owns that file in P8-2 |
 
 ### Phase P8-3 — External apps v1: Vercel + supabase.com (Wave P8-D; after P8-2)
 
@@ -1102,12 +1181,12 @@ Needs open decisions 10, 11, 12, 13, 14.
 | # | Work item | Owns |
 |---|---|---|
 | 3.1 | Verify current vendor APIs (Vercel deployments/env/domains/protection, Supabase Management API + OAuth) and record them; hosting base: `HostingAdapter`, `PROVIDERS`, `tool_hosting` table, CLI `tool deploy|status|logs` + allowlist, Python routes `POST /api/tools/{name}/{deploy,redeploy}` and `GET /api/tools/{name}/deployments`, external promotion plan in `promote_tool`, C5/C8 wiring | `hermes_cli/hosting/base.py`, `hermes_cli/tools_api.py` (deploy/redeploy/deployments routes only — the only P8-3 owner of this file), `hermes_cli/hosting/store.py`, `hermes_cli/hosting/__init__.py`, `hermes_cli/tool_cmd.py` (deploy verbs), `deploy/hermes-tools-cli`, `hermes_cli/tools_registry.py` (`promote_tool` external branch), `docs/design/hosting-provider-apis.md` (new), `tests/hermes_cli/test_fg33_hosting_base.py` |
-| 3.2 | Credential kinds + Settings: `vercel-token`, `supabase-management`, `supabase-project`, `hosting` service, OAuth start/complete for Supabase; Settings → Connected accounts "Hosting" group; move `supabase-cli` PAT off env passthrough | `hermes_cli/credential_store.py`, `hermes_cli/credentials_api.py`, `agent-home/src/components/settings/ConnectedAccounts.tsx`, `optional-skills/devops/supabase-cli/SKILL.md`, `tests/hermes_cli/test_fg33_credential_kinds.py` |
+| 3.2 | Default-or-own account choice per external tool (decision 10) and `hosting_accounts` with per-account caps (decision 13); Credential kinds + Settings: `vercel-token`, `supabase-management`, `supabase-project`, `hosting` service, OAuth start/complete for Supabase; Settings → Connected accounts "Hosting" group; move `supabase-cli` PAT off env passthrough | `hermes_cli/credential_store.py`, `hermes_cli/credentials_api.py`, `agent-home/src/components/settings/ConnectedAccounts.tsx`, `optional-skills/devops/supabase-cli/SKILL.md`, `tests/hermes_cli/test_fg33_credential_kinds.py` |
 | 3.3 | Vercel adapter (REST file upload, preview/production, env, protection bypass, rollback, teardown) | `hermes_cli/hosting/vercel.py`, `tests/hermes_cli/hosting/test_vercel.py` |
 | 3.4 | supabase.com adapter (projects dev/prod, keys, auth config, `db push` via pooler, pause/restore/delete) | `hermes_cli/hosting/supabase_com.py`, `tests/hermes_cli/hosting/test_supabase_com.py` |
-| 3.5 | Status/spend timer + orphans: `aquarium-hosting-poll`, budget 80/100%, provider cost as C8 rows | `deploy/aquarium-hosting-poll.service`, `deploy/aquarium-hosting-poll.timer`, `hermes_cli/hosting/poll.py`, `tests/hermes_cli/hosting/test_poll.py` |
+| 3.5 | Per-project and per-account caps (§4.7); Status/spend timer + orphans: `aquarium-hosting-poll`, budget 80/100%, provider cost as C8 rows | `deploy/aquarium-hosting-poll.service`, `deploy/aquarium-hosting-poll.timer`, `hermes_cli/hosting/poll.py`, `tests/hermes_cli/hosting/test_poll.py` |
 | 3.6 | Tools page external states: outlined tile data, deployments panel, Redeploy/console actions, connected-account empty state | `agent-home/src/components/tools/external/**` (new), `agent-home/src/app/api/tools/apps/[name]/{deployments,deploy,redeploy}/route.ts`, `agent-home/src/lib/auth/route-roles.json` (these three entries); Redeploy/teardown buttons carry `data-appmcp-deny` |
-| 3.7 *ops* | Leo creates the Vercel `aquarium-apps` team (Pro + Spend Management cap) and the supabase.com org (OAuth app or dedicated PAT); runbook in the ops repo | private ops repo |
+| 3.7 *ops* | Default accounts (decision 10): Leo creates the Vercel `aquarium-apps` team (Pro + Spend Management cap) and the supabase.com org (OAuth app or dedicated PAT); runbook in the ops repo | private ops repo |
 
 ### Phase P8-4 — More providers, lifecycle extras, launcher (Wave P8-E; after P8-3)
 
@@ -1128,7 +1207,7 @@ local app's default is its own **Postgres database**, with Supabase Auth/REST/
 Storage per-app opt-in (decisions 1 and 2) — a departure from the literal
 "own supabase database instance" that Leo/Yan should confirm.
 
-1. **What "its own supabase database instance" means for a local app.** (A) full Supabase docker stack per app and mode — ~2.2–3.8 GB RAM per app (estimate), **2–3 apps** on this box; (B) a database + NOBYPASSRLS role per app per mode inside the existing `supabase-db` — tens of MB, but app roles/WAL/connections sit on Aquarium's cluster and the provisioner needs superuser there; (B2) a dedicated apps Postgres cluster (~250–400 MB once, inside a 1 GB-capped apps compose project (`aquarium-db.slice`, inside the 6 GB `aquarium.slice` ceiling)) holding a database per app per mode, Supabase APIs opt-in per app — capacity is **~6 apps, disk-bound** (the §6 admission number, an estimate until P8-0 row 0.7; B is the same); (C) schema + role in the shared DB — shares `auth.users`, JWT secret, anon key; (D) plain Postgres, no Supabase. **Recommend B2**, A only as a per-app upgrade on a bigger or second box, numbers re-measured in P8-0.
+1. **What "its own supabase database instance" means for a local app.** **Decided (Yan, 2026-10-25): "its own supabase DB", not its own instance. A is out; B2 is the design, with B as the fallback.** Options as analysed: (A) full Supabase docker stack per app and mode — ~2.2–3.8 GB RAM per app (estimate), **2–3 apps** on this box; (B) a database + NOBYPASSRLS role per app per mode inside the existing `supabase-db` — tens of MB, but app roles/WAL/connections sit on Aquarium's cluster and the provisioner needs superuser there; (B2) a dedicated apps Postgres cluster (~250–400 MB once, inside a 1 GB-capped apps compose project (`aquarium-db.slice`, inside the 6 GB `aquarium.slice` ceiling)) holding a database per app per mode, Supabase APIs opt-in per app — capacity is **~6 apps, disk-bound** (the §6 admission number, an estimate until P8-0 row 0.7; B is the same); (C) schema + role in the shared DB — shares `auth.users`, JWT secret, anon key; (D) plain Postgres, no Supabase. **Recommend B2**, A only as a per-app upgrade on a bigger or second box, numbers re-measured in P8-0.
 2. **Supabase APIs and end-user auth for local apps.** Per-app GoTrue + PostgREST sidecars for every app (~0.1–0.2 GB per app) vs opt-in per app with Aquarium identity via forward_auth as the default. **Recommend opt-in**; Postgres always; Storage opt-in; no Realtime until a spike shows per-app tenants work on v2.143.3.
 3. **Registry shape.** (a) keep `kind='in_house'` for both and add only a `hosting` column; (b) add `kind='external'` for provider-hosted apps, local stays `in_house` (+ `hosting`); (c) new kinds `local_app`/`external_app`; (d) reuse `remote`. **Recommend (b)** — `remote` already means FG-08 third-party OSS, and (c) renames D3's local case for no gain.
 4. **Local app URL scheme and domain.** Path `/apps/<slug>` under `home.leolau.ai-and-i.io` (no DNS/Caddy churn, but app JS shares agent-home's origin and cookies) vs own origin per app. And which domain: a subdomain of `leolau.ai-and-i.io` (same-site with agent-home) vs a separate registrable domain. **Recommend own origin on a separate domain** if Leo can buy/point one; otherwise `*.apps.leolau.ai-and-i.io` with per-host HTTP-01 certs. Needs Leo for DNS.
@@ -1137,12 +1216,12 @@ Storage per-app opt-in (decisions 1 and 2) — a departure from the literal
 7. **Dev preview and idle policy.** Build-based dev preview started on demand + idle-stop (20–30 min) + one box-wide `next dev` live-edit slot, vs always-on `next dev` per app; prod always-on vs socket-activated. **Recommend build-based dev with idle-stop, one live-edit slot, prod always-on** (owner may opt a prod app into sleep).
 8. **Quota defaults and where policy lives.** `config.yaml` (agent-editable, so advisory) vs root-owned `/etc/aquarium/app-quotas.yaml` + owner-only `quota_overrides`. **Recommend the root file**, with the §6 starting values (3 registered / 2 running local apps per member, 512 MB / 50% CPU per app, 1 GB RAM / 4 GB disk / 1 GB DB per member, apps slice 3 GB, 6 GB FG-33 ceiling, 3 GB box reserve) calibrated on the system-test box.
 9. **Who may do what.** Members create and run private dev apps; prod, public URLs, sharing, paid resources and deletes need owner/admin + C6 — vs keeping all registry mutations admin-only as today. **Recommend the member-dev / admin-prod split** (§8).
-10. **External accounts and credentials.** Dedicated owner-managed Aquarium accounts per provider with tokens in `materialize=False` credential kinds used only by in-process adapters, vs each user's own accounts, vs root-only token files under `/etc/aquarium/providers`. **Recommend dedicated owner-managed accounts in v1**, bring-your-own later via the same kinds.
+10. **External accounts and credentials.** **Decided (Yan, 2026-10-25): default Vercel, Railway, AWS and Alibaba Cloud accounts (plus the default supabase.com org); each external tool's author chooses default or their own account (§4.2).** Options as analysed: Dedicated owner-managed Aquarium accounts per provider with tokens in `materialize=False` credential kinds used only by in-process adapters, vs each user's own accounts, vs root-only token files under `/etc/aquarium/providers`. **Recommend dedicated owner-managed accounts in v1**, bring-your-own later via the same kinds.
 11. **Provider order.** **Recommend Vercel + supabase.com first**, then Railway, AWS Amplify (App Runner is closed to new customers; Amplify SSR needs a GitHub repo per app), Alibaba FC 3.0 in `cn-hongkong` (no ICP; mainland later with a China-site account).
 12. **supabase.com dev/prod mapping.** Two projects per app (any plan; mirrors C3) vs a persistent dev branch (Pro; ~USD 10/mo per branch) vs dev/prod schemas in one project. The research sections disagreed. **Recommend two projects**, branching later; confirm the cost of a second project.
-13. **External spend policy.** **Recommend:** provider-side hard cap/budget action mandatory before connecting (Vercel Spend Management, Railway workspace hard limit, Supabase spend cap, AWS Budgets deny action); `approval_usd` = 0 so every paid resource needs approval; per-member monthly cap 0 until the owner sets one; Alibaba (alert-only budgets) only with concurrency caps. Confirm the default per-app budget (sections proposed USD 20–50).
+13. **External spend policy.** **Decided (Yan, 2026-10-25): a cap for each project and for each account (§4.7).** Options as analysed: **Recommend:** provider-side hard cap/budget action mandatory before connecting (Vercel Spend Management, Railway workspace hard limit, Supabase spend cap, AWS Budgets deny action); `approval_usd` = 0 so every paid resource needs approval; per-member monthly cap 0 until the owner sets one; Alibaba (alert-only budgets) only with concurrency caps. Confirm the default per-app budget (sections proposed USD 20–50).
 14. **Per-app git remote.** Local git repo always (`main`/`dev`, tags `vN`) vs also pushing to a GitHub org. **Recommend local by default**, GitHub only on user opt-in through C6 or when the provider needs it (AWS Amplify, optionally Railway); Leo names the org.
-15. **Who writes the code.** Dispatcher-spawned kanban workers with Hermes' own file/terminal tools (+ inline for tiny edits, OpenCode opt-in) vs wiring the box's `opencode-web`/`qoder-daemon` into the agent. **Recommend kanban workers**; keep opencode-web/qoder as a human "open in editor" link only.
+15. **Who writes the code.** **Decided (Yan, 2026-10-25): new `internal-coder` and `external-coder` profiles, used by default and overridable per tool (§10).** Options as analysed: Dispatcher-spawned kanban workers with Hermes' own file/terminal tools (+ inline for tiny edits, OpenCode opt-in) vs wiring the box's `opencode-web`/`qoder-daemon` into the agent. **Recommend kanban workers**; keep opencode-web/qoder as a human "open in editor" link only.
 16. **Default hosting mode.** **Recommend Local pre-selected** in one clarify question, switching to External only when the user mentions a public URL, custom domain, scale or a named provider.
 17. **Which app MCPs a chat gets.** Every enabled app the principal can see vs apps attached to the active project plus explicitly enabled ones. **Recommend project-attached + explicit**; `list_changed` applies next chat only; app read tools ungated for the owner and gated when shared.
 18. **System-test host.** The Alibaba `hermes-systest` ECS still named in FG docs vs a small Hetzner box mirroring prod. **Recommend a Hetzner system-test box**; restarting `supabase-db` and deploy-survival tests must never run on prod.
@@ -1186,6 +1265,7 @@ Storage per-app opt-in (decisions 1 and 2) — a departure from the literal
 - [ ] P8-2.6 Egress policy + fail-closed supply chain
 - [ ] P8-2.7 Secrets form
 - [ ] P8-2.8 Projects link
+- [ ] P8-2.9 Coder profiles (`internal-coder`, `external-coder`)
 - [ ] P8-2 system test passed
 - [ ] P8-3.1 Vendor API verification + hosting base
 - [ ] P8-3.2 Credential kinds + Settings hosting group
@@ -1210,6 +1290,7 @@ Storage per-app opt-in (decisions 1 and 2) — a departure from the literal
 | 2026-10-25 | 1 | devin:workflow | FG-33 | Created FG doc (PLAN): merged sixteen research sections (inventory, agent workflow, template, local runtime, local database, MCP access, Tools UX, external hosting, Vercel/Railway/AWS/Alibaba/supabase.com deep dives, security, quotas, operations) into one design, five phases with file-owned work items, and twenty open decisions. Contradictions resolved toward what the code supports: app units named `aquarium-app@` (a `hermes-*` unit would be restarted by `hermes-deploy.sh`), own origin per app (path routing shares agent-home's cookies), quota policy in a root-owned file (`config.yaml` is Customizable), source stays in `$HERMES_HOME/tools/<slug>` (repo `apps/` is an npm workspace), HTTP MCP in-app (stdio runs as the gateway uid), one `hermes tool` CLI. | Yan: "I want to allows users to vibe code within Aquarium but with two different approaches … Please create a plan first." |
 | 2026-10-25 | 2 | devin:workflow | FG-33 | Review fixes: corrected citations (`hermes-embed.service` caps vs `agent-home.service` hardening; `HostRunner` lives in `oss_acquisition.py`; deploy-verification test path; FG-20 §6 is not a privacy rule); pins taken from the resolved `package-lock.json`; one admission number (N ≈ 6, disk-bound, estimate) used in §3.4/§6/decision 1, apps compose project capped at 1.5 GB and counted; D21 now scopes D4; Summary states the B2 Postgres-default; new open decision 21 (disk headroom); file ownership made disjoint (flags/allowlist and quotas mount → 1.4, all sudoers → 1.2, drift hook → 2.4, `deploy/aquarium.py` → 2.5, `web_server.py` for 0.4/2.2, `agent/agent_init.py` for 0.5, gateway mint marked human, secrets route renamed under `tools/apps/`, route-roles entries for 3.6/4.5, new 4.0 for provider registration). | Reviewer findings on edition 1. |
 | 2026-10-25 | 3 | devin:workflow | FG-33 | Second review fixes: `guard.py` already has `CONSENT_WORDS` + `data-appmcp-deny` (0.3 narrowed to the new verbs); dropped the unsupported Vercel `buy_*` claim; `/api/apps` marked new (Coral Phase-2 not implemented); hard 6 GB `aquarium.slice` ceiling with a 3 GB box reserve enforced by admission, build and live-edit share one slot; disjoint route ownership (2.1 vs 2.7; `tools_api.py` owned by 2.2 in P8-2, 3.1 in P8-3, 4.4 in P8-4); CLI/API/test files on 2.4 and 4.4; install path + drift warning on 1.2 and root install steps on 1.7; provider ids `vercel`/`railway`/`aws_amplify`/`alibaba_fc` everywhere; `tools/mcp_tool.py` gate is the enforcement and `approvals.tools` an extra layer; D3 dev + prod units stated; FG-33 added to README §5 | — |
+| 2026-10-25 | 4 | devin (for Yan) | FG-33 | Recorded Yan's answers to open decisions 1, 10, 13 and 15: own Supabase database, not instance (B2); default Vercel/Railway/AWS/Alibaba Cloud accounts (+ default supabase.com org), default-or-own per external tool; a spend cap per project and per account (§4.7, `hosting_accounts`); `internal-coder` / `external-coder` profiles with per-tool `coder_profile` override (§10, new item 2.9). | Yan: "1. sorry, not its own supabase instance, I meant its own supabase DB; 2. create a default vercel, railway, AWS and Alibaba Cloud accounts. And for each external tool, author can decide to use the default one or to use their own accounts; 3. yes, please create a cap for each project and for each account; 4. create a new profile as an internal coder and another one as the external coder. Each tool will use these as default or can override it;" |
 
 ## Cloud-agent prompts (one per phase)
 
@@ -1217,7 +1298,7 @@ Storage per-app opt-in (decisions 1 and 2) — a departure from the literal
 
 > **[FG-33 P8-1 — Local runtime, database and template. Start after every P8-0 PR has merged and open decisions 1, 2, 4, 5, 7, 8 are answered.]** Repo `leolau/aquarium`, branch off `develop`, one PR per work item (1.1–1.6; 1.7 is ops). Read `AGENTS.md`, the master-plan README and FG-33 §2, §3, §6, Data model, Security. Own **only** your item's files. 1.1: move scaffold templates to `hermes_cli/app_templates/{minimal,nextjs-supabase}/` (package-data; `minimal` byte-identical), add the `template/hosting/provider` scaffold keyword interface (flags are 1.4's), exact pins taken from the root `package-lock.json` resolved versions for the agent-home workspace (test asserts exact equality), `git init` with `main`/`dev`, HTTP MCP at `app/api/mcp/route.ts` with bearer, `/api/health`, generated `app/icon.png`, `supabase/migrations`. 1.2: `deploy/aquarium-app@.service` (DynamicUser, slice, caps, hardening as in FG-33 §3.3 — never a `hermes-*` name), build unit + slices under a parent `aquarium.slice` `MemoryMax=6G` (apps 3G, shared build/live-edit 2G, compose 1G), the install path (`aq_install_app_runtime` in `deploy/install/lib.sh` by glob, one call in `install-aquarium.sh`, a STALE drift warning in `deploy/hermes-deploy.sh`), stdlib root helper `deploy/aquarium-app-helper` in the `hermes-vpn-helper` style with a validated JSON spec, port allocation as `hermes-wa-bridge-add`, Caddy include writer that refuses blocks without `forward_auth`, sudoers with exact argv. 1.3: the apps Postgres cluster and `aquarium apps db create|migrate|status|suspend|drop` in `deploy/aquarium.py` (per-app roles, CONNECTION LIMIT, statement_timeout, REVOKE CONNECT, root-0600 DSNs, prod verbs require an approved `approval_ref`), and per-DB backup/restore. 1.4: `hermes_cli/app_runtime.py`, `hermes tool build|start|stop|restart|logs|status|preview|doctor`, the `tool new --template/--hosting/--provider` flags + `COMMANDS["new"]` allowlist, other allowlist entries, the one router-mount line for 1.6's `quotas_api`, `/api/tools/{name}/…` routes, `app_databases`/`app_deployments`/`tool_runtime`, and the local promotion plan inside `promote_tool` (tag, prod migration with pg_dump, symlink flip, restart, copy endpoint row; inverse_op the FG-12 engine accepts). 1.5: agent-home `/api/apps/auth` forward_auth route (ticket + C2 `can_read`). 1.6: `hermes_cli/app_quota.py` reading root-owned `/etc/aquarium/app-quotas.yaml` + owner-only `quota_overrides`; admission refuses `start`/`build` past the 6 GB `aquarium.slice` ceiling or below the 3 GB box reserve. Tests per FG-33 Testing requirements (incl. stubbed-systemctl deploy tests, `visudo -c`, C2 negatives, throwaway-Postgres E2E). Run the full gate; update your checklist row + one audit row; PR linking FG-33. Not done until the P8-1 system-test checklist passes on the system-test box (never prod) — coordinate with Leo.
 
-> **[FG-33 P8-2 — Tools page, agent workflow, operations. Start after every P8-1 PR has merged and open decisions 9, 15, 16, 17 are answered.]** Repo `leolau/aquarium`, branch off `develop`, one PR per work item (2.1–2.8). Read `AGENTS.md`, the README and FG-33 §1, §5, §7, §8, §9. Own **only** your item's files. 2.1: agent-home `/tools` as an icon grid — "On this box" (solid squircle + box badge), "Hosted elsewhere" (outlined circle + provider badge + ↗), "Helpers & services" (today's rows) — with `AppIcon`/`AppTile`/`AppGrid`/`ProviderBadge`/`HealthDot`/`ToolActionsSheet`/`IconPicker`/`QuotaStrip`, `data-component` on every root, `tools.json` i18n (en, zh-Hant), `/tools/[name]`, the BFF routes enumerated in FG-33 row 2.1 (not 2.7's `secrets` or 3.6's deploy routes) with `route-roles.json` entries, `data-appmcp-deny` on approve/make-live/delete buttons, all writes via `useProjectAction`/`ActionButton`; widen `rawFetchGuard.test.ts` to `components/tools/`. 2.2: owns every `/api/tools*` Python route in P8-2 (moved into `hermes_cli/tools_api.py`): `GET /api/tools?include=health` (one registry read, parallel probes, 30 s cache, SSRF rules), `GET /api/tools/{name}`, `…/mcp`, `GET /api/tools/quota`, `PUT …/{icon,secrets,egress,mcp,visibility}`, favicon/feedback routes, mounting 2.4's lifecycle router; add `/api/tools/` to `projects_idempotency._covers`. 2.3: `skills/software-development/vibe-code-app/SKILL.md` — intake → FG-32 project → one clarify for hosting (Local default) → scaffold → kanban cards with `--workspace dir:` and the definition of done (`npm run check`, MCP handshake, screenshot) → preview → promote → update-later. 2.4: `aquarium-apps-watch` timer, NotificationStore alerts (dedupe), Telegram helper in `scripts/lib/`, lifecycle with C6 for archive/purge, `archive|purge|restore` in `tool_cmd.py` (kept off the `hermes-tools-cli` allowlist) and `hermes_cli/app_lifecycle_api.py`. 2.4 also adds the `tool doctor` hook to the weekly drift check. 2.5: capacity bounds, drift globs, `SKIP_DIRS`/`backup_sources()` in `deploy/aquarium.py`. 2.6: helper-owned nftables egress + fail-closed OSV. 2.7: secrets form at `src/app/api/tools/apps/[name]/secrets/route.ts` (2.1 adds its `route-roles.json` entry). 2.8: project ↔ app links. Run the full gate incl. agent-home vitest; update your checklist row + one audit row; PR linking FG-33. Not done until the P8-2 system-test checklist passes on the system-test box — coordinate with Leo.
+> **[FG-33 P8-2 — Tools page, agent workflow, operations. Start after every P8-1 PR has merged and open decisions 9, 15, 16, 17 are answered.]** Repo `leolau/aquarium`, branch off `develop`, one PR per work item (2.1–2.9). Read `AGENTS.md`, the README and FG-33 §1, §5, §7, §8, §9. Own **only** your item's files. 2.1: agent-home `/tools` as an icon grid — "On this box" (solid squircle + box badge), "Hosted elsewhere" (outlined circle + provider badge + ↗), "Helpers & services" (today's rows) — with `AppIcon`/`AppTile`/`AppGrid`/`ProviderBadge`/`HealthDot`/`ToolActionsSheet`/`IconPicker`/`QuotaStrip`, `data-component` on every root, `tools.json` i18n (en, zh-Hant), `/tools/[name]`, the BFF routes enumerated in FG-33 row 2.1 (not 2.7's `secrets` or 3.6's deploy routes) with `route-roles.json` entries, `data-appmcp-deny` on approve/make-live/delete buttons, all writes via `useProjectAction`/`ActionButton`; widen `rawFetchGuard.test.ts` to `components/tools/`. 2.2: owns every `/api/tools*` Python route in P8-2 (moved into `hermes_cli/tools_api.py`): `GET /api/tools?include=health` (one registry read, parallel probes, 30 s cache, SSRF rules), `GET /api/tools/{name}`, `…/mcp`, `GET /api/tools/quota`, `PUT …/{icon,secrets,egress,mcp,visibility}`, favicon/feedback routes, mounting 2.4's lifecycle router; add `/api/tools/` to `projects_idempotency._covers`. 2.3: `skills/software-development/vibe-code-app/SKILL.md` — intake → FG-32 project → one clarify for hosting (Local default) → scaffold → kanban cards with `--workspace dir:` and the definition of done (`npm run check`, MCP handshake, screenshot) → preview → promote → update-later. 2.4: `aquarium-apps-watch` timer, NotificationStore alerts (dedupe), Telegram helper in `scripts/lib/`, lifecycle with C6 for archive/purge, `archive|purge|restore` in `tool_cmd.py` (kept off the `hermes-tools-cli` allowlist) and `hermes_cli/app_lifecycle_api.py`. 2.4 also adds the `tool doctor` hook to the weekly drift check. 2.5: capacity bounds, drift globs, `SKIP_DIRS`/`backup_sources()` in `deploy/aquarium.py`. 2.6: helper-owned nftables egress + fail-closed OSV. 2.7: secrets form at `src/app/api/tools/apps/[name]/secrets/route.ts` (2.1 adds its `route-roles.json` entry). 2.8: project ↔ app links. 2.9: the `internal-coder` / `external-coder` profile definitions and `coder_profile_for` (FG-33 §10); the skill (2.3) assigns every build card to that profile. Run the full gate incl. agent-home vitest; update your checklist row + one audit row; PR linking FG-33. Not done until the P8-2 system-test checklist passes on the system-test box — coordinate with Leo.
 
 > **[FG-33 P8-3 — External apps v1: Vercel + supabase.com. Start after every P8-2 PR has merged, open decisions 10–14 are answered and Leo has created the Vercel team and supabase.com org (item 3.7).]** Repo `leolau/aquarium`, branch off `develop`, one PR per work item (3.1–3.6). Read `AGENTS.md`, the README and FG-33 §4, §5, Security. Own **only** your item's files. 3.1 first: verify the current Vercel and Supabase Management APIs against vendor docs and record them in `docs/design/hosting-provider-apis.md`; add `hermes_cli/hosting/base.py` (`HostingAdapter`, `PROVIDERS`), `tool_hosting`, `hermes tool deploy|status|logs` (allowlisted; `teardown` never allowlisted), `POST /api/tools/{name}/{deploy,redeploy}` + `GET …/deployments` in `hermes_cli/tools_api.py`, and the external branch of `promote_tool` (dry-run in the approval, adapter `promote()`, `xa-<slug>` http endpoint to prod). 3.2: `vercel-token`, `supabase-management`, `supabase-project` kinds (`materialize=False`, validators), a `hosting` service, Settings → Connected accounts "Hosting" group; take `SUPABASE_ACCESS_TOKEN` off env passthrough. 3.3: Vercel adapter — REST file upload, preview = dev, promote the approved preview to production, env per target (`sensitive`), protection bypass for probes, rollback as inverse_op, teardown. 3.4: supabase.com adapter — dev and prod projects, keys, auth `site_url`/allow list, `db push` via the pooler, pause/restore/delete. 3.5: `aquarium-hosting-poll` timer (status, budget 80/100%, provider cost as C8 rows, orphans). 3.6: external tile states and BFF `deployments`/`deploy`/`redeploy` routes (Python side is 3.1's, in `tools_api.py`). Adapters run in-process, never in the agent shell; every mutation C5, every call C8; durable `reversible=False` approvals per FG-33 §4.4; mocked-HTTP tests only in CI. Run the full gate; update your checklist row + one audit row; PR linking FG-33. Not done until the P8-3 system-test checklist passes against sandbox accounts — coordinate with Leo.
 
