@@ -1555,6 +1555,15 @@ class MCPServerTask:
                                 "MCP server '%s': received tools/list_changed notification",
                                 self.name,
                             )
+                            if _is_registry_app_server(self.name):
+                                # FG-33: an app's new tools reach the next
+                                # chat only; never splice them into live ones.
+                                logger.info(
+                                    "MCP server '%s': app tool list changed; "
+                                    "applies from the next chat",
+                                    self.name,
+                                )
+                                return
                             # Some servers (notably mongodb-mcp-server) emit
                             # tools/list_changed immediately after initialize,
                             # while the client may already be executing another
@@ -2083,6 +2092,7 @@ class MCPServerTask:
         url = config["url"]
         headers = dict(config.get("headers") or {})
         _add_app_mcp_token(self.name, config, headers)
+        _add_secret_ref_token(self.name, config, headers)
         # Some MCP servers require MCP-Protocol-Version on the initial
         # initialize request and reject session-less POSTs otherwise.
         # Seed it as a client-level default, but treat user overrides as
@@ -3459,6 +3469,82 @@ def _add_app_mcp_token(name: str, config: dict, headers: dict) -> None:
         headers["Authorization"] = f"Bearer {token}"
 
 
+def _add_secret_ref_token(name: str, config: dict, headers: dict) -> None:
+    """Bearer token named by a registry endpoint's ``secret_ref`` (FG-33)."""
+    ref = config.get("secret_ref")
+    if not ref or any(key.lower() == "authorization" for key in headers):
+        return
+    from tools.registry_mcp import read_secret
+
+    token = read_secret(str(ref))
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    else:
+        logger.warning("MCP server '%s': secret_ref %r has no token", name, ref)
+
+
+def _is_registry_app_server(name: str) -> bool:
+    """An FG-33 app server (``la-*`` / ``xa-*``)."""
+    from tools.registry_mcp import is_app_server
+
+    return is_app_server(name)
+
+
+def _app_tool_needs_approval(server_name: str, mcp_tool: Any) -> bool:
+    """FG-33: an app tool that mutates (``destructiveHint`` or ``action_*``)."""
+    if not _is_registry_app_server(server_name):
+        return False
+    if str(getattr(mcp_tool, "name", "") or "").startswith("action_"):
+        return True
+    annotations = getattr(mcp_tool, "annotations", None)
+    if isinstance(annotations, dict):
+        hint = annotations.get("destructiveHint")
+    else:
+        hint = getattr(annotations, "destructiveHint", None)
+    return hint is True
+
+
+def _app_action_gate(tool_name: str, args: dict) -> Optional[str]:
+    """Ask the chat's user before an app tool mutates; error text unless approved.
+
+    The enforcement for FG-33 app actions, independent of the opt-in
+    ``plugins/tool-approval``. Fails closed: no answer means no call.
+    """
+    try:
+        from gateway.session_context import get_session_env
+        from tools.approval import (
+            get_current_session_key,
+            is_approved,
+            request_elicitation_consent_detailed,
+        )
+
+        scope_key = get_session_env("HERMES_SESSION_ID", "") or get_current_session_key(
+            default=""
+        )
+        if is_approved(scope_key, tool_name):
+            return None
+        try:
+            shown = json.dumps(args, ensure_ascii=False, default=str)[:2000]
+        except (TypeError, ValueError):
+            shown = str(args)[:2000]
+        decision, reason = request_elicitation_consent_detailed(
+            f"{tool_name}\n{shown}",
+            f"The app tool '{tool_name}' changes something and needs your approval.",
+            surface="app-action",
+            persist_key=tool_name,
+            persist_session_key=scope_key or None,
+        )
+    except Exception:  # noqa: BLE001 - fail closed
+        logger.warning("app action approval for %s failed", tool_name, exc_info=True)
+        decision, reason = "error", "error"
+    if decision == "accept":
+        return None
+    return (
+        f"'{tool_name}' changes something in an app and was not approved "
+        f"({reason}), so it did not run. Ask the user before trying again."
+    )
+
+
 def _is_app_mcp_server(name: str, config: dict) -> bool:
     """Aquarium's own app-mcp (UI + Folder Bridge) server.
 
@@ -3490,14 +3576,25 @@ def _make_tool_handler(
     tool_name: str,
     tool_timeout: float,
     max_result_chars: int = _DEFAULT_MAX_RESULT_CHARS,
+    approval_name: Optional[str] = None,
 ):
     """Return a sync handler that calls an MCP tool via the background loop.
 
     The handler conforms to the registry's dispatch interface:
-    ``handler(args_dict, **kwargs) -> str``
+    ``handler(args_dict, **kwargs) -> str``. With *approval_name* every call
+    first needs the user's approval (FG-33 app actions).
     """
 
     def _handler(args: dict, **kwargs) -> str:
+        from tools.registry_mcp import blocked_call_error as _registry_blocked
+
+        _blocked = _registry_blocked(server_name, kwargs.get("principal_user_id"))
+        if _blocked:
+            return json.dumps({"error": _blocked}, ensure_ascii=False)
+        if approval_name:
+            _denied = _app_action_gate(approval_name, args)
+            if _denied:
+                return json.dumps({"error": _denied}, ensure_ascii=False)
         # Circuit breaker: if this server has failed too many times
         # consecutively, short-circuit with a clear message so the model
         # stops retrying and uses alternative approaches (#10447).
@@ -3936,8 +4033,17 @@ def _make_get_prompt_handler(server_name: str, tool_timeout: float):
     return _handler
 
 
+def _registry_only_check() -> bool:
+    """Registry app tools are added per chat by tools.registry_mcp, never by toolset."""
+    return False
+
+
 def _make_check_fn(server_name: str):
     """Return a check function that verifies the MCP connection is alive."""
+    from tools.registry_mcp import is_registry_server
+
+    if is_registry_server(server_name):
+        return _registry_only_check
 
     def _check() -> bool:
         with _lock:
@@ -4392,7 +4498,13 @@ def _register_server_tools(name: str, server: MCPServerTask, config: dict) -> Li
             toolset=toolset_name,
             schema=schema,
             handler=_make_tool_handler(
-                name, mcp_tool.name, server.tool_timeout, server.max_result_chars
+                name,
+                mcp_tool.name,
+                server.tool_timeout,
+                server.max_result_chars,
+                approval_name=(
+                    tool_name_prefixed if _app_tool_needs_approval(name, mcp_tool) else None
+                ),
             ),
             check_fn=_make_check_fn(name),
             is_async=False,
@@ -4942,6 +5054,9 @@ def refresh_agent_mcp_tools(
     from tools.personal_mcp import reinject as _reinject_personal_mcp
 
     _reinject_personal_mcp(agent, new_defs, new_names)
+    from tools.registry_mcp import reinject as _reinject_registry_mcp
+
+    _reinject_registry_mcp(agent, new_defs, new_names)
 
     # Single atomic read-diff-publish so the returned ``added`` is consistent
     # with what was actually published, even under concurrent callers, and a

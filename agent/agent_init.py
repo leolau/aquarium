@@ -1276,9 +1276,12 @@ def init_agent(
     # The chat person's own MCP servers (Get ready item 8), chosen once per
     # chat. Needs the session id/store set above.
     from tools.personal_mcp import apply_to_agent as _apply_personal_mcp
+    from tools.registry_mcp import apply_registry_endpoints
 
     _apply_personal_mcp(agent)
-    if agent._personal_mcp_defs:
+    # Every enabled app MCP the person may see (FG-33), pinned per chat.
+    apply_registry_endpoints(agent)
+    if agent._personal_mcp_defs or agent._registry_mcp_defs:
         _denied = _denied_tools(
             agent._internal_user_id,
             agent._internal_user_role,
@@ -1287,6 +1290,9 @@ def init_agent(
         if _denied:
             agent._personal_mcp_defs = [
                 t for t in agent._personal_mcp_defs if t["function"]["name"] not in _denied
+            ]
+            agent._registry_mcp_defs = [
+                t for t in agent._registry_mcp_defs if t["function"]["name"] not in _denied
             ]
             agent.tools = [t for t in agent.tools if t["function"]["name"] not in _denied]
         agent.valid_tool_names = {t["function"]["name"] for t in agent.tools}

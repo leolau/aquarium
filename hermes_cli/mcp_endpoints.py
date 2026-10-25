@@ -62,6 +62,17 @@ _ENDPOINT_KINDS: tuple[EndpointKind, ...] = ("in_house", "remote")
 
 TransportType = Literal["stdio", "http"]
 
+#: FG-33 app endpoints: ``local`` apps run on the box (``la-<slug>``),
+#: ``external`` apps are hosted by a provider (``xa-<slug>``).
+AppKind = Literal["local", "external"]
+APP_NAME_PREFIXES: Dict[str, str] = {"local": "la-", "external": "xa-"}
+
+#: ``transport.auth`` names the auth *type*; the token itself never sits in the
+#: row — ``secret_ref`` names where it is kept (see ``tools.registry_mcp``).
+_AUTH_TYPES = ("bearer", "oauth")
+
+_VALID_SECRET_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
 _VALID_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
@@ -78,7 +89,21 @@ CREATE TABLE IF NOT EXISTS {ENDPOINTS_TABLE} (
 );
 CREATE INDEX IF NOT EXISTS {ENDPOINTS_TABLE}_visibility_idx
     ON {ENDPOINTS_TABLE} (visibility);
+ALTER TABLE {ENDPOINTS_TABLE}
+    ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE {ENDPOINTS_TABLE}
+    ADD COLUMN IF NOT EXISTS app_kind TEXT
+        CHECK (app_kind IS NULL OR app_kind IN ('local', 'external'));
+ALTER TABLE {ENDPOINTS_TABLE}
+    ADD COLUMN IF NOT EXISTS secret_ref TEXT;
+ALTER TABLE {ENDPOINTS_TABLE}
+    ADD COLUMN IF NOT EXISTS forward_principal BOOLEAN NOT NULL DEFAULT FALSE;
 """
+
+_COLUMNS = (
+    "id, name, kind, transport, owner_user_id, visibility, mode, "
+    "enabled, app_kind, secret_ref, forward_principal"
+)
 
 
 def _validate_transport(transport: Mapping[str, object]) -> dict:
@@ -86,7 +111,8 @@ def _validate_transport(transport: Mapping[str, object]) -> dict:
 
     Accepts the same two transports the MCP client (:mod:`tools.mcp_tool`)
     understands: ``stdio`` (needs ``command``, optional ``args`` / ``env``)
-    and ``http`` (needs ``url``, optional ``auth``). Raises ``ValueError`` on
+    and ``http`` (needs ``url``, optional ``auth`` — the auth *type*,
+    ``bearer`` or ``oauth``, never a token). Raises ``ValueError`` on
     anything malformed so a bad row never reaches the store.
     """
     if not isinstance(transport, Mapping):
@@ -122,9 +148,13 @@ def _validate_transport(transport: Mapping[str, object]) -> dict:
         normalized["url"] = url
         auth = transport.get("auth")
         if auth is not None:
-            if not isinstance(auth, str):
-                raise ValueError("transport.auth must be a string")
-            normalized["auth"] = auth
+            kind = auth.strip().lower() if isinstance(auth, str) else None
+            if kind not in _AUTH_TYPES:
+                raise ValueError(
+                    "transport.auth must name the auth type "
+                    f"({' or '.join(_AUTH_TYPES)}); keep tokens in secret_ref"
+                )
+            normalized["auth"] = kind
     return normalized
 
 
@@ -139,6 +169,10 @@ class MCPEndpoint:
     owner_user_id: str
     visibility: str
     mode: str
+    enabled: bool = True
+    app_kind: Optional[AppKind] = None
+    secret_ref: Optional[str] = None
+    forward_principal: bool = False
 
     def to_server_config(self) -> dict:
         """Translate to the ``mcp_servers.<name>`` block the client consumes.
@@ -158,10 +192,15 @@ class MCPEndpoint:
                 cfg["env"] = dict(transport["env"])
         elif ttype == "http":
             cfg["url"] = transport.get("url", "")
-            if transport.get("auth"):
-                cfg["auth"] = transport["auth"]
+            auth = str(transport.get("auth") or "").lower()
+            if auth == "oauth":
+                cfg["auth"] = "oauth"
+            elif auth == "bearer" and self.secret_ref:
+                cfg["secret_ref"] = self.secret_ref
         else:  # pragma: no cover - guarded at registration time
             raise ValueError(f"Unknown transport type: {ttype!r}")
+        if self.forward_principal:
+            cfg["forward_principal"] = True
         return cfg
 
     def as_dict(self) -> dict:
@@ -173,7 +212,19 @@ class MCPEndpoint:
             "owner_user_id": self.owner_user_id,
             "visibility": self.visibility,
             "mode": self.mode,
+            "enabled": self.enabled,
+            "app_kind": self.app_kind,
+            "secret_ref": self.secret_ref,
+            "forward_principal": self.forward_principal,
         }
+
+
+def _column(row: "asyncpg.Record", key: str, default: object = None) -> object:
+    try:
+        value = row[key]
+    except (KeyError, IndexError):
+        return default
+    return default if value is None else value
 
 
 def _row_to_endpoint(row: "asyncpg.Record") -> MCPEndpoint:
@@ -188,7 +239,31 @@ def _row_to_endpoint(row: "asyncpg.Record") -> MCPEndpoint:
         owner_user_id=str(row["owner_user_id"]),
         visibility=str(row["visibility"]),
         mode=str(row["mode"]),
+        enabled=bool(_column(row, "enabled", True)),
+        app_kind=_column(row, "app_kind"),  # type: ignore[arg-type]
+        secret_ref=_column(row, "secret_ref"),  # type: ignore[arg-type]
+        forward_principal=bool(_column(row, "forward_principal", False)),
     )
+
+
+def _check_app_fields(
+    name: str,
+    app_kind: Optional[str],
+    secret_ref: Optional[str],
+    transport: Mapping[str, object],
+) -> None:
+    """An app endpoint's name carries its kind; bearer auth needs a secret_ref."""
+    if app_kind is not None and app_kind not in APP_NAME_PREFIXES:
+        raise ValueError(f"Invalid app_kind: {app_kind!r}")
+    for kind, prefix in APP_NAME_PREFIXES.items():
+        if name.startswith(prefix) != (app_kind == kind):
+            raise ValueError(
+                f"Endpoint names starting {prefix!r} are {kind} apps and only they are"
+            )
+    if secret_ref is not None and not _VALID_SECRET_REF.fullmatch(secret_ref):
+        raise ValueError(f"Invalid secret_ref: {secret_ref!r}")
+    if transport.get("auth") == "bearer" and not secret_ref:
+        raise ValueError("bearer auth needs a secret_ref naming the token")
 
 
 def _resolve_visibility(principal: Principal, visibility: Optional[str]) -> str:
@@ -256,6 +331,10 @@ class MCPEndpointRegistry:
         transport: Mapping[str, object],
         *,
         visibility: Optional[str] = None,
+        enabled: bool = True,
+        app_kind: Optional[AppKind] = None,
+        secret_ref: Optional[str] = None,
+        forward_principal: bool = False,
         connection: Optional["asyncpg.Connection"] = None,
     ) -> MCPEndpoint:
         """Register (or update) an MCP endpoint as ``principal``.
@@ -272,6 +351,7 @@ class MCPEndpointRegistry:
         if kind not in _ENDPOINT_KINDS:
             raise ValueError(f"Invalid endpoint kind: {kind!r}")
         normalized_transport = _validate_transport(transport)
+        _check_app_fields(name, app_kind, secret_ref, normalized_transport)
         resolved_visibility = _resolve_visibility(principal, visibility)
 
         own = connection is None
@@ -280,15 +360,18 @@ class MCPEndpointRegistry:
             row = await conn.fetchrow(
                 f"""
                 INSERT INTO {ENDPOINTS_TABLE}
-                    (id, name, kind, transport, owner_user_id, visibility, mode)
-                VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7)
+                    ({_COLUMNS})
+                VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11)
                 ON CONFLICT (name) DO UPDATE SET
                     kind = EXCLUDED.kind,
                     transport = EXCLUDED.transport,
-                    visibility = EXCLUDED.visibility
+                    visibility = EXCLUDED.visibility,
+                    enabled = EXCLUDED.enabled,
+                    app_kind = EXCLUDED.app_kind,
+                    secret_ref = EXCLUDED.secret_ref,
+                    forward_principal = EXCLUDED.forward_principal
                 WHERE {ENDPOINTS_TABLE}.owner_user_id = EXCLUDED.owner_user_id
-                RETURNING id, name, kind, transport, owner_user_id,
-                          visibility, mode
+                RETURNING {_COLUMNS}
                 """,
                 f"mep_{uuid.uuid4().hex}",
                 name,
@@ -297,6 +380,10 @@ class MCPEndpointRegistry:
                 principal.user_id,
                 resolved_visibility,
                 self._store.mode,
+                bool(enabled),
+                app_kind,
+                secret_ref,
+                bool(forward_principal),
             )
             if row is None:
                 # The name exists but is owned by someone else — the conflict
@@ -325,7 +412,7 @@ class MCPEndpointRegistry:
         try:
             row = await conn.fetchrow(
                 f"""
-                SELECT id, name, kind, transport, owner_user_id, visibility, mode
+                SELECT {_COLUMNS}
                 FROM {ENDPOINTS_TABLE} WHERE name = $1
                 """,
                 name,
@@ -339,6 +426,8 @@ class MCPEndpointRegistry:
         self,
         principal: Principal,
         *,
+        enabled_only: bool = False,
+        apps_only: bool = False,
         connection: Optional["asyncpg.Connection"] = None,
     ) -> List[MCPEndpoint]:
         """Return every endpoint ``principal`` may use (contract C2).
@@ -346,16 +435,23 @@ class MCPEndpointRegistry:
         A non-owner sees ``shared`` endpoints plus its own ``private`` ones;
         the owner sees all. Because the table lives in the store's mode schema,
         the result is already mode-scoped (dev endpoints in dev, prod in prod).
+        ``enabled_only`` drops switched-off rows; ``apps_only`` keeps only
+        FG-33 app endpoints (``app_kind`` set).
         """
         predicate = scope_filter(principal, start_index=1)
+        extra = ""
+        if enabled_only:
+            extra += " AND enabled"
+        if apps_only:
+            extra += " AND app_kind IS NOT NULL"
         own = connection is None
         conn = connection or await self._connect()
         try:
             rows = await conn.fetch(
                 f"""
-                SELECT id, name, kind, transport, owner_user_id, visibility, mode
+                SELECT {_COLUMNS}
                 FROM {ENDPOINTS_TABLE}
-                WHERE {predicate.sql}
+                WHERE ({predicate.sql}){extra}
                 ORDER BY name
                 """,
                 *predicate.params,
@@ -369,6 +465,7 @@ class MCPEndpointRegistry:
         self,
         principal: Principal,
         *,
+        apps_only: bool = False,
         connection: Optional["asyncpg.Connection"] = None,
     ) -> Dict[str, dict]:
         """Return ``{name: mcp_servers-config}`` for every endpoint in scope.
@@ -378,12 +475,17 @@ class MCPEndpointRegistry:
         :func:`tools.mcp_tool.register_mcp_servers` at session start). It must
         never be applied to a live conversation — doing so would splice tools
         into a cached prompt/tool schema and break prompt-cache safety.
+        Switched-off (``enabled = false``) endpoints are never resolved.
         """
-        endpoints = await self.list_for_principal(principal, connection=connection)
+        endpoints = await self.list_for_principal(
+            principal, enabled_only=True, apps_only=apps_only, connection=connection
+        )
         return {ep.name: ep.to_server_config() for ep in endpoints}
 
 
 __all__ = [
+    "APP_NAME_PREFIXES",
+    "AppKind",
     "ENDPOINTS_TABLE",
     "EndpointKind",
     "MCPEndpoint",
