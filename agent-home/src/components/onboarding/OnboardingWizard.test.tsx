@@ -107,18 +107,17 @@ describe("ToolsRegistry", () => {
   it("explains the page in plain words and links to chat tools", () => {
     const html = renderToStaticMarkup(<ToolsRegistry data={data} />);
     expect(html).toContain('data-component="ToolsRegistry"');
-    expect(html).toContain("Apps the agent has built or installed");
+    expect(html).toContain("Apps the agent built for you");
     expect(html).toContain('href="/settings/tools"');
     expect(html).toContain("Tools &amp; Integrations");
   });
 
-  it("shows on apps and tucks turned-off ones into a collapsed section", () => {
+  it("lists pre-FG-33 rows under Helpers & services with their on/off state", () => {
     const html = renderToStaticMarkup(<ToolsRegistry data={data} />);
+    expect(html).toContain('data-section="helpers"');
     expect(html).toContain("notes_app");
     expect(html).toContain("Built by the agent · Shared with everyone");
-    expect(html).toMatch(/<details data-component="ToolsDisabled">/);
-    expect(html).not.toMatch(/<details[^>]*open/);
-    expect(html).toContain("Turned off (1)");
+    expect(html).toMatch(/spotify<\/span><span data-component="Pill"[^>]*>Off</);
     expect(html).toContain("spotify");
     expect(html).toContain("External service · Private");
   });
@@ -139,6 +138,6 @@ describe("ToolsRegistry", () => {
     const empty = renderToStaticMarkup(
       <ToolsRegistry data={{ configured: true, mode: "prod", tools: [] }} />,
     );
-    expect(empty).toContain("built or installed any apps yet");
+    expect(empty).toContain("No apps yet");
   });
 });

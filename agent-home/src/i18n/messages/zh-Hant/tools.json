@@ -1,0 +1,168 @@
+{
+  "title": "工具",
+  "intro": "助理為你建立的應用程式，以及它使用的輔助服務。你會看到自己的和與所有人分享的項目。",
+  "notConfigured": "此安裝尚未設定這個清單。",
+  "loadFailed": "無法載入應用程式清單（{error}）。",
+  "notFound": "這個應用程式不存在，或你沒有權限查看。",
+  "section": {
+    "local": "在本機上",
+    "localHint": "在這部 Aquarium 主機上執行。",
+    "external": "託管於其他地方",
+    "externalHint": "在其他服務供應商上執行；會在新分頁開啟。",
+    "helpers": "輔助工具與服務"
+  },
+  "kind": {
+    "local": "在本機上",
+    "external": "託管於其他地方"
+  },
+  "health": {
+    "running": "執行中",
+    "building": "建置中或效能下降",
+    "down": "已停止運作或失敗",
+    "off": "已關閉",
+    "dev": "只有測試版本",
+    "unknown": "狀態不明"
+  },
+  "provider": {
+    "box": "在本機上",
+    "vercel": "Vercel",
+    "railway": "Railway",
+    "aws_amplify": "AWS Amplify",
+    "alibaba_fc": "阿里雲",
+    "supabase": "Supabase",
+    "globe": "託管於其他地方"
+  },
+  "tile": {
+    "openLocal": "{name}，在本機上，{status}",
+    "openExternal": "{name}，託管於 {provider}，{status}",
+    "actions": "{name} 的操作",
+    "building": "{name} 正在建置 — 查看執行記錄"
+  },
+  "sheet": {
+    "title": "{name} 的操作",
+    "close": "關閉",
+    "devCopy": "測試版本"
+  },
+  "actions": {
+    "open": "開啟",
+    "details": "詳細資料、記錄與意見",
+    "ask": "請助理修改",
+    "askPrompt": "修改我的應用程式 {name}：",
+    "start": "啟動",
+    "stop": "停止",
+    "restart": "重新啟動",
+    "build": "重新建置測試版本",
+    "promote": "正式上線",
+    "console": "供應商控制台",
+    "hide": "從格狀檢視隱藏",
+    "show": "在格狀檢視顯示",
+    "share": "與所有人分享",
+    "unshare": "設為私人",
+    "icon": "更改圖示",
+    "archive": "封存…",
+    "restore": "還原",
+    "purge": "永久刪除資料…",
+    "delete": "刪除應用程式…",
+    "unlink": "從 Aquarium 移除…",
+    "saving": "儲存中…"
+  },
+  "confirm": {
+    "cancel": "取消",
+    "archive": {
+      "title": "封存 {name}？",
+      "body": "它會停止並從格狀檢視移除。資料會保留，之後可以還原。",
+      "cta": "封存"
+    },
+    "purge": {
+      "title": "永久刪除 {name} 的資料？",
+      "body": "這會刪除應用程式的程式碼、發佈版本和資料庫，而且無法復原。",
+      "cta": "永久刪除"
+    },
+    "delete": {
+      "title": "刪除 {name}？",
+      "body": "這會停止應用程式並刪除它的程式碼、發佈版本和資料庫，而且無法復原。",
+      "bodyExternal": "這會把 {name} 從 Aquarium 移除，但不會刪除託管的應用程式本身。",
+      "cta": "刪除"
+    }
+  },
+  "icon": {
+    "glyph": "字母或表情符號（1–2 個）",
+    "color": "顏色",
+    "save": "儲存圖示",
+    "useFavicon": "使用應用程式本身的圖示"
+  },
+  "color": {
+    "blue": "藍色",
+    "teal": "藍綠色",
+    "green": "綠色",
+    "amber": "琥珀色",
+    "orange": "橙色",
+    "red": "紅色",
+    "pink": "粉紅色",
+    "violet": "紫色"
+  },
+  "quota": {
+    "apps_registered": {
+      "of": "{used} / {limit} 個應用程式",
+      "unlimited": "{used} 個應用程式"
+    },
+    "apps_running": {
+      "of": "{used} / {limit} 個執行中",
+      "unlimited": "{used} 個執行中"
+    },
+    "ram_mb": {
+      "of": "{used} / {limit} MB 記憶體",
+      "unlimited": "{used} MB 記憶體"
+    },
+    "disk_mb": {
+      "of": "{used} / {limit} MB 磁碟",
+      "unlimited": "{used} MB 磁碟"
+    }
+  },
+  "empty": {
+    "body": "還沒有應用程式。請助理建立一個吧。",
+    "local": "建立本機應用程式",
+    "localPrompt": "在這部主機上幫我建立一個本機應用程式，用來",
+    "external": "建立託管應用程式",
+    "externalPrompt": "幫我建立一個有公開網址的託管應用程式，用來"
+  },
+  "helper": {
+    "on": "開啟",
+    "off": "關閉",
+    "shared": "與所有人分享",
+    "private": "私人",
+    "none": "還沒有輔助工具或服務。",
+    "settingsHint": "在找助理在對話中使用的工具（網頁搜尋、瀏覽器、Canva…）？請前往",
+    "settingsLink": "設定 → 工具與整合"
+  },
+  "helperKind": {
+    "in_house": "由助理建立",
+    "remote": "外部服務",
+    "builtin": "Aquarium 內建",
+    "external": "託管於其他地方"
+  },
+  "detail": {
+    "back": "所有工具",
+    "allActions": "所有操作",
+    "status": "狀態",
+    "prodUrl": "正式網址",
+    "devUrl": "測試網址",
+    "release": "正式發佈版本",
+    "lastRun": "上次建置",
+    "mcp": "對話工具（MCP）",
+    "mcpOn": "開啟 — 對話可以使用此應用程式",
+    "mcpOff": "關閉",
+    "mcpUnknown": "不適用",
+    "deployments": "部署記錄",
+    "logs": "最近的記錄",
+    "logsShow": "顯示最近的記錄",
+    "logsReload": "重新載入記錄",
+    "logsLoading": "載入中…",
+    "logsEmpty": "還沒有記錄。",
+    "logsFailed": "無法載入記錄。",
+    "feedback": "意見",
+    "feedbackLabel": "下次助理處理它時，應該改進什麼？",
+    "feedbackSend": "送出意見",
+    "feedbackSent": "謝謝 — 助理會在下次建置時看到。"
+  }
+}
