@@ -5,7 +5,7 @@ import {
   filtersToParams,
 } from "@/components/projects/filters";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
-import type { ProjectsResponse } from "@/types";
+import type { ProjectCategory, ProjectsResponse } from "@/types";
 
 // Reads the live principal (cookie) + the caller's readable projects per
 // request — never at build time.
@@ -20,6 +20,8 @@ const EMPTY_PROJECTS: ProjectsResponse = { items: [], next_cursor: null };
  * same filters the URL carries, so a shared `/projects?cadence=standing`
  * link arrives already filtered. The list defaults to the live work —
  * `filtersFromParams` maps an empty querystring onto `status=active`.
+ * The categories (the board's columns) load alongside; failing to read them
+ * only degrades the board to its Uncategorized column.
  */
 export default async function Page({
   searchParams,
@@ -36,21 +38,29 @@ export default async function Page({
   }
 
   let projects: ProjectsResponse = EMPTY_PROJECTS;
+  let categories: ProjectCategory[] = [];
   let error: string | null = null;
+  // The codec is authoritative: the URL narrows by status/cadence/health,
+  // and the same round-trip drives the client-side refetch. `layout` is a
+  // view preference and never reaches the upstream query.
+  const state = filtersFromParams(params);
   try {
     const client = await apiClientForRequest();
-    // The codec is authoritative: the URL narrows by status/cadence/health,
-    // and the same round-trip drives the client-side refetch.
-    const state = filtersFromParams(params);
     const query = filtersToParams(state);
-    projects = await client.projects({
-      status: query.get("status") ?? undefined,
-      cadence: query.get("cadence") ?? undefined,
-      health: query.get("health") ?? undefined,
-      archived: query.get("archived") === "true",
-      q: state.q || undefined,
-      limit: 50,
-    });
+    const [projectsPage, categoriesRes] = await Promise.all([
+      client.projects({
+        status: query.get("status") ?? undefined,
+        cadence: query.get("cadence") ?? undefined,
+        health: query.get("health") ?? undefined,
+        archived: query.get("archived") === "true",
+        q: state.q || undefined,
+        // The board reads every page; start it with the largest one.
+        limit: state.layout === "board" ? 200 : 50,
+      }),
+      client.projectCategories().catch(() => ({ items: [] })),
+    ]);
+    projects = projectsPage;
+    categories = categoriesRes.items ?? [];
   } catch (err) {
     error = err instanceof Error ? err.message : "Failed to load your projects";
   }
@@ -65,7 +75,11 @@ export default async function Page({
           Couldn&apos;t load your projects ({error}).
         </div>
       ) : (
-        <ProjectsList initial={projects} />
+        <ProjectsList
+          initial={projects}
+          categories={categories}
+          initialFilters={state}
+        />
       )}
     </MobileShell>
   );
