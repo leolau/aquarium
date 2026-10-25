@@ -4922,3 +4922,77 @@ def test_refresh_compression_lock_requires_holder_and_preserves_reclaimability(d
 
     monkeypatch.setattr(hermes_state.time, "time", lambda: 1016.0)
     assert db.try_acquire_compression_lock("s1", "holder-b", ttl_seconds=10.0) is True
+
+
+class TestInsightsMessageIndexes:
+    """agent/insights.py filters messages by role / tool_name / tool_calls."""
+
+    NEW_INDEXES = (
+        "idx_messages_session_role_tool",
+        "idx_messages_assistant_tool_calls",
+    )
+
+    def _plan(self, db, sql, params=()):
+        rows = db._conn.execute("EXPLAIN QUERY PLAN " + sql, params).fetchall()
+        return " | ".join(row[-1] for row in rows)
+
+    def test_indexes_exist_after_init(self, db):
+        names = {
+            row[0]
+            for row in db._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'messages'"
+            )
+        }
+        assert set(self.NEW_INDEXES) <= names
+
+    def test_existing_db_gets_indexes_on_reopen(self, tmp_path):
+        db_path = tmp_path / "legacy.db"
+        first = SessionDB(db_path=db_path)
+        for name in self.NEW_INDEXES:
+            first._conn.execute(f"DROP INDEX {name}")
+        first._conn.commit()
+        first.close()
+
+        reopened = SessionDB(db_path=db_path)
+        try:
+            names = {
+                row[0]
+                for row in reopened._conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'index'"
+                )
+            }
+            assert set(self.NEW_INDEXES) <= names
+        finally:
+            reopened.close()
+
+    def test_tool_name_count_uses_covering_index(self, db):
+        detail = self._plan(
+            db,
+            "SELECT m.tool_name, COUNT(*) FROM messages m "
+            "JOIN sessions s ON s.id = m.session_id "
+            "WHERE s.started_at >= ? AND m.role = 'tool' AND m.tool_name IS NOT NULL "
+            "GROUP BY m.tool_name",
+            (0,),
+        )
+        assert "COVERING INDEX idx_messages_session_role_tool" in detail, detail
+
+    def test_message_stats_uses_covering_index(self, db):
+        detail = self._plan(
+            db,
+            "SELECT COUNT(*), SUM(CASE WHEN m.role = 'user' THEN 1 ELSE 0 END) "
+            "FROM messages m JOIN sessions s ON s.id = m.session_id "
+            "WHERE s.started_at >= ?",
+            (0,),
+        )
+        assert "COVERING INDEX idx_messages_session_role_tool" in detail, detail
+
+    def test_tool_calls_scan_uses_partial_index(self, db):
+        detail = self._plan(
+            db,
+            "SELECT m.tool_calls, m.timestamp FROM messages m "
+            "JOIN sessions s ON s.id = m.session_id "
+            "WHERE s.started_at >= ? AND m.role = 'assistant' AND m.tool_calls IS NOT NULL",
+            (0,),
+        )
+        assert "idx_messages_assistant_tool_calls" in detail, detail
+        assert "SCAN m |" not in detail + " |", detail

@@ -894,6 +894,15 @@ CREATE INDEX IF NOT EXISTS idx_sessions_archived_started
     ON sessions(archived, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_api_call_log_kanban_task
     ON api_call_log(kanban_task_id, ts);
+-- agent/insights.py (/api/analytics/usage, polled by the agent-home status
+-- strip) filters messages by role and tool_name/tool_calls. Without these
+-- it full-scans the messages table and its large content/tool_calls rows.
+-- (session_id, role, tool_name) covers _get_message_stats and the tool_name
+-- count; the partial index lists only the assistant rows with tool calls.
+CREATE INDEX IF NOT EXISTS idx_messages_session_role_tool
+    ON messages(session_id, role, tool_name);
+CREATE INDEX IF NOT EXISTS idx_messages_assistant_tool_calls
+    ON messages(session_id) WHERE role = 'assistant' AND tool_calls IS NOT NULL;
 """
 
 FTS_SQL = """
