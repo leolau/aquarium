@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { MobileShell } from "@/components/MobileShell";
 import { ToolDetailView, type ToolDetailData } from "@/components/tools/ToolDetailView";
+import type { AppHealth } from "@/components/tools/toolsModel";
 import { getT } from "@/i18n/server";
 import { HermesApiError } from "@/lib/api/client";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
@@ -33,7 +34,11 @@ export default async function Page({
   try {
     const client = await apiClientForRequest();
     const raw = await client.request<ToolDetailData | Tool>(`${path}?mode=${mode}`);
-    data = "tool" in raw ? raw : { tool: raw };
+    // The Python read is the flat tool row plus its `runtime` row (runtime_state,
+    // health, lifecycle_state), which is the health shape the view reads.
+    data = "tool" in raw
+      ? raw
+      : { tool: raw, health: (raw as Tool & { runtime?: AppHealth | null }).runtime ?? null };
     if (!data.mcp) {
       data.mcp = await client
         .request<NonNullable<ToolDetailData["mcp"]>>(`${path}/mcp?mode=${mode}`)

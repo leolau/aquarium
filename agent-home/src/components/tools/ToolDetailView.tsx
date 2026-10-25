@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { AppSecretsForm } from "@/components/apps-secrets/AppSecretsForm";
 import { ActionButton } from "@/components/projects/ActionButton";
 import { useProjectAction } from "@/components/projects/useProjectAction";
 import { useT } from "@/i18n/client";
@@ -11,6 +12,7 @@ import { AppIcon } from "./AppIcon";
 import { ToolActionsSheet } from "./ToolActionsSheet";
 import {
   appApiPath,
+  canManageApp,
   deriveHealth,
   displayName,
   openUrl,
@@ -186,6 +188,14 @@ export function ToolDetailView({ data, viewer }: { data: ToolDetailData; viewer:
           <h3 className="text-sm font-semibold">{t("detail.logs")}</h3>
           <LogsTail tool={tool} />
         </section>
+      ) : null}
+      {section === "local" ? (
+        <AppSecretsForm
+          name={tool.name}
+          mode={tool.mode}
+          secretNames={tool.secret_names ?? []}
+          canEdit={canManageApp(viewer, tool)}
+        />
       ) : null}
       <section className="flex flex-col gap-2">
         <h3 className="text-sm font-semibold">{t("detail.feedback")}</h3>

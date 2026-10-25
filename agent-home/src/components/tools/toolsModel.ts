@@ -5,6 +5,8 @@
 import { canAdminister } from "@/lib/auth/roles";
 import type { Principal, Tool } from "@/types";
 
+import type { AppQuotaSummary } from "./QuotaStrip";
+
 /** Tile shape: local = solid squircle, external = outlined circle. */
 export type AppKind = "local" | "external";
 export type ToolSection = AppKind | "helper";
@@ -13,6 +15,8 @@ export type HealthState = "running" | "building" | "down" | "off" | "dev" | "unk
 /** One entry of `GET /api/tools?include=health` (fields are all optional). */
 export interface AppHealth {
   health?: string | null;
+  /** The Python API's name for `health` (ok, degraded, down, building, off, unknown). */
+  state?: string | null;
   runtime_state?: string | null;
   lifecycle_state?: string | null;
   provider?: string | null;
@@ -40,7 +44,7 @@ export function sectionOf(tool: Tool): ToolSection {
 export function healthByName(data: ToolsHealthResponse | null | undefined): Map<string, AppHealth> {
   const out = new Map<string, AppHealth>();
   const norm = (h: AppHealth | string | null | undefined): AppHealth | null =>
-    typeof h === "string" ? { health: h } : (h ?? null);
+    typeof h === "string" ? { health: h } : h ? { ...h, health: h.health ?? h.state ?? null } : null;
   for (const [name, h] of Object.entries(data?.health ?? {})) {
     const v = norm(h);
     if (v) out.set(name, v);
@@ -55,15 +59,15 @@ export function healthByName(data: ToolsHealthResponse | null | undefined): Map<
 export function deriveHealth(tool: Tool, h: AppHealth | null | undefined): HealthState {
   if (!tool.enabled || h?.lifecycle_state === "archived") return "off";
   const runtime = h?.runtime_state ?? null;
-  const health = h?.health ?? null;
+  const health = h?.health ?? h?.state ?? null;
   if (tool.build_state === "building" || runtime === "building" || runtime === "starting") {
     return "building";
   }
   if (runtime === "failed" || runtime === "over_quota" || health === "down") return "down";
   if (tool.build_state === "failed") return "down";
-  if (health === "degraded") return "building";
+  if (health === "degraded" || health === "building") return "building";
   if (runtime === "running" || health === "ok") return tool.mode === "dev" ? "dev" : "running";
-  if (runtime === "stopped" || runtime === "idle_stopped") return "off";
+  if (runtime === "stopped" || runtime === "idle_stopped" || health === "off") return "off";
   return "unknown";
 }
 
@@ -111,4 +115,33 @@ export function askAgentHref(tool: Tool, prompt: string): string {
 
 export function appApiPath(tool: Tool, suffix = ""): string {
   return `/api/tools/apps/${encodeURIComponent(tool.name)}${suffix}`;
+}
+
+/** `GET /api/tools/quota` (the caller's limits and use) as the QuotaStrip's summary. */
+export interface ToolQuotaResponse {
+  configured?: boolean;
+  limits?: { per_member?: Record<string, number | null> } | null;
+  usage?: {
+    registered?: string[] | number | null;
+    running?: string[] | number | null;
+    ram_mb?: number | null;
+    disk_mb?: number | null;
+  } | null;
+}
+
+export function quotaSummary(data: ToolQuotaResponse | null | undefined): AppQuotaSummary | null {
+  if (!data?.configured || !data.usage) return null;
+  const count = (v: string[] | number | null | undefined) =>
+    Array.isArray(v) ? v.length : typeof v === "number" ? v : undefined;
+  const usage: NonNullable<AppQuotaSummary["usage"]> = {};
+  const values = {
+    apps_registered: count(data.usage.registered),
+    apps_running: count(data.usage.running),
+    ram_mb: data.usage.ram_mb ?? undefined,
+    disk_mb: data.usage.disk_mb ?? undefined,
+  };
+  for (const [key, value] of Object.entries(values)) {
+    if (typeof value === "number") usage[key as keyof typeof values] = value;
+  }
+  return { usage, limits: { per_member: data.limits?.per_member ?? {} } };
 }
