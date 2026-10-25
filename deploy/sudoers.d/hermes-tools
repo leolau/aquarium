@@ -6,6 +6,7 @@ Defaults!/usr/local/sbin/hermes-tools-exec !use_pty, !secure_path
 hermes ALL=(hermes-tools) NOPASSWD:SETENV: /usr/local/sbin/hermes-tools-exec
 # The agent's `hermes ...` calls (deploy/hermes-tools-shim) go back to hermes through
 # deploy/hermes-tools-cli, which runs only an allowlist. No SETENV: sudo resets the
-# environment, keeping just the two kanban worker variables the helper checks.
-Defaults!/usr/local/sbin/hermes-tools-cli !use_pty, env_keep += "HERMES_KANBAN_TASK HERMES_KANBAN_RUN_ID"
+# environment, keeping just the kanban worker variables and the requester ticket
+# (FG-33 0.4), all of which the helper checks.
+Defaults!/usr/local/sbin/hermes-tools-cli !use_pty, env_keep += "HERMES_KANBAN_TASK HERMES_KANBAN_RUN_ID HERMES_PRINCIPAL_TICKET"
 hermes-tools ALL=(hermes) NOPASSWD: /usr/local/sbin/hermes-tools-cli

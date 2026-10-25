@@ -13551,19 +13551,6 @@ class ToolPromoteRequest(BaseModel):
     mode: Optional[str] = None
 
 
-async def _resolve_tool_operator(prod_store):
-    """Resolve the dashboard operator principal (the enrolled owner)."""
-    from hermes_cli.access import PrincipalStore
-
-    owner = await PrincipalStore(prod_store).get_owner()
-    if owner is None:
-        raise HTTPException(
-            status_code=409,
-            detail="No owner enrolled yet — run `hermes owner` to enrol one.",
-        )
-    return owner
-
-
 def _resolve_tool_mode(mode: Optional[str]):
     from hermes_cli.datastore import resolve_mode
 
@@ -13595,7 +13582,7 @@ async def list_tools(request: Request, mode: Optional[str] = None):
 
 
 @app.put("/api/tools/{name}/enabled", dependencies=_TOOLS_MANAGER)
-async def set_tool_enabled(name: str, body: ToolEnabledToggle):
+async def set_tool_enabled(request: Request, name: str, body: ToolEnabledToggle):
     """Enable/disable a tool (owner or owning principal); records C5 provenance."""
     from hermes_cli.datastore import get_store
     from hermes_cli.tool_cmd import _record_provenance
@@ -13604,7 +13591,9 @@ async def set_tool_enabled(name: str, body: ToolEnabledToggle):
     resolved_mode = _resolve_tool_mode(body.mode)
     try:
         prod_store = get_store("supabase-app", "prod")
-        operator = await _resolve_tool_operator(prod_store)
+        # The signed-in caller (owner only with no login), never the owner
+        # by default (FG-33 0.4).
+        operator = await _comms_resolve_principal(request)
         registry = ToolRegistry(get_store("supabase-app", resolved_mode))
         await registry.initialize()
         tool = await registry.set_enabled(operator, name, bool(body.enabled))
@@ -13629,7 +13618,7 @@ async def set_tool_enabled(name: str, body: ToolEnabledToggle):
 
 
 @app.put("/api/tools/{name}/config", dependencies=_TOOLS_MANAGER)
-async def set_tool_config(name: str, body: ToolConfigUpdate):
+async def set_tool_config(request: Request, name: str, body: ToolConfigUpdate):
     """Replace a tool's config_json (validated: no HERMES_* non-secret keys)."""
     from hermes_cli.datastore import get_store
     from hermes_cli.tool_cmd import _record_provenance
@@ -13638,7 +13627,9 @@ async def set_tool_config(name: str, body: ToolConfigUpdate):
     resolved_mode = _resolve_tool_mode(body.mode)
     try:
         prod_store = get_store("supabase-app", "prod")
-        operator = await _resolve_tool_operator(prod_store)
+        # The signed-in caller (owner only with no login), never the owner
+        # by default (FG-33 0.4).
+        operator = await _comms_resolve_principal(request)
         registry = ToolRegistry(get_store("supabase-app", resolved_mode))
         await registry.initialize()
         tool = await registry.set_config(operator, name, body.config)
@@ -13665,14 +13656,15 @@ async def set_tool_config(name: str, body: ToolConfigUpdate):
 
 
 @app.post("/api/tools/{name}/promote", dependencies=_TOOLS_MANAGER)
-async def promote_tool_route(name: str, body: ToolPromoteRequest):
+async def promote_tool_route(request: Request, name: str, body: ToolPromoteRequest):
     """Approval-gated (C6) dev→prod promotion. The explicit POST is the approval."""
     from hermes_cli.datastore import get_store
     from hermes_cli.tools_registry import promote_tool
 
     try:
-        prod_store = get_store("supabase-app", "prod")
-        operator = await _resolve_tool_operator(prod_store)
+        # The signed-in caller (owner only with no login), never the owner
+        # by default (FG-33 0.4).
+        operator = await _comms_resolve_principal(request)
         result = await promote_tool(
             get_store("supabase-app", "prod"),
             name,
