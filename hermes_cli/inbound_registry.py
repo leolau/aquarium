@@ -146,6 +146,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS {INBOUND_ITEMS_TABLE}_identity_idx
 -- reads straight off this index, so page 100 costs what page 1 costs.
 CREATE INDEX IF NOT EXISTS {INBOUND_ITEMS_TABLE}_owner_occurred_idx
     ON {INBOUND_ITEMS_TABLE} (owner_user_id, occurred_at DESC, id DESC);
+-- The same page for a reader whose scope predicate is `TRUE` (the owner, and
+-- so every read on a single-user box): with no `owner_user_id` equality the
+-- index above cannot supply the order, and each page was a full scan + sort.
+CREATE INDEX IF NOT EXISTS {INBOUND_ITEMS_TABLE}_occurred_idx
+    ON {INBOUND_ITEMS_TABLE} (occurred_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS {INBOUND_ITEMS_TABLE}_surface_idx
     ON {INBOUND_ITEMS_TABLE} (surface);
 CREATE INDEX IF NOT EXISTS {INBOUND_ITEMS_TABLE}_visibility_idx
