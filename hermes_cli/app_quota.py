@@ -120,7 +120,9 @@ DEFAULT_POLICY: dict[str, dict[str, Any]] = {
         "build_mb": 2048,
     },
     # Decision 21: where app source/releases, the apps DB volume and build
-    # caches live. ``base_path: null`` means the Hermes home.
+    # caches live. ``base_path: null`` means DEFAULT_STORAGE_BASE, the same
+    # default as deploy/aquarium-app-helper (storage_base) and deploy/aquarium.py
+    # (APPS_BASE), so admission measures free space where apps really live.
     "storage": {
         "base_path": None,
         "min_free_mb": 2048,
@@ -141,6 +143,9 @@ BOX_OVERRIDE_KEYS: frozenset[str] = frozenset(
 )
 _MAX_INT = 10_000_000
 #: Never a storage location: system trees and pseudo-filesystems.
+#: Decision 21 default app storage location (FG-33 §3.1 /var/lib/aquarium-apps).
+DEFAULT_STORAGE_BASE = "/var/lib/aquarium-apps"
+
 _FORBIDDEN_STORAGE_ROOTS = (
     "/", "/bin", "/boot", "/dev", "/etc", "/lib", "/lib64", "/proc", "/root",
     "/run", "/sbin", "/sys", "/usr",
@@ -359,11 +364,7 @@ def storage_base_path(
     configured = (box_overrides or {}).get("storage.base_path") or policy.section(
         "storage"
     ).get("base_path")
-    if configured:
-        return Path(configured)
-    from hermes_constants import get_hermes_home
-
-    return Path(get_hermes_home())
+    return Path(configured or DEFAULT_STORAGE_BASE)
 
 
 def min_free_mb(

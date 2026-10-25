@@ -41,5 +41,5 @@ box:                      # refusals; the owner is not exempt
   build_mb: 2048          # one shared build slot
 
 storage:
-  base_path: null         # app source/releases, apps DB volume, build caches; null = Hermes home
+  base_path: null         # app source/releases, apps DB volume, build caches; null = /var/lib/aquarium-apps
   min_free_mb: 2048       # admission keeps this much free at base_path
