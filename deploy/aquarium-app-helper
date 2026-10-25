@@ -31,7 +31,10 @@ Layout (storage base from /etc/aquarium/apps.conf, default /var/lib/aquarium-app
     <base>/<slug>/releases/<mode>-<sha>/   root-owned built artifact (basePath is per mode)
     <base>/<slug>/<mode> -> releases/<mode>-<sha>
     /etc/aquarium/apps/<slug>/<mode>.env   PORT, HOSTNAME, APP_SLUG, APP_MODE, APP_BASE_PATH
-    /etc/aquarium/apps/<slug>/<mode>/NAME  root 0600 credentials, one per file
+    /etc/aquarium/apps/<slug>/<mode>/NAME  root 0600 credentials, one per file (APP_MCP_TOKEN, user secrets)
+    /etc/aquarium/apps/<slug>/db-<mode>-{rw,ro}.dsn  written by `aquarium apps db create`;
+                                           delivered as DATABASE_URL / DATABASE_URL_RO
+    /etc/aquarium/apps/<slug>/ticket-<mode>.key      APP_TICKET_KEY (X-Aquarium-Principal key)
 URL paths on the main site: prod /apps/<slug>, dev /apps-dev/<slug>.
 
 Output is one JSON object on stdout. Exit 0 = done, 2 = rejected input,
@@ -42,6 +45,7 @@ Output is one JSON object on stdout. Exit 0 = done, 2 = rejected input,
 import contextlib
 import fcntl
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -108,7 +112,8 @@ MAX_SOURCE_BYTES = 256 * 1024 ** 2
 MAX_TAR_ENTRIES = 200_000
 BUILD_TIMEOUT = 25 * 60
 
-SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$")
+#: Same rule as `aquarium apps db` (deploy/aquarium.py APP_SLUG_RE): starts with a letter.
+SLUG_RE = re.compile(r"^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
@@ -117,10 +122,36 @@ HOSTPORT_RE = re.compile(r"^127\.0\.0\.1:[0-9]{2,5}$")
 #: environment, and the DSNs `aquarium apps db create` writes.
 RESERVED_SECRET_PREFIXES = ("DATABASE_URL", "NEXT_PUBLIC_", "NODE_", "APP_", "CREDENTIALS_")
 RESERVED_SECRET_NAMES = {"PORT", "HOSTNAME", "HOME", "PATH", "LD_PRELOAD", "LD_LIBRARY_PATH"}
+#: Runtime-managed credentials set-secret still accepts despite the APP_ prefix:
+#: the MCP bearer minted by hermes_cli/app_runtime.py for /api/mcp.
+MANAGED_SECRET_NAMES = {"APP_MCP_TOKEN"}
+#: `aquarium apps db create` (deploy/aquarium.py) writes the DSNs here as
+#: db-<mode>-<kind>.dsn; the unit gets rw as DATABASE_URL and ro as DATABASE_URL_RO.
+DSN_CREDENTIALS = (("DATABASE_URL", "rw"), ("DATABASE_URL_RO", "ro"))
+#: agent-home's env file holding AGENT_HOME_APPS_TICKET_SECRET, the master
+#: key of the X-Aquarium-Principal ticket (agent-home/src/lib/apps/ticket.ts).
+AGENT_HOME_ENV = "/etc/aquarium/agent-home.env"
+TICKET_SECRET_KEY = "AGENT_HOME_APPS_TICKET_SECRET"
 
-CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
-       "img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; "
-       "frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'")
+def app_csp(base_path, mode):
+    """Content-Security-Policy of one instance: every source pinned to the app's own
+    path on the shared origin. Mirrors appContentSecurityPolicy() in
+    agent-home/src/lib/apps/headers.ts (FG-33 decision 4)."""
+    base = "https://{host}" + base_path
+    own = f"{base} {base}/"
+    script = f"{own} 'unsafe-inline' 'unsafe-eval'" if mode == "dev" else f"{own} 'unsafe-inline'"
+    return "; ".join([
+        f"default-src {own}", f"script-src {script}", f"style-src {own} 'unsafe-inline'",
+        f"img-src {own} data: blob:", f"media-src {own} data: blob:", f"font-src {own} data:",
+        f"connect-src {own}", f"worker-src {own}", f"manifest-src {own}", "frame-src 'none'",
+        "child-src 'none'", "object-src 'none'", "base-uri 'none'", f"form-action {own}",
+        "frame-ancestors 'none'",
+    ])
+
+
+#: agent-home's session cookie (agent-home/src/lib/auth/session.ts SESSION_COOKIE).
+SESSION_COOKIE_RE = r"(^|;\s*)agent_home_session=[^;]*"
+SESSION_SET_COOKIE_RE = r"(?i)^\s*agent_home_session=.*$"
 
 
 class InputError(Exception):
@@ -142,7 +173,7 @@ class HelperError(Exception):
 
 def check_slug(slug):
     if not isinstance(slug, str) or not SLUG_RE.fullmatch(slug) or "--" in slug:
-        raise InputError("invalid slug (a-z, 0-9 and single dashes, at most 40 characters)")
+        raise InputError("invalid slug (starts with a-z; a-z, 0-9 and single dashes, at most 40 characters)")
     return slug
 
 
@@ -190,6 +221,8 @@ def check_approval(spec):
 def check_secret_name(name):
     if not isinstance(name, str) or not NAME_RE.fullmatch(name):
         raise InputError("secret names look like MY_API_KEY (A-Z, 0-9, _)")
+    if name in MANAGED_SECRET_NAMES:
+        return name
     if name in RESERVED_SECRET_NAMES or name.startswith(RESERVED_SECRET_PREFIXES):
         raise InputError(f"{name} is reserved")
     return name
@@ -301,6 +334,8 @@ def paths(conf, slug, mode):
         "dropin": os.path.join(UNIT_DIR, UNIT_TEMPLATE.format(inst=inst) + ".d", "10-instance.conf"),
         "build_dropin_dir": os.path.join(RUN_UNIT_DIR, BUILD_TEMPLATE.format(inst=inst) + ".d"),
         "caddy": os.path.join(CADDY_DIR, f"aquarium-{inst}.caddy"),
+        "dsn": {cred: os.path.join(ETC_APPS, slug, f"db-{mode}-{kind}.dsn") for cred, kind in DSN_CREDENTIALS},
+        "ticket_key": os.path.join(ETC_APPS, slug, f"ticket-{mode}.key"),
         "base_path": BASE_PATHS[mode].format(slug=slug),
         "idle_state": os.path.join(RUN_DIR, f"{inst}.idle.json"),
     }
@@ -562,7 +597,40 @@ def instance_dropin(conf, p):
         f"Environment=APP_RELEASE={release}",
     ]
     lines += [f"LoadCredential={n}:{os.path.join(p['creds'], n)}" for n in secret_names(p)]
+    lines += [f"LoadCredential={cred}:{path}" for cred, path in p["dsn"].items() if os.path.isfile(path)]
+    if write_ticket_key(p):
+        lines.append(f"LoadCredential=APP_TICKET_KEY:{p['ticket_key']}")
     return "\n".join(lines) + "\n", release
+
+
+def ticket_master():
+    """AGENT_HOME_APPS_TICKET_SECRET from agent-home's root-owned env file, or None."""
+    try:
+        if not _root_file_ok(AGENT_HOME_ENV):
+            return None
+    except FileNotFoundError:
+        return None
+    value = read_env(AGENT_HOME_ENV).get(TICKET_SECRET_KEY, "").strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1]
+    return value or None
+
+
+def write_ticket_key(p):
+    """Write this instance's ticket key (hex HMAC-SHA256(master,
+    "aquarium-app-ticket/v1/<slug>/<mode>"), as deriveAppKey() in
+    agent-home/src/lib/apps/ticket.ts). The app holds only its own key."""
+    master = ticket_master()
+    if not master:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(p["ticket_key"])
+        return False
+    slug, mode = p["inst"].rsplit("-", 1)
+    key = hmac.new(master.encode(), f"aquarium-app-ticket/v1/{slug}/{mode}".encode(),
+                   hashlib.sha256).hexdigest()
+    trusted_dir(p["etc"], 0o700)
+    write_atomic(p["ticket_key"], key, 0o600)
+    return True
 
 
 def write_instance_dropin(conf, p):
@@ -861,6 +929,10 @@ def cmd_stop(conf, spec):
 
 
 def caddy_block(conf, slug, mode, port):
+    """One instance's include. Shape and headers follow the front-door contract in
+    agent-home/deploy/Caddyfile.agent-home (FG-33 P8-1 1.5): route{} so the steps run
+    in order, X-Aquarium-App names the instance to /api/apps/auth, the agent-home
+    session cookie never reaches the app and the app can never set it."""
     p = paths(conf, slug, mode)
     bp = p["base_path"]
     matcher = f"@aquarium-app-{p['inst']}"
@@ -872,15 +944,21 @@ def caddy_block(conf, slug, mode, port):
         "\t\trequest_header -X-Aquarium-Principal\n"
         f"\t\tforward_auth {conf['agent_home']} {{\n"
         f"\t\t\turi /api/apps/auth?slug={slug}&mode={mode}\n"
+        f"\t\t\theader_up X-Aquarium-App \"{slug}/{mode}\"\n"
         "\t\t\tcopy_headers X-Aquarium-Principal\n"
         "\t\t}\n"
+        f"\t\trequest_header Cookie \"{SESSION_COOKIE_RE}\" \"\"\n"
         "\t\theader {\n"
-        f"\t\t\tContent-Security-Policy \"{CSP}\"\n"
-        "\t\t\tX-Content-Type-Options nosniff\n"
-        "\t\t\tReferrer-Policy same-origin\n"
-        "\t\t\tX-Frame-Options SAMEORIGIN\n"
-        "\t\t\tCross-Origin-Opener-Policy same-origin\n"
+        f"\t\t\tContent-Security-Policy \"{app_csp(bp, mode)}\"\n"
+        "\t\t\tCross-Origin-Opener-Policy \"noopener-allow-popups\"\n"
+        "\t\t\tX-Frame-Options \"DENY\"\n"
+        "\t\t\tX-Content-Type-Options \"nosniff\"\n"
+        "\t\t\tReferrer-Policy \"strict-origin-when-cross-origin\"\n"
+        f"\t\t\tSet-Cookie \"{SESSION_SET_COOKIE_RE}\" \"agent_home_session_refused=; Max-Age=0\"\n"
+        "\t\t\t-Service-Worker-Allowed\n"
+        "\t\t\t-Clear-Site-Data\n"
         "\t\t\t-Server\n"
+        "\t\t\tdefer\n"
         "\t\t}\n"
         f"\t\treverse_proxy 127.0.0.1:{port}\n"
         "\t}\n"
@@ -894,6 +972,10 @@ def check_caddy_block(text, conf):
         raise HelperError("refusing a Caddy block without forward_auth to agent-home")
     if not re.search(r"^\t\t\turi /api/apps/auth\?", text, re.M):
         raise HelperError("refusing a Caddy block whose forward_auth is not /api/apps/auth")
+    if not re.search(r'^\t\t\theader_up X-Aquarium-App "[a-z0-9-]+/(dev|prod)"$', text, re.M):
+        raise HelperError("refusing a Caddy block that does not name its instance to /api/apps/auth")
+    if "agent_home_session=[^;]*" not in text:
+        raise HelperError("refusing a Caddy block that forwards the agent-home session cookie")
     if text.count("reverse_proxy") != 1 or text.index("forward_auth") > text.index("reverse_proxy"):
         raise HelperError("refusing a Caddy block that proxies before forward_auth")
     return text
@@ -1110,7 +1192,7 @@ def cmd_run_app():
         for name in sorted(os.listdir(creds)):
             if NAME_RE.fullmatch(name):
                 with open(os.path.join(creds, name), encoding="utf-8") as fh:
-                    env[name] = fh.read()
+                    env[name] = fh.read().rstrip("\r\n")
     os.execve(NODE, [NODE, "server.js"], env)
 
 

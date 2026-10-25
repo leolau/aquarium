@@ -77,7 +77,7 @@ def h(tmp_path, monkeypatch):
         "ETC_APPS": "etc/aquarium/apps", "UNIT_DIR": "etc/systemd/system",
         "RUN_UNIT_DIR": "run/systemd/system", "RUN_DIR": "run/aquarium-apps",
         "CADDYFILE": "etc/caddy/Caddyfile", "CADDY_DIR": "etc/caddy/apps.d",
-        "PROC_MEMINFO": "proc/meminfo",
+        "PROC_MEMINFO": "proc/meminfo", "AGENT_HOME_ENV": "etc/aquarium/agent-home.env",
     }.items():
         monkeypatch.setattr(mod, attr, str(tmp_path / sub))
     monkeypatch.setattr(mod, "PROC_NET_TCP", (str(tmp_path / "proc/net/tcp"),))
@@ -115,7 +115,7 @@ def fake_release(h, slug, mode, sha=SHA):
 # --------------------------------------------------------------------------- validation
 
 
-@pytest.mark.parametrize("slug", ["../etc", "a/b", "Demo", "-x", "x-", "a--b", "", "a" * 41, "a b", None, 5])
+@pytest.mark.parametrize("slug", ["../etc", "a/b", "Demo", "-x", "x-", "a--b", "", "a" * 41, "a b", "1app", None, 5])
 def test_rejects_bad_slugs(h, slug):
     with pytest.raises(h.InputError):
         h.cmd_allocate(conf(h), {"slug": slug, "mode": "dev"})
@@ -190,6 +190,49 @@ def test_set_secret_writes_0600_and_never_echoes_value(h):
     assert f.read_text() == "sk_live_zzz" and stat.S_IMODE(f.stat().st_mode) == 0o600
     h.cmd_set_secret(c, {"slug": "demo", "mode": "dev", "name": "STRIPE_KEY", "delete": True})
     assert not f.exists()
+
+
+def test_set_secret_accepts_the_runtime_managed_mcp_token(h):
+    # hermes_cli/app_runtime.py AppRuntime.allocate delivers the app's MCP bearer this way.
+    c = conf(h)
+    h.cmd_allocate(c, {"slug": "demo", "mode": "dev"})
+    doc = h.cmd_set_secret(c, {"slug": "demo", "mode": "dev", "name": "APP_MCP_TOKEN", "value": "tok"})
+    assert doc["secret_names"] == ["APP_MCP_TOKEN"]
+    with pytest.raises(h.InputError):
+        h.cmd_set_secret(c, {"slug": "demo", "mode": "dev", "name": "APP_TICKET_KEY", "value": "x"})
+
+
+def test_start_delivers_the_app_db_dsns_and_its_own_ticket_key(h):
+    import hashlib
+    import hmac
+    c = conf(h)
+    h.cmd_allocate(c, {"slug": "demo", "mode": "dev"})
+    fake_release(h, "demo", "dev")
+    etc = h.W / "etc/aquarium/apps/demo"
+    # what `aquarium apps db create demo dev` (deploy/aquarium.py) writes
+    for kind in ("owner", "rw", "ro"):
+        (etc / f"db-dev-{kind}.dsn").write_text(f"postgresql://{kind}@127.0.0.1:54331/x\n")
+    (h.W / "etc/aquarium/agent-home.env").write_text("PORT=3100\nAGENT_HOME_APPS_TICKET_SECRET=master-secret\n")
+    h.cmd_start(c, {"slug": "demo", "mode": "dev"})
+    dropin = (h.W / "etc/systemd/system/aquarium-app@demo-dev.service.d/10-instance.conf").read_text()
+    assert f"LoadCredential=DATABASE_URL:{etc}/db-dev-rw.dsn" in dropin
+    assert f"LoadCredential=DATABASE_URL_RO:{etc}/db-dev-ro.dsn" in dropin
+    assert "owner.dsn" not in dropin and "postgresql://" not in dropin
+    key = (etc / "ticket-dev.key")
+    want = hmac.new(b"master-secret", b"aquarium-app-ticket/v1/demo/dev", hashlib.sha256).hexdigest()
+    assert key.read_text() == want and stat.S_IMODE(key.stat().st_mode) == 0o600
+    assert f"LoadCredential=APP_TICKET_KEY:{key}" in dropin and "master-secret" not in dropin
+
+
+def test_run_app_strips_the_trailing_newline_of_credential_files(h, tmp_path, monkeypatch):
+    creds = tmp_path / "creds"
+    creds.mkdir()
+    (creds / "DATABASE_URL").write_text("postgresql://x/y\n")
+    seen = {}
+    monkeypatch.setattr(h.os, "execve", lambda path, argv, env: seen.update(env))
+    monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(creds))
+    h.cmd_run_app()
+    assert seen["DATABASE_URL"] == "postgresql://x/y"
 
 
 def test_start_writes_instance_dropin_pinning_release_and_credentials(h):
@@ -309,6 +352,12 @@ def test_route_block_has_forward_auth_and_csp(h):
     assert text.index("request_header -X-Aquarium-Principal") < text.index("forward_auth 127.0.0.1:3100")
     assert text.index("forward_auth") < text.index("reverse_proxy 127.0.0.1:")
     assert "uri /api/apps/auth?slug=demo&mode=prod" in text and "Content-Security-Policy" in text
+    # the front-door contract of agent-home/deploy/Caddyfile.agent-home (item 1.5)
+    assert 'header_up X-Aquarium-App "demo/prod"' in text
+    assert text.index("forward_auth") < text.index("request_header Cookie") < text.index("reverse_proxy")
+    assert "connect-src https://{host}/apps/demo https://{host}/apps/demo/;" in text
+    assert "frame-ancestors 'none'" in text and "-Service-Worker-Allowed" in text
+    assert "agent_home_session_refused=; Max-Age=0" in text
     assert "caddy validate" in calls(h) and "systemctl reload caddy" in calls(h)
 
 
@@ -316,6 +365,8 @@ def test_route_block_has_forward_auth_and_csp(h):
     lambda t: t.replace("\t\tforward_auth 127.0.0.1:3100 {\n", "\t\tbasicauth {\n"),
     lambda t: t.replace("/api/apps/auth?", "/login?"),
     lambda t: t.replace("\t\trequest_header -X-Aquarium-Principal\n", "\t\treverse_proxy 127.0.0.1:1\n"),
+    lambda t: "".join(ln for ln in t.splitlines(True) if "X-Aquarium-App" not in ln),
+    lambda t: "".join(ln for ln in t.splitlines(True) if "request_header Cookie" not in ln),
 ])
 def test_block_without_forward_auth_is_refused(h, mutate):
     c = conf(h)
@@ -528,7 +579,7 @@ def test_sudoers_helper_lines_allow_only_the_verb():
 def test_sudoers_db_argv_for_item_1_3():
     db = sorted(r.split("NOPASSWD: ", 1)[1] for r in _rules() if "aquarium apps db" in r)
     expected = sorted(f"/usr/local/sbin/aquarium apps db {v} * {m}"
-                      for v in ("create", "migrate", "status", "suspend", "drop") for m in ("dev", "prod"))
+                      for v in ("create", "migrate", "status", "suspend", "resume", "drop") for m in ("dev", "prod"))
     assert db == expected
 
 
