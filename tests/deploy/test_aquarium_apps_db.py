@@ -424,11 +424,12 @@ class TestAppsDatabasesEndToEnd:
 
     def test_prod_archive_and_restore_need_an_approval(self, cluster):
         root, conf = cluster
-        assert not answer(cli(root, "apps", "db", "archive", "notes", "prod"))["ok"]
-        out = answer(cli(root, "apps", "db", "archive", "notes", "prod", spec={"approval_ref": approve(conf, "notes")}))
+        assert answer(cli(root, "apps", "db", "create", "keep", "prod", spec={"approval_ref": approve(conf, "keep")}))["ok"]
+        assert not answer(cli(root, "apps", "db", "archive", "keep", "prod"))["ok"]
+        out = answer(cli(root, "apps", "db", "archive", "keep", "prod", spec={"approval_ref": approve(conf, "keep")}))
         assert out["ok"]
         spec = {"backup_ref": out["backup_ref"]}
-        assert not answer(cli(root, "apps", "db", "restore", "notes", "prod", spec=spec))["ok"]
-        res = answer(cli(root, "apps", "db", "restore", "notes", "prod",
-                         spec={**spec, "approval_ref": approve(conf, "notes")}))
-        assert res["ok"] and res["restored"] is False
+        assert not answer(cli(root, "apps", "db", "restore", "keep", "prod", spec=spec))["ok"]
+        res = answer(cli(root, "apps", "db", "restore", "keep", "prod",
+                         spec={**spec, "approval_ref": approve(conf, "keep")}))
+        assert res["ok"] and res["restored"] is True  # a new database has no rows yet: the copy is reloaded
