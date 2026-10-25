@@ -141,6 +141,15 @@ DEFAULT_POLICY: dict[str, dict[str, Any]] = {
 }
 
 _INT_SECTIONS = ("per_app", "per_member", "box")
+#: Accepted range of the per-app values the root app helper writes into each
+#: instance's systemd drop-in (MemoryHigh/MemoryMax in MB, CPUQuota in % of
+#: one core): one app fits in aquarium-apps.slice (3 GB, 200%). Equal to
+#: deploy/aquarium-app-helper APP_LIMIT_BOUNDS.
+APP_UNIT_LIMIT_BOUNDS: dict[str, tuple[int, int]] = {
+    "memory_high_mb": (128, 3072),
+    "memory_max_mb": (128, 3072),
+    "cpu_quota_pct": (10, 200),
+}
 #: Keys a per-member override may set.
 MEMBER_OVERRIDE_KEYS: frozenset[str] = frozenset(
     f"{section}.{key}"
@@ -518,6 +527,9 @@ def validate_tier_limits(limits: Any) -> dict[str, Optional[dict[str, dict[str, 
                     raise QuotaError(f"unknown limit {tier}.{sec}.{key}")
                 if not _valid_int(value):
                     raise QuotaError(f"{tier}.{sec}.{key} must be a whole number from 0 to {_MAX_INT}")
+                bounds = APP_UNIT_LIMIT_BOUNDS.get(key) if sec == "per_app" else None
+                if bounds and not bounds[0] <= value <= bounds[1]:
+                    raise QuotaError(f"{tier}.per_app.{key} must be from {bounds[0]} to {bounds[1]}")
                 out.setdefault(sec, {})[key] = value
         per_app = {**DEFAULT_POLICY["per_app"], **out.get("per_app", {})}
         if per_app["memory_high_mb"] > per_app["memory_max_mb"]:

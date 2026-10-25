@@ -24,6 +24,13 @@ arguments; the request is one JSON object on stdin:
                 (Settings -> App storage / App limits; storage_base also sets
                 APPS_BASE in /etc/aquarium/aquarium.conf for `aquarium apps db`)
 
+Every start/restart writes the instance's systemd memory/CPU caps
+(aquarium-app@<inst>.service.d/50-limits.conf) from the root-owned policy this
+helper reads itself (app_limits()), never from the request. A `configure`
+limits change therefore reaches an app at its next start or restart; running
+apps are not changed live (`set-property` lowering MemoryMax under an app's
+current use would OOM-kill it).
+
 The caller is UNTRUSTED: every field is validated here, ports come from the
 box, never the request, and prod activation needs an ``approval_ref``.
 Root-only argv forms (no sudo rule): ``status --all`` (deploy report) and
@@ -79,6 +86,14 @@ LIMIT_KEYS = {
                    "external_apps"),
 }
 MAX_LIMIT = 10_000_000
+#: systemd caps of one app instance when no policy sets them. Equal to
+#: hermes_cli/app_quota.py DEFAULT_POLICY per_app and the fallbacks hardcoded
+#: in aquarium-app@.service.
+DEFAULT_APP_LIMITS = {"memory_high_mb": 384, "memory_max_mb": 512, "cpu_quota_pct": 50}
+#: Accepted range of those caps (equal to app_quota.APP_UNIT_LIMIT_BOUNDS): one
+#: app fits in aquarium-apps.slice (MemoryMax=3G, CPUQuota=200%).
+APP_LIMIT_BOUNDS = {"memory_high_mb": (128, 3072), "memory_max_mb": (128, 3072),
+                    "cpu_quota_pct": (10, 200)}
 
 
 def _etc(name):
@@ -119,7 +134,6 @@ IDLE_UNIT = "aquarium-app-idle-{inst}"
 #: FG-33 §6: the 6 GB aquarium.slice ceiling and the box reserve.
 SLICE_CEILING = 6 * 1024 ** 3
 DEFAULT_RESERVED_MB = 3072
-START_REQUEST = 384 * 1024 ** 2      # MemoryHigh of one instance (the sizing figure)
 BUILD_REQUEST = 2 * 1024 ** 3        # the build slice
 DEV_IDLE_SECONDS = 25 * 60           # decision 7: dev idle-stopped after 20–30 min
 IDLE_CHECK_SECONDS = 60
@@ -355,6 +369,7 @@ def paths(conf, slug, mode):
         "creds": os.path.join(ETC_APPS, slug, mode),
         "dropin_dir": os.path.join(UNIT_DIR, UNIT_TEMPLATE.format(inst=inst) + ".d"),
         "dropin": os.path.join(UNIT_DIR, UNIT_TEMPLATE.format(inst=inst) + ".d", "10-instance.conf"),
+        "limits_dropin": os.path.join(UNIT_DIR, UNIT_TEMPLATE.format(inst=inst) + ".d", "50-limits.conf"),
         "build_dropin_dir": os.path.join(RUN_UNIT_DIR, BUILD_TEMPLATE.format(inst=inst) + ".d"),
         "caddy": os.path.join(CADDY_DIR, f"aquarium-{inst}.caddy"),
         "dsn": {cred: os.path.join(ETC_APPS, slug, f"db-{mode}-{kind}.dsn") for cred, kind in DSN_CREDENTIALS},
@@ -468,25 +483,60 @@ def current_release(p):
 # ---------------------------------------------------------------------------
 
 
-def reserved_bytes():
-    """``box.reserved_mb`` from the root-owned quota policy, else 3 GB."""
-    mb = DEFAULT_RESERVED_MB
+def quota_section(name):
+    """Whole-number ``key: N`` lines directly under top-level ``name:`` of the
+    root-owned quota policy (stdlib only, so no YAML parser); {} if unreadable."""
+    out = {}
     try:
-        if _root_file_ok(QUOTA_PATH):
-            with open(QUOTA_PATH, encoding="utf-8") as fh:
-                in_box = False
-                for line in fh:
-                    if re.match(r"^box:\s*(#.*)?$", line):
-                        in_box = True
-                    elif re.match(r"^\S", line):
-                        in_box = False
-                    elif in_box:
-                        m = re.match(r"^\s+reserved_mb:\s*([0-9]{1,7})\s*(#.*)?$", line)
-                        if m:
-                            mb = int(m.group(1))
+        if not _root_file_ok(QUOTA_PATH):
+            return out
+        with open(QUOTA_PATH, encoding="utf-8") as fh:
+            inside, indent = False, None
+            for line in fh:
+                if re.match(rf"^{re.escape(name)}:\s*(#.*)?$", line):
+                    inside, indent = True, None
+                elif re.match(r"^\S", line):
+                    inside = False
+                elif inside:
+                    m = re.match(r"^( +)([a-z_]+):\s*([0-9]{1,7})?\s*(#.*)?$", line)
+                    if not m:
+                        continue
+                    indent = len(m.group(1)) if indent is None else indent
+                    if len(m.group(1)) == indent and m.group(3):
+                        out[m.group(2)] = int(m.group(3))
     except OSError:
         pass
-    return mb * 1024 ** 2
+    return out
+
+
+def reserved_bytes():
+    """``box.reserved_mb`` from the root-owned quota policy, else 3 GB."""
+    return quota_section("box").get("reserved_mb", DEFAULT_RESERVED_MB) * 1024 ** 2
+
+
+def app_limits():
+    """MemoryHigh/MemoryMax (MB) and CPUQuota (%) of every app instance:
+    DEFAULT_APP_LIMITS, then app-quotas.yaml ``per_app``, then the Settings ->
+    App limits member tier, the same base tier as hermes_cli/app_quota.py
+    ``load_policy().section("per_app")``. The helper has no trusted record of an
+    app's owner, so admin-tier and per-member overrides do not reach systemd.
+    Files that are not root-owned, and values outside APP_LIMIT_BOUNDS, are
+    skipped (the earlier value stays), as app_quota does."""
+    limits = dict(DEFAULT_APP_LIMITS)
+    layers = [quota_section("per_app")]
+    try:
+        member = read_limits().get("member")
+    except (HelperError, OSError, ValueError):
+        member = None
+    if isinstance(member, dict) and isinstance(member.get("per_app"), dict):
+        layers.append(member["per_app"])
+    for layer in layers:
+        for key, (low, high) in APP_LIMIT_BOUNDS.items():
+            value = layer.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and low <= value <= high:
+                limits[key] = value
+    limits["memory_high_mb"] = min(limits["memory_high_mb"], limits["memory_max_mb"])
+    return limits
 
 
 def mem_available():
@@ -661,6 +711,20 @@ def write_instance_dropin(conf, p):
     os.makedirs(p["dropin_dir"], mode=0o755, exist_ok=True)
     write_atomic(p["dropin"], text, 0o644)
     return release
+
+
+def write_limits_dropin(p, limits):
+    """Root-owned caps overriding the unit's fallback MemoryHigh/MemoryMax/CPUQuota."""
+    text = "\n".join([
+        "# Written by aquarium-app-helper from the app limits policy; do not edit "
+        "(rewritten on every start).",
+        "[Service]",
+        f"MemoryHigh={limits['memory_high_mb']}M",
+        f"MemoryMax={limits['memory_max_mb']}M",
+        f"CPUQuota={limits['cpu_quota_pct']}%",
+    ]) + "\n"
+    os.makedirs(p["dropin_dir"], mode=0o755, exist_ok=True)
+    write_atomic(p["limits_dropin"], text, 0o644)
 
 
 # ---------------------------------------------------------------------------
@@ -900,9 +964,11 @@ def _run_build(conf, p, slug, sha, rel_dir):
 def _start(conf, slug, mode, restart=False):
     p, _ = require_allocated(conf, slug, mode)
     was_active = show(p["unit"], "ActiveState").get("ActiveState") == "active"
+    limits = app_limits()
     if not was_active:
-        admit(START_REQUEST, "start")
+        admit(limits["memory_high_mb"] * 1024 ** 2, "start")
     write_instance_dropin(conf, p)
+    write_limits_dropin(p, limits)
     systemctl("daemon-reload")
     systemctl("reset-failed", p["unit"], check=False)
     if mode == "prod":
@@ -1164,6 +1230,12 @@ def check_limits(limits):
                 if key not in LIMIT_KEYS[section]:
                     raise InputError(f"unknown limit {tier}.{section}.{key}")
                 out.setdefault(section, {})[key] = _whole(value, f"{tier}.{section}.{key}")
+                bounds = APP_LIMIT_BOUNDS.get(key) if section == "per_app" else None
+                if bounds and not bounds[0] <= value <= bounds[1]:
+                    raise InputError(f"{tier}.per_app.{key} must be from {bounds[0]} to {bounds[1]}")
+        per_app = {**DEFAULT_APP_LIMITS, **out.get("per_app", {})}
+        if per_app["memory_high_mb"] > per_app["memory_max_mb"]:
+            raise InputError(f"{tier}: memory_high_mb cannot exceed memory_max_mb")
         clean[tier] = out
     return clean
 

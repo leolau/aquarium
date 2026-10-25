@@ -10,10 +10,10 @@
 # Per-member overrides and the storage location can also be set by the owner
 # or an admin through PUT /api/quotas/{user_id} and PUT /api/quotas/box.
 
-per_app:
-  memory_high_mb: 384     # systemd MemoryHigh per instance
-  memory_max_mb: 512      # systemd MemoryMax per instance
-  cpu_quota_pct: 50       # systemd CPUQuota per instance; apps-watch alerts when an app stays near it
+per_app:                  # memory/CPU reach an app's systemd unit at its next start or restart
+  memory_high_mb: 384     # systemd MemoryHigh per instance (128-3072; also the start admission figure)
+  memory_max_mb: 512      # systemd MemoryMax per instance (128-3072, not below memory_high_mb)
+  cpu_quota_pct: 50       # systemd CPUQuota per instance (10-200); apps-watch alerts when an app stays near it
   disk_mb: 1536           # repo + node_modules + releases
   db_mb: 500              # one app database (per mode)
   db_connections: 5

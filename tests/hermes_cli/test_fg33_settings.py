@@ -161,6 +161,7 @@ def test_tier_edits_owner_both_admin_member_only():
 @pytest.mark.parametrize("bad", [
     {"viewer": {}}, {"member": {"per_app": {"nope": 1}}}, {"member": {"per_app": {"disk_mb": -1}}},
     {"member": {"per_app": {"memory_high_mb": 900, "memory_max_mb": 512}}}, {},
+    {"member": {"per_app": {"cpu_quota_pct": 0}}}, {"admin": {"per_app": {"memory_max_mb": 99999}}},
 ])
 def test_tier_limit_validation(bad):
     with pytest.raises(app_quota.QuotaError):
