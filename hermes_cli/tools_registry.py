@@ -48,7 +48,8 @@ import json
 import re
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, List, Literal, Mapping, Optional
+from typing import TYPE_CHECKING, Any, List, Literal, Mapping, Optional, Sequence
+from urllib.parse import urlparse
 
 from hermes_cli.access import (
     SHARED,
@@ -67,8 +68,22 @@ if TYPE_CHECKING:
 #: Registry table (RLS applied). Lives in the store's mode schema (C3).
 TOOLS_TABLE = "tools"
 
-ToolKind = Literal["in_house", "remote", "builtin"]
-_TOOL_KINDS: tuple[ToolKind, ...] = ("in_house", "remote", "builtin")
+ToolKind = Literal["in_house", "remote", "builtin", "external"]
+_TOOL_KINDS: tuple[ToolKind, ...] = ("in_house", "remote", "builtin", "external")
+
+#: Where a vibe-coded app runs (FG-33): ``local`` = on this box (a D3
+#: ``in_house`` tool), ``external`` = on a hosting provider (``kind='external'``).
+#: ``NULL`` for legacy tools.
+ToolHosting = Literal["local", "external"]
+_TOOL_HOSTINGS: tuple[ToolHosting, ...] = ("local", "external")
+
+ToolBuildState = Literal["draft", "building", "ready", "failed"]
+_TOOL_BUILD_STATES: tuple[ToolBuildState, ...] = (
+    "draft", "building", "ready", "failed",
+)
+
+ToolIconSource = Literal["generated", "uploaded", "favicon"]
+_TOOL_ICON_SOURCES: tuple[ToolIconSource, ...] = ("generated", "uploaded", "favicon")
 
 ToolStatus = Literal["enabled", "disabled"]
 _TOOL_STATUSES: tuple[ToolStatus, ...] = ("enabled", "disabled")
@@ -77,6 +92,17 @@ _TOOL_STATUSES: tuple[ToolStatus, ...] = ("enabled", "disabled")
 DEFAULT_IN_HOUSE_STACK = "nextjs-node"
 
 _VALID_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+#: Tool names that sibling ``/api/tools/<x>`` routes (and FG-33 app routes)
+#: would shadow. Compared case-insensitively because the slug becomes a
+#: hostname.
+RESERVED_TOOL_NAMES: frozenset[str] = frozenset({
+    "mcp", "personal-mcp", "toolsets", "changes", "computer-use",
+    "apps", "health", "quota",
+})
+
+_VALID_SECRET_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+_VALID_RELEASE_SHA = re.compile(r"^[0-9a-f]{7,64}$")
 
 # Behavioural config must never be smuggled in as an env var. ``.env`` is for
 # secrets only (AGENTS.md); a ``HERMES_*`` key in a tool's config_json is a
@@ -123,6 +149,80 @@ def _reject_env_var_keys(node: object, *, path: str) -> None:
             _reject_env_var_keys(item, path=f"{path}[{index}]")
 
 
+def _validate_tool_name(name: str) -> None:
+    if not _VALID_NAME.fullmatch(name or ""):
+        raise ValueError(f"Invalid tool name: {name!r}")
+    if name.lower() in RESERVED_TOOL_NAMES:
+        raise ValueError(
+            f"Tool name {name!r} is reserved (a sibling /api/tools route "
+            "would shadow it)"
+        )
+
+
+def _check(value: Optional[str], allowed: tuple[str, ...], field: str) -> None:
+    if value is not None and value not in allowed:
+        raise ValueError(f"Invalid tool {field}: {value!r}")
+
+
+def _validate_https_url(value: Optional[str], field: str) -> None:
+    if value is None:
+        return
+    parsed = urlparse(value)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise ValueError(f"Tool {field} must be an https:// URL: {value!r}")
+
+
+def _validate_app_fields(
+    principal: Principal,
+    kind: str,
+    fields: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Validate the FG-33 app columns passed to :meth:`ToolRegistry.create`.
+
+    Returns a normalized copy. ``kind='external'`` implies (and defaults to)
+    ``hosting='external'``; ``hosting='external'`` requires that kind. The
+    owner-only runtime knobs (``always_on``, ``limits_json``) are refused for
+    any other principal.
+    """
+    out = dict(fields)
+    hosting = out.get("hosting")
+    if kind == "external" and hosting is None:
+        hosting = out["hosting"] = "external"
+    _check(hosting, _TOOL_HOSTINGS, "hosting")
+    if (kind == "external") != (hosting == "external") and hosting is not None:
+        raise ValueError(
+            f"Tool kind {kind!r} does not match hosting {hosting!r}: "
+            "provider-hosted apps are kind 'external', local apps stay 'in_house'"
+        )
+    _check(out.get("build_state"), _TOOL_BUILD_STATES, "build_state")
+    _check(out.get("icon_source"), _TOOL_ICON_SOURCES, "icon_source")
+    _validate_https_url(out.get("public_url"), "public_url")
+    _validate_https_url(out.get("dashboard_url"), "dashboard_url")
+    sha = out.get("release_sha")
+    if sha is not None and not _VALID_RELEASE_SHA.fullmatch(sha):
+        raise ValueError(f"Invalid tool release_sha: {sha!r}")
+    profile = out.get("coder_profile")
+    if profile is not None:
+        from hermes_cli.profiles import validate_profile_name
+
+        validate_profile_name(profile)
+    names = out.get("secret_names")
+    if names is not None:
+        if isinstance(names, str) or not all(
+            isinstance(n, str) and _VALID_SECRET_NAME.fullmatch(n) for n in names
+        ):
+            raise ValueError("Tool secret_names must be a list of secret names")
+        out["secret_names"] = list(dict.fromkeys(names))
+    if out.get("limits_json") is not None:
+        out["limits_json"] = validate_tool_config(out["limits_json"])
+    owner_only = [k for k in ("always_on", "limits_json") if out.get(k) is not None]
+    if owner_only and not principal.is_owner:
+        raise PermissionError(
+            f"only the owner may set {', '.join(owner_only)} on a tool"
+        )
+    return out
+
+
 def _tools_schema_sql(table: str = TOOLS_TABLE) -> str:
     """DDL creating the ``tools`` registry table (idempotent).
 
@@ -136,7 +236,7 @@ def _tools_schema_sql(table: str = TOOLS_TABLE) -> str:
 CREATE TABLE IF NOT EXISTS {table} (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
-    kind TEXT NOT NULL CHECK (kind IN ('in_house', 'remote', 'builtin')),
+    kind TEXT NOT NULL CHECK (kind IN ('in_house', 'remote', 'builtin', 'external')),
     stack TEXT NOT NULL DEFAULT '',
     owner_user_id TEXT NOT NULL,
     visibility TEXT NOT NULL,
@@ -150,11 +250,64 @@ CREATE TABLE IF NOT EXISTS {table} (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS {index} ON {table} (visibility);
+ALTER TABLE {table}
+    ADD COLUMN IF NOT EXISTS hosting TEXT
+        CHECK (hosting IN ('local', 'external')),
+    ADD COLUMN IF NOT EXISTS display_name TEXT,
+    ADD COLUMN IF NOT EXISTS description TEXT,
+    ADD COLUMN IF NOT EXISTS icon TEXT,
+    ADD COLUMN IF NOT EXISTS icon_color TEXT,
+    ADD COLUMN IF NOT EXISTS icon_asset_id TEXT,
+    ADD COLUMN IF NOT EXISTS icon_source TEXT
+        CHECK (icon_source IN ('generated', 'uploaded', 'favicon')),
+    ADD COLUMN IF NOT EXISTS public_url TEXT,
+    ADD COLUMN IF NOT EXISTS dashboard_url TEXT,
+    ADD COLUMN IF NOT EXISTS repo_path TEXT,
+    ADD COLUMN IF NOT EXISTS release_sha TEXT,
+    ADD COLUMN IF NOT EXISTS project_slug TEXT,
+    ADD COLUMN IF NOT EXISTS build_state TEXT
+        CHECK (build_state IN ('draft', 'building', 'ready', 'failed')),
+    ADD COLUMN IF NOT EXISTS always_on BOOLEAN,
+    ADD COLUMN IF NOT EXISTS limits_json JSONB,
+    ADD COLUMN IF NOT EXISTS secret_names TEXT[],
+    ADD COLUMN IF NOT EXISTS coder_profile TEXT;
+DO $$
+DECLARE con record;
+BEGIN
+    FOR con IN
+        SELECT conname FROM pg_constraint
+        WHERE conrelid = '{table}'::regclass AND contype = 'c'
+          AND pg_get_constraintdef(oid) LIKE '%(kind = ANY%'
+          AND pg_get_constraintdef(oid) NOT LIKE '%''external''%'
+    LOOP
+        EXECUTE format('ALTER TABLE {table} DROP CONSTRAINT %I', con.conname);
+        EXECUTE 'ALTER TABLE {table} ADD CONSTRAINT ' || quote_ident(con.conname)
+            || ' CHECK (kind IN (''in_house'', ''remote'', ''builtin'', ''external''))';
+    END LOOP;
+END $$;
 """
 
-_COLUMNS = (
-    "id, name, kind, stack, owner_user_id, visibility, mode, status, "
-    "mcp_endpoint_ref, web_url, config_json"
+#: FG-33 app columns (all nullable, additive). ``create`` keeps a stored value
+#: when the caller passes ``None``.
+_APP_COLUMN_NAMES: tuple[str, ...] = (
+    "hosting", "display_name", "description", "icon", "icon_color",
+    "icon_asset_id", "icon_source", "public_url", "dashboard_url", "repo_path",
+    "release_sha", "project_slug", "build_state", "always_on", "limits_json",
+    "secret_names", "coder_profile",
+)
+
+_COLUMN_NAMES: tuple[str, ...] = (
+    "id", "name", "kind", "stack", "owner_user_id", "visibility", "mode",
+    "status", "mcp_endpoint_ref", "web_url", "config_json",
+) + _APP_COLUMN_NAMES
+
+_COLUMNS = ", ".join(_COLUMN_NAMES)
+
+#: Columns ``promote_tool`` does NOT copy from dev: prod mints its own id,
+#: tags the row ``prod`` and always lands it ``disabled``.
+_PROMOTE_EXEMPT: frozenset[str] = frozenset({"id", "mode", "status"})
+_PROMOTED_COLUMNS: tuple[str, ...] = tuple(
+    c for c in _COLUMN_NAMES if c not in _PROMOTE_EXEMPT
 )
 
 
@@ -173,6 +326,23 @@ class Tool:
     mcp_endpoint_ref: Optional[str]
     web_url: Optional[str]
     config_json: dict
+    hosting: Optional[ToolHosting] = None
+    display_name: Optional[str] = None
+    description: Optional[str] = None
+    icon: Optional[str] = None
+    icon_color: Optional[str] = None
+    icon_asset_id: Optional[str] = None
+    icon_source: Optional[ToolIconSource] = None
+    public_url: Optional[str] = None
+    dashboard_url: Optional[str] = None
+    repo_path: Optional[str] = None
+    release_sha: Optional[str] = None
+    project_slug: Optional[str] = None
+    build_state: Optional[ToolBuildState] = None
+    always_on: Optional[bool] = None
+    limits_json: Optional[dict] = None
+    secret_names: Optional[tuple[str, ...]] = None
+    coder_profile: Optional[str] = None
 
     @property
     def enabled(self) -> bool:
@@ -192,6 +362,13 @@ class Tool:
             "mcp_endpoint_ref": self.mcp_endpoint_ref,
             "web_url": self.web_url,
             "config_json": dict(self.config_json),
+            **{name: getattr(self, name) for name in _APP_COLUMN_NAMES},
+            "limits_json": (
+                dict(self.limits_json) if self.limits_json is not None else None
+            ),
+            "secret_names": (
+                list(self.secret_names) if self.secret_names is not None else None
+            ),
         }
 
 
@@ -199,6 +376,10 @@ def _row_to_tool(row: "asyncpg.Record") -> Tool:
     config = row["config_json"]
     if isinstance(config, str):
         config = json.loads(config)
+    limits = row["limits_json"]
+    if isinstance(limits, str):
+        limits = json.loads(limits)
+    secret_names = row["secret_names"]
     return Tool(
         id=str(row["id"]),
         name=str(row["name"]),
@@ -211,6 +392,23 @@ def _row_to_tool(row: "asyncpg.Record") -> Tool:
         mcp_endpoint_ref=row["mcp_endpoint_ref"],
         web_url=row["web_url"],
         config_json=dict(config or {}),
+        hosting=row["hosting"],
+        display_name=row["display_name"],
+        description=row["description"],
+        icon=row["icon"],
+        icon_color=row["icon_color"],
+        icon_asset_id=row["icon_asset_id"],
+        icon_source=row["icon_source"],
+        public_url=row["public_url"],
+        dashboard_url=row["dashboard_url"],
+        repo_path=row["repo_path"],
+        release_sha=row["release_sha"],
+        project_slug=row["project_slug"],
+        build_state=row["build_state"],
+        always_on=row["always_on"],
+        limits_json=dict(limits) if limits is not None else None,
+        secret_names=tuple(secret_names) if secret_names is not None else None,
+        coder_profile=row["coder_profile"],
     )
 
 
@@ -297,6 +495,23 @@ class ToolRegistry:
         status: ToolStatus = "disabled",
         mcp_endpoint_ref: Optional[str] = None,
         web_url: Optional[str] = None,
+        hosting: Optional[ToolHosting] = None,
+        display_name: Optional[str] = None,
+        description: Optional[str] = None,
+        icon: Optional[str] = None,
+        icon_color: Optional[str] = None,
+        icon_asset_id: Optional[str] = None,
+        icon_source: Optional[ToolIconSource] = None,
+        public_url: Optional[str] = None,
+        dashboard_url: Optional[str] = None,
+        repo_path: Optional[str] = None,
+        release_sha: Optional[str] = None,
+        project_slug: Optional[str] = None,
+        build_state: Optional[ToolBuildState] = None,
+        always_on: Optional[bool] = None,
+        limits_json: Optional[Mapping[str, object]] = None,
+        secret_names: Optional[Sequence[str]] = None,
+        coder_profile: Optional[str] = None,
         connection: Optional["asyncpg.Connection"] = None,
     ) -> Tool:
         """Create (or update-in-place) a tool as ``principal``.
@@ -304,29 +519,51 @@ class ToolRegistry:
         A ``viewer`` may not author tools. The tool's ``mode`` is the store's
         mode, so it lands in the matching schema and only sessions of that mode
         resolve it. ``config`` is validated against the no-``HERMES_*`` contract.
+        Reserved names (:data:`RESERVED_TOOL_NAMES`) are refused. On an update
+        in place, an FG-33 app field passed as ``None`` keeps its stored value.
         """
         if principal.role == "viewer":
             raise PermissionError("viewer principals may not create tools")
-        if not _VALID_NAME.fullmatch(name or ""):
-            raise ValueError(f"Invalid tool name: {name!r}")
+        _validate_tool_name(name)
         if kind not in _TOOL_KINDS:
             raise ValueError(f"Invalid tool kind: {kind!r}")
         if status not in _TOOL_STATUSES:
             raise ValueError(f"Invalid tool status: {status!r}")
         normalized_config = validate_tool_config(config)
         resolved_visibility = _resolve_visibility(principal, visibility)
-        if not stack and kind == "in_house":
+        if not stack and kind in ("in_house", "external"):
             stack = DEFAULT_IN_HOUSE_STACK
+        app = _validate_app_fields(principal, kind, {
+            "hosting": hosting, "display_name": display_name,
+            "description": description, "icon": icon, "icon_color": icon_color,
+            "icon_asset_id": icon_asset_id, "icon_source": icon_source,
+            "public_url": public_url, "dashboard_url": dashboard_url,
+            "repo_path": repo_path, "release_sha": release_sha,
+            "project_slug": project_slug, "build_state": build_state,
+            "always_on": always_on, "limits_json": limits_json,
+            "secret_names": secret_names, "coder_profile": coder_profile,
+        })
+        if app["limits_json"] is not None:
+            app["limits_json"] = json.dumps(app["limits_json"], sort_keys=True)
+        app_values = [app[c] for c in _APP_COLUMN_NAMES]
+        app_casts = {"limits_json": "::jsonb", "secret_names": "::text[]"}
+        app_params = ", ".join(
+            f"${12 + i}{app_casts.get(c, '')}"
+            for i, c in enumerate(_APP_COLUMN_NAMES)
+        )
+        app_updates = "".join(
+            f",\n                    {c} = COALESCE(EXCLUDED.{c}, {TOOLS_TABLE}.{c})"
+            for c in _APP_COLUMN_NAMES
+        )
 
         own = connection is None
         conn = connection or await self._connect()
         try:
             row = await conn.fetchrow(
                 f"""
-                INSERT INTO {TOOLS_TABLE}
-                    (id, name, kind, stack, owner_user_id, visibility, mode,
-                     status, mcp_endpoint_ref, web_url, config_json)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
+                INSERT INTO {TOOLS_TABLE} ({_COLUMNS})
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb,
+                        {app_params})
                 ON CONFLICT (name) DO UPDATE SET
                     kind = EXCLUDED.kind,
                     stack = EXCLUDED.stack,
@@ -334,7 +571,7 @@ class ToolRegistry:
                     status = EXCLUDED.status,
                     mcp_endpoint_ref = EXCLUDED.mcp_endpoint_ref,
                     web_url = EXCLUDED.web_url,
-                    config_json = EXCLUDED.config_json,
+                    config_json = EXCLUDED.config_json{app_updates},
                     updated_at = NOW()
                 WHERE {TOOLS_TABLE}.owner_user_id = EXCLUDED.owner_user_id
                 RETURNING {_COLUMNS}
@@ -350,6 +587,7 @@ class ToolRegistry:
                 mcp_endpoint_ref,
                 web_url,
                 json.dumps(normalized_config, sort_keys=True),
+                *app_values,
             )
             if row is None:
                 # The name exists but is owned by someone else — the conflict
@@ -589,8 +827,7 @@ async def promote_tool(
     from hermes_cli.changes import initialize_changes
     from hermes_cli.datastore import app_schema
 
-    if not _VALID_NAME.fullmatch(name or ""):
-        raise ValueError(f"Invalid tool name: {name!r}")
+    _validate_tool_name(name)
     if prod_store.mode != "prod":
         raise ValueError("Tool promotion requires a prod Supabase app store")
 
@@ -617,6 +854,19 @@ async def promote_tool(
         if source is None:
             raise KeyError(f"Dev tool not found: {name}")
         tool = _row_to_tool(source)
+        # Every column except _PROMOTE_EXEMPT is copied verbatim from the dev
+        # row, so a new column cannot silently drop on promotion.
+        promoted_values = [source[c] for c in _PROMOTED_COLUMNS]
+        insert_columns = ", ".join(("id", "mode", "status") + _PROMOTED_COLUMNS)
+        insert_params = ", ".join(
+            f"${i + 2}" for i in range(len(_PROMOTED_COLUMNS))
+        )
+        # The prod row's owner is kept on re-promotion (as before FG-33).
+        update_set = ",\n                    ".join(
+            f"{c} = EXCLUDED.{c}"
+            for c in _PROMOTED_COLUMNS
+            if c not in ("name", "owner_user_id")
+        )
 
         if not approved and not _request_promotion_approval(
             name, approval_callback=approval_callback
@@ -626,7 +876,6 @@ async def promote_tool(
         approval_ref = _new_ref("apr")
         change_ref = _new_ref("chg")
         promotion_ref = _new_ref("prm")
-        config_text = json.dumps(tool.config_json, sort_keys=True)
 
         async with connection.transaction():
             existing = await connection.fetchrow(
@@ -666,29 +915,14 @@ async def promote_tool(
             )
             await connection.execute(
                 f"""
-                INSERT INTO {prod}.{TOOLS_TABLE}
-                    (id, name, kind, stack, owner_user_id, visibility, mode,
-                     status, mcp_endpoint_ref, web_url, config_json)
-                VALUES ($1, $2, $3, $4, $5, $6, 'prod', 'disabled', $7, $8,
-                        $9::jsonb)
+                INSERT INTO {prod}.{TOOLS_TABLE} ({insert_columns})
+                VALUES ($1, 'prod', 'disabled', {insert_params})
                 ON CONFLICT (name) DO UPDATE SET
-                    kind = EXCLUDED.kind,
-                    stack = EXCLUDED.stack,
-                    visibility = EXCLUDED.visibility,
-                    mcp_endpoint_ref = EXCLUDED.mcp_endpoint_ref,
-                    web_url = EXCLUDED.web_url,
-                    config_json = EXCLUDED.config_json,
+                    {update_set},
                     updated_at = NOW()
                 """,
                 f"tol_{uuid.uuid4().hex}",
-                tool.name,
-                tool.kind,
-                tool.stack,
-                tool.owner_user_id,
-                tool.visibility,
-                tool.mcp_endpoint_ref,
-                tool.web_url,
-                config_text,
+                *promoted_values,
             )
             await connection.execute(
                 f"""
@@ -734,7 +968,11 @@ async def promote_tool(
 __all__ = [
     "TOOLS_TABLE",
     "DEFAULT_IN_HOUSE_STACK",
+    "RESERVED_TOOL_NAMES",
     "ToolKind",
+    "ToolHosting",
+    "ToolBuildState",
+    "ToolIconSource",
     "ToolStatus",
     "Tool",
     "ToolConfigError",
