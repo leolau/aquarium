@@ -42,6 +42,7 @@ db.execute("""CREATE TABLE IF NOT EXISTS email_messages (
 db.execute("CREATE INDEX IF NOT EXISTS idx_email_from ON email_messages(from_addr)")
 db.execute("CREATE INDEX IF NOT EXISTS idx_email_thread ON email_messages(thread_id)")
 db.execute("CREATE INDEX IF NOT EXISTS idx_email_received ON email_messages(received_at)")
+db.execute("CREATE INDEX IF NOT EXISTS idx_email_unbatched ON email_messages(received_at) WHERE batch_id IS NULL")
 
 db.execute("""CREATE TABLE IF NOT EXISTS email_tasks (
   id TEXT PRIMARY KEY,
