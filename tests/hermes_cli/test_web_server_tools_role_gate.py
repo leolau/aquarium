@@ -102,7 +102,8 @@ def _call(client, method, path, body):
 def _member_managed_routes():
     from hermes_cli.tools_api import MEMBER_MANAGED_ROUTES
 
-    return MEMBER_MANAGED_ROUTES
+    lifecycle = {f"/api/tools/{{name}}/{verb}" for verb in ("archive", "restore", "purge")}
+    return MEMBER_MANAGED_ROUTES | lifecycle
 
 
 def test_every_change_route_is_gated():

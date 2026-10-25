@@ -82,11 +82,13 @@ _SECRET_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 #: helper refuses most of these too; this keeps them from reaching sudo.
 USER_SECRET_RESERVED_PREFIXES = ("DATABASE_URL", "NEXT_PUBLIC_", "NODE_", "APP_", "CREDENTIALS_")
 USER_SECRET_RESERVED_NAMES = frozenset({"PORT", "HOSTNAME", "HOME", "PATH", "LD_PRELOAD", "LD_LIBRARY_PATH"})
-MAX_EGRESS_HOSTS = 32
+#: Same host rule and default cap as ``deploy/aquarium-app-egress`` (the helper
+#: re-checks both, and its admin policy may lower the cap).
+MAX_EGRESS_HOSTS = 20
 _EGRESS_HOST_RE = re.compile(
-    r"^(?:\*\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?(?::[0-9]{1,5})?$"
+    r"^(?:\*\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
 )
-_EGRESS_REFUSED_SUFFIXES = (".local", ".internal", ".localhost", ".lan", ".home.arpa")
+_EGRESS_REFUSED_SUFFIXES = (".local", ".internal", ".localhost", ".localdomain", ".lan", ".arpa")
 
 PROD_PATH = "/apps/{slug}"
 DEV_PATH = "/apps-dev/{slug}"
@@ -174,7 +176,7 @@ def validate_user_secret_name(name: Any) -> str:
 
 
 def validate_egress_hosts(hosts: Any) -> List[str]:
-    """A sorted, de-duplicated list of public DNS names (``*.`` and ``:port`` allowed)."""
+    """A sorted, de-duplicated list of public DNS names (a leading ``*.`` is allowed; no ports)."""
     if not isinstance(hosts, (list, tuple)):
         raise ValueError("hosts must be a list of host names")
     out = set()
@@ -182,10 +184,7 @@ def validate_egress_hosts(hosts: Any) -> List[str]:
         host = raw.strip().lower() if isinstance(raw, str) else ""
         if not _EGRESS_HOST_RE.fullmatch(host):
             raise ValueError(f"Not a public host name: {raw!r}")
-        bare = host.rsplit(":", 1)[0] if ":" in host else host
-        if host.count(":") and not 1 <= int(host.rsplit(":", 1)[1]) <= 65535:
-            raise ValueError(f"Invalid port in {raw!r}")
-        if bare == "localhost" or bare.endswith(_EGRESS_REFUSED_SUFFIXES):
+        if host.endswith(_EGRESS_REFUSED_SUFFIXES):
             raise ValueError(f"Not a public host name: {raw!r}")
         out.add(host)
     if len(out) > MAX_EGRESS_HOSTS:

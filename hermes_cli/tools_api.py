@@ -633,22 +633,34 @@ async def set_tool_enabled(request: Request, name: str, body: ToolEnabledToggle)
     """Enable/disable a tool (its owner, an admin or the owner); records C5."""
 
     async def _run(rt, reg, who):
-        await _tool_for(reg, who, name, write=True)
-        tool = await _set_enabled(reg, who, name, bool(body.enabled))
-        await rt._record(reg, who, tool,
-                         f"hermes tool {'enable' if body.enabled else 'disable'} {name}",
-                         {"status": tool.status})
+        try:
+            tool = await reg.set_enabled(who, name, bool(body.enabled))
+        except PermissionError:
+            if who.role != "admin":
+                raise
+            await _tool_for(reg, who, name, write=True)
+            tool = await _admin_set_enabled(reg, name, bool(body.enabled))
+        await _provenance(who, f"hermes tool {'enable' if body.enabled else 'disable'} {name}",
+                          name, tool, {"status": tool.status})
         return tool.as_dict()
 
     return await _app_tool_call(request, _resolve_tool_mode(body.mode), _run)
 
 
-async def _set_enabled(registry: Any, who: Any, name: str, enabled: bool) -> Any:
-    """``set_enabled`` as the row's owner when an admin acts on someone's app."""
+async def _provenance(who: Any, action: str, name: str, tool: Any, payload: dict) -> None:
+    from hermes_cli.datastore import get_store
+    from hermes_cli.tool_cmd import _record_provenance
+
+    await _record_provenance(
+        get_store("supabase-app", "prod"), actor_user_id=who.user_id, action=action,
+        target_ref=name, mode=tool.mode, visibility=tool.visibility, payload=payload,
+    )
+
+
+async def _admin_set_enabled(registry: Any, name: str, enabled: bool) -> Any:
+    """An admin acting on someone else's tool (the registry allows only its owner)."""
     from hermes_cli.tools_registry import _COLUMNS, TOOLS_TABLE, _row_to_tool
 
-    if who.is_owner or (await registry.get(name)).owner_user_id == who.user_id:
-        return await registry.set_enabled(who, name, enabled)
     conn = await registry.store.connect()
     try:
         row = await conn.fetchrow(
@@ -658,6 +670,8 @@ async def _set_enabled(registry: Any, who: Any, name: str, enabled: bool) -> Any
         )
     finally:
         await conn.close()
+    if row is None:
+        raise KeyError(name)
     return _row_to_tool(row)
 
 
@@ -669,10 +683,9 @@ async def set_tool_config(request: Request, name: str, body: ToolConfigUpdate):
     """
 
     async def _run(rt, reg, who):
-        await _tool_for(reg, who, name, write=True)
         tool = await reg.set_config(who, name, body.config)
-        await rt._record(reg, who, tool, f"hermes tool config {name}",
-                         {"config_json": tool.config_json})
+        await _provenance(who, f"hermes tool config {name}", name, tool,
+                          {"config_json": tool.config_json})
         return tool.as_dict()
 
     return await _app_tool_call(request, _resolve_tool_mode(body.mode), _run)
@@ -688,11 +701,12 @@ async def promote_tool_route(request: Request, name: str, body: ToolPromoteReque
     async def _run(rt, reg, who):
         from hermes_cli.app_runtime import admit
 
-        tool = await _tool_for(reg, who, name, write=True)
-        if tool.hosting == "local":
-            prod = ToolRegistry(get_store("supabase-app", "prod"))
-            await prod.initialize()
-            await admit(prod, who, "promote", tool=name)
+        if not (who.is_owner or who.role == "admin"):
+            tool = await _tool_for(reg, who, name, write=True)
+            if tool.hosting == "local":
+                prod = ToolRegistry(get_store("supabase-app", "prod"))
+                await prod.initialize()
+                await admit(prod, who, "promote", tool=name)
         result = await promote_tool(
             get_store("supabase-app", "prod"), name, actor=who.user_id, approved=True,
         )

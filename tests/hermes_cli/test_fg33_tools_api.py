@@ -87,6 +87,8 @@ def api(monkeypatch, tmp_path):
             return [t for t in rows.values() if _can_read(principal, t.visibility)]
 
         async def set_enabled(self, principal, name, enabled):
+            if not principal.is_owner and rows[name].owner_user_id != principal.user_id:
+                raise PermissionError("not the tool's owner")  # like _assert_can_write
             rows[name] = dataclasses.replace(rows[name], status="enabled" if enabled else "disabled")
             return rows[name]
 
@@ -274,10 +276,18 @@ def test_mcp_toggle_applies_next_chat(api):
     assert client.put("/api/tools/site/mcp", json={"enabled": False}).status_code == 409
 
 
-def test_member_enables_own_tool(api):
+def test_member_enables_own_tool(api, monkeypatch):
     client, rows, state = api
+
+    async def admin_set(registry, name, enabled):
+        rows[name] = dataclasses.replace(rows[name], status="enabled" if enabled else "disabled")
+        return rows[name]
+
+    monkeypatch.setattr(tools_api, "_admin_set_enabled", admin_set)
     assert client.put("/api/tools/notes/enabled", json={"enabled": False}).json()["status"] == "disabled"
     assert client.put("/api/tools/board/enabled", json={"enabled": False}).status_code == 403
+    state["as"] = ADMIN  # an admin acts on anyone's app (decision 9)
+    assert client.put("/api/tools/board/enabled", json={"enabled": False}).json()["status"] == "disabled"
 
 
 # ── secrets + egress through the helpers ────────────────────────────────────
@@ -314,14 +324,15 @@ def test_secrets_refused_for_non_local_and_other_members(api):
 
 def test_egress_calls_the_egress_helper_with_validated_hosts(api):
     client, rows, state = api
-    out = client.put("/api/tools/notes/egress", json={"hosts": ["API.Stripe.com", "*.openai.com:443", "api.stripe.com"]})
-    assert out.json()["hosts"] == ["*.openai.com:443", "api.stripe.com"]
+    out = client.put("/api/tools/notes/egress", json={"hosts": ["API.Stripe.com", "*.openai.com", "api.stripe.com"]})
+    assert out.json()["hosts"] == ["*.openai.com", "api.stripe.com"]
     argv, spec = state["helper"][-1]
     assert argv == ["sudo", "-n", rt.EGRESS_HELPER, "set"]
-    assert spec == {"slug": "notes", "mode": "dev", "hosts": ["*.openai.com:443", "api.stripe.com"]}
+    assert spec == {"slug": "notes", "mode": "dev", "hosts": ["*.openai.com", "api.stripe.com"]}
 
 
-@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "db.internal", "printer.local", "a b.com", "x.com:0", "x.com:70000"])
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "db.internal", "printer.local", "a b.com",
+                                  "x.com:443", "x.com/path", "1.10.in-addr.arpa"])
 def test_egress_refuses_non_public_hosts(api, host):
     client, rows, state = api
     assert client.put("/api/tools/notes/egress", json={"hosts": [host]}).status_code == 400

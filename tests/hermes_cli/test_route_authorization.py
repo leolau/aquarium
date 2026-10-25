@@ -94,6 +94,11 @@ HANDLER_CHECKED = {
     "PUT /api/tools/{name}/egress": ("member", "_app_tool_call"),
     "POST /api/tools/{name}/favicon-refresh": ("member", "_app_tool_call"),
     "POST /api/tools/{name}/feedback": ("member", "_app_tool_call"),
+    # FG-33 P8-2 2.4 lifecycle (hermes_cli/app_lifecycle_api.py, mounted by 2.2):
+    # the app's owner, an admin or the owner (AppRuntime.resolve, decision 9).
+    "POST /api/tools/{name}/archive": ("member", "_lifecycle_call"),
+    "POST /api/tools/{name}/restore": ("member", "_lifecycle_call"),
+    "POST /api/tools/{name}/purge": ("member", "_lifecycle_call"),
     "PUT /api/access/roles/{role}": ("admin", "_require_role_limits_editor"),
     "POST /api/profiles/suggestions/{suggestion_id}/adopt": ("owner", "principal.is_owner"),
     "POST /api/profiles/suggestions/{suggestion_id}/dismiss": ("owner", "principal.is_owner"),
