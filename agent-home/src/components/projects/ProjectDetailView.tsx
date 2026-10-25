@@ -15,6 +15,8 @@ import { useProjectAction } from "@/components/projects/useProjectAction";
 
 import { AddToProjectSheet } from "@/components/projects/AddToProjectSheet";
 import { EditBriefSheet } from "@/components/projects/EditBriefSheet";
+import { CategoryDot, findCategory } from "@/components/projects/categories/CategoryPicker";
+import { useProjectCategories } from "@/components/projects/categories/useProjectCategories";
 import { ProjectLifecycleMenu } from "@/components/projects/ProjectLifecycleMenu";
 import { ReadinessChecklist } from "@/components/projects/ReadinessChecklist";
 import {
@@ -132,6 +134,8 @@ export function ProjectDetailView({
   const busy = headerBusy || refreshing;
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const { categories } = useProjectCategories();
+  const category = findCategory(categories, project.category_id);
   const [summariseOpen, setSummariseOpen] = useState(false);
 
   const callerRole =
@@ -273,6 +277,15 @@ export function ProjectDetailView({
                 isInstanceAdmin={isInstanceAdmin}
               />
             </div>
+            {category ? (
+              <span
+                data-component="ProjectCategoryPill"
+                className="mt-1 inline-flex max-w-full items-center gap-1.5 rounded-full border border-[var(--color-border)] px-2 py-0.5 text-xs"
+              >
+                <CategoryDot color={category.color} />
+                <span className="truncate">{category.name}</span>
+              </span>
+            ) : null}
             {project.goal ? (
               <p className="mt-1 text-sm text-[var(--color-muted)]">
                 {project.goal}

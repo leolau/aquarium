@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 
 import { ActionButton } from "@/components/projects/ActionButton";
+import { CategoryPicker, findCategory } from "@/components/projects/categories/CategoryPicker";
+import { useProjectCategories } from "@/components/projects/categories/useProjectCategories";
 import { friendlyError } from "@/components/projects/errors";
 import { FileDropZone } from "@/components/projects/inputs/FileDropZone";
 import { FileQueueList } from "@/components/projects/inputs/FileQueueList";
@@ -131,6 +133,9 @@ export function NewProjectForm({
   const [goal, setGoal] = useState("");
   const [description, setDescription] = useState("");
   const [name, setName] = useState("");
+  const [categoryId, setCategoryId] = useState<string | null>(null);
+  const categories = useProjectCategories();
+  const chosenCategory = findCategory(categories.categories, categoryId);
   const [outputs, setOutputs] = useState<string[]>([""]);
   const [cadence, setCadence] = useState<ProjectCadence>("one_off");
   const [autonomy, setAutonomy] = useState<ProjectAutonomy>("supervised");
@@ -259,6 +264,7 @@ export function NewProjectForm({
               .map((title) => ({ title })),
             cadence,
             autonomy,
+            ...(chosenCategory ? { category_id: chosenCategory.id } : {}),
           },
         });
         if (!res) return;
@@ -429,6 +435,15 @@ export function NewProjectForm({
                 className={inputClass(false)}
               />
             </label>
+
+            <CategoryPicker
+              id="new-project-category"
+              label="Category (optional)"
+              categories={categories.categories}
+              value={categoryId}
+              onChange={setCategoryId}
+              disabled={categories.loading && categories.categories.length === 0}
+            />
 
             <div className="flex flex-col gap-1 text-sm">
               <span>Outputs — what it delivers * </span>
@@ -657,6 +672,12 @@ export function NewProjectForm({
                   {AUTONOMIES.find((a) => a.value === autonomy)?.label}
                 </dd>
               </div>
+              {chosenCategory ? (
+                <div>
+                  <dt className="text-xs text-[var(--color-muted)]">Category</dt>
+                  <dd>{chosenCategory.name}</dd>
+                </div>
+              ) : null}
               <div data-component="WizardInputsSummary">
                 <dt className="text-xs text-[var(--color-muted)]">Inputs</dt>
                 <dd className="flex flex-col gap-1.5">
