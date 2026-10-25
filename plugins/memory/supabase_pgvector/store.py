@@ -20,6 +20,7 @@ connection, so there is no single-writer bottleneck.
 
 from __future__ import annotations
 
+import struct
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Callable, List, Optional
@@ -272,15 +273,15 @@ class MemoryReadAudit:
         }
 
 
-def _encode_vector(vector: List[float]) -> str:
-    return "[" + ",".join(repr(float(component)) for component in vector) + "]"
+def _encode_vector(vector: List[float]) -> bytes:
+    """pgvector binary wire format: int16 dim, int16 unused, dim x float4 (big-endian)."""
+    values = [float(component) for component in vector]
+    return struct.pack(f">HH{len(values)}f", len(values), 0, *values)
 
 
-def _decode_vector(text: str) -> List[float]:
-    inner = text.strip().lstrip("[").rstrip("]")
-    if not inner:
-        return []
-    return [float(part) for part in inner.split(",")]
+def _decode_vector(data: bytes) -> List[float]:
+    dim, _unused = struct.unpack_from(">HH", data)
+    return list(struct.unpack_from(f">{dim}f", data, 4))
 
 
 def _role_reads_configured(config: Optional[dict]) -> bool:
@@ -428,7 +429,7 @@ class PgvectorMemoryStore:
             schema=vector_schema,
             encoder=_encode_vector,
             decoder=_decode_vector,
-            format="text",
+            format="binary",
         )
         return connection
 
