@@ -182,3 +182,53 @@ def test_settings_changes_mark_the_gateway(home):
     assert not marker.exists()
     owners.mark_changed()
     assert marker.exists()
+
+
+def test_suspended_person_is_not_authorised_and_their_bridge_stops(home, monkeypatch):
+    import dataclasses
+
+    people = {"amy": AMY, "bob": BOB}
+
+    class Store:
+        async def get(self, user_id, connection=None):
+            return people.get(user_id)
+
+    runner = make_runner()
+    runner._get_principal_store = lambda: Store()
+    run(runner._reconcile_person_whatsapp_bridges())
+    amy_handler = handler_for(runner, "wabridge:amy")
+    people["amy"] = dataclasses.replace(AMY, active=False)
+    run(amy_handler(event(AMY_NO)))
+    assert runner.handled == []
+    src = event(AMY_NO).source
+    src.account_id = "wabridge:amy"
+    assert runner._person_wa_authorization(src) is False
+    run(runner._reconcile_person_whatsapp_bridges())
+    assert set(runner._person_wa_adapters()) == {"wabridge:bob"}
+    people["amy"] = AMY
+    run(runner._reconcile_person_whatsapp_bridges())
+    assert "wabridge:amy" in runner._person_wa_adapters()
+    run(handler_for(runner, "wabridge:amy")(event(AMY_NO)))
+    assert [s.internal_user_id for s in runner.handled] == ["amy"]
+
+
+def test_person_lookup_error_is_refused(home):
+    runner = make_runner()
+    run(runner._reconcile_person_whatsapp_bridges())
+    amy_handler = handler_for(runner, "wabridge:amy")
+
+    class Broken:
+        async def get(self, user_id, connection=None):
+            raise RuntimeError("store down")
+
+    runner._get_principal_store = lambda: Broken()
+    run(amy_handler(event(AMY_NO)))
+    assert runner.handled == []
+    src = event(AMY_NO).source
+    src.account_id = "wabridge:amy"
+    assert runner._person_wa_authorization(src) is False
+
+
+def test_desired_bridges_exclude_suspended_people(home):
+    assert set(pwb.desired_person_bridges()) == {"wabridge:amy", "wabridge:bob"}
+    assert set(pwb.desired_person_bridges(person_active=lambda p: p != "amy")) == {"wabridge:bob"}

@@ -111,3 +111,47 @@ def test_adapter_bridge_name_from_config(home):
     assert b.bridge_name == "work"
     c = WhatsAppAdapter(PlatformConfig(enabled=True))
     assert c.bridge_name is None
+
+
+@pytest.mark.asyncio
+async def test_suspended_person_on_own_number_is_refused(home):
+    owners.record_owner("amy", "amy")
+    store = _Store({"amy": SimpleNamespace(user_id="amy", role="member", active=False)})
+    out = await _runner(_Adapter("amy"), store)._enrich_channel_source_identity(
+        _src("85298765432@s.whatsapp.net")
+    )
+    assert out is None
+
+
+@pytest.mark.asyncio
+async def test_missing_person_on_own_number_is_refused(home):
+    owners.record_owner("amy", "amy")
+    out = await _runner(_Adapter("amy"), _Store({}))._enrich_channel_source_identity(
+        _src("85298765432@s.whatsapp.net")
+    )
+    assert out is None
+
+
+@pytest.mark.asyncio
+async def test_store_error_on_own_number_is_refused(home):
+    class Broken:
+        async def get(self, user_id, connection=None):
+            raise RuntimeError("store down")
+
+    owners.record_owner("amy", "amy")
+    out = await _runner(_Adapter("amy"), Broken())._enrich_channel_source_identity(
+        _src("85298765432@s.whatsapp.net")
+    )
+    assert out is None
+
+
+@pytest.mark.asyncio
+async def test_clamp_failure_is_refused(home, monkeypatch):
+    def boom(name):
+        raise RuntimeError("unreadable")
+
+    monkeypatch.setattr(owners, "bridge_person", boom)
+    out = await _runner(_Adapter("amy"), STORE)._enrich_channel_source_identity(
+        _src("85298765432@s.whatsapp.net")
+    )
+    assert out is None

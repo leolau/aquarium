@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import subprocess
+import time
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
 
@@ -37,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 ACCOUNT_PREFIX = "wabridge:"
 _POLL_SECONDS = 10.0
+_PERSON_ACTIVE_TTL = 60.0
 
 
 @dataclass(frozen=True)
@@ -67,8 +69,12 @@ def desired_person_bridges(
     *,
     is_active: Optional[Callable[[str], bool]] = None,
     skip_ports: frozenset = frozenset(),
+    person_active: Optional[Callable[[str], bool]] = None,
 ) -> Dict[str, PersonBridgeSpec]:
-    """Recorded, running, linked bridges keyed by account id."""
+    """Recorded, running, linked bridges keyed by account id.
+
+    With ``person_active``, bridges whose person it rejects are left out.
+    """
     from hermes_cli import wa_bridge_owners as owners
 
     is_active = is_active or _unit_active
@@ -80,6 +86,8 @@ def desired_person_bridges(
             continue
         session = owners.session_dir(name)
         if (session / "qr.txt").exists() or not is_active(name):
+            continue
+        if person_active is not None and not person_active(rec["user_id"]):
             continue
         spec = PersonBridgeSpec(name, rec["user_id"], port, number, str(session))
         specs[spec.account_id] = spec
@@ -109,6 +117,8 @@ class PersonWhatsAppBridgesMixin:
         spec = self._person_wa_specs().get(account_id)
         if spec is None or getattr(source, "platform", None) != Platform.WHATSAPP:
             return False
+        if not self._person_wa_person_active(spec.person):
+            return False
         from gateway.whatsapp_identity import normalize_whatsapp_identifier
 
         return bool(
@@ -117,17 +127,41 @@ class PersonWhatsAppBridgesMixin:
             and normalize_whatsapp_identifier(getattr(source, "chat_id", None) or "") == spec.own_number
         )
 
+    def _person_wa_active_cache(self) -> Dict[str, float]:
+        cache = getattr(self, "_person_wa_active_map", None)
+        if cache is None:
+            cache = self._person_wa_active_map = {}
+        return cache
+
+    def _person_wa_person_active(self, person: str) -> bool:
+        checked = self._person_wa_active_cache().get(person)
+        return checked is not None and time.monotonic() - checked < _PERSON_ACTIVE_TTL
+
+    async def _person_wa_refresh_person(self, person: str):
+        principal = await self._person_bot_owner(person)
+        cache = self._person_wa_active_cache()
+        if principal is None:
+            cache.pop(person, None)
+        else:
+            cache[person] = time.monotonic()
+        return principal
+
     def _main_whatsapp_port(self) -> Optional[int]:
         main = (getattr(self, "adapters", None) or {}).get(Platform.WHATSAPP)
         port = getattr(main, "_bridge_port", None)
         return port if isinstance(port, int) else None
 
     async def _reconcile_person_whatsapp_bridges(self) -> None:
+        from hermes_cli import wa_bridge_owners as owners
+
         main_port = self._main_whatsapp_port()
         try:
+            people = {rec["user_id"] for rec in (await asyncio.to_thread(owners.load_owners)).values()}
+            active_people = {p for p in people if await self._person_wa_refresh_person(p) is not None}
             desired = await asyncio.to_thread(
                 desired_person_bridges,
                 skip_ports=frozenset({main_port}) if main_port else frozenset(),
+                person_active=active_people.__contains__,
             )
         except Exception:
             logger.warning("Could not read per-person WhatsApp bridges", exc_info=True)
@@ -208,12 +242,12 @@ class PersonWhatsAppBridgesMixin:
             if source is None or spec is None:
                 return None
             source.account_id = account_id
-            if not self._person_wa_authorization(source):
-                logger.info("WhatsApp bridge %s: ignored a message not from its own person", spec.name)
-                return None
-            principal = await self._person_bot_owner(spec.person)
+            principal = await self._person_wa_refresh_person(spec.person)
             if principal is None:
                 logger.warning("WhatsApp bridge %s: its person is not active; ignored", spec.name)
+                return None
+            if not self._person_wa_authorization(source):
+                logger.info("WhatsApp bridge %s: ignored a message not from its own person", spec.name)
                 return None
             source.internal_user_id = principal.user_id
             source.internal_user_role = principal.role
