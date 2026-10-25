@@ -1262,6 +1262,56 @@ Storage per-app opt-in (decisions 1 and 2) — a departure from the literal
 - Per phase: tests green + `tests/plan_baseline/` green + `ruff`/`ty` + agent-home lint/typecheck/vitest clean; new web components carry `data-component`; no new non-secret `HERMES_*` env vars; no new core model tool; Core paths listed in `core_manifest.yaml`; that phase's system-test checklist passes on the system-test box.
 - Feature: a member can ask in chat for an app and get (local) a Next.js app in its own Node process with its own dev and prod database, reachable only after login on its own origin, or (external) the same template on Vercel with supabase.com; both appear on `/tools` with distinct icons; promotion is C6-gated and C5-logged and moves no data; the agent can use each app over MCP from the next chat; quotas, backups, monitoring and teardown cover every app; every open decision above is answered and recorded in README §1/§9.
 
+## Handoff for the next agent (2026-10-25)
+
+State when this was written. Re-check each item before acting on it.
+
+**Where things are**
+
+- `develop` has every merged PR for P8-0, P8-1 and P8-2, and CI is green (`101739410`, after #660).
+- Production (`root@188.245.219.105:/opt/data/hermes-agent`) runs `develop` @ `3117f72ca`: P8-0 and P8-1 are deployed, P8-2 is **not**. Deploy with `/opt/data/deploy-hermes.sh develop`. Until the box setup below is done, a deploy ships code but no local app can run.
+- The 2.x rows above are merged code only. None of P8-0, P8-1 or P8-2 has passed its system test.
+
+**Box setup still to do (Leo / ops; never through the agent's own tools).** What the box looked like at hand-off:
+
+- `/etc/sudoers.d/` has no `hermes-tools` and no `aquarium-apps` file, and `config.yaml` has no `terminal.run_as`. The agent shell still runs as `hermes`, so the 0.4 principal-ticket checks are not enforced (0.2, decision 19).
+- `/etc/aquarium/app-quotas.yaml` does not exist (1.6).
+- The deploy reports `/usr/local/sbin/aquarium` and `/opt/data/deploy-hermes.sh` as stale against the repo, and `docs/deployment/README.md` as stale.
+- Not yet installed or started:
+  - the runtime units and slices (`deploy/aquarium-*.{service,timer,slice}`);
+  - the `aquarium-app-helper` and `aquarium-app-egress` helpers;
+  - the Caddy `import /etc/caddy/apps.d/*.caddy`;
+  - `AGENT_HOME_APPS_TICKET_SECRET`;
+  - `supabase-apps-db` and the separate dev instance `supabase-apps-dev-db` (1.3, decision 18);
+  - the `aquarium-apps-watch` timer (2.4);
+  - `aquarium-app-egress enable` (2.6);
+  - the coder profiles (`python -m hermes_cli.app_coder install`, 2.9).
+- After the helper is reinstalled, check that app routes strip the `__Host-` agent-home cookie (2.12).
+- 0.7: the idle-RSS measurements and the GoTrue/PostgREST spike.
+- `hermes-secret-backup.service` was already failing before FG-33 (the box key is not registered on GitHub). It is unrelated, but it is still red.
+
+**Code not built yet (good next PRs, one each, off `develop`)**
+
+1. Call `publish_app_source` (`hermes_cli/app_source_publish.py`) after app commits and releases, when the Settings GitHub token is set (decision 14). The function exists, but nothing calls it.
+2. Archive with a database dump, and the matching restore (2.4 lifecycle). Archive/purge/restore exist, but they do not dump or restore the app databases.
+3. Per-app CPU sampling in `hermes_cli/app_watch.py` (there is only memory/health monitoring today).
+4. Bump the `minimal` template's `next` pin (`hermes_cli/app_templates/minimal/package.json`, 15.1.6) to match agent-home (15.5.28), or retire the template.
+5. Run real npm/build traffic through the egress proxy once egress is enabled on a test box.
+
+**Rules for the next agent**
+
+- Decision 9 as clarified: a release the agent starts (`hermes tool promote`) keeps the member's C6 Approve card. A member's own Tools-page click needs no extra prompt. One confirmation is still required before data loss.
+- `leolau` usually merges PRs within minutes of opening. Check that a PR is still open before pushing to its branch; if it has merged, open a new PR.
+- The root `.gitignore` ignores `logs/`; `agent-home/src/app/api/**/logs/` is now excepted. Check `git status` for any new files that end up ignored.
+- Parallel item PRs do not edit this doc. The parent updates the checklist and audit log after the merge.
+- System tests run on a system-test box, never on prod.
+
+**After P8-2**
+
+- P8-3 (Vercel + supabase.com) needs three things first: Yan's answers to open decisions 11 (provider order) and 12 (supabase.com dev/prod mapping), the default Vercel team, and the default supabase.com org that Leo creates (3.7).
+- P8-4 needs the Railway, AWS and Alibaba accounts.
+- The phase prompts are in §Cloud-agent prompts.
+
 ## Progress checklist
 
 - [x] P8-0.1 Core boundary PR (human) — prepared for Leo's review
@@ -1280,7 +1330,7 @@ Storage per-app opt-in (decisions 1 and 2) — a departure from the literal
 - [ ] P8-1.7 Ops runbook (DNS, Caddy import, apps cluster)
 - [ ] P8-1 system test passed
 - [x] P8-2.1 Tools page v2 (#654)
-- [ ] P8-2.2 Tools API (batch health, icons, feedback, idempotency)
+- [x] P8-2.2 Tools API (batch health, icons, feedback, idempotency) (#658; cross-review fix #659)
 - [x] P8-2.3 `vibe-code-app` skill (#647)
 - [x] P8-2.4 Monitoring, alerts, lifecycle (#656)
 - [x] P8-2.5 Capacity + drift + backup coverage (#651)
@@ -1324,6 +1374,7 @@ Storage per-app opt-in (decisions 1 and 2) — a departure from the literal
 | 2026-10-25 | 10 | devin (for Yan) | FG-33 | P8-1.1–1.6 merged (#640–#645) after a cross-review that fixed the helper/DB/front-door/template contract mismatches. Dev path is `/apps-dev/<slug>`; prod DBs on `supabase-apps-db`, dev DBs on the separate `supabase-apps-dev-db` instance (decision 18). Open: 1.7 ops (box install, Caddy import, `AGENT_HOME_APPS_TICKET_SECRET`, `/etc/aquarium/app-quotas.yaml`), the agent-home Next.js bump the template's `npm audit` gate needs, storage base_path → helper `configure`, `__Host-` session cookie. | Parent ticks the checklist once so parallel PRs don't conflict on this doc. |
 | 2026-10-25 | 11 | devin (for Yan) | FG-33 | Recorded Yan's second round: accepted 2, 3, 5, 6, 16, 19, 20; 4 = path routing for local apps (with CSP/cookie/origin mitigations); 7 = one prod + one dev Node process per tool, dev idle-stopped; 8 = defaults + Settings limits panel; 9 = members do everything within limits; 14 = Settings GitHub token, local git otherwise; 17 = every visible app; 18 = separate Supabase instance for all dev DBs; 21 = Settings storage location. Design sections that conflict are superseded by §Decisions recorded. | Yan's answers, 2026-10-25 |
 | 2026-10-25 | 12 | devin (for Yan) | FG-33 | P8-2: 2.1, 2.3–2.12 merged (#647–#657); 2.10 Settings panels, 2.11 Next bump, 2.12 cookie/CSP added as new items (decisions 8/14/21 and P8-1 follow-ups). Cross-review fix #659 (gitignored `logs/route.ts`, secrets form mounted, 2.1↔2.2 health/quota field contract) and 2.2 #658 still open. Yan clarified decision 9: agent-started releases keep the member's C6 Approve card. Open: Leo's box installs (apps-watch timer, helper reinstall for `__Host-` stripping, `aquarium-app-egress enable`, coder profiles), `publish_app_source` not yet called, archive DB dump, CPU sampling, P8-2 system test. | 2.2 ticked when #658 merges. |
+| 2026-10-25 | 13 | devin (for Yan) | FG-33 | P8-2.2 merged (#658) with cross-review fix #659; `develop` green. Added §Handoff for the next agent: deploy state (prod on P8-1 `3117f72ca`), box setup still missing, unbuilt code follow-ups, working rules. | Yan asked for the remaining work to be handed to another agent. |
 
 ## Cloud-agent prompts (one per phase)
 
