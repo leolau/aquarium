@@ -35,6 +35,7 @@ import contextlib
 import datetime as _dt
 import errno
 import fcntl
+import gzip
 import hashlib
 import hmac
 import http.client
@@ -2218,8 +2219,67 @@ def check_probes(cfg: Dict[str, str]) -> List[Tuple[str, str, str]]:
     return rows
 
 
+PHP2SHELL_FIXED = {(8, 2): 35, (8, 3): 36, (8, 4): 27, (8, 5): 12}
+PHP_DIRS = ("/usr/bin", "/usr/sbin", "/usr/local/bin", "/usr/local/sbin")
+PHP_NAME_RE = re.compile(r"^(php(\d+(\.\d+)?)?|php-fpm[\d.]*|php-cgi[\d.]*|frankenphp)$")
+PHP_IMAGE_RE = re.compile(r"php|wordpress|nextcloud|drupal|joomla|matomo|moodle|mediawiki", re.I)
+PHP_FIX = ("Install PHP 8.2.35, 8.3.36, 8.4.27 or 8.5.12 or newer (or your distribution's backport), restart "
+           "every PHP worker, and set session.upload_progress.enabled = Off (CVE-2026-115560 is not fixed by "
+           "those releases). If nothing here needs PHP, remove it.")
+
+
+def _php_backported(major: int, minor: int) -> bool:
+    """A distribution package whose changelog lists the PHP2Shell fix (backports keep the old version number)."""
+    for log in P("/usr/share/doc").glob(f"php{major}.{minor}*/changelog.Debian.gz"):
+        with contextlib.suppress(OSError, EOFError):
+            with gzip.open(log, "rt", errors="replace") as fh:
+                text = fh.read()
+            if "CVE-2026-109618" in text and "CVE-2026-109619" in text:
+                return True
+    return False
+
+
+def check_php(cfg: Dict[str, str]) -> List[Tuple[str, str, str]]:
+    """PHP2Shell (CVE-2026-109618/109619): any PHP runtime on the host or in a container."""
+    rows, seen = [], set()
+    for d in PHP_DIRS:
+        base = P(d)
+        if not base.is_dir():
+            continue
+        for f in sorted(base.iterdir()):
+            if not PHP_NAME_RE.match(f.name) or not f.is_file() or not os.access(f, os.X_OK):
+                continue
+            target = f.resolve()
+            if target in seen:
+                continue
+            seen.add(target)
+            banner = run([str(f), "-v"], check=False, timeout=10).stdout.decode(errors="replace")
+            m = re.search(r"PHP (\d+)\.(\d+)\.(\d+)(-\S+)?", banner)
+            if not m:
+                rows.append((WARN, f"PHP {real(f)}: version unknown", PHP_FIX))
+                continue
+            major, minor, patch = (int(x) for x in m.groups()[:3])
+            version = f"{major}.{minor}.{patch}"
+            fixed = PHP2SHELL_FIXED.get((major, minor))
+            if (major, minor) > (8, 5) or (fixed is not None and patch >= fixed):
+                rows.append((OK, f"PHP {real(f)}: {version}, has the PHP2Shell fixes", ""))
+            elif m.group(4) and _php_backported(major, minor):
+                rows.append((OK, f"PHP {real(f)}: {version}{m.group(4)}, distribution backport of the PHP2Shell fixes", ""))
+            else:
+                rows.append((FAILED, f"PHP {real(f)}: {version} is open to PHP2Shell remote code execution "
+                                     "(CVE-2026-109618/109619)", PHP_FIX))
+    if have("docker"):
+        listing = run(["docker", "ps", "--format", "{{.Names}}\t{{.Image}}"], check=False, timeout=20).stdout
+        for line in listing.decode(errors="replace").splitlines():
+            name, _, image = line.partition("\t")
+            if image and PHP_IMAGE_RE.search(image):
+                rows.append((WARN, f"container {name} ({image}) may run PHP",
+                             f"Check `docker exec {name} php -v`. " + PHP_FIX))
+    return rows or [(OK, "PHP: not installed (PHP2Shell, CVE-2026-109618/109619, does not apply)", "")]
+
+
 DOCTOR = [check_disk, check_self, check_services, check_db, check_http, check_certs,
-          check_probes, check_whatsapp, check_vpn, check_backups]
+          check_probes, check_whatsapp, check_vpn, check_php, check_backups]
 
 
 def cmd_doctor(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
