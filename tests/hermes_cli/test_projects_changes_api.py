@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import time
+import types
 
 import pytest
 
@@ -190,6 +191,35 @@ def test_next_drafts_a_seeded_plan_and_leaves_the_run_alone(cenv, model):
     assert change["reading"]["changes"][0] == "Add a Chinese edition"
     plain = next(c for c in history["changes"] if c["id"] == old["id"])
     assert plain["is_change"] is False and plain["kinds"] == []
+
+
+def test_change_response_reports_the_draft_as_started_even_if_it_already_finished(
+    cenv, model, monkeypatch
+):
+    """The draft job may finish before the route returns; the response still
+    describes the job it started, and the poll endpoint shows the outcome."""
+
+    class _FinishFirstThread:
+        def __init__(self, *, target, kwargs, **_):
+            self._run = lambda: target(**kwargs)
+
+        def start(self):
+            self._run()
+
+    monkeypatch.setattr(
+        projects_changes_api, "threading", types.SimpleNamespace(Thread=_FinishFirstThread)
+    )
+    client, _ = cenv
+    project = _active_project(cenv)
+    _save_and_activate_playbook(cenv, project)
+
+    resp = _change(client, project, "next")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["draft"]["status"] == "running"
+    assert body["draft"]["change_id"] == body["change"]["id"]
+    state = client.get(_url(project, "/playbook/draft")).json()
+    assert state["status"] == "done", state
 
 
 def test_now_stops_the_open_run_and_keeps_finished_work(cenv, model):

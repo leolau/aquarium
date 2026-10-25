@@ -2809,6 +2809,9 @@ def start_plan_draft(project, profiles, principal) -> dict:
     state = {"status": "running", "started_at": int(time.time())}
     with _PLAN_DRAFTS_LOCK:
         _PLAN_DRAFTS[project.id] = state
+        # Snapshot before the job starts: it updates ``state`` in place and
+        # can finish before this function returns.
+        started = dict(state)
     threading.Thread(
         target=_plan_draft_job,
         kwargs={
@@ -2824,7 +2827,7 @@ def start_plan_draft(project, profiles, principal) -> dict:
         name=f"plan-draft-{project.slug}",
         daemon=True,
     ).start()
-    return dict(state)
+    return started
 
 
 @router.post("/{slug}/playbook/draft")
