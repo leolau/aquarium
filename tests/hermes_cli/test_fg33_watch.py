@@ -168,16 +168,21 @@ def harness(tmp_path, monkeypatch):
     async def owner(user_id, title, body, key):
         sent["owner"].append((user_id, key))
 
-    def run(registries, runtime, now, *, code=None, visits=0, cap=None, dry_run=False):
+    cgroup = tmp_path / "cgroup"
+
+    def run(registries, runtime, now, *, code=None, visits=0, cap=None, dry_run=False, cpu_quota=50):
         return asyncio.run(aw.watch_once(
             registries, owner=OWNER, runtime=runtime, notify_owner=owner,
             notify_box=lambda text: sent["box"].append(text),
             state=aw.WatchState(tmp_path / "state.json"), now=now,
             capacity_state=lambda: cap, health=lambda port, base: code,
             visits=lambda port: visits, dry_run=dry_run,
+            cpu_usage=lambda unit: aw.cpu_usage_usec(unit, root=cgroup),
+            cpu_quota_pct=lambda: cpu_quota,
         ))
 
-    return SimpleNamespace(store=store, sent=sent, run=run, state=tmp_path / "state.json")
+    return SimpleNamespace(store=store, sent=sent, run=run, state=tmp_path / "state.json",
+                           cgroup=cgroup)
 
 
 def test_broken_app_alerts_its_owner_once_after_three_failures(harness):
@@ -285,6 +290,97 @@ def test_dry_run_writes_nothing_and_alerts_no_one(harness):
     assert harness.store.writes == 0 and not harness.state.exists()
     assert harness.sent == {"owner": [], "box": []}
     assert report["box_alerts"] and [c for c in runtime.calls if c[0] != "status"] == []
+
+
+# ── per-app CPU (cgroup v2 cpu.stat) ─────────────────────────────────────────
+
+def _cpu_stat(root, unit, usage_usec):
+    path = root.joinpath(*aw.APPS_CGROUP, unit, "cpu.stat")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"usage_usec {usage_usec}\nuser_usec {usage_usec}\nsystem_usec 0\n"
+                    "nr_periods 0\nnr_throttled 0\nthrottled_usec 0\n")
+
+
+def _busy(harness, regs, runtime, passes, pct, *, start=0, used=0, name="notes"):
+    """``passes`` watch runs 5 minutes apart with the app burning ``pct``% of a core."""
+    for i in range(passes):
+        _cpu_stat(harness.cgroup, f"aquarium-app@{name}-prod.service", used)
+        report = harness.run(regs, runtime, T0 + (start + i) * 300, code=200)
+        used += int(pct / 100 * 300 * 1e6)
+    return report, used
+
+
+def test_cpu_usage_reads_the_instance_cgroup_and_tolerates_a_missing_one(tmp_path):
+    unit = "aquarium-app@notes-prod.service"
+    assert aw.cpu_usage_usec(unit, root=tmp_path) is None
+    _cpu_stat(tmp_path, unit, 123456)
+    assert aw.cpu_usage_usec(unit, root=tmp_path) == 123456
+    (tmp_path.joinpath(*aw.APPS_CGROUP, unit, "cpu.stat")).write_text("garbage\n")
+    assert aw.cpu_usage_usec(unit, root=tmp_path) is None
+    assert aw.cpu_usage_usec("../../etc", root=tmp_path) is None
+
+
+def test_cpu_rate_needs_a_fresh_baseline_from_the_same_cgroup():
+    prev = {"usec": 1_000_000, "at": T0}
+    assert aw.cpu_percent(prev, 1_000_000 + 150_000_000, T0 + 300) == 50.0
+    assert aw.cpu_percent(None, 5, T0) is None
+    assert aw.cpu_percent(prev, 10, T0 + 300) is None  # restarted: a new cgroup counts from 0
+    assert aw.cpu_percent(prev, 2_000_000, T0 + aw.CPU_SAMPLE_MAX_GAP_S + 1) is None
+
+
+def test_cpu_below_quota_never_alerts(harness):
+    regs = {"prod": Reg("prod", [_tool("notes")])}
+    report, _ = _busy(harness, regs, Runtime([_doc("notes")]), 8, 20)
+    assert report["apps"][0]["cpu_pct"] == 20.0
+    assert report["alerts"] == [] and harness.sent == {"owner": [], "box": []}
+
+
+def test_sustained_cpu_at_quota_alerts_owner_and_box_once_per_episode(harness):
+    regs = {"prod": Reg("prod", [_tool("notes")])}
+    runtime = Runtime([_doc("notes")])
+    # First pass only sets the baseline; alerts after three high rates in a row.
+    _busy(harness, regs, runtime, aw.CPU_RUNS_TO_ALERT, 50)
+    assert harness.sent == {"owner": [], "box": []}
+    report, used = _busy(harness, regs, runtime, 6, 50, start=aw.CPU_RUNS_TO_ALERT, used=0)
+    assert harness.sent["owner"] == [("alice", "app-cpu:notes")]
+    assert len(harness.sent["box"]) == 1 and "notes (prod)" in harness.sent["box"][0]
+    assert report["apps"][0]["cpu_pct"] == 50.0
+    # Calm again ends the episode; a new busy stretch is a new alert.
+    _, used = _busy(harness, regs, runtime, 2, 5, start=20, used=used)
+    _busy(harness, regs, runtime, aw.CPU_RUNS_TO_ALERT + 1, 50, start=22, used=used)
+    assert harness.sent["owner"] == [("alice", "app-cpu:notes")] * 2
+    assert len(harness.sent["box"]) == 2
+
+
+def test_cpu_quota_follows_the_policy(harness):
+    regs = {"prod": Reg("prod", [_tool("notes")])}
+    _busy(harness, regs, Runtime([_doc("notes")]), 6, 50)
+    assert harness.sent["owner"]
+    harness.sent["owner"].clear()
+    regs = {"prod": Reg("prod", [_tool("calm")])}
+    for i in range(6):
+        _cpu_stat(harness.cgroup, "aquarium-app@calm-prod.service", int(i * 0.5 * 300e6))
+        harness.run(regs, Runtime([_doc("calm")]), T0 + (40 + i) * 300, code=200, cpu_quota=200)
+    assert harness.sent["owner"] == []
+
+
+def test_missing_cgroup_or_stopped_app_is_no_cpu_and_no_crash(harness):
+    regs = {"prod": Reg("prod", [_tool("notes")])}
+    for i in range(5):
+        report = harness.run(regs, Runtime([_doc("notes")]), T0 + i * 300, code=200)
+    assert report["apps"][0]["cpu_pct"] is None and report["alerts"] == []
+    _busy(harness, regs, Runtime([_doc("notes")]), 3, 50, start=10)
+    report = harness.run(regs, Runtime([_doc("notes", state="inactive")]), T0 + 13 * 300)
+    assert report["apps"][0]["cpu_pct"] is None
+    assert json.loads(harness.state.read_text())["apps"]["prod:t-notes"]["cpu_high_runs"] == 0
+
+
+def test_cpu_quota_default_is_the_policy_per_app_value(tmp_path, monkeypatch):
+    from hermes_cli import app_quota
+
+    monkeypatch.setattr(app_quota, "POLICY_PATH", tmp_path / "missing.yaml")
+    monkeypatch.setattr(app_quota, "LIMITS_PATH", tmp_path / "missing.json")
+    assert aw.default_cpu_quota_pct() == app_quota.DEFAULT_POLICY["per_app"]["cpu_quota_pct"]
 
 
 # ── owner notification end to end (throwaway Postgres) ───────────────────────

@@ -7,6 +7,11 @@
   probes ``GET <base path>/api/health`` on loopback, takes the unit's memory and
   (hourly) the source size and ``pg_database_size``, and writes ``tool_runtime``
   so the Tools page never probes live;
+* samples each running instance's CPU from its cgroup v2 ``cpu.stat`` and
+  turns two passes into a rate (% of one core). Near the app's ``CPUQuota``
+  (``per_app.cpu_quota_pct``) for three passes in a row, the app's owner gets a
+  ``proactive_ask`` (``dedupe_key=app-cpu:<slug>``) and the instance owner a
+  box alert, once per episode;
 * counts a *visit* when the instance has an established loopback connection
   (the front door's upstream; the helper's dev idle check uses the same signal);
 * alerts the app's owner through ``NotificationStore`` (a ``proactive_ask``,
@@ -69,6 +74,14 @@ BOX_DOWN_ALERT = 3
 SIZE_EVERY_S = 3600.0
 HEALTH_TIMEOUT_S = 5.0
 PROC_NET_TCP = ("/proc/net/tcp", "/proc/net/tcp6")
+CGROUP_ROOT = Path("/sys/fs/cgroup")
+#: aquarium-app@.service runs in aquarium-apps.slice, a child of aquarium.slice.
+APPS_CGROUP = ("aquarium.slice", "aquarium-apps.slice")
+#: systemd caps an instance at its CPUQuota, so "over quota" means pinned near it.
+CPU_HIGH_SHARE = 0.9
+CPU_RUNS_TO_ALERT = FAILURES_TO_ALERT
+#: A rate needs two samples this close together; an older one only restarts the baseline.
+CPU_SAMPLE_MAX_GAP_S = 3 * WATCH_INTERVAL_S
 LIFECYCLE_VERBS = ("archive", "restore", "purge")
 
 OwnerNotifier = Callable[[str, str, str, str], Awaitable[Any]]
@@ -201,7 +214,8 @@ class WatchState:
         key = f"{mode}:{tool_id}"
         entry = self.data["apps"].get(key)
         if not isinstance(entry, dict) or entry.get("lifecycle") != lifecycle:
-            kept = {k: v for k, v in (entry or {}).items() if k in ("size_at", "status_before_archive")}
+            kept = {k: v for k, v in (entry or {}).items()
+                    if k in ("size_at", "status_before_archive", "cpu", "cpu_high_runs")}
             entry = {"lifecycle": lifecycle, "since": now, "notice_at": None, **kept}
             self.data["apps"][key] = entry
         return entry
@@ -254,6 +268,48 @@ def health_status(port: int, base_path: str, timeout: float = HEALTH_TIMEOUT_S) 
         return int(exc.code)
     except (OSError, ValueError):
         return None
+
+
+def cpu_usage_usec(unit: str, root: Path = CGROUP_ROOT) -> Optional[int]:
+    """CPU time (µs) ``unit`` has used since it started, from its cgroup v2
+    ``cpu.stat``; ``None`` if the cgroup is missing or unreadable."""
+    if not unit or "/" in unit or unit.startswith("."):
+        return None
+    try:
+        text = root.joinpath(*APPS_CGROUP, unit, "cpu.stat").read_text(encoding="ascii")
+    except (OSError, ValueError):
+        return None
+    for line in text.splitlines():
+        key, _, value = line.partition(" ")
+        if key == "usage_usec" and value.strip().isdigit():
+            return int(value)
+    return None
+
+
+def cpu_percent(prev: Any, usec: int, now: float) -> Optional[float]:
+    """Average CPU (% of one core) since the ``{"usec", "at"}`` sample ``prev``.
+
+    ``None`` without a usable baseline: no sample yet, the counter went
+    backwards (the unit restarted into a new cgroup) or the sample is stale.
+    """
+    if not isinstance(prev, dict):
+        return None
+    try:
+        used, at = int(prev["usec"]), float(prev["at"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    elapsed = now - at
+    if usec < used or elapsed <= 0 or elapsed > CPU_SAMPLE_MAX_GAP_S:
+        return None
+    return round((usec - used) / (elapsed * 1e6) * 100, 1)
+
+
+def default_cpu_quota_pct() -> Optional[int]:
+    """``per_app.cpu_quota_pct`` of the root policy (built-in default: 50)."""
+    from hermes_cli import app_quota
+
+    value = app_quota.load_policy().section("per_app").get("cpu_quota_pct")
+    return value if isinstance(value, int) and value > 0 else None
 
 
 def tree_bytes(path: Path) -> Optional[int]:
@@ -544,12 +600,18 @@ async def watch_once(
     capacity_state: Optional[Callable[[], Optional[str]]] = None,
     health: Callable[[int, str], Optional[int]] = health_status,
     visits: Callable[[int], int] = established,
+    cpu_usage: Callable[[str], Optional[int]] = cpu_usage_usec,
+    cpu_quota_pct: Optional[Callable[[], Optional[int]]] = None,
     dry_run: bool = False,
 ) -> dict:
     """One pass over every local app in ``registries`` (mode -> ToolRegistry)."""
     from hermes_cli import app_runtime as rt
 
     now = time.time() if now is None else now
+    try:
+        cpu_quota = (cpu_quota_pct or default_cpu_quota_pct)()
+    except Exception:  # noqa: BLE001 - a broken policy read never stops the watch
+        cpu_quota = None
     report: Dict[str, Any] = {"apps": [], "alerts": [], "box_alerts": [], "actions": []}
     try:
         status = await runtime._call("status", all=True)
@@ -575,7 +637,8 @@ async def watch_once(
                 await _watch_app(
                     tool, mode, registry, store, instances.get((tool.name, mode)), st, now,
                     owner=owner, runtime=runtime, notify_owner=notify_owner, health=health,
-                    visits=visits, dry_run=dry_run, report=report, box=box, down=down,
+                    visits=visits, cpu_usage=cpu_usage, cpu_quota=cpu_quota, dry_run=dry_run,
+                    report=report, box=box, down=down,
                 )
         if len(down) > BOX_DOWN_ALERT:
             box["apps-down"] = f"Local apps: {len(down)} instances are down ({', '.join(sorted(down)[:10])})"
@@ -597,7 +660,8 @@ async def watch_once(
 async def _watch_app(
     tool: Any, mode: str, registry: Any, store: Any, doc: Optional[dict], st: WatchState,
     now: float, *, owner: Principal, runtime: Any, notify_owner: OwnerNotifier,
-    health: Callable[[int, str], Optional[int]], visits: Callable[[int], int], dry_run: bool,
+    health: Callable[[int, str], Optional[int]], visits: Callable[[int], int],
+    cpu_usage: Callable[[str], Optional[int]], cpu_quota: Optional[int], dry_run: bool,
     report: dict, box: Dict[str, str], down: List[str],
 ) -> None:
     slug = tool.name
@@ -637,6 +701,9 @@ async def _watch_app(
                     f"See its logs on the Tools page, or ask the agent to fix it.",
                     f"app-down:{slug}",
                 )
+    cpu_pct = await _watch_cpu(tool, mode, doc, entry, now, running=running,
+                               cpu_usage=cpu_usage, quota=cpu_quota, notify_owner=notify_owner,
+                               dry_run=dry_run, report=report, box=box)
     if now - float(entry.get("size_at") or 0) >= SIZE_EVERY_S:
         fields.update(await _size_fields(runtime, store, tool, mode))
         entry["size_at"] = now
@@ -648,7 +715,8 @@ async def _watch_app(
     if action is not None:
         report["actions"].append({"tool": slug, "mode": mode, "action": action, "to": nxt})
     if dry_run:
-        report["apps"].append({"tool": slug, "mode": mode, "lifecycle": lifecycle, **{
+        report["apps"].append({"tool": slug, "mode": mode, "lifecycle": lifecycle,
+                               "cpu_pct": cpu_pct, **{
             k: v for k, v in fields.items() if not isinstance(v, datetime)}})
         return
     if action == "notice":
@@ -671,7 +739,50 @@ async def _watch_app(
     if action == "archive":
         await archive_app(runtime, registry, owner, slug, state=_Held(st), reason="watch")
     report["apps"].append({"tool": slug, "mode": mode, "lifecycle": nxt,
-                           "health": fields.get("health", row.get("health"))})
+                           "health": fields.get("health", row.get("health")),
+                           "cpu_pct": cpu_pct})
+
+
+async def _watch_cpu(
+    tool: Any, mode: str, doc: Optional[dict], entry: dict, now: float, *, running: bool,
+    cpu_usage: Callable[[str], Optional[int]], quota: Optional[int],
+    notify_owner: OwnerNotifier, dry_run: bool, report: dict, box: Dict[str, str],
+) -> Optional[float]:
+    """Sample the instance's CPU into ``entry``; alert on sustained use near ``quota``."""
+    slug = tool.name
+    usec = None
+    if running:
+        unit = str((doc or {}).get("unit") or f"aquarium-app@{slug}-{mode}.service")
+        usec = cpu_usage(unit)
+    pct = cpu_percent(entry.get("cpu"), usec, now) if usec is not None else None
+    if usec is None:
+        entry.pop("cpu", None)
+    else:
+        entry["cpu"] = {"usec": usec, "at": now}
+    runs = int(entry.get("cpu_high_runs") or 0)
+    if not running or not quota:
+        new_runs = 0
+    elif pct is None:
+        new_runs = runs
+    else:
+        new_runs = runs + 1 if pct >= quota * CPU_HIGH_SHARE else 0
+    entry["cpu_high_runs"] = new_runs
+    if new_runs >= CPU_RUNS_TO_ALERT:
+        box[f"cpu-high:{slug}-{mode}"] = (
+            f"Local app {slug} ({mode}) has been at its {quota}% CPU limit for "
+            f"{new_runs} checks in a row")
+    if runs < CPU_RUNS_TO_ALERT <= new_runs:
+        report["alerts"].append({"tool": slug, "mode": mode, "owner": tool.owner_user_id,
+                                 "kind": "cpu", "cpu_pct": pct})
+        if not dry_run:
+            await notify_owner(
+                tool.owner_user_id, f"Your app {slug} is using all its CPU",
+                f"{slug} ({mode}) has used about {pct:g}% CPU (its limit is {quota}%) for "
+                f"{new_runs} checks in a row, so it is being slowed down. Check its logs on "
+                f"the Tools page, or ask the agent to find what keeps it busy.",
+                f"app-cpu:{slug}",
+            )
+    return pct
 
 
 class _Held:
@@ -759,6 +870,8 @@ __all__ = [
     "LifecycleConflict",
     "WatchState",
     "archive_app",
+    "cpu_percent",
+    "cpu_usage_usec",
     "crash_looping",
     "lifecycle_step",
     "probe_verdict",
