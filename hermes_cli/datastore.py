@@ -417,16 +417,33 @@ async def claim_schema_owner(
         if force
         else "DO NOTHING"
     )
-    await connection.execute(
+    claimed = await connection.fetchval(
         f"""
         INSERT INTO {target}.schema_owner (singleton, profile_slug, hermes_home)
         VALUES (TRUE, $1, $2)
-        ON CONFLICT (singleton) {conflict};
+        ON CONFLICT (singleton) {conflict}
+        RETURNING TRUE;
         """,
         active_profile_slug(),
         str(get_hermes_home().resolve()),
     )
-    _verified_schemas.clear()
+    # A no-op claim (the marker already existed) cannot change the owner, so
+    # verifications cached for this schema stay valid. Only a fresh or forced
+    # claim invalidates them.
+    if claimed:
+        forget_verified_schema(target)
+
+
+def forget_verified_schema(schema: str | None = None) -> None:
+    """Drop cached :func:`verify_schema_owner` results for ``schema`` (or all).
+
+    Call after dropping, recreating or re-claiming a schema out of band.
+    """
+    if schema is None:
+        _verified_schemas.clear()
+        return
+    for key in [k for k in _verified_schemas if k[1] == schema]:
+        _verified_schemas.discard(key)
 
 
 async def connect_for_publish(

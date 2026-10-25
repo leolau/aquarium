@@ -44,10 +44,12 @@ from datetime import datetime, timezone
 from typing import (
     TYPE_CHECKING,
     Callable,
+    Dict,
     Literal,
     Mapping,
     Protocol,
     Sequence,
+    Tuple,
 )
 
 if TYPE_CHECKING:
@@ -583,8 +585,93 @@ async def initialize_access(connection: asyncpg.Connection) -> None:
     """
     from hermes_cli.datastore import ensure_app_schema
 
+    key, _, oids = await _probe_access_schema(connection)
+    if key is not None and oids is not None and _access_initialized.get(key) == oids:
+        return
     await ensure_app_schema(connection)
     await connection.execute(ACCESS_SCHEMA_SQL)
+    if key is None and not all(_connection_server(connection)):
+        return
+    # Re-probe even when the first probe had no key: a schema that did not
+    # exist yet has no ``current_schema()`` until the DDL above created it.
+    after_key, _, after = await _probe_access_schema(connection)
+    if after_key is not None and after is not None:
+        _access_initialized[after_key] = after
+
+
+#: Relations :data:`ACCESS_SCHEMA_SQL` and the schema claim create. Their OIDs
+#: fingerprint an initialised schema: a dropped or recreated schema/table gets
+#: new OIDs (or none), so the cached state below can never go stale silently.
+_ACCESS_RELATIONS = (
+    "schema_owner",
+    "principals",
+    "principals_single_owner",
+    "channel_identities",
+    "channel_identities_user",
+    "principal_aliases",
+    "principal_aliases_user",
+)
+
+_ACCESS_PROBE_SQL = (
+    "SELECT current_setting('search_path', true) AS search_path, "
+    "current_schema() AS schema, ARRAY["
+    + ", ".join(
+        f"to_regclass(quote_ident(current_schema()) || '.{name}')::oid"
+        for name in _ACCESS_RELATIONS
+    )
+    + "] AS oids"
+)
+
+#: ``(server, user, database, schema, profile, home) -> relation OIDs`` for
+#: schemas whose access DDL already ran in this process. The DDL is idempotent,
+#: but re-running it per connection was the top statement in production
+#: (``ALTER TABLE ... ADD COLUMN IF NOT EXISTS`` takes an exclusive lock).
+_access_initialized: Dict[Tuple[str, ...], Tuple[int, ...]] = {}
+
+
+def reset_access_cache() -> None:
+    """Forget which schemas :func:`initialize_access` has set up (tests, resets)."""
+    _access_initialized.clear()
+
+
+def _connection_server(connection: asyncpg.Connection) -> Tuple[str, str, str]:
+    from hermes_cli import db_setup
+
+    return db_setup.connection_key(connection)
+
+
+async def _probe_access_schema(
+    connection: asyncpg.Connection,
+) -> Tuple[Tuple[str, ...] | None, str, Tuple[int, ...] | None]:
+    """One catalog round trip: the cache key and the access relations' OIDs.
+
+    The key is ``None`` when the connection cannot be identified (a fake in
+    unit tests) or its ``search_path`` is not one existing schema; callers then
+    run the full DDL as before. OIDs are ``None`` while any relation is missing.
+    """
+    from hermes_cli.datastore import active_profile_slug
+    from hermes_constants import get_hermes_home
+
+    server = _connection_server(connection)
+    if not all(server):
+        return None, "", None
+    row = await connection.fetchrow(_ACCESS_PROBE_SQL)
+    if row is None:
+        return None, "", None
+    pinned = str(row["search_path"] or "").split(",")[0].strip().strip('"')
+    schema = str(row["schema"] or "")
+    if not schema or pinned != schema:
+        return None, schema, None
+    key = (
+        *server,
+        schema,
+        active_profile_slug(),
+        str(get_hermes_home().resolve()),
+    )
+    raw = list(row["oids"] or ())
+    if len(raw) != len(_ACCESS_RELATIONS) or any(o is None for o in raw):
+        return key, schema, None
+    return key, schema, tuple(int(o) for o in raw)
 
 
 async def apply_scope_rls(
