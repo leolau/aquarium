@@ -10,16 +10,33 @@ const AUTO_REFRESH_MS = 30_000;
 import { ActionButton } from "@/components/projects/ActionButton";
 import { ProjectRow } from "@/components/projects/ProjectRow";
 import { ProjectsFilters } from "@/components/projects/ProjectsFilters";
+import { ProjectCategoriesSheet } from "@/components/projects/categories/ProjectCategoriesSheet";
+import { ProjectsCategoryBoard } from "@/components/projects/categories/ProjectsCategoryBoard";
 import {
   EMPTY_FILTERS,
   filtersFromParams,
   filtersToParams,
   type ProjectsFilterState,
+  type ProjectsLayout,
 } from "@/components/projects/filters";
 import { useAction } from "@/lib/use-action";
-import type { ProjectListItem, ProjectsResponse } from "@/types";
+import type {
+  ProjectCategory,
+  ProjectListItem,
+  ProjectsResponse,
+} from "@/types";
 
 const PAGE_SIZE = 50;
+
+/** The board shows every matching project, read in the API's largest page
+ * size and capped so a huge instance can't fetch forever. */
+export const BOARD_PAGE_SIZE = 200;
+export const BOARD_CAP = 500;
+
+const LAYOUTS: { layout: ProjectsLayout; label: string }[] = [
+  { layout: "list", label: "List" },
+  { layout: "board", label: "Board" },
+];
 
 /**
  * The project list: everything the agent is working on, running on a
@@ -29,15 +46,32 @@ const PAGE_SIZE = 50;
  * the URL (the cursor never does), and the first page is the server's — so
  * the debounce arms on the first interaction instead of refetching the page
  * that just rendered.
+ *
+ * `layout=board` swaps the list for the category board, which needs every
+ * matching project rather than page 1: it reads all pages (up to
+ * `BOARD_CAP`), and the auto-refresh re-reads all of them.
  */
-export function ProjectsList({ initial }: { initial: ProjectsResponse }) {
+export function ProjectsList({
+  initial,
+  categories: initialCategories = [],
+  initialFilters,
+}: {
+  initial: ProjectsResponse;
+  /** The board's columns, in any order (the board sorts by `position`). */
+  categories?: ProjectCategory[];
+  /** The server's parse of the same URL, so SSR renders the same layout. */
+  initialFilters?: ProjectsFilterState;
+}) {
   const [items, setItems] = useState<ProjectListItem[]>(initial.items);
   const [cursor, setCursor] = useState<string | null>(initial.next_cursor);
+  const [categories, setCategories] =
+    useState<ProjectCategory[]>(initialCategories);
+  const [managing, setManaging] = useState(false);
   // The server rendered from the same URL, so the state starts from the
   // address bar rather than from an effect that would flash the default view.
   const [filters, setFilters] = useState<ProjectsFilterState>(() =>
     typeof window === "undefined"
-      ? EMPTY_FILTERS
+      ? (initialFilters ?? EMPTY_FILTERS)
       : filtersFromParams(new URLSearchParams(window.location.search)),
   );
   const [loading, setLoading] = useState(false);
@@ -56,26 +90,41 @@ export function ProjectsList({ initial }: { initial: ProjectsResponse }) {
       setLoading(true);
       loadingRef.current = true;
       setError(null);
+      const board = value.layout === "board";
       // A fresh first page (filters changed, auto-refresh) resets the flag;
-      // appending a deeper page sets it.
-      setPaged(after !== null);
+      // appending a deeper page sets it. The board always reads everything.
+      setPaged(!board && after !== null);
       try {
-        const params = filtersToParams(value, after);
-        params.set("limit", String(PAGE_SIZE));
-        const res = await fetch(`/api/projects?${params.toString()}`, {
-          cache: "no-store",
-        });
-        if (!res.ok) {
-          setError(
-            res.status === 401
-              ? "Your session expired — sign in again."
-              : "Couldn't load your projects.",
-          );
-          return;
+        // The board walks every page from the top; the list reads one.
+        let next: string | null = board ? null : after;
+        let collected: ProjectListItem[] = [];
+        do {
+          const params = filtersToParams(value, next);
+          // A view preference, not a filter: never sent upstream.
+          params.delete("layout");
+          params.set("limit", String(board ? BOARD_PAGE_SIZE : PAGE_SIZE));
+          const res = await fetch(`/api/projects?${params.toString()}`, {
+            cache: "no-store",
+          });
+          if (!res.ok) {
+            setError(
+              res.status === 401
+                ? "Your session expired — sign in again."
+                : "Couldn't load your projects.",
+            );
+            return;
+          }
+          const body = (await res.json()) as ProjectsResponse;
+          collected = [...collected, ...body.items];
+          next = body.next_cursor;
+        } while (board && next && collected.length < BOARD_CAP);
+        if (board) {
+          setItems(collected.slice(0, BOARD_CAP));
+        } else {
+          setItems((prev) => (after ? [...prev, ...collected] : collected));
         }
-        const body = (await res.json()) as ProjectsResponse;
-        setItems((prev) => (after ? [...prev, ...body.items] : body.items));
-        setCursor(body.next_cursor);
+        // On the board a cursor left over means the cap cut the read short.
+        setCursor(next);
       } catch {
         setError("Couldn't reach the AI layer.");
       } finally {
@@ -87,10 +136,13 @@ export function ProjectsList({ initial }: { initial: ProjectsResponse }) {
   );
 
   const armed = useRef(false);
+  // A board URL opened directly: the server sent page 1 only, so the first
+  // pass reads the rest instead of skipping.
+  const boardNeedsRest = useRef(initial.next_cursor !== null);
   useEffect(() => {
     if (!armed.current) {
       armed.current = true;
-      return;
+      if (!(filters.layout === "board" && boardNeedsRest.current)) return;
     }
     const timer = setTimeout(() => {
       const params = filtersToParams(filters);
@@ -106,7 +158,7 @@ export function ProjectsList({ initial }: { initial: ProjectsResponse }) {
   }, [filters, fetchPage]);
 
   // Live list: health, status and next-run move without a reload. Re-read
-  // the first page on a cadence while the tab is visible and the moment
+  // the first page (the board: every page) on a cadence while the tab is visible and the moment
   // focus returns — the same pattern the chat unread badge uses. Paused
   // while the user has paged deeper (a refresh would drop appended pages)
   // and skipped while a fetch is already in flight.
@@ -133,7 +185,12 @@ export function ProjectsList({ initial }: { initial: ProjectsResponse }) {
   const sentinel = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const node = sentinel.current;
-    if (!node || cursor == null || typeof IntersectionObserver === "undefined") {
+    if (
+      !node ||
+      cursor == null ||
+      filters.layout === "board" ||
+      typeof IntersectionObserver === "undefined"
+    ) {
       return;
     }
     const observer = new IntersectionObserver((entries) => {
@@ -146,7 +203,23 @@ export function ProjectsList({ initial }: { initial: ProjectsResponse }) {
   }, [cursor, filters, loading, fetchPage]);
 
   const narrowed = filters !== EMPTY_FILTERS && filters.view !== "active";
+  const board = filters.layout === "board";
 
+  const onMoved = useCallback((slug: string, categoryId: string | null) => {
+    setItems((prev) =>
+      prev.map((p) => (p.slug === slug ? { ...p, category_id: categoryId } : p)),
+    );
+  }, []);
+
+  // A rename/recolour changes the columns; a delete also moves that
+  // category's projects to Uncategorized server-side, so re-read them.
+  const onCategoriesChanged = useCallback(
+    (next: ProjectCategory[]) => {
+      setCategories(next);
+      void fetchPage(filters, null);
+    },
+    [filters, fetchPage],
+  );
 
   // The button is swapped for "Loading…" only after a render; the lock
   // stops a fast second click from fetching the same page twice.
@@ -156,7 +229,29 @@ export function ProjectsList({ initial }: { initial: ProjectsResponse }) {
     <div data-component="ProjectsList" className="flex flex-col gap-3">
       {/* The create door (§13): the feature is unreachable if its only
           entrance is a CLI verb. */}
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-between gap-2">
+        <div
+          role="group"
+          aria-label="Layout"
+          data-component="ProjectsLayoutToggle"
+          className="flex rounded-xl border border-[var(--color-border)] p-0.5 text-xs"
+        >
+          {LAYOUTS.map((option) => (
+            <button
+              key={option.layout}
+              type="button"
+              aria-pressed={filters.layout === option.layout}
+              onClick={() => setFilters({ ...filters, layout: option.layout })}
+              className={`rounded-lg px-3 py-1.5 ${
+                filters.layout === option.layout
+                  ? "bg-[var(--color-surface-2)] font-medium text-[var(--color-fg)]"
+                  : "text-[var(--color-muted)]"
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
         <Link
           href="/projects/new"
           data-component="NewProjectAction"
@@ -177,7 +272,42 @@ export function ProjectsList({ initial }: { initial: ProjectsResponse }) {
         </p>
       ) : null}
 
-      {items.length === 0 && !loading ? (
+      {board ? (
+        <>
+          <div className="flex items-center justify-end">
+            <button
+              type="button"
+              data-component="ManageCategoriesAction"
+              onClick={() => setManaging(true)}
+              className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs"
+            >
+              Manage categories
+            </button>
+          </div>
+          <ProjectsCategoryBoard
+            items={items}
+            categories={categories}
+            onMoved={onMoved}
+          />
+          <div className="flex items-center justify-center py-2 text-xs text-[var(--color-muted)]">
+            {loading ? (
+              <span>Loading…</span>
+            ) : cursor ? (
+              <span>
+                Showing the first {items.length} projects — narrow the view or
+                search to see the rest.
+              </span>
+            ) : null}
+          </div>
+          {managing ? (
+            <ProjectCategoriesSheet
+              categories={categories}
+              onClose={() => setManaging(false)}
+              onChanged={onCategoriesChanged}
+            />
+          ) : null}
+        </>
+      ) : items.length === 0 && !loading ? (
         <div
           data-component="ProjectsEmpty"
           className="flex flex-col gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
@@ -205,8 +335,11 @@ export function ProjectsList({ initial }: { initial: ProjectsResponse }) {
         </ul>
       )}
 
-      <div ref={sentinel} aria-hidden className="h-px" />
+      {board ? null : (
+        <div ref={sentinel} aria-hidden className="h-px" />
+      )}
 
+      {board ? null : (
       <div className="flex items-center justify-center py-2 text-xs text-[var(--color-muted)]">
         {loading ? (
           <span>Loading…</span>
@@ -222,6 +355,7 @@ export function ProjectsList({ initial }: { initial: ProjectsResponse }) {
           <span>That&apos;s everything.</span>
         ) : null}
       </div>
+      )}
     </div>
   );
 }

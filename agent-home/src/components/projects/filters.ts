@@ -44,14 +44,24 @@ export const FILTER_CHIPS: { view: ProjectListView; label: string }[] = [
  */
 export const DEFAULT_VIEW: ProjectListView = "active";
 
+/**
+ * How `/projects` lays the matching projects out: the paged list, or the
+ * category board (one column per category). A view preference, not a
+ * filter — it rides in the URL as `layout=board` but never reaches the
+ * upstream projects API.
+ */
+export type ProjectsLayout = "list" | "board";
+
 export interface ProjectsFilterState {
   view: ProjectListView;
   q: string;
+  layout: ProjectsLayout;
 }
 
 export const EMPTY_FILTERS: ProjectsFilterState = {
   view: DEFAULT_VIEW,
   q: "",
+  layout: "list",
 };
 
 /** Read the filter state out of a shared `/projects?…` URL. */
@@ -68,10 +78,15 @@ export function filtersFromParams(
   else if (params.get("status") === "paused") view = "paused";
   else if (params.get("status") === "done") view = "done";
   // `status=active` and anything unrecognised both land on the default view.
-  return { view, q: params.get("q") ?? "" };
+  const layout: ProjectsLayout =
+    params.get("layout") === "board" ? "board" : "list";
+  return { view, q: params.get("q") ?? "", layout };
 }
 
-/** The inverse, for the address bar and for the BFF call. */
+/**
+ * The inverse, for the address bar and for the BFF call. `layout` is only
+ * written for the board (absent = list); the BFF call drops it.
+ */
 export function filtersToParams(
   value: ProjectsFilterState,
   cursor?: string | null,
@@ -104,6 +119,7 @@ export function filtersToParams(
       params.set("status", "active");
   }
   if (value.q) params.set("q", value.q);
+  if (value.layout === "board") params.set("layout", "board");
   if (cursor) params.set("cursor", cursor);
   return params;
 }

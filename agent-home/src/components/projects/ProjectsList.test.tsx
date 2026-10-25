@@ -90,16 +90,38 @@ describe("projects filter URL round-trip", () => {
     for (const [qs, view] of cases) {
       expect(filtersFromParams(new URLSearchParams(qs)).view).toBe(view);
       // Round-trips: the same view produces the one narrowing parameter back.
-      expect(filtersToParams({ view, q: "" }).toString()).toBe(qs);
+      expect(filtersToParams({ view, q: "", layout: "list" }).toString()).toBe(qs);
     }
   });
 
   it("carries the search and keeps the cursor out of the shareable filter", () => {
-    const state = { view: "standing" as const, q: "digest" };
+    const state = { view: "standing" as const, q: "digest", layout: "list" as const };
     const params = filtersToParams(state, "cur_2");
     expect(params.get("q")).toBe("digest");
     expect(params.get("cursor")).toBe("cur_2");
     expect(filtersToParams(state).has("cursor")).toBe(false);
+  });
+});
+
+describe("projects layout URL round-trip", () => {
+  it("is the list when absent, and only `layout=board` selects the board", () => {
+    expect(filtersFromParams(new URLSearchParams()).layout).toBe("list");
+    expect(filtersFromParams(new URLSearchParams("layout=grid")).layout).toBe("list");
+    expect(filtersFromParams(new URLSearchParams("layout=board")).layout).toBe("board");
+    // The list never writes the parameter, so existing shared links are unchanged.
+    expect(filtersToParams(EMPTY_FILTERS).has("layout")).toBe(false);
+  });
+
+  it("round-trips the board alongside the view and the search", () => {
+    const state = { view: "standing" as const, q: "digest", layout: "board" as const };
+    const params = filtersToParams(state, "cur_2");
+    expect(params.get("layout")).toBe("board");
+    expect(filtersFromParams(filtersToParams(state))).toEqual(state);
+    expect(filtersFromParams(new URLSearchParams("status=paused&layout=board"))).toEqual({
+      view: "paused",
+      q: "",
+      layout: "board",
+    });
   });
 });
 
@@ -166,6 +188,9 @@ describe("ProjectsList", () => {
       expect(html).toContain(label);
     }
     expect(html).toContain("Load more");
+    // The layout toggle is there in list mode; the board is not.
+    expect(html).toContain('data-component="ProjectsLayoutToggle"');
+    expect(html).not.toContain('data-component="ProjectsCategoryBoard"');
   });
 
   it("says what the page is for when there is nothing in it", () => {
