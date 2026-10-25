@@ -529,7 +529,8 @@ async def test_local_app_scaffold_build_promote_undo_and_remove(
     state = await runtime.runtime(dev, _ALICE, "notes")
     assert state["runtime"]["runtime_state"] == "running"
     assert state["deployments"][0]["source_sha"] == sha1
-    assert box.calls[-2][1] == {"slug": "notes", "mode": "dev", "sha": sha1}
+    assert box.calls[-3][1] == {"slug": "notes", "mode": "dev", "sha": sha1}
+    assert [a[3] for a, _ in box.calls[-2:]] == ["restart", "route"]  # served at /apps-dev/notes
     assert box.calls[-1][1] == {"slug": "notes", "mode": "dev"}
     assert (await runtime.status(dev, _ALICE, "notes"))["live"]["active_state"] == "active"
     assert (await runtime.logs(dev, _OWNER, "notes", lines=3))["lines"] == "line 0\nline 1\nline 2"
@@ -567,7 +568,7 @@ async def test_local_app_scaffold_build_promote_undo_and_remove(
     assert {r["db_name"] for r in dev_dbs} != {r["db_name"] for r in prod_dbs}
     assert prod_dbs[0]["last_backup_ref"] == "bk_prod"
     prod_calls = [(a[3], s) for a, s in box.calls if a[2] == rt.HELPER and s and s.get("mode") == "prod"]
-    assert [v for v, _ in prod_calls] == ["allocate", "set-secret", "build", "restart"]
+    assert [v for v, _ in prod_calls] == ["allocate", "set-secret", "build", "restart", "route"]
     assert prod_calls[2][1] == {"slug": "notes", "mode": "prod", "sha": sha1,
                                 "approval_ref": result.approval_ref}
     change = (await _fetch(postgres_dsn, "SELECT op, inverse_op FROM app_prod.changes WHERE id=$1",

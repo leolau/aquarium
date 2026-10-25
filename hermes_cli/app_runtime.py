@@ -69,7 +69,8 @@ MCP_TOKEN_NAME = "APP_MCP_TOKEN"
 
 #: A local app's slug is its tool name and becomes a URL path segment and a
 #: unit instance name, so it is stricter than a tool name.
-SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$")
+#: Same rule as ``aquarium apps db`` (``deploy/aquarium.py`` ``APP_SLUG_RE``) and the helper.
+SLUG_RE = re.compile(r"^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$")
 _REF_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 _SHA_RE = re.compile(r"^[0-9a-f]{7,64}$")
 _SECRET_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
@@ -108,10 +109,10 @@ def app_path(slug: str, mode: str) -> str:
 
 
 def validate_slug(slug: str) -> str:
-    if not isinstance(slug, str) or not SLUG_RE.fullmatch(slug):
+    if not isinstance(slug, str) or not SLUG_RE.fullmatch(slug) or "--" in slug:
         raise ValueError(
-            f"Invalid app slug: {slug!r} (lowercase letters, digits and '-', "
-            "at most 40 characters)"
+            f"Invalid app slug: {slug!r} (starts with a lowercase letter; letters, "
+            "digits and single '-', at most 40 characters)"
         )
     return slug
 
@@ -604,6 +605,7 @@ class AppRuntime:
             await self._db("migrate", slug, mode, migrations=migrations)
             built = await self._call("build", slug=slug, mode=mode, sha=sha)
             started = await self._call("restart", slug=slug, mode=mode)
+            await self._call("route", slug=slug, mode=mode)
         except HelperError as exc:
             await store.set_tool_build(tool.id, "failed")
             await store.set_runtime(tool.id, runtime="local", runtime_state="failed")
@@ -821,6 +823,7 @@ class AppRuntime:
         port, ref = self.allocate(slug, "prod")
         self.helper.call("build", slug=slug, mode="prod", sha=sha, approval_ref=approval_ref)
         self.helper.call("restart", slug=slug, mode="prod")
+        self.helper.call("route", slug=slug, mode="prod")
 
         _git(repo, "update-ref", "refs/heads/main", sha)
         _git(repo, "tag", tag, sha)
