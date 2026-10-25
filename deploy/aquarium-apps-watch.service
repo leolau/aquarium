@@ -1,0 +1,42 @@
+; FG-33 local apps: one watch pass (P8-2 item 2.4), started by
+; aquarium-apps-watch.timer. No [Install]: only the timer starts it.
+;
+; As hermes, it reads `aquarium-app-helper status --all` and
+; `aquarium apps db status` through the existing sudoers rules
+; (deploy/sudoers.d/aquarium-apps), probes each instance's /api/health on
+; loopback, writes tool_runtime, raises owner notifications (NotificationStore)
+; and sends box alerts to the operator Telegram (scripts/lib/notify.py, token
+; from the profile .env), and steps the lifecycle (stop after the idle notice,
+; archive after 90 days stopped; never purge).
+;
+; NoNewPrivileges stays off and /run, /var/log stay writable because the pass
+; calls the root helpers through sudo. Paths follow the other units in deploy/;
+; adjust HERMES_HOME and the checkout path to the box.
+
+[Unit]
+Description=FG-33 local app watch pass
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=hermes
+Group=hermes
+WorkingDirectory=/opt/data/hermes-agent
+Environment=HERMES_HOME=/opt/data/hermes-home-staging
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=-/opt/data/hermes-home-staging/.env
+ExecStart=/opt/data/hermes-agent/.venv/bin/python -I -m hermes_cli.app_watch
+TimeoutStartSec=240
+
+; Losing to a live conversation or an app is the right outcome.
+Nice=10
+IOSchedulingClass=idle
+CPUWeight=20
+MemoryMax=512M
+
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictRealtime=yes

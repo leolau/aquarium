@@ -25,6 +25,10 @@ Subcommands:
 * ``build|start|stop|restart|logs|status|preview <name>`` and ``doctor`` —
   the FG-33 local app runtime (:mod:`hermes_cli.app_runtime`); app verbs
   default to ``--mode dev``.
+* ``archive|restore <name>`` and ``purge <name> --yes-destroy <name>`` — the
+  FG-33 lifecycle (:mod:`hermes_cli.app_watch`); never from the agent's shell.
+* ``set <name> --coder-profile <profile>`` — the tool's kanban coder profile
+  (FG-33 §10, :mod:`hermes_cli.app_coder`).
 
 Routine dev authoring/enable/disable/config each record a C5 provenance change
 (pre-approved — the operator is performing it directly); only ``promote`` is
@@ -165,6 +169,8 @@ async def _record_provenance(
 
 #: FG-33 local app verbs (``hermes_cli.app_runtime``).
 _APP_VERBS = ("build", "start", "stop", "restart", "logs", "status", "preview", "doctor")
+#: FG-33 lifecycle verbs (``hermes_cli.app_watch``); a person's own act only.
+_LIFECYCLE_VERBS = ("archive", "restore", "purge")
 
 
 def _is_app_new(args) -> bool:
@@ -181,7 +187,9 @@ async def _run(args, action: str) -> None:
     from hermes_cli.tools_registry import ToolRegistry, promote_tool
 
     explicit_mode = getattr(args, "mode", None)
-    if action in _APP_VERBS or (action == "new" and _is_app_new(args)):
+    if action in _APP_VERBS or action in _LIFECYCLE_VERBS or (
+        action == "new" and _is_app_new(args)
+    ):
         # Apps are authored and previewed in dev; prod only when asked for.
         mode = explicit_mode or "dev"
     else:
@@ -201,6 +209,14 @@ async def _run(args, action: str) -> None:
 
     if action in _APP_VERBS:
         await _cmd_app(args, action, principal, registry)
+        return
+
+    if action in _LIFECYCLE_VERBS:
+        await _cmd_lifecycle(args, action, principal, registry)
+        return
+
+    if action == "set":
+        await _cmd_set(args, principal, registry)
         return
 
     if action == "list":
@@ -452,6 +468,71 @@ async def _cmd_app(args, action, principal, registry) -> None:
         raise SystemExit(f"error: {exc}") from exc
 
 
+def _from_agent_shell() -> bool:
+    from hermes_cli import principal_ticket
+
+    return bool(os.environ.get(principal_ticket.ENV_VAR, "").strip()
+                or os.environ.get("HERMES_TOOLS_CLI"))
+
+
+async def _cmd_lifecycle(args, action, principal, registry) -> None:
+    """``archive|restore|purge``: decision 9, the owner's or an admin's own act."""
+    from hermes_cli import app_runtime as rt
+    from hermes_cli import app_watch
+    from hermes_cli.datastore import get_store
+    from hermes_cli.tools_registry import ToolRegistry
+
+    if _from_agent_shell():
+        raise SystemExit(f"refused: `hermes tool {action}` is a person's act; "
+                         "use the Tools page or your own shell.")
+    runtime = rt.AppRuntime()
+    try:
+        if action == "archive":
+            result = await app_watch.archive_app(runtime, registry, principal, args.name)
+        elif action == "restore":
+            result = await app_watch.restore_app(runtime, registry, principal, args.name)
+        else:
+            other = ToolRegistry(get_store("supabase-app",
+                                           "prod" if registry.mode == "dev" else "dev"))
+            await other.initialize()
+            result = await app_watch.purge_app(
+                runtime, registry, principal, args.name,
+                confirm=getattr(args, "yes_destroy", None) or "", other_registry=other,
+            )
+    except KeyError as exc:
+        raise SystemExit(f"error: no tool named {args.name!r} visible to you") from exc
+    except (PermissionError, ValueError, rt.AdmissionRefused,
+            app_watch.LifecycleConflict) as exc:
+        raise SystemExit(f"refused: {exc}") from exc
+    except rt.HelperError as exc:
+        raise SystemExit(f"error: {exc}") from exc
+    print(f"{result['tool']} ({result['mode']}): {result['lifecycle_state']}")
+    if result.get("backup_ref"):
+        print(f"  final database dump: {result['backup_ref']}")
+
+
+async def _cmd_set(args, principal, registry) -> None:
+    """``tool set <name> --coder-profile <profile>`` (FG-33 §10, item 2.9)."""
+    import inspect
+
+    from hermes_cli.app_runtime import AppRuntime
+
+    try:
+        from hermes_cli.app_coder import set_coder_profile
+    except ImportError as exc:
+        raise SystemExit("refused: this build has no coder profiles yet (FG-33 P8-2.9).") from exc
+    try:
+        await AppRuntime.resolve(registry, principal, args.name, write=True)
+        result = set_coder_profile(args.name, args.coder_profile)
+        if inspect.isawaitable(result):
+            await result
+    except KeyError as exc:
+        raise SystemExit(f"error: no tool named {args.name!r} visible to you") from exc
+    except (PermissionError, ValueError) as exc:
+        raise SystemExit(f"refused: {exc}") from exc
+    print(f"{args.name}: coder profile set to {args.coder_profile!r}.")
+
+
 def cmd_tool(args) -> None:
     """Dispatch ``hermes tool`` subcommands (default ``list``)."""
     action = getattr(args, "tool_action", None) or "list"
@@ -548,6 +629,29 @@ def register_tool_subparser(subparsers) -> None:
     )
     doctor.add_argument("--json", action="store_true")
     doctor.set_defaults(func=cmd_tool, tool_action="doctor")
+
+    lifecycle_help = {
+        "archive": "Stop, unroute and suspend a local app (reversible; --mode, default dev)",
+        "restore": "Bring an archived or idle-stopped local app back",
+        "purge": "Delete an archived app's instance and database for good",
+    }
+    for verb, text in lifecycle_help.items():
+        verb_parser = sub.add_parser(verb, help=text)
+        verb_parser.add_argument("name")
+        verb_parser.add_argument("--mode", choices=("dev", "prod"),
+                                 default=argparse.SUPPRESS)
+        if verb == "purge":
+            verb_parser.add_argument(
+                "--yes-destroy", dest="yes_destroy", metavar="NAME", default=None,
+                help="Confirm the data loss by repeating the tool name",
+            )
+        verb_parser.set_defaults(func=cmd_tool, tool_action=verb)
+
+    setp = sub.add_parser("set", help="Set a tool's properties (FG-33)")
+    setp.add_argument("name")
+    setp.add_argument("--coder-profile", dest="coder_profile", required=True,
+                      help="Kanban coder profile for the tool's build cards")
+    setp.set_defaults(func=cmd_tool, tool_action="set")
 
     parser.set_defaults(func=cmd_tool)
 
