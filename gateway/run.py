@@ -3404,9 +3404,10 @@ class GatewayRunner(
 
     async def _clamp_whatsapp_bridge_person(
         self, source: SessionSource, bridge: str
-    ) -> SessionSource:
+    ) -> Optional[SessionSource]:
         """A message through a person's own WhatsApp bridge is handled only as
-        that person. Bridges with no recorded person keep today's routing."""
+        that person. Bridges with no recorded person keep today's routing.
+        ``None`` means the message must be dropped."""
         try:
             from hermes_cli.wa_bridge_owners import bridge_person, own_number
 
@@ -3423,12 +3424,10 @@ class GatewayRunner(
             )
         except Exception:
             logger.warning(
-                "WhatsApp bridge %s: could not apply its person; message left "
-                "unbound.", bridge, exc_info=True,
+                "WhatsApp bridge %s: could not apply its person; message "
+                "dropped.", bridge, exc_info=True,
             )
-            source.internal_user_id = None
-            source.internal_user_role = None
-            return source
+            return None
 
     def _spawn_inbound_file_registration(
         self, event: Any, source: SessionSource
@@ -10423,6 +10422,9 @@ class GatewayRunner(
         # and per-internal-user (a no-op that leaves ``source`` unchanged when
         # neither is configured — see ``_enrich_channel_source_identity``).
         source = await self._enrich_channel_source_identity(source)
+        if source is None:
+            logger.info("inbound message dropped: its WhatsApp bridge person is not available")
+            return None
         try:
             event.source = source
         except Exception:

@@ -163,27 +163,33 @@ async def clamp_to_bridge_person(
     person: str,
     own_number: Optional[str],
     store: Optional["PrincipalStore"],
-) -> SessionSource:
+) -> Optional[SessionSource]:
     """Handle a message that came through a person's WhatsApp bridge only as
     that person (``hermes_cli.wa_bridge_owners``).
 
     The person writing from the bridge's own number is bound to the bridge's
-    person. Any other sender that resolved to a *different* principal is
-    unbound, so a message through Amy's phone never runs with Ben's identity,
-    role or data. Strangers stay unbound, as on any channel.
+    person. Returns ``None`` (the caller drops the message) when that person
+    cannot be resolved to an active principal. Any other sender that resolved
+    to a *different* principal is unbound, so a message through Amy's phone
+    never runs with Ben's identity, role or data. Strangers stay unbound, as on
+    any channel.
     """
     from gateway.whatsapp_identity import normalize_whatsapp_identifier
 
     sender = normalize_whatsapp_identifier(source.user_id or "")
-    if own_number and sender == own_number and store is not None:
+    if own_number and sender == own_number:
+        if store is None:
+            return None
         try:
             principal = await store.get(person)
         except Exception:
-            principal = None
-        if principal is not None and principal.active:
-            source.internal_user_id = principal.user_id
-            source.internal_user_role = principal.role
-            return source
+            logger.warning("Could not resolve the person of a WhatsApp bridge", exc_info=True)
+            return None
+        if principal is None or not getattr(principal, "active", True):
+            return None
+        source.internal_user_id = principal.user_id
+        source.internal_user_role = principal.role
+        return source
     if source.internal_user_id and source.internal_user_id != person:
         source.internal_user_id = None
         source.internal_user_role = None
