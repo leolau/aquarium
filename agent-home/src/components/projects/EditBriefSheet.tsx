@@ -4,6 +4,8 @@ import { useState } from "react";
 
 import { ActionButton } from "@/components/projects/ActionButton";
 import { ActionError } from "@/components/projects/ActionError";
+import { CategoryPicker } from "@/components/projects/categories/CategoryPicker";
+import { useProjectCategories } from "@/components/projects/categories/useProjectCategories";
 import { useProjectAction } from "@/components/projects/useProjectAction";
 import { BusyRegion } from "@/components/ui/BusyRegion";
 import type { ProjectDetail, ProjectStatus } from "@/types";
@@ -16,6 +18,13 @@ interface BriefFields {
   target_audience: string;
 }
 
+const TEXT_FIELDS = ["name", "goal", "description", "target_audience"] as const;
+
+/** The brief plus its category (null = Uncategorized). */
+type BriefState = BriefFields & { category_id?: string | null };
+
+export type BriefPatch = Partial<BriefFields> & { category_id?: string | null };
+
 const PAUSABLE: Partial<
   Record<ProjectStatus, { to: ProjectStatus; label: string; pending: string }>
 > = {
@@ -24,13 +33,15 @@ const PAUSABLE: Partial<
 };
 
 /** Only the fields that changed — the API treats every key as an assignment. */
-export function briefPatch(
-  before: BriefFields,
-  after: BriefFields,
-): Partial<BriefFields> {
-  const patch: Partial<BriefFields> = {};
-  for (const key of Object.keys(after) as (keyof BriefFields)[]) {
+/** `category_id` is sent only when it changed; clearing it sends `null`. */
+export function briefPatch(before: BriefState, after: BriefState): BriefPatch {
+  const patch: BriefPatch = {};
+  for (const key of TEXT_FIELDS) {
     if (after[key].trim() !== before[key].trim()) patch[key] = after[key].trim();
+  }
+  if ("category_id" in after) {
+    const next = after.category_id || null;
+    if (next !== (before.category_id || null)) patch.category_id = next;
   }
   return patch;
 }
@@ -48,13 +59,15 @@ export function EditBriefSheet({
   /** Called after a successful save too — the caller refreshes. */
   onClose: () => void;
 }) {
-  const before: BriefFields = {
+  const before: BriefState = {
     name: project.name,
     goal: project.goal ?? "",
     description: project.description ?? "",
     target_audience: project.target_audience ?? "",
+    category_id: project.category_id ?? null,
   };
-  const [fields, setFields] = useState<BriefFields>(before);
+  const [fields, setFields] = useState<BriefState>(before);
+  const categories = useProjectCategories();
   const saveAction = useProjectAction();
   const toggleAction = useProjectAction();
   const busy = saveAction.busy || toggleAction.busy;
@@ -63,7 +76,7 @@ export function EditBriefSheet({
   const slugPath = `/api/projects/${encodeURIComponent(project.slug)}`;
 
   // The caller refreshes on close and holds its busy state meanwhile.
-  const patchRequest = (body: Record<string, string>) => ({
+  const patchRequest = (body: Record<string, unknown>) => ({
     method: "PATCH" as const,
     body,
     skipRefresh: true,
@@ -90,7 +103,7 @@ export function EditBriefSheet({
 
   const toggle = PAUSABLE[project.status];
 
-  const set = (key: keyof BriefFields) => (value: string) =>
+  const set = (key: (typeof TEXT_FIELDS)[number]) => (value: string) =>
     setFields((prev) => ({ ...prev, [key]: value }));
 
   const inputClass = (bad: boolean) =>
@@ -171,6 +184,19 @@ export function EditBriefSheet({
                 className={inputClass(false)}
               />
             </label>
+
+            <CategoryPicker
+              id="edit-brief-category"
+              categories={categories.categories}
+              value={fields.category_id ?? null}
+              onChange={(id) => setFields((prev) => ({ ...prev, category_id: id }))}
+              disabled={busy || categories.loading}
+            />
+            {categories.error ? (
+              <span className="-mt-2 text-xs text-[var(--color-muted)]">
+                Couldn&rsquo;t load the categories — the current one is kept.
+              </span>
+            ) : null}
 
             <ActionError action={saveAction} className="flex flex-wrap items-center gap-2 text-sm text-red-400" />
             <ActionError action={toggleAction} className="flex flex-wrap items-center gap-2 text-sm text-red-400" />
