@@ -130,6 +130,20 @@ DEFAULTS: Dict[str, str] = {
     "DASHBOARD_DOMAIN": "",
     "HEALTH_WAIT_SECONDS": "120",
     "RESTART_SETTLE_SECONDS": "10",
+    # FG-33 local apps: storage base path (decision 21) and the two apps database targets (decision 18)
+    "APPS_BASE": "/var/lib/aquarium-apps",
+    "APPS_DB_HOST": "127.0.0.1",
+    "APPS_DB_PROD_CONTAINER": "supabase-apps-db",
+    "APPS_DB_PROD_PORT": "54330",
+    "APPS_DB_PROD_MEM": "512m",
+    "APPS_DB_DEV_CONTAINER": "supabase-apps-dev-db",
+    "APPS_DB_DEV_PORT": "54331",
+    "APPS_DB_DEV_MEM": "384m",
+    "APPS_DB_MAX_CONNECTIONS": "100",
+    "APPS_DB_CONN_LIMIT": "5",
+    "APPS_DB_STATEMENT_TIMEOUT": "30s",
+    "APPS_DB_CGROUP_PARENT": "aquarium-db.slice",
+    "APPS_APPROVALS_SCHEMA": "app_prod",
 }
 
 
@@ -1080,7 +1094,7 @@ def make_backup(cfg: Dict[str, str], *, label: str = "manual", to: Optional[Path
     staging = Path(tempfile.mkdtemp(prefix=".staging-", dir=dest_dir))
     manifest: Dict = {"format": 1, "created": stamp, "label": label, "release": current_release(),
                       "layout": layout(cfg), "hostname": socket.gethostname(), "files": {}, "paths": [],
-                      "db": None}
+                      "db": None, "apps_db": []}
     genv = gpg_env()
     try:
         report("database", 5)
@@ -1103,6 +1117,7 @@ def make_backup(cfg: Dict[str, str], *, label: str = "manual", to: Optional[Path
             manifest["db"] = {"database": "postgres", "tables": db_counts(cfg, "postgres")}
         else:
             say("  database not running here: backing up files only")
+        manifest["apps_db"] = backup_app_dbs(cfg, staging)
         sources = backup_sources(cfg)
         manifest["paths"] = sources
         report("files", 30)
@@ -1115,6 +1130,8 @@ def make_backup(cfg: Dict[str, str], *, label: str = "manual", to: Optional[Path
             if manifest["db"] is not None:
                 for f in ("postgres.dump", "globals.sql"):
                     _add_file(tar, staging / "db" / f, f"db/{f}", manifest)
+            for entry in manifest["apps_db"]:
+                _add_file(tar, staging / entry["file"], entry["file"], manifest)
             for i, src in enumerate(sources):
                 say(f"  {src}")
                 report("files", 30 + 30 * i // max(len(sources), 1))
@@ -1330,9 +1347,11 @@ def cmd_restore(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
             manifest = open_backup(path, key, staging)
             say(f"  made {manifest['created']} on {manifest.get('hostname')} (release {manifest.get('release')}, "
                 f"label {manifest.get('label')}); {len(manifest['files'])} files, checksums ok")
+            if args.app:
+                return cmd_restore_app(cfg, args, manifest, staging)
             if args.test:
                 step("Restore test (nothing on this server is changed)")
-                problems = restore_test(cfg, manifest, staging)
+                problems = restore_test(cfg, manifest, staging) + restore_test_apps(cfg, manifest, staging)
                 if problems:
                     for p in problems:
                         say(f"  FAIL  {p}")
@@ -1345,6 +1364,8 @@ def cmd_restore(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
                 say(f"  {p}")
             if manifest.get("db"):
                 say(f"  the whole database ({len(manifest['db']['tables'])} app/auth/storage tables)")
+            for entry in manifest.get("apps_db") or []:
+                say(f"  app database {entry['database']} ({entry['mode']} apps cluster)")
             if not args.yes:
                 say("\nNothing changed. Re-run with --yes to restore (a safety backup of the current state is taken first).")
                 return 0
@@ -1389,6 +1410,16 @@ def _restore_apply(cfg: Dict[str, str], manifest: Dict, staging: Path, args: arg
                 + ("row counts match the backup" if not diff else f"{len(diff)} tables differ"))
             for d in diff[:20]:
                 say(f"  FAIL  {d}")
+        if manifest.get("apps_db"):
+            step("Restoring app databases")
+        for entry in manifest.get("apps_db") or []:
+            if not apps_cluster_running(apps_target(cfg, entry["mode"])):
+                say(f"  SKIP  {entry['database']}: the {entry['mode']} apps cluster is not running; "
+                    f"later: aquarium apps cluster up {entry['mode']}, then restore --app {entry['slug']} "
+                    f"--mode {entry['mode']}")
+                continue
+            for d in restore_app_db(cfg, manifest, staging, entry)[:20]:
+                say(f"  FAIL  {entry['database']}: {d}")
     finally:
         for name in others:
             run(["docker", "start", name], check=False)
@@ -1410,6 +1441,607 @@ def _restore_apply(cfg: Dict[str, str], manifest: Dict, staging: Path, args: arg
         raise Fail("restored, but the health check fails: " + ", ".join(failed),
                    "Run `aquarium doctor` and `aquarium logs <service>`.")
     say("\nRestore finished; everything is healthy.")
+    return 0
+
+
+# --------------------------------------------------------------------------- local app databases (FG-33)
+#
+# Every local app gets one database per mode on a dedicated Postgres cluster (B2, decisions 1/2):
+# `prod` databases on the apps cluster, `dev` databases on the separate dev instance (decision 18).
+# Nothing here touches Aquarium's own database except reading one approval row. The service user
+# reaches these verbs only through the sudoers argv `aquarium apps db <verb> <slug> <mode>`; any
+# other input is a JSON object on stdin. See deploy/install/apps-db/README.md.
+
+APP_SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
+APP_MODES = ("prod", "dev")
+APP_DB_VERBS = ("create", "migrate", "status", "suspend", "resume", "drop")
+APP_DB_NAME_RE = re.compile(r"^lapp_[a-z0-9_]{1,30}_[0-9a-f]{8}_(?:prod|dev)$")
+APPROVAL_REF_RE = re.compile(r"^apr_[0-9a-f]{32}$")
+MIGRATION_NAME_RE = re.compile(r"^[0-9]{1,20}_[A-Za-z0-9_.-]{1,80}\.sql$")
+APP_SCHEMA_RE = re.compile(r"^app_[a-z0-9_]{1,40}$")
+APPS_COMPOSE = "deploy/install/apps-db/docker-compose.yml"
+APPS_SPEC_MAX = 8 * 2**20
+APPROVAL_MAX_AGE_HOURS = 24
+APP_ROLE_KINDS = ("owner", "rw", "ro")
+
+
+def apps_slug(slug: str) -> str:
+    if not APP_SLUG_RE.match(slug or "") or "--" in slug or slug.endswith("-"):
+        raise Fail(f"invalid app slug {slug!r}", "Use 1-40 lowercase letters, digits and single dashes, starting with a letter.")
+    return slug
+
+
+def apps_mode(mode: str) -> str:
+    if mode not in APP_MODES:
+        raise Fail(f"invalid mode {mode!r}", "Use prod or dev.")
+    return mode
+
+
+def app_db_name(slug: str, mode: str) -> str:
+    """lapp_<id>_<mode>; the hash keeps `a-b` and `a_b`-like slugs apart and fits role names in 63 bytes."""
+    digest = hashlib.sha256(apps_slug(slug).encode()).hexdigest()[:8]
+    return f"lapp_{slug.replace('-', '_')[:30]}_{digest}_{apps_mode(mode)}"
+
+
+def app_roles(db: str) -> Dict[str, str]:
+    return {kind: f"{db}_{kind}" for kind in APP_ROLE_KINDS}
+
+
+def apps_target(cfg: Dict[str, str], mode: str) -> Dict[str, str]:
+    key = "PROD" if apps_mode(mode) == "prod" else "DEV"
+    return {"name": mode, "container": cfg[f"APPS_DB_{key}_CONTAINER"], "port": cfg[f"APPS_DB_{key}_PORT"],
+            "mem": cfg[f"APPS_DB_{key}_MEM"], "data": f"{cfg['APPS_BASE'].rstrip('/')}/db/{mode}",
+            "env": f"{ETC}/apps-db-{mode}.env"}
+
+
+def app_dsn_dir(slug: str) -> Path:
+    return P(f"{ETC}/apps/{apps_slug(slug)}")
+
+
+def app_dsn_path(slug: str, mode: str, kind: str) -> Path:
+    return app_dsn_dir(slug) / f"db-{apps_mode(mode)}-{kind}.dsn"
+
+
+def sql_lit(text: str) -> str:
+    return "'" + text.replace("'", "''") + "'"
+
+
+def sql_ident(text: str) -> str:
+    return '"' + text.replace('"', '""') + '"'
+
+
+def apps_psql(container: str, sql: str, db: str = "postgres", user: str = "supabase_admin",
+              tcp: bool = False, timeout: float = 600) -> subprocess.CompletedProcess:
+    """psql inside an apps cluster container, SQL on stdin (never argv: it may hold password verifiers).
+
+    ``tcp`` connects over the container's loopback so ``user`` is the session user (no superuser)."""
+    argv = ["docker", "exec", "-i", "-u", "postgres", container, "psql", "-X", "-q", "-At", "-F", "|",
+            "-v", "ON_ERROR_STOP=1", "-U", user, "-d", db] + (["-h", "127.0.0.1"] if tcp else []) + ["-f", "-"]
+    return run(argv, input=sql.encode(), check=False, timeout=timeout)
+
+
+def apps_sql_ok(container: str, sql: str, db: str = "postgres", what: str = "the database command") -> str:
+    proc = apps_psql(container, sql, db)
+    if proc.returncode != 0:
+        tail = (proc.stderr or b"").decode(errors="replace").strip().splitlines()[-3:]
+        raise Fail(f"{what} failed: " + " / ".join(tail)[-400:])
+    return proc.stdout.decode(errors="replace")
+
+
+def apps_cluster_running(target: Dict[str, str]) -> bool:
+    return have("docker") and run(["docker", "inspect", "-f", "{{.State.Running}}", target["container"]],
+                                  check=False).stdout.strip() == b"true"
+
+
+def apps_require_cluster(target: Dict[str, str]) -> None:
+    if not apps_cluster_running(target):
+        raise Fail(f"the {target['name']} apps database cluster ({target['container']}) is not running",
+                   f"Run `aquarium apps cluster up {target['name']}` as root.")
+
+
+def app_db_exists(target: Dict[str, str], db: str) -> bool:
+    return apps_sql_ok(target["container"], f"SELECT 1 FROM pg_database WHERE datname = {sql_lit(db)};",
+                       what="looking up the database").strip() == "1"
+
+
+def list_app_dbs(target: Dict[str, str]) -> List[str]:
+    rows = apps_sql_ok(target["container"], "SELECT datname FROM pg_database WHERE datname LIKE 'lapp\\_%' "
+                       "ORDER BY 1;", what="listing app databases").split()
+    return [r for r in rows if APP_DB_NAME_RE.match(r)]
+
+
+def scram_verifier(password: str, iterations: int = 4096) -> str:
+    """A SCRAM-SHA-256 verifier, so the plain password never reaches the server or its logs."""
+    salt = secrets.token_bytes(16)
+    salted = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations)
+    stored = hashlib.sha256(hmac.new(salted, b"Client Key", "sha256").digest()).digest()
+    server = hmac.new(salted, b"Server Key", "sha256").digest()
+
+    def b64(data: bytes) -> str:
+        return base64.b64encode(data).decode()
+    return f"SCRAM-SHA-256${iterations}:{b64(salt)}${b64(stored)}:{b64(server)}"
+
+
+def read_apps_spec(allowed: Sequence[str]) -> Dict:
+    """The one JSON object the caller may pipe on stdin; unknown keys are refused."""
+    if sys.stdin is None or sys.stdin.isatty():
+        return {}
+    raw = sys.stdin.buffer.read(APPS_SPEC_MAX + 1)
+    if len(raw) > APPS_SPEC_MAX:
+        raise Fail("the request on stdin is too large")
+    if not raw.strip():
+        return {}
+    try:
+        spec = json.loads(raw)
+    except ValueError:
+        raise Fail("stdin is not a JSON object")
+    if not isinstance(spec, dict):
+        raise Fail("stdin is not a JSON object")
+    extra = sorted(set(spec) - set(allowed))
+    if extra:
+        raise Fail(f"unexpected keys on stdin: {', '.join(extra)}")
+    return spec
+
+
+def apps_approvals_path() -> Path:
+    return P("/var/lib/aquarium/apps-db-approvals.json")
+
+
+def require_prod_approval(cfg: Dict[str, str], slug: str, verb: str, spec: Dict) -> str:
+    """Prod verbs need an approved C6 record for this tool; each approval works once per verb."""
+    ref = spec.get("approval_ref")
+    if not isinstance(ref, str) or not APPROVAL_REF_RE.match(ref):
+        raise Fail(f"`{verb}` on a prod database needs an approved approval_ref on stdin",
+                   'Pipe {"approval_ref": "apr_..."} from the promotion that was approved.')
+    schema = cfg["APPS_APPROVALS_SCHEMA"]
+    if not APP_SCHEMA_RE.match(schema):
+        raise Fail(f"APPS_APPROVALS_SCHEMA={schema!r} is not a valid schema name")
+    used_path = apps_approvals_path()
+    used = json.loads(used_path.read_text()) if used_path.is_file() else {}
+    if verb in used.get(ref, []):
+        raise Fail(f"approval {ref} was already used for `{verb}`", "Ask for a new approval.")
+    proc = psql(cfg, f"SELECT count(*) FROM {schema}.approvals WHERE id = {sql_lit(ref)} "
+                     f"AND target_ref = {sql_lit('tool:' + slug)} AND decision = 'approved' "
+                     f"AND created_at > now() - interval '{APPROVAL_MAX_AGE_HOURS} hours'")
+    if proc.returncode != 0 or proc.stdout.decode(errors="replace").strip() != "1":
+        raise Fail(f"approval {ref} is not an approved, recent approval for tool:{slug}",
+                   "Promotion must be approved (C6) before prod databases change.")
+    used.setdefault(ref, []).append(verb)
+    write_private(used_path, (json.dumps(used, sort_keys=True) + "\n").encode())
+    return ref
+
+
+def apps_answer(data: Dict) -> int:
+    print(json.dumps(data, sort_keys=True), flush=True)
+    return 0 if data.get("ok") else 1
+
+
+def harden_apps_cluster(target: Dict[str, str]) -> None:
+    """No app role may connect to anything but its own database (not even `postgres`)."""
+    apps_sql_ok(target["container"], """
+DO $aq$
+DECLARE d text;
+BEGIN
+  FOR d IN SELECT datname FROM pg_database WHERE datallowconn LOOP
+    EXECUTE format('REVOKE CONNECT, TEMPORARY ON DATABASE %I FROM PUBLIC', d);
+  END LOOP;
+END
+$aq$;
+""", what="hardening the apps cluster")
+
+
+def app_role_sql(cfg: Dict[str, str], role: str, kind: str, verifier: Optional[str]) -> str:
+    limit = int(cfg["APPS_DB_CONN_LIMIT"])
+    timeout = cfg["APPS_DB_STATEMENT_TIMEOUT"]
+    if not re.match(r"^[0-9]{1,6}(?:ms|s|min)$", timeout):
+        raise Fail(f"APPS_DB_STATEMENT_TIMEOUT={timeout!r} is not like 30s")
+    sql = (f"DO $aq$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = {sql_lit(role)}) "
+           f"THEN CREATE ROLE {sql_ident(role)}; END IF; END $aq$;\n"
+           f"ALTER ROLE {sql_ident(role)} WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION "
+           f"NOBYPASSRLS NOINHERIT CONNECTION LIMIT {limit}"
+           + (f" PASSWORD {sql_lit(verifier)}" if verifier else "") + ";\n"
+           f"ALTER ROLE {sql_ident(role)} SET statement_timeout = {sql_lit(timeout)};\n"
+           f"ALTER ROLE {sql_ident(role)} SET idle_in_transaction_session_timeout = '60s';\n"
+           f"ALTER ROLE {sql_ident(role)} SET search_path = public, extensions;\n")
+    if kind == "ro":
+        sql += f"ALTER ROLE {sql_ident(role)} SET default_transaction_read_only = on;\n"
+    return sql
+
+
+def app_grants_sql(db: str) -> str:
+    """Inside the app database: who may do what (re-run after restores; idempotent)."""
+    r = {k: sql_ident(v) for k, v in app_roles(db).items()}
+    return f"""
+CREATE SCHEMA IF NOT EXISTS extensions;
+REVOKE ALL ON SCHEMA extensions FROM PUBLIC;
+GRANT USAGE ON SCHEMA extensions TO {r['owner']}, {r['rw']}, {r['ro']};
+CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp" SCHEMA extensions;
+CREATE SCHEMA IF NOT EXISTS aquarium_meta;
+REVOKE ALL ON SCHEMA aquarium_meta FROM PUBLIC;
+CREATE TABLE IF NOT EXISTS aquarium_meta.app (slug text NOT NULL, mode text NOT NULL);
+CREATE TABLE IF NOT EXISTS aquarium_meta.migrations (
+  name text PRIMARY KEY, sha256 text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now());
+CREATE SCHEMA IF NOT EXISTS supabase_migrations;
+REVOKE ALL ON SCHEMA supabase_migrations FROM PUBLIC;
+CREATE TABLE IF NOT EXISTS supabase_migrations.schema_migrations (
+  version text PRIMARY KEY, statements text[], name text);
+GRANT USAGE ON SCHEMA supabase_migrations TO {r['rw']}, {r['ro']};
+GRANT SELECT ON supabase_migrations.schema_migrations TO {r['rw']}, {r['ro']};
+ALTER SCHEMA public OWNER TO {r['owner']};
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+GRANT USAGE ON SCHEMA public TO {r['rw']}, {r['ro']};
+ALTER DEFAULT PRIVILEGES FOR ROLE {r['owner']} IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {r['rw']};
+ALTER DEFAULT PRIVILEGES FOR ROLE {r['owner']} IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO {r['rw']};
+ALTER DEFAULT PRIVILEGES FOR ROLE {r['owner']} IN SCHEMA public GRANT SELECT ON TABLES TO {r['ro']};
+ALTER DEFAULT PRIVILEGES FOR ROLE {r['owner']} IN SCHEMA public GRANT SELECT ON SEQUENCES TO {r['ro']};
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {r['rw']};
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO {r['rw']};
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO {r['ro']};
+GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO {r['ro']};
+"""
+
+
+def ensure_app_db(cfg: Dict[str, str], target: Dict[str, str], slug: str, mode: str,
+                  rotate: bool = False) -> Tuple[bool, Dict[str, str]]:
+    """Create (or repair) database, roles, grants and DSN files. Existing passwords are kept."""
+    db = app_db_name(slug, mode)
+    roles = app_roles(db)
+    harden_apps_cluster(target)
+    existing = set(apps_sql_ok(target["container"], "SELECT rolname FROM pg_roles WHERE rolname IN ("
+                               + ", ".join(sql_lit(r) for r in roles.values()) + ");", what="looking up roles").split())
+    sql = "SET log_statement = 'none';\n"
+    new_dsns: Dict[str, str] = {}
+    for kind, role in roles.items():
+        path = app_dsn_path(slug, mode, kind)
+        verifier = None
+        if rotate or role not in existing or not path.is_file():
+            password = secrets.token_urlsafe(32)
+            verifier = scram_verifier(password)
+            new_dsns[kind] = (f"postgresql://{role}:{password}@{cfg['APPS_DB_HOST']}:{target['port']}/{db}"
+                              "?sslmode=disable")
+        sql += app_role_sql(cfg, role, kind, verifier)
+    apps_sql_ok(target["container"], sql, what="creating the app roles")
+    created = not app_db_exists(target, db)
+    if created:
+        apps_sql_ok(target["container"], f"CREATE DATABASE {sql_ident(db)} OWNER {sql_ident(roles['owner'])} "
+                    "ENCODING 'UTF8' TEMPLATE template0;", what="creating the database")
+    apps_sql_ok(target["container"],
+                f"REVOKE ALL ON DATABASE {sql_ident(db)} FROM PUBLIC;\n"
+                f"GRANT CONNECT, TEMPORARY ON DATABASE {sql_ident(db)} TO "
+                + ", ".join(sql_ident(r) for r in roles.values()) + ";", what="granting connect")
+    apps_sql_ok(target["container"], app_grants_sql(db)
+                + "DELETE FROM aquarium_meta.app;\n"
+                f"INSERT INTO aquarium_meta.app (slug, mode) VALUES ({sql_lit(slug)}, {sql_lit(mode)});\n",
+                db=db, what="setting up the database")
+    folder = app_dsn_dir(slug)
+    folder.mkdir(parents=True, exist_ok=True)
+    os.chmod(folder, 0o700)
+    for kind, dsn in new_dsns.items():
+        write_private(app_dsn_path(slug, mode, kind), (dsn + "\n").encode())
+    return created, {k: real(app_dsn_path(slug, mode, k)) for k in APP_ROLE_KINDS}
+
+
+def app_db_dump(target: Dict[str, str], db: str, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        p = subprocess.run(["docker", "exec", "-u", "postgres", target["container"], "pg_dump", "-U", "supabase_admin",
+                            "-d", db, "-Fc"], stdout=fh, stderr=subprocess.PIPE, check=False)
+    if p.returncode != 0:
+        with contextlib.suppress(FileNotFoundError):
+            dest.unlink()
+        raise Fail(f"dumping {db} failed: " + p.stderr.decode(errors="replace").strip()[-300:])
+
+
+def app_safety_dump(cfg: Dict[str, str], target: Dict[str, str], db: str, why: str) -> str:
+    folder = P(f"{cfg['APPS_BASE'].rstrip('/')}/db-backups")
+    folder.mkdir(parents=True, exist_ok=True)
+    os.chmod(folder, 0o700)
+    dest = folder / f"{db}-{utcnow()}-{why}.dump"
+    app_db_dump(target, db, dest)
+    return real(dest)
+
+
+def app_counts(target: Dict[str, str], db: str) -> Dict[str, int]:
+    proc = apps_psql(target["container"], COUNT_SQL + ";", db, timeout=900)
+    counts: Dict[str, int] = {}
+    for line in proc.stdout.decode(errors="replace").splitlines():
+        name, _, value = line.partition("|")
+        if value.strip().isdigit():
+            counts[name] = int(value)
+    return counts
+
+
+def app_migrations(spec: Dict) -> List[Tuple[str, str]]:
+    items = spec.get("migrations")
+    if items is None:
+        return []
+    if not isinstance(items, list):
+        raise Fail("migrations must be a list")
+    seen: Dict[str, str] = {}
+    for item in items:
+        if not isinstance(item, dict) or set(item) != {"name", "sql"} or not isinstance(item["sql"], str):
+            raise Fail('each migration must be {"name": ..., "sql": ...}')
+        name = item["name"]
+        if not isinstance(name, str) or not MIGRATION_NAME_RE.match(name):
+            raise Fail(f"bad migration file name {name!r}", "Name them like 20260101120000_create_notes.sql.")
+        if name in seen:
+            raise Fail(f"migration {name} is listed twice")
+        seen[name] = item["sql"]
+    return sorted(seen.items())
+
+
+def apply_migration(target: Dict[str, str], db: str, name: str, sql: str) -> None:
+    """Run one migration as the owner role in a single transaction, then record it.
+
+    The text is wrapped in a dollar-quoted EXECUTE with a random tag, so psql meta-commands
+    (``\\!`` and friends) inside a migration are just SQL text the server rejects."""
+    tag = "aqm_" + secrets.token_hex(8)
+    if f"${tag}$" in sql:
+        raise Fail("migration text collides with the wrapper; try again")
+    owner = app_roles(db)["owner"]
+    wrapped = (f"BEGIN;\nSET LOCAL statement_timeout = '15min';\n"
+               f"DO ${tag}_do$ BEGIN EXECUTE ${tag}${sql}${tag}$; END ${tag}_do$;\nCOMMIT;\n")
+    proc = apps_psql(target["container"], wrapped, db, user=owner, tcp=True, timeout=1200)
+    if proc.returncode != 0:
+        tail = (proc.stderr or b"").decode(errors="replace").strip().splitlines()[-3:]
+        raise Fail(f"migration {name} failed (nothing from it was applied): " + " / ".join(tail)[-400:])
+    # aquarium_meta is the authority; supabase_migrations.schema_migrations mirrors it in the
+    # Supabase CLI shape, so the app's /api/health can report it and `supabase db push`
+    # after a move to supabase.com sees what is applied.
+    version, _, label = name[: -len(".sql")].partition("_")
+    apps_sql_ok(target["container"], "INSERT INTO aquarium_meta.migrations (name, sha256) VALUES ("
+                f"{sql_lit(name)}, {sql_lit(hashlib.sha256(sql.encode()).hexdigest())});\n"
+                "INSERT INTO supabase_migrations.schema_migrations (version, name) VALUES ("
+                f"{sql_lit(version)}, {sql_lit(label)}) ON CONFLICT (version) DO NOTHING;", db,
+                what="recording the migration")
+    apps_sql_ok(target["container"], app_grants_sql(db), db, what="re-granting")
+
+
+def app_db_status(cfg: Dict[str, str], target: Dict[str, str], slug: str, mode: str) -> Dict:
+    db = app_db_name(slug, mode)
+    base = {"ok": True, "verb": "status", "slug": slug, "mode": mode, "database": db,
+            "target": target["container"], "cluster_running": apps_cluster_running(target)}
+    if not base["cluster_running"]:
+        return {**base, "exists": False}
+    if not app_db_exists(target, db):
+        return {**base, "exists": False}
+    roles = app_roles(db)
+    rows = apps_sql_ok(target["container"], "SELECT rolname, rolconnlimit FROM pg_roles WHERE rolname IN ("
+                       + ", ".join(sql_lit(r) for r in roles.values()) + ");", what="reading roles")
+    limits = dict(line.split("|") for line in rows.splitlines() if "|" in line)
+    size = apps_sql_ok(target["container"], f"SELECT pg_database_size({sql_lit(db)});", what="reading size").strip()
+    applied = apps_sql_ok(target["container"], "SELECT name FROM aquarium_meta.migrations ORDER BY 1;", db,
+                          what="reading migrations").split()
+    return {**base, "exists": True, "size_bytes": int(size or 0), "migrations": applied,
+            "suspended": bool(limits) and all(v == "0" for v in limits.values()),
+            "connection_limits": {k: int(limits.get(r, -1)) for k, r in roles.items()}}
+
+
+def set_conn_limit(target: Dict[str, str], db: str, limit: int) -> None:
+    sql = "".join(f"ALTER ROLE {sql_ident(r)} CONNECTION LIMIT {limit};\n" for r in app_roles(db).values())
+    if limit == 0:
+        sql += (f"SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity WHERE datname = {sql_lit(db)} "
+                "AND pid <> pg_backend_pid();\n")
+    apps_sql_ok(target["container"], sql, what="changing the connection limit")
+
+
+def apps_db_verb(cfg: Dict[str, str], verb: str, slug: str, mode: str) -> Dict:
+    slug, mode = apps_slug(slug), apps_mode(mode)
+    allowed = {"create": ["approval_ref"], "migrate": ["approval_ref", "migrations"], "status": [],
+               "suspend": ["approval_ref"], "resume": ["approval_ref"], "drop": ["approval_ref", "confirm"]}[verb]
+    spec = read_apps_spec(allowed)
+    target = apps_target(cfg, mode)
+    db = app_db_name(slug, mode)
+    if verb == "status":
+        return app_db_status(cfg, target, slug, mode)
+    if verb == "drop" and spec.get("confirm") != slug:
+        raise Fail(f"dropping {db} deletes its data for good; confirmation missing",
+                   f'Pipe {{"confirm": "{slug}"}} after the member confirmed.')
+    apps_require_cluster(target)
+    if verb == "create":
+        approval = require_prod_approval(cfg, slug, verb, spec) if mode == "prod" else None
+        created, dsns = ensure_app_db(cfg, target, slug, mode)
+        audit(f"apps db create {slug} {mode}: {db} ({'new' if created else 'repaired'})")
+        return {"ok": True, "verb": verb, "slug": slug, "mode": mode, "database": db, "target": target["container"],
+                "created": created, "dsn_files": dsns, "approval_ref": approval}
+    if not app_db_exists(target, db):
+        raise Fail(f"{db} does not exist", f"Run `aquarium apps db create {slug} {mode}` first.")
+    if verb == "migrate":
+        wanted = app_migrations(spec)
+        rows = apps_sql_ok(target["container"], "SELECT name, sha256 FROM aquarium_meta.migrations;", db,
+                           what="reading applied migrations")
+        applied = dict(line.split("|", 1) for line in rows.splitlines() if "|" in line)
+        pending = []
+        for name, sql in wanted:
+            digest = hashlib.sha256(sql.encode()).hexdigest()
+            if name in applied:
+                if applied[name] != digest:
+                    raise Fail(f"migration {name} changed after it was applied",
+                               "Never edit an applied migration; add a new one.")
+                continue
+            if any(name < done for done in applied):
+                raise Fail(f"migration {name} sorts before one already applied",
+                           "Give new migrations a later timestamp prefix.")
+            pending.append((name, sql))
+        approval = require_prod_approval(cfg, slug, verb, spec) if mode == "prod" and pending else None
+        backup = app_safety_dump(cfg, target, db, "pre-migrate") if mode == "prod" and pending else None
+        done = []
+        for name, sql in pending:
+            apply_migration(target, db, name, sql)
+            done.append(name)
+        audit(f"apps db migrate {slug} {mode}: {len(done)} applied")
+        return {"ok": True, "verb": verb, "slug": slug, "mode": mode, "database": db, "applied": done,
+                "already_applied": sorted(applied), "backup_ref": backup, "approval_ref": approval}
+    approval = require_prod_approval(cfg, slug, verb, spec) if mode == "prod" else None
+    if verb in ("suspend", "resume"):
+        set_conn_limit(target, db, 0 if verb == "suspend" else int(cfg["APPS_DB_CONN_LIMIT"]))
+        audit(f"apps db {verb} {slug} {mode}")
+        return {"ok": True, "verb": verb, "slug": slug, "mode": mode, "database": db, "approval_ref": approval}
+    backup = app_safety_dump(cfg, target, db, "pre-drop")
+    apps_sql_ok(target["container"], f"DROP DATABASE {sql_ident(db)} WITH (FORCE);", what="dropping the database")
+    apps_sql_ok(target["container"], "".join(f"DROP ROLE IF EXISTS {sql_ident(r)};\n" for r in app_roles(db).values()),
+                what="dropping the roles")
+    for kind in APP_ROLE_KINDS:
+        with contextlib.suppress(FileNotFoundError):
+            app_dsn_path(slug, mode, kind).unlink()
+    with contextlib.suppress(OSError):
+        app_dsn_dir(slug).rmdir()
+    audit(f"apps db drop {slug} {mode}: {db}, final dump {backup}")
+    return {"ok": True, "verb": verb, "slug": slug, "mode": mode, "database": db, "backup_ref": backup,
+            "approval_ref": approval}
+
+
+def apps_cluster_targets(cfg: Dict[str, str], which: str) -> List[Dict[str, str]]:
+    return [apps_target(cfg, m) for m in (APP_MODES if which == "all" else (apps_mode(which),))]
+
+
+def apps_cluster_up(cfg: Dict[str, str], target: Dict[str, str]) -> None:
+    compose = code_dir(cfg) / APPS_COMPOSE
+    if not compose.is_file():
+        raise Fail(f"{real(compose)} is missing", "Update Aquarium to a release with local apps.")
+    env_path = P(target["env"])
+    secrets_env = read_kv(env_path)
+    if not secrets_env.get("POSTGRES_PASSWORD"):
+        secrets_env["POSTGRES_PASSWORD"] = secrets.token_urlsafe(32)
+        write_private(env_path, f"POSTGRES_PASSWORD={secrets_env['POSTGRES_PASSWORD']}\n".encode())
+    data = P(target["data"])
+    data.mkdir(parents=True, exist_ok=True)
+    os.chmod(data, 0o700)
+    env = {"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+           "POSTGRES_PASSWORD": secrets_env["POSTGRES_PASSWORD"], "APPS_DB_CONTAINER": target["container"],
+           "APPS_DB_PORT": target["port"], "APPS_DB_DATA": str(data), "APPS_DB_MEM": target["mem"],
+           "APPS_DB_MAX_CONNECTIONS": cfg["APPS_DB_MAX_CONNECTIONS"],
+           "APPS_DB_CGROUP_PARENT": cfg["APPS_DB_CGROUP_PARENT"]}
+    for key in ("HOME", "DOCKER_HOST", "DOCKER_CONFIG"):
+        if key in os.environ:
+            env[key] = os.environ[key]
+    run(["docker", "compose", "-p", f"aquarium-apps-db-{target['name']}", "-f", str(compose), "up", "-d",
+         "--wait"], env=env, timeout=600)
+    harden_apps_cluster(target)
+
+
+def cmd_apps(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
+    if args.area == "db":
+        try:
+            path = P("/run/aquarium-apps-db.lock")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fcntl.flock(fh, fcntl.LOCK_EX)
+                return apps_answer(apps_db_verb(cfg, args.verb, args.slug, args.mode))
+        except Fail as error:
+            return apps_answer({"ok": False, "verb": args.verb, "error": str(error), "fix": error.fix})
+    for target in apps_cluster_targets(cfg, args.target):
+        if args.verb == "up":
+            with admin_lock():
+                step(f"Apps database cluster: {target['name']} ({target['container']})")
+                apps_cluster_up(cfg, target)
+            say("  running; app roles can reach only their own databases")
+        elif args.verb == "down":
+            run(["docker", "stop", target["container"]], check=False)
+            say(f"  {target['container']}: stopped")
+        else:
+            up = apps_cluster_running(target)
+            dbs = list_app_dbs(target) if up else []
+            say(f"  {target['name']}: {target['container']} 127.0.0.1:{target['port']} "
+                f"{'running' if up else 'not running'}, {len(dbs)} app databases")
+    return 0
+
+
+def backup_app_dbs(cfg: Dict[str, str], staging: Path) -> List[Dict]:
+    """Dump every app database on both clusters; a running cluster that cannot be dumped fails the backup."""
+    entries: List[Dict] = []
+    for mode in APP_MODES:
+        target = apps_target(cfg, mode)
+        if not apps_cluster_running(target):
+            continue
+        for db in list_app_dbs(target):
+            say(f"  app database {db}")
+            app_db_dump(target, db, staging / "db" / "apps" / f"{db}.dump")
+            meta = apps_psql(target["container"], "SELECT slug, mode FROM aquarium_meta.app LIMIT 1;", db)
+            slug, _, _ = meta.stdout.decode(errors="replace").strip().partition("|")
+            entries.append({"database": db, "slug": slug or None, "mode": mode, "target": target["container"],
+                            "file": f"db/apps/{db}.dump", "tables": app_counts(target, db)})
+    return entries
+
+
+def restore_test_apps(cfg: Dict[str, str], manifest: Dict, staging: Path) -> List[str]:
+    problems: List[str] = []
+    for entry in manifest.get("apps_db") or []:
+        target = apps_target(cfg, entry["mode"])
+        if not apps_cluster_running(target):
+            problems.append(f"{entry['database']}: the {entry['mode']} apps cluster is not running here")
+            continue
+        scratch = "aquarium_restore_test_app"
+        apps_psql(target["container"], f"DROP DATABASE IF EXISTS {scratch} WITH (FORCE);")
+        if apps_psql(target["container"], f"CREATE DATABASE {scratch} TEMPLATE template0;").returncode != 0:
+            problems.append(f"{entry['database']}: could not create a scratch database")
+            continue
+        try:
+            with open(staging / entry["file"], "rb") as fh:
+                subprocess.run(["docker", "exec", "-i", "-u", "postgres", target["container"], "pg_restore",
+                                "-U", "supabase_admin", "--no-owner", "--no-privileges", "-d", scratch],
+                               stdin=fh, capture_output=True, check=False)
+            diff = compare_counts(entry["tables"], app_counts(target, scratch))
+            problems += [f"{entry['database']} row count differs: {d}" for d in diff[:20]]
+            say(f"  app database {entry['database']}: {len(entry['tables'])} tables restored into a scratch copy")
+        finally:
+            apps_psql(target["container"], f"DROP DATABASE IF EXISTS {scratch} WITH (FORCE);")
+    return problems
+
+
+def restore_app_db(cfg: Dict[str, str], manifest: Dict, staging: Path, entry: Dict) -> List[str]:
+    """Put back one app database: safety dump, recreate it empty with its roles, restore as the owner."""
+    slug, mode, db = entry["slug"], entry["mode"], entry["database"]
+    if not slug or app_db_name(slug, mode) != db:
+        raise Fail(f"the backup entry for {db} does not name its app")
+    target = apps_target(cfg, mode)
+    apps_require_cluster(target)
+    if app_db_exists(target, db):
+        say(f"  safety dump: {app_safety_dump(cfg, target, db, 'pre-restore')}")
+        apps_sql_ok(target["container"], f"DROP DATABASE {sql_ident(db)} WITH (FORCE);", what="clearing the database")
+    ensure_app_db(cfg, target, slug, mode)
+    owner = app_roles(db)["owner"]
+    dump = staging / entry["file"]
+    with open(dump, "rb") as fh:
+        subprocess.run(["docker", "exec", "-i", "-u", "postgres", target["container"], "pg_restore", "-U",
+                        "supabase_admin", "--no-owner", "--no-privileges", f"--role={owner}", "-n", "public",
+                        "-d", db], stdin=fh, capture_output=True, check=False)
+    apps_sql_ok(target["container"], app_grants_sql(db), db, what="re-granting")
+    apps_sql_ok(target["container"], "TRUNCATE aquarium_meta.migrations, supabase_migrations.schema_migrations;", db,
+                what="clearing migration history")
+    for schema, table in (("aquarium_meta", "migrations"), ("supabase_migrations", "schema_migrations")):
+        with open(dump, "rb") as fh:
+            subprocess.run(["docker", "exec", "-i", "-u", "postgres", target["container"], "pg_restore", "-U",
+                            "supabase_admin", "--data-only", "-n", schema, "-t", table, "-d", db],
+                           stdin=fh, capture_output=True, check=False)
+    apps_sql_ok(target["container"], app_grants_sql(db), db, what="re-granting")
+    diff = compare_counts({k: v for k, v in entry["tables"].items() if k.startswith("public.")}, app_counts(target, db))
+    say(f"  app database {db}: " + ("row counts match the backup" if not diff else f"{len(diff)} tables differ"))
+    audit(f"restore app db {db} from {manifest.get('created')}")
+    return diff
+
+
+def apps_slug_arg(slug: str) -> str:
+    if not APP_SLUG_RE.match(slug or ""):
+        raise argparse.ArgumentTypeError(f"invalid app slug {slug!r}")
+    return slug
+
+
+def cmd_restore_app(cfg: Dict[str, str], args: argparse.Namespace, manifest: Dict, staging: Path) -> int:
+    db = app_db_name(args.app, args.mode or "prod")
+    entry = next((e for e in manifest.get("apps_db") or [] if e.get("database") == db), None)
+    if entry is None:
+        raise Fail(f"the backup has no {db}", "Pick a backup made after the app's database existed.")
+    say(f"\nThis will REPLACE only the app database {db} ({len(entry['tables'])} tables); "
+        "Aquarium's own database and files are not touched.")
+    if not args.yes:
+        say("\nNothing changed. Re-run with --yes (the current database is dumped first).")
+        return 0
+    diff = restore_app_db(cfg, manifest, staging, entry)
+    if diff:
+        raise Fail(f"restored, but {len(diff)} tables differ from the backup: {diff[0]}")
     return 0
 
 
@@ -2637,6 +3269,17 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--yes", action="store_true")
     p.add_argument("--key-file")
     p.add_argument("--no-safety-backup", action="store_true")
+    p.add_argument("--app", type=apps_slug_arg, help="restore only this local app's database")
+    p.add_argument("--mode", choices=list(APP_MODES), help="with --app: prod (default) or dev")
+    p = sub.add_parser("apps", help="local app databases (FG-33): clusters and per-app provisioning")
+    apps = p.add_subparsers(dest="area", required=True)
+    q = apps.add_parser("db", help="one app's database: aquarium apps db <verb> <slug> <prod|dev>")
+    q.add_argument("verb", choices=list(APP_DB_VERBS))
+    q.add_argument("slug")
+    q.add_argument("mode", choices=list(APP_MODES))
+    q = apps.add_parser("cluster", help="the apps Postgres clusters (prod, and the separate dev instance)")
+    q.add_argument("verb", choices=["up", "down", "status"])
+    q.add_argument("target", nargs="?", default="all", choices=["all", *APP_MODES])
     p = sub.add_parser("offsite", help="encrypted copies in S3-compatible storage (set up in Get ready)")
     p.add_argument("verb", choices=["status", "configure", "test", "run", "restore-test", "remove"])
     p.add_argument("--foreground", action="store_true", help=argparse.SUPPRESS)
@@ -2660,7 +3303,7 @@ def parser() -> argparse.ArgumentParser:
 
 COMMANDS = {"status": cmd_status, "update": cmd_update, "backup": cmd_backup, "restore": cmd_restore,
             "doctor": cmd_doctor, "logs": cmd_logs, "migrate-layout": cmd_migrate_layout,
-            "uninstall": cmd_uninstall, "offsite": cmd_offsite}
+            "uninstall": cmd_uninstall, "offsite": cmd_offsite, "apps": cmd_apps}
 
 
 def main(argv: Optional[List[str]] = None) -> int:
