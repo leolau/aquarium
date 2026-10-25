@@ -1570,6 +1570,26 @@ export interface Project {
   last_reviewed_at: number | null;
   /** Display cache only (§3.2) — refreshed on read, never a decision input. */
   next_run_at: number | null;
+  /** A `ProjectCategory.id`, or null for "Uncategorized". Optional: older API builds omit it. */
+  category_id?: string | null;
+}
+
+/** A user-managed project category (Sales, Marketing, …) — a kanban column on `/projects`. */
+export interface ProjectCategory {
+  id: string;
+  name: string;
+  /** A CSS colour (e.g. `#f59e0b`) or null for the default tone. */
+  color: string | null;
+  /** Column order, ascending. */
+  position: number;
+  created_at: number;
+  created_by: string | null;
+  /** Projects (archived included) currently filed under it. */
+  project_count: number;
+}
+
+export interface ProjectCategoriesResponse {
+  items: ProjectCategory[];
 }
 
 export interface ProjectCardRollup {
@@ -2200,6 +2220,7 @@ export interface CreateProjectPayload {
   definition_of_done?: string;
   visibility?: ProjectVisibility;
   goal_link?: { ref: string; profile?: string; label?: string };
+  category_id?: string | null;
 }
 
 /**

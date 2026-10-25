@@ -87,6 +87,8 @@ import type {
   ProjectRun,
   ProjectScheduleResult,
   ProjectsDoctorResponse,
+  ProjectCategoriesResponse,
+  ProjectCategory,
   ProjectsResponse,
   ProjectToolsResolution,
   ProposedAction,
@@ -1768,6 +1770,43 @@ export class HermesApiClient {
     if (opts.limit !== undefined) p.set("limit", String(opts.limit));
     const qs = p.toString();
     return this.request(`/api/registry/projects${qs ? `?${qs}` : ""}`);
+  }
+
+  /** The instance's project categories, in column order, with project counts. */
+  async projectCategories(): Promise<ProjectCategoriesResponse> {
+    return this.request("/api/registry/project-categories");
+  }
+
+  /** Add a category (name unique, case-insensitive; a duplicate is a 409). */
+  async createProjectCategory(payload: {
+    name: string;
+    color?: string | null;
+  }): Promise<ProjectCategory> {
+    return this.request("/api/registry/project-categories", {
+      method: "POST",
+      json: payload,
+    });
+  }
+
+  /** Rename / recolour / reorder a category. */
+  async updateProjectCategory(
+    id: string,
+    payload: { name?: string; color?: string | null; position?: number },
+  ): Promise<ProjectCategory> {
+    return this.request(
+      `/api/registry/project-categories/${encodeURIComponent(id)}`,
+      { method: "PATCH", json: payload },
+    );
+  }
+
+  /** Delete a category; its projects fall back to Uncategorized. */
+  async deleteProjectCategory(
+    id: string,
+  ): Promise<{ deleted: string; uncategorized: number }> {
+    return this.request(
+      `/api/registry/project-categories/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+    );
   }
 
   /** Diagnosable breaks across readable projects (§15.1), or one slug's. */
