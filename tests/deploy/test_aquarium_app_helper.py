@@ -294,15 +294,126 @@ def test_established_counts_only_connections_to_the_port(h):
 
 
 def test_admission_refuses_past_slice_ceiling_and_box_reserve(h):
+    one_app = 384 * 1024 ** 2
     (h.W / "slice_mem").write_text(str(6 * 1024 ** 3 - 100 * 1024 ** 2))
     with pytest.raises(h.Refused, match="6 GB"):
-        h.admit(h.START_REQUEST, "start")
+        h.admit(one_app, "start")
     (h.W / "slice_mem").write_text("0")
     (h.W / "proc/meminfo").write_text("MemAvailable: 3200000 kB\n")
     with pytest.raises(h.Refused, match="reserve"):
-        h.admit(h.START_REQUEST, "start")
+        h.admit(one_app, "start")
     (h.W / "etc/aquarium/app-quotas.yaml").write_text("box:\n  reserved_mb: 1024\nper_member:\n  reserved_mb: 99999\n")
-    h.admit(h.START_REQUEST, "start")
+    h.admit(one_app, "start")
+
+
+def test_start_admits_with_the_effective_memory_high(h):
+    c = conf(h)
+    h.cmd_allocate(c, {"slug": "demo", "mode": "dev"})
+    fake_release(h, "demo", "dev")
+    # 600 MB left under the 6 GB ceiling: the default 384 MB fits, a raised 1024 MB does not.
+    (h.W / "slice_mem").write_text(str(6 * 1024 ** 3 - 600 * 1024 ** 2))
+    h.cmd_configure(c, {"limits": {"member": {"per_app": {"memory_high_mb": 1024, "memory_max_mb": 1536}}}})
+    with pytest.raises(h.Refused, match="6 GB"):
+        h.cmd_start(c, {"slug": "demo", "mode": "dev"})
+    h.cmd_configure(c, {"limits": {"member": None}})
+    h.cmd_start(c, {"slug": "demo", "mode": "dev"})
+
+
+# --------------------------------------------------------------------------- per-app systemd limits
+
+
+def _limits_dropin(h, inst="demo-dev"):
+    text = (h.W / f"etc/systemd/system/aquarium-app@{inst}.service.d/50-limits.conf").read_text()
+    return dict(re.findall(r"^(MemoryHigh|MemoryMax|CPUQuota)=(\S+)$", text, re.M))
+
+
+def _started(h, slug="demo", mode="dev"):
+    c = conf(h)
+    if not (h.W / f"etc/aquarium/apps/{slug}/{mode}.env").exists():
+        h.cmd_allocate(c, {"slug": slug, "mode": mode})
+        fake_release(h, slug, mode)
+    h.cmd_start(c, {"slug": slug, "mode": mode})
+    return c
+
+
+def test_start_writes_limits_dropin_with_the_default_policy(h):
+    _started(h)
+    d = h.DEFAULT_APP_LIMITS
+    assert _limits_dropin(h) == {"MemoryHigh": f"{d['memory_high_mb']}M",
+                                 "MemoryMax": f"{d['memory_max_mb']}M",
+                                 "CPUQuota": f"{d['cpu_quota_pct']}%"}
+    path = h.W / "etc/systemd/system/aquarium-app@demo-dev.service.d/50-limits.conf"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o644
+    log = calls(h).splitlines()
+    assert log.index("systemctl daemon-reload") < log.index("systemctl start aquarium-app@demo-dev.service")
+
+
+def test_settings_cpu_raise_reaches_the_unit_at_next_restart(h):
+    c = _started(h)
+    h.cmd_configure(c, {"limits": {"member": {"per_app": {"cpu_quota_pct": 100}}}})
+    assert _limits_dropin(h)["CPUQuota"] == "50%"  # a running app is not changed live
+    h.cmd_restart(c, {"slug": "demo", "mode": "dev"})
+    assert _limits_dropin(h) == {"MemoryHigh": "384M", "MemoryMax": "512M", "CPUQuota": "100%"}
+
+
+def test_quota_file_per_app_applies_under_the_settings_tier(h):
+    (h.W / "etc/aquarium/app-quotas.yaml").write_text(
+        "per_app:\n  memory_high_mb: 256  # soft\n  memory_max_mb: 768\n  cpu_quota_pct: 75\n"
+        "roles:\n  admin:\n    per_app:\n      cpu_quota_pct: 200\n")
+    c = _started(h)
+    assert _limits_dropin(h) == {"MemoryHigh": "256M", "MemoryMax": "768M", "CPUQuota": "75%"}
+    h.cmd_configure(c, {"limits": {"member": {"per_app": {"cpu_quota_pct": 120}},
+                                   "admin": {"per_app": {"memory_max_mb": 2048}}}})
+    h.cmd_restart(c, {"slug": "demo", "mode": "dev"})
+    assert _limits_dropin(h) == {"MemoryHigh": "256M", "MemoryMax": "768M", "CPUQuota": "120%"}
+
+
+@pytest.mark.parametrize("per_app", [
+    {"cpu_quota_pct": 0}, {"cpu_quota_pct": 5000}, {"memory_max_mb": 64}, {"memory_high_mb": 99999},
+    {"memory_high_mb": 900, "memory_max_mb": 600}, {"cpu_quota_pct": "100"}, {"cpu_quota_pct": 50.5},
+])
+def test_configure_rejects_out_of_range_unit_limits(h, per_app):
+    with pytest.raises(h.InputError):
+        h.cmd_configure(conf(h), {"limits": {"member": {"per_app": per_app}}})
+    assert not (h.W / "etc/aquarium/app-limits.json").exists()
+
+
+def test_out_of_range_or_untrusted_policy_values_keep_the_fallback(h):
+    (h.W / "etc/aquarium/app-quotas.yaml").write_text(
+        "per_app:\n  memory_high_mb: 9000\n  memory_max_mb: 256\n  cpu_quota_pct: 1\n")
+    limits = h.W / "etc/aquarium/app-limits.json"
+    limits.write_text(json.dumps({"roles": {"member": {"per_app": {"cpu_quota_pct": 200}}}}))
+    limits.chmod(0o666)
+    _started(h)
+    # memory_high falls back to 384 and is held under the file's valid 256 max;
+    # the group/world-writable Settings file is ignored entirely.
+    assert _limits_dropin(h) == {"MemoryHigh": "256M", "MemoryMax": "256M", "CPUQuota": "50%"}
+
+
+def test_remove_deletes_the_limits_dropin(h):
+    c = _started(h)
+    dropin_dir = h.W / "etc/systemd/system/aquarium-app@demo-dev.service.d"
+    assert (dropin_dir / "50-limits.conf").exists()
+    h.cmd_remove(c, {"slug": "demo", "mode": "dev", "confirm": "demo"})
+    assert not dropin_dir.exists()
+
+
+def test_unit_limit_defaults_and_bounds_match_the_quota_policy_and_unit(h):
+    from hermes_cli import app_quota
+
+    per_app = app_quota.DEFAULT_POLICY["per_app"]
+    assert h.DEFAULT_APP_LIMITS == {k: per_app[k] for k in h.DEFAULT_APP_LIMITS}
+    assert h.APP_LIMIT_BOUNDS == app_quota.APP_UNIT_LIMIT_BOUNDS
+    text = _unit("aquarium-app@.service")
+    d = h.DEFAULT_APP_LIMITS
+    for line in (f"MemoryHigh={d['memory_high_mb']}M", f"MemoryMax={d['memory_max_mb']}M",
+                 f"CPUQuota={d['cpu_quota_pct']}%"):
+        assert re.search(rf"^{re.escape(line)}$", text, re.M), line
+    slice_text = _unit("aquarium-apps.slice")
+    slice_mb = int(re.search(r"^MemoryMax=(\d+)G$", slice_text, re.M).group(1)) * 1024
+    slice_cpu = int(re.search(r"^CPUQuota=(\d+)%$", slice_text, re.M).group(1))
+    assert h.APP_LIMIT_BOUNDS["memory_max_mb"][1] <= slice_mb
+    assert h.APP_LIMIT_BOUNDS["cpu_quota_pct"][1] <= slice_cpu
 
 
 def test_build_refuses_when_disk_is_short(h, monkeypatch):

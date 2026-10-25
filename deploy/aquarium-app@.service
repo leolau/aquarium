@@ -11,7 +11,10 @@
 # APP_BASE_PATH, ...) and one LoadCredential= per file in
 # /etc/aquarium/apps/<slug>/<mode>/ (DATABASE_URL, APP_MCP_TOKEN, user
 # secrets). `run-app` copies the credentials into the environment and execs
-# `node server.js` (a Next.js standalone build). Core.
+# `node server.js` (a Next.js standalone build). On every start it also
+# writes 50-limits.conf with MemoryHigh/MemoryMax/CPUQuota from the root-owned
+# app limits policy (app-quotas.yaml per_app + Settings -> App limits); the
+# values below are only the fallback. Core.
 [Unit]
 Description=Aquarium local app (%i)
 After=network-online.target
