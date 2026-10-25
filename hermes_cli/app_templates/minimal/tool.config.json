@@ -1,0 +1,13 @@
+{
+  "name": "{{name}}",
+  "stack": "nextjs-node",
+  "port": {{port}},
+  "web_url": "{{web_url}}",
+  "mcp": {
+    "command": "node",
+    "args": [
+      "mcp/server.mjs"
+    ]
+  },
+  "config": {}
+}

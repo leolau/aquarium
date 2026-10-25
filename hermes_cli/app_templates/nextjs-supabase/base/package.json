@@ -1,0 +1,41 @@
+{
+  "name": "{{slug}}",
+  "version": "0.1.0",
+  "private": true,
+  "description": "{{name}}: an Aquarium app (Next.js web UI + MCP at /api/mcp).",
+  "type": "module",
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "scripts": {
+    "dev": "next dev -H 127.0.0.1 -p {{port}}",
+    "build": "next build",
+    "start": "next start -H 127.0.0.1 -p {{port}}",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run && node --test tests/mcp.test.mjs",
+    "audit": "npm audit --audit-level=high",
+    "check": "npm run typecheck && npm run lint && npm run test && npm run audit && npm run build"
+  },
+  "dependencies": {
+    "@supabase/ssr": "0.7.0",
+    "@supabase/supabase-js": "2.45.4",
+    "next": "15.5.20",
+    "pg": "8.13.1",
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "3.3.5",
+    "@eslint/js": "9.39.4",
+    "@types/node": "24.13.2",
+    "@types/pg": "8.11.10",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "eslint": "9.39.4",
+    "eslint-config-next": "15.5.20",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.62.0",
+    "vitest": "4.1.9"
+  }
+}

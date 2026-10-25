@@ -1,0 +1,13 @@
+# Names only. Never commit values. On this box the runtime gets these from
+# systemd credentials ($CREDENTIALS_DIRECTORY/<lowercase name>); external hosts
+# set them in the provider's environment.
+DATABASE_URL=
+DATABASE_URL_RO=
+APP_MCP_TOKEN=
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
+SUPABASE_SECRET_KEY=
+PORT=
+APP_MODE=
+APP_PUBLIC_URL=
+APP_BASE_PATH=
