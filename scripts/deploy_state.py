@@ -92,7 +92,17 @@ SYSTEMD_DIRNAME = "systemd"
 # Units to capture. `agent-home*` is here because it is the one service on the
 # box not named `hermes-*` (FG-23 A0): with only the first pattern, the drift
 # check cannot see the unit that serves the phone.
-DEFAULT_UNIT_GLOBS = ("hermes-*", "agent-home*")
+# FG-33 local apps: the instance templates (never the per-instance units or
+# their helper-written drop-ins, which are derived state), the slices, and the
+# ``aquarium-apps-*`` services/timers that drive them.
+DEFAULT_UNIT_GLOBS = (
+    "hermes-*",
+    "agent-home*",
+    "aquarium-app@.service",
+    "aquarium-app-build@.service",
+    "aquarium*.slice",
+    "aquarium-apps-*",
+)
 
 # Keys whose value is a credential regardless of what it looks like. Matched
 # against the leaf key only, so `mcp_servers.github.headers.Authorization`
