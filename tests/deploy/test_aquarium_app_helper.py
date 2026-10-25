@@ -358,6 +358,9 @@ def test_route_block_has_forward_auth_and_csp(h):
     assert "connect-src https://{host}/apps/demo https://{host}/apps/demo/;" in text
     assert "frame-ancestors 'none'" in text and "-Service-Worker-Allowed" in text
     assert "agent_home_session_refused=; Max-Age=0" in text
+    # both the __Host- session cookie and its legacy name (agent-home session.ts)
+    assert 'request_header Cookie "(^|;\\s*)(__Host-)?agent_home_session=[^;]*" ""' in text
+    assert 'Set-Cookie "(?i)^\\s*(__Host-)?agent_home_session=.*$"' in text
     assert "caddy validate" in calls(h) and "systemctl reload caddy" in calls(h)
 
 
@@ -367,6 +370,7 @@ def test_route_block_has_forward_auth_and_csp(h):
     lambda t: t.replace("\t\trequest_header -X-Aquarium-Principal\n", "\t\treverse_proxy 127.0.0.1:1\n"),
     lambda t: "".join(ln for ln in t.splitlines(True) if "X-Aquarium-App" not in ln),
     lambda t: "".join(ln for ln in t.splitlines(True) if "request_header Cookie" not in ln),
+    lambda t: t.replace("(__Host-)?agent_home_session=[^;]*", "agent_home_session=[^;]*"),
 ])
 def test_block_without_forward_auth_is_refused(h, mutate):
     c = conf(h)
@@ -589,3 +593,16 @@ def test_sudoers_file_passes_visudo():
     visudo = shutil.which("visudo") or "/usr/sbin/visudo"
     proc = subprocess.run([visudo, "-cf", str(SUDOERS)], capture_output=True, text=True)
     assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_session_cookie_regexes_strip_both_names_and_nothing_else(h):
+    for name in ("__Host-agent_home_session", "agent_home_session"):
+        assert re.sub(h.SESSION_COOKIE_RE, "", f"a=1; {name}=v.s; b=2") == "a=1; b=2"
+        assert re.match(h.SESSION_SET_COOKIE_RE, f"{name}=forged; Path=/; Secure")
+    assert re.sub(h.SESSION_COOKIE_RE, "", "app_session=1") == "app_session=1"
+
+
+@pytest.mark.parametrize("mode", ["dev", "prod"])
+def test_app_csp_never_allows_eval(h, mode):
+    csp = h.app_csp(f"/apps{'-dev' if mode == 'dev' else ''}/demo", mode)
+    assert "'unsafe-eval'" not in csp and "script-src https://{host}/apps" in csp

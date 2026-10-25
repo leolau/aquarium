@@ -38,8 +38,10 @@
 #     and `copy_headers X-Aquarium-Principal` (the 60 s per-app ticket, see
 #     agent-home/src/lib/apps/ticket.ts) — signed-out visitors get the login
 #     redirect, people the app's C2 visibility excludes get a 404;
-#   - strip the agent-home session cookie before proxying, so app code never
-#     sees it (it is HttpOnly, so app JS cannot read it either);
+#   - strip the agent-home session cookie (`__Host-agent_home_session`, and
+#     the pre-__Host- `agent_home_session` while it is still read) before
+#     proxying, so app code never sees it (it is HttpOnly, so app JS cannot
+#     read it either);
 #   - set the strict path-scoped CSP and COOP from
 #     agent-home/src/lib/apps/headers.ts, and drop origin-wide headers
 #     (Service-Worker-Allowed, Clear-Site-Data, a Set-Cookie for the session).
@@ -80,14 +82,14 @@ home.example.com {
 #                 header_up X-Aquarium-App "example/prod"
 #                 copy_headers X-Aquarium-Principal
 #             }
-#             request_header Cookie "(^|;\s*)agent_home_session=[^;]*" ""
+#             request_header Cookie "(^|;\s*)(__Host-)?agent_home_session=[^;]*" ""
 #             header {
 #                 Content-Security-Policy "default-src https://{host}/apps/example https://{host}/apps/example/; script-src https://{host}/apps/example https://{host}/apps/example/ 'unsafe-inline'; style-src https://{host}/apps/example https://{host}/apps/example/ 'unsafe-inline'; img-src https://{host}/apps/example https://{host}/apps/example/ data: blob:; media-src https://{host}/apps/example https://{host}/apps/example/ data: blob:; font-src https://{host}/apps/example https://{host}/apps/example/ data:; connect-src https://{host}/apps/example https://{host}/apps/example/; worker-src https://{host}/apps/example https://{host}/apps/example/; manifest-src https://{host}/apps/example https://{host}/apps/example/; frame-src 'none'; child-src 'none'; object-src 'none'; base-uri 'none'; form-action https://{host}/apps/example https://{host}/apps/example/; frame-ancestors 'none'"
 #                 Cross-Origin-Opener-Policy "noopener-allow-popups"
 #                 X-Frame-Options "DENY"
 #                 X-Content-Type-Options "nosniff"
 #                 Referrer-Policy "strict-origin-when-cross-origin"
-#                 Set-Cookie "(?i)^\s*agent_home_session=.*$" "agent_home_session_refused=; Max-Age=0"
+#                 Set-Cookie "(?i)^\s*(__Host-)?agent_home_session=.*$" "agent_home_session_refused=; Max-Age=0"
 #                 -Service-Worker-Allowed
 #                 -Clear-Site-Data
 #                 defer
@@ -99,4 +101,4 @@ home.example.com {
 #
 # The dev instance of the same app (/etc/caddy/apps.d/dev-example.caddy) is the
 # same block with `/apps-dev/example`, `X-Aquarium-App "example/dev"`, the dev
-# CSP from headers.ts (adds 'unsafe-eval' for `next dev`) and the dev port.
+# CSP from headers.ts (the same policy under /apps-dev/example) and the dev port.

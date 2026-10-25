@@ -4,6 +4,7 @@ import path from "path";
 import { describe, expect, it } from "vitest";
 
 import { APP_STRIPPED_RESPONSE_HEADERS, appResponseHeaders } from "@/lib/apps/headers";
+import { LEGACY_SESSION_COOKIE, SESSION_COOKIE } from "@/lib/auth/session";
 
 function cspMap(value: string): Map<string, string[]> {
   return new Map(
@@ -39,10 +40,10 @@ describe("app response headers", () => {
     }
   });
 
-  it("allows eval only for the dev build", () => {
+  it("allows eval in neither mode (dev is a built release too, not `next dev`)", () => {
     const devCsp = appResponseHeaders(origin, "notes", "dev")[0].value;
     expect(devCsp).toContain("https://home.example.com/apps-dev/notes/");
-    expect(devCsp).toContain("'unsafe-eval'");
+    expect(devCsp).not.toContain("'unsafe-eval'");
     expect(csp.get("script-src")).not.toContain("'unsafe-eval'");
   });
 
@@ -84,7 +85,28 @@ describe("Caddyfile.agent-home instance example", () => {
     expect(example).toContain("uri /api/apps/auth");
     expect(example).toContain('header_up X-Aquarium-App "example/prod"');
     expect(example).toContain("copy_headers X-Aquarium-Principal");
-    expect(example).toContain("agent_home_session=");
+  });
+
+  // Caddy's regexes are RE2; these patterns are plain enough for JS to match the same.
+  const caddyRegex = (directive: string) =>
+    new RegExp(example.match(new RegExp(`${directive} "([^"]+)"`))![1].replace("(?i)", ""), "i");
+
+  it("strips the session cookie under both names and keeps every other cookie", () => {
+    const strip = caddyRegex("request_header Cookie");
+    for (const name of [SESSION_COOKIE, LEGACY_SESSION_COOKIE]) {
+      const header = `theme=dark; ${name}=abc.def; app_pref=1`;
+      expect(header.replace(new RegExp(strip, "g"), ""), name).toBe("theme=dark; app_pref=1");
+      expect(`${name}=abc.def`.replace(strip, "")).toBe("");
+    }
+    expect("x__Host-agent_home_sessionx=1".replace(strip, "")).toBe("x__Host-agent_home_sessionx=1");
+  });
+
+  it("refuses an app response that sets the session cookie under either name", () => {
+    const setCookie = caddyRegex("Set-Cookie");
+    for (const name of [SESSION_COOKIE, LEGACY_SESSION_COOKIE]) {
+      expect(setCookie.test(`${name}=forged; Path=/; Secure`), name).toBe(true);
+    }
+    expect(setCookie.test("app_pref=1; Path=/apps/example")).toBe(false);
   });
 
   it("sets exactly the headers headers.ts defines and drops the origin-wide ones", () => {

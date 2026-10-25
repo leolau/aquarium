@@ -26,7 +26,20 @@ import { cookies } from "next/headers";
 import { sessionSecret } from "@/lib/env";
 import type { Principal } from "@/types";
 
-export const SESSION_COOKIE = "agent_home_session";
+/**
+ * `__Host-` makes the browser accept this cookie only with `Secure`, `Path=/`
+ * and no `Domain`, so a local app under `/apps/*` (same origin, FG-33
+ * decision 4) cannot plant a path- or domain-scoped cookie of the same name
+ * that shadows it. Browsers treat `http://localhost` as secure, so `next dev`
+ * still works there.
+ */
+export const SESSION_COOKIE = "__Host-agent_home_session";
+
+/**
+ * Pre-`__Host-` name. Still read so a deploy logs nobody out; every write or
+ * logout clears it. Drop after one release (the cookie lives 12 h).
+ */
+export const LEGACY_SESSION_COOKIE = "agent_home_session";
 
 /** Max cookie lifetime; the upstream token's own TTL is the real authority. */
 const MAX_AGE_SECONDS = 12 * 60 * 60;
@@ -92,32 +105,44 @@ export function deserializeSession(value: string | undefined): AgentHomeSession 
   }
 }
 
-/** Read + verify the current request's session (or null if unauthenticated). */
-export async function readSession(): Promise<AgentHomeSession | null> {
-  const store = await cookies();
-  return deserializeSession(store.get(SESSION_COOKIE)?.value);
+type CookieReader = { get(name: string): { value: string } | undefined };
+
+/** The session cookie value: the `__Host-` cookie wins whenever it is present. */
+export function sessionCookieValue(store: CookieReader): string | undefined {
+  return store.get(SESSION_COOKIE)?.value ?? store.get(LEGACY_SESSION_COOKIE)?.value;
 }
 
-/** Set the signed session cookie on the response (via `next/headers`). */
-export async function writeSession(session: AgentHomeSession): Promise<void> {
-  const store = await cookies();
-  store.set(SESSION_COOKIE, serializeSession(session), {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: MAX_AGE_SECONDS,
-  });
-}
+const COOKIE_OPTIONS = { httpOnly: true, sameSite: "lax", secure: true, path: "/" } as const;
 
-/** Clear the session cookie (logout). */
-export async function clearSession(): Promise<void> {
-  const store = await cookies();
-  store.set(SESSION_COOKIE, "", {
+function expireLegacyCookie(store: Awaited<ReturnType<typeof cookies>>): void {
+  store.set(LEGACY_SESSION_COOKIE, "", {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
     maxAge: 0,
   });
+}
+
+/** Read + verify the current request's session (or null if unauthenticated). */
+export async function readSession(): Promise<AgentHomeSession | null> {
+  const store = await cookies();
+  return deserializeSession(sessionCookieValue(store));
+}
+
+/** Set the signed session cookie on the response (via `next/headers`). */
+export async function writeSession(session: AgentHomeSession): Promise<void> {
+  const store = await cookies();
+  store.set(SESSION_COOKIE, serializeSession(session), {
+    ...COOKIE_OPTIONS,
+    maxAge: MAX_AGE_SECONDS,
+  });
+  if (store.has(LEGACY_SESSION_COOKIE)) expireLegacyCookie(store);
+}
+
+/** Clear the session cookie (logout). */
+export async function clearSession(): Promise<void> {
+  const store = await cookies();
+  store.set(SESSION_COOKIE, "", { ...COOKIE_OPTIONS, maxAge: 0 });
+  expireLegacyCookie(store);
 }
