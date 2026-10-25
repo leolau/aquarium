@@ -223,6 +223,7 @@
   "POST /api/tools/personal-mcp/[name]/oauth/cancel": "signed-in",
   "GET /api/tools/personal-mcp/catalog": "signed-in",
   "GET /api/tools/personal-mcp/people": "admin",
+  "PUT /api/tools/apps/[name]/secrets": "signed-in",
   "POST /api/tools/toolsets/[name]": "admin",
   "GET /api/email/mailboxes": "signed-in",
   "PUT /api/email/mailboxes/[address]": "signed-in",
