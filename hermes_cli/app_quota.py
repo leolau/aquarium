@@ -35,6 +35,7 @@ import copy
 import json
 import logging
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -42,7 +43,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, Literal, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, Optional
 
 import yaml
 
@@ -56,6 +57,15 @@ logger = logging.getLogger(__name__)
 
 #: Root-owned policy file. Installed by the ops runbook (P8-1 1.7).
 POLICY_PATH = Path("/etc/aquarium/app-quotas.yaml")
+#: Settings -> App limits (decision 8): root JSON the app helper's
+#: ``configure`` verb writes, merged after :data:`POLICY_PATH`.
+LIMITS_PATH = Path("/etc/aquarium/app-limits.json")
+#: The app helper's own config (decision 21): where apps actually live.
+HELPER_CONF_PATH = Path("/etc/aquarium/apps.conf")
+APP_HELPER = "/usr/local/sbin/aquarium-app-helper"
+#: Editable tiers of Settings -> App limits: ``member`` is the base policy
+#: (members and viewers), ``admin`` the admins' raised limits.
+LIMIT_TIERS: tuple[str, ...] = ("member", "admin")
 #: The uid that must own the policy file. A module constant so tests can
 #: stand in for root without running as root.
 _ROOT_UID = 0
@@ -139,8 +149,11 @@ MEMBER_OVERRIDE_KEYS: frozenset[str] = frozenset(
 #: Keys a box-wide (``*``) override may set. ``box.*`` stays file-only: those
 #: numbers mirror kernel-enforced slice caps the API cannot raise.
 BOX_OVERRIDE_KEYS: frozenset[str] = frozenset(
-    {"storage.base_path", "storage.min_free_mb"}
+    {"storage.base_path", "storage.min_free_mb", "github.owner", "github.credential",
+     "github.use_box_git"}
 )
+#: Decision 14: the GitHub account/org app repos are pushed to.
+_GITHUB_OWNER = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
 _MAX_INT = 10_000_000
 #: Never a storage location: system trees and pseudo-filesystems.
 #: Decision 21 default app storage location (FG-33 §3.1 /var/lib/aquarium-apps).
@@ -237,7 +250,7 @@ def _merge_file(data: dict[str, Any], raw: Mapping[str, Any]) -> list[str]:
     return warnings
 
 
-def load_policy(path: Optional[Path] = None) -> QuotaPolicy:
+def _load_yaml_policy(path: Optional[Path] = None) -> QuotaPolicy:
     """Read the root policy file over the built-in defaults.
 
     Never raises: a missing, untrusted or malformed file leaves the defaults
@@ -272,6 +285,49 @@ def load_policy(path: Optional[Path] = None) -> QuotaPolicy:
 # ── overrides validation ──────────────────────────────────────────────────
 
 
+def _limits_file_raw(path: Path) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+    problem = _file_is_trusted(path)
+    if problem == "missing":
+        return None, None
+    if problem is not None:
+        return None, f"{path} ignored: {problem}"
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None, f"{path} ignored: unparsable"
+    roles = doc.get("roles") if isinstance(doc, Mapping) else None
+    if not isinstance(roles, Mapping):
+        return None, f"{path} ignored: no roles mapping"
+    raw: dict[str, Any] = {}
+    member = roles.get("member")
+    if isinstance(member, Mapping):
+        raw.update({k: v for k, v in member.items() if k in ("per_app", "per_member")})
+    admin = roles.get("admin")
+    if isinstance(admin, Mapping):
+        raw["roles"] = {"admin": admin}
+    return raw, None
+
+
+def load_policy(path: Optional[Path] = None, limits_path: Optional[Path] = None) -> QuotaPolicy:
+    """The root policy file over the defaults, then Settings -> App limits.
+
+    The Settings file (:data:`LIMITS_PATH`) is written only by the root app
+    helper, so it carries the same trust check as the policy file.
+    """
+    base = _load_yaml_policy(path)
+    raw, problem = _limits_file_raw(Path(limits_path) if limits_path is not None else LIMITS_PATH)
+    if problem:
+        logger.warning("app quotas: %s", problem)
+        return QuotaPolicy(data=base.data, source=base.source, warnings=(*base.warnings, problem))
+    if not raw:
+        return base
+    data = copy.deepcopy(dict(base.data))
+    warnings = _merge_file(data, raw)
+    source = str(limits_path or LIMITS_PATH) if base.source == "defaults" else (
+        f"{base.source}+{limits_path or LIMITS_PATH}")
+    return QuotaPolicy(data=data, source=source, warnings=(*base.warnings, *warnings))
+
+
 def validate_storage_path(value: Any) -> str:
     """An absolute, normalised directory path outside system trees."""
     if not isinstance(value, str) or not value.strip():
@@ -301,6 +357,8 @@ def validate_override(key: str, value: Any, *, scope: str, actor_is_owner: bool)
         return None
     if key == "storage.base_path":
         return validate_storage_path(value)
+    if key.startswith("github."):
+        return validate_github_setting(key, value)
     if value == UNLIMITED:
         if not actor_is_owner:
             raise QuotaError("only the owner can make a limit unlimited")
@@ -308,6 +366,28 @@ def validate_override(key: str, value: Any, *, scope: str, actor_is_owner: bool)
     if not _valid_int(value):
         raise QuotaError(f"{key} must be a whole number from 0 to {_MAX_INT}")
     return value
+
+
+def validate_github_setting(key: str, value: Any) -> Any:
+    """Decision 14 settings. The token itself never lands here: only a
+    reference to the credential-store row that holds it."""
+    if key == "github.owner":
+        if not isinstance(value, str) or not _GITHUB_OWNER.match(value):
+            raise QuotaError("github.owner must be a GitHub user or organisation name")
+        return value
+    if key == "github.use_box_git":
+        if not isinstance(value, bool):
+            raise QuotaError("github.use_box_git must be true or false")
+        return value
+    if key == "github.credential":
+        if (
+            not isinstance(value, Mapping)
+            or set(value) != {"owner_user_id", "name"}
+            or not all(isinstance(v, str) and 0 < len(v) <= 200 for v in value.values())
+        ):
+            raise QuotaError("github.credential must be {owner_user_id, name}")
+        return {"owner_user_id": value["owner_user_id"], "name": value["name"]}
+    raise QuotaError(f"{key!r} cannot be overridden here")
 
 
 # ── effective limits ──────────────────────────────────────────────────────
@@ -355,27 +435,128 @@ def effective_limits(
     )
 
 
+def read_helper_conf(path: Optional[Path] = None) -> dict[str, Any]:
+    """The root app helper's config (``storage_base``, ``min_free_mb``), or
+    ``{}`` when missing or not root-owned."""
+    path = Path(path) if path is not None else HELPER_CONF_PATH
+    if _file_is_trusted(path) is not None:
+        return {}
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return dict(doc) if isinstance(doc, Mapping) else {}
+
+
 def storage_base_path(
     policy: Optional[QuotaPolicy] = None,
     box_overrides: Optional[Mapping[str, Any]] = None,
+    *,
+    helper_conf: Optional[Mapping[str, Any]] = None,
 ) -> Path:
-    """Decision 21: the configured app storage location."""
+    """Decision 21: the configured app storage location.
+
+    Box override, then the root helper's ``storage_base`` (where the helper
+    really puts apps), then the policy file, then the default.
+    """
     policy = policy or load_policy()
-    configured = (box_overrides or {}).get("storage.base_path") or policy.section(
-        "storage"
-    ).get("base_path")
+    helper = read_helper_conf() if helper_conf is None else helper_conf
+    configured = (
+        (box_overrides or {}).get("storage.base_path")
+        or helper.get("storage_base")
+        or policy.section("storage").get("base_path")
+    )
     return Path(configured or DEFAULT_STORAGE_BASE)
 
 
 def min_free_mb(
     policy: Optional[QuotaPolicy] = None,
     box_overrides: Optional[Mapping[str, Any]] = None,
+    *,
+    helper_conf: Optional[Mapping[str, Any]] = None,
 ) -> int:
     policy = policy or load_policy()
-    value = (box_overrides or {}).get("storage.min_free_mb")
-    if isinstance(value, int) and _valid_int(value):
-        return value
+    helper = read_helper_conf() if helper_conf is None else helper_conf
+    for value in ((box_overrides or {}).get("storage.min_free_mb"), helper.get("min_free_mb")):
+        if isinstance(value, int) and _valid_int(value):
+            return value
     return int(policy.section("storage").get("min_free_mb") or 0)
+
+
+# ── Settings -> App limits / App storage (decisions 8, 21) ───────────────
+
+
+def tier_limits(policy: Optional[QuotaPolicy] = None) -> dict[str, dict[str, dict[str, int]]]:
+    """The editable defaults per tier, as Settings -> App limits shows them."""
+    policy = policy or load_policy()
+    member = {sec: dict(policy.section(sec)) for sec in ("per_app", "per_member")}
+    admin_extra = (policy.section("roles").get("admin") or {})
+    admin = {sec: {**member[sec], **dict(admin_extra.get(sec) or {})} for sec in member}
+    return {"member": member, "admin": admin}
+
+
+def validate_tier_limits(limits: Any) -> dict[str, Optional[dict[str, dict[str, int]]]]:
+    """``{tier: {"per_app": {..}, "per_member": {..}} | None}`` (None = reset)."""
+    if not isinstance(limits, Mapping) or not limits:
+        raise QuotaError("limits must name at least one tier")
+    clean: dict[str, Optional[dict[str, dict[str, int]]]] = {}
+    for tier, sections in limits.items():
+        if tier not in LIMIT_TIERS:
+            raise QuotaError(f"unknown limits tier {tier!r}")
+        if sections is None:
+            clean[tier] = None
+            continue
+        if not isinstance(sections, Mapping):
+            raise QuotaError(f"limits.{tier} must be an object")
+        out: dict[str, dict[str, int]] = {}
+        for sec, values in sections.items():
+            if sec not in ("per_app", "per_member") or not isinstance(values, Mapping):
+                raise QuotaError(f"unknown limits section {tier}.{sec}")
+            for key, value in values.items():
+                if key not in DEFAULT_POLICY[sec]:
+                    raise QuotaError(f"unknown limit {tier}.{sec}.{key}")
+                if not _valid_int(value):
+                    raise QuotaError(f"{tier}.{sec}.{key} must be a whole number from 0 to {_MAX_INT}")
+                out.setdefault(sec, {})[key] = value
+        per_app = {**DEFAULT_POLICY["per_app"], **out.get("per_app", {})}
+        if per_app["memory_high_mb"] > per_app["memory_max_mb"]:
+            raise QuotaError(f"{tier}: memory_high_mb cannot exceed memory_max_mb")
+        clean[tier] = out
+    return clean
+
+
+def may_edit_tier(actor: "Principal", tier: str) -> Optional[str]:
+    """Owner edits every tier; an admin only the member tier (no self-escalation)."""
+    if actor.is_owner:
+        return None
+    if actor.role != "admin":
+        return "Only the owner or an admin can change app limits."
+    if tier != "member":
+        return "Only the owner can change the admins' app limits."
+    return None
+
+
+def configure_helper(
+    spec: Mapping[str, Any],
+    *,
+    runner: Optional[Callable[[list[str], Optional[str], float], tuple[int, str, str]]] = None,
+) -> dict[str, Any]:
+    """Run the root helper's ``configure`` verb (sudo -n, stdin JSON).
+
+    Raises :class:`QuotaError` with the helper's sentence when it refuses.
+    """
+    from hermes_cli import app_runtime
+
+    run = runner or app_runtime._default_runner
+    argv = [*app_runtime.SUDO, APP_HELPER, "configure"]
+    code, out, err = run(argv, json.dumps(dict(spec), sort_keys=True), 60.0)
+    if code == 127:
+        raise QuotaError("the FG-33 app runtime is not installed on this box")
+    parsed = app_runtime._parse(out)
+    if code != 0 or parsed.get("ok") is False:
+        detail = parsed.get("error") if isinstance(parsed.get("error"), str) else ""
+        raise QuotaError((detail or (err or "").strip() or f"exit {code}")[:500])
+    return parsed
 
 
 # ── usage ─────────────────────────────────────────────────────────────────
@@ -833,6 +1014,41 @@ class QuotaStore:
             "overrides": {row["key"]: json.loads(row["value"]) for row in after_rows},
             "change_ref": result.change_ref,
         }
+
+    async def record_settings_change(
+        self,
+        actor: "Principal",
+        *,
+        action: str,
+        target_ref: str,
+        path: str,
+        before: Any,
+        after: Any,
+    ) -> str:
+        """One C5 ``config`` change for a root-file setting the helper wrote
+        (Settings -> App limits); returns its ``change_ref``."""
+        from hermes_cli.changes import ChangeLog, initialize_changes
+
+        conn = await self._connect()
+        try:
+            await initialize_changes(conn)
+            result = await ChangeLog(self._store, config=self._config).record(
+                actor_user_id=actor.user_id,
+                target_kind="config",
+                op=[{"op": "set", "path": path, "value": after}],
+                inverse_op=[{"op": "set", "path": path, "value": before}],
+                reversible=True,
+                action=action,
+                target_ref=target_ref,
+                mode=self._store.mode,
+                payload={"values": after, "previous": before},
+                approved=True,
+                connection=conn,
+            )
+        finally:
+            await conn.close()
+        await self._record_span(actor.user_id, target_ref, result.change_ref)
+        return result.change_ref
 
     async def _record_span(self, actor_user_id: str, ref: str, change_ref: str) -> None:
         from hermes_cli.interactions import Interaction, InteractionLedger

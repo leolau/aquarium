@@ -19,7 +19,10 @@ arguments; the request is one JSON object on stdin:
     logs        {"slug", "mode"[, "lines", "build"]}
     status      {"slug", "mode"} | {"all": true}
     remove      {"slug", "mode", "confirm": "<slug>"}  irreversible: needs confirm
-    configure   {} (read) | {"storage_base": "/abs/path"}
+    configure   {} (read) | {["storage_base": "/abs/path"], ["min_free_mb": N],
+                ["limits": {"member"|"admin": {"per_app": {..}, "per_member": {..}} | null}]}
+                (Settings -> App storage / App limits; storage_base also sets
+                APPS_BASE in /etc/aquarium/aquarium.conf for `aquarium apps db`)
 
 The caller is UNTRUSTED: every field is validated here, ports come from the
 box, never the request, and prod activation needs an ``approval_ref``.
@@ -61,6 +64,25 @@ SAFE_PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
 SELF_PATH = "/usr/local/sbin/aquarium-app-helper"
 CONF_PATH = "/etc/aquarium/apps.conf"
 QUOTA_PATH = "/etc/aquarium/app-quotas.yaml"
+#: KEY=VALUE settings of deploy/aquarium.py; `configure` keeps APPS_BASE equal
+#: to storage_base so the apps DB volume and DB backups move with the apps.
+AQUARIUM_CONF = "aquarium.conf"  # next to CONF_PATH
+#: Settings -> App limits (FG-33 decision 8): per-role defaults the owner/admin
+#: edit, root JSON merged by hermes_cli/app_quota.py after app-quotas.yaml.
+LIMITS_PATH = "app-limits.json"  # next to CONF_PATH
+LIMIT_TIERS = ("member", "admin")
+#: Must equal hermes_cli/app_quota.py DEFAULT_POLICY per_app/per_member keys.
+LIMIT_KEYS = {
+    "per_app": ("memory_high_mb", "memory_max_mb", "cpu_quota_pct", "disk_mb", "db_mb",
+                "db_connections"),
+    "per_member": ("apps_registered", "apps_running", "ram_mb", "disk_mb", "db_mb",
+                   "external_apps"),
+}
+MAX_LIMIT = 10_000_000
+
+
+def _etc(name):
+    return os.path.join(os.path.dirname(CONF_PATH), name)
 ETC_APPS = "/etc/aquarium/apps"
 UNIT_DIR = "/etc/systemd/system"
 RUN_UNIT_DIR = "/run/systemd/system"
@@ -1115,8 +1137,76 @@ def cmd_remove(conf, spec):
     return {"slug": slug, "mode": mode, "removed": True}
 
 
+def _whole(value, what):
+    if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= MAX_LIMIT:
+        raise InputError(f"{what} must be a whole number from 0 to {MAX_LIMIT}")
+    return value
+
+
+def check_limits(limits):
+    """``{"member"|"admin": {"per_app": {..}, "per_member": {..}} | None}``."""
+    if not isinstance(limits, dict) or not limits:
+        raise InputError("limits must be a non-empty object")
+    clean = {}
+    for tier, sections in limits.items():
+        if tier not in LIMIT_TIERS:
+            raise InputError(f"unknown limits tier {tier!r}")
+        if sections is None:
+            clean[tier] = None
+            continue
+        if not isinstance(sections, dict):
+            raise InputError(f"limits.{tier} must be an object or null")
+        out = {}
+        for section, values in sections.items():
+            if section not in LIMIT_KEYS or not isinstance(values, dict):
+                raise InputError(f"unknown limits section {tier}.{section}")
+            for key, value in values.items():
+                if key not in LIMIT_KEYS[section]:
+                    raise InputError(f"unknown limit {tier}.{section}.{key}")
+                out.setdefault(section, {})[key] = _whole(value, f"{tier}.{section}.{key}")
+        clean[tier] = out
+    return clean
+
+
+def read_limits():
+    if not os.path.lexists(_etc(LIMITS_PATH)):
+        return {}
+    if not _root_file_ok(_etc(LIMITS_PATH)):
+        raise HelperError(f"{_etc(LIMITS_PATH)} must be a root-owned file nobody else can write")
+    with open(_etc(LIMITS_PATH), encoding="utf-8") as fh:
+        data = json.load(fh)
+    roles = data.get("roles") if isinstance(data, dict) else None
+    return roles if isinstance(roles, dict) else {}
+
+
+def _read_json_conf():
+    if not os.path.isfile(CONF_PATH):
+        return {}
+    with open(CONF_PATH, encoding="utf-8") as fh:
+        data = json.load(fh)
+    return data if isinstance(data, dict) else {}
+
+
+def set_apps_base(base):
+    """Point deploy/aquarium.py's APPS_BASE at ``base``, keeping every other line."""
+    lines = []
+    mode = 0o644
+    if os.path.lexists(_etc(AQUARIUM_CONF)):
+        if not _root_file_ok(_etc(AQUARIUM_CONF)):
+            raise HelperError(f"{_etc(AQUARIUM_CONF)} must be a root-owned file nobody else can write")
+        mode = stat.S_IMODE(os.lstat(_etc(AQUARIUM_CONF)).st_mode)
+        with open(_etc(AQUARIUM_CONF), encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    pattern = re.compile(r"^\s*(?:export\s+)?APPS_BASE\s*=")
+    kept = [ln for ln in lines if not pattern.match(ln)]
+    kept.append(f"APPS_BASE={base}")
+    trusted_dir(os.path.dirname(_etc(AQUARIUM_CONF)), 0o755)
+    write_atomic(_etc(AQUARIUM_CONF), "\n".join(kept) + "\n", mode)
+
+
 def cmd_configure(conf, spec):
-    spec_keys(spec, ("storage_base",), ())
+    spec_keys(spec, ("storage_base", "min_free_mb", "limits"), ())
+    data = None
     if "storage_base" in spec:
         base = check_base(spec["storage_base"])
         if base != conf["storage_base"]:
@@ -1124,17 +1214,30 @@ def cmd_configure(conf, spec):
             if os.path.isdir(old) and any(not n.startswith(".") for n in os.listdir(old)):
                 raise Refused(f"apps already live under {old}; remove or move them first")
             trusted_dir(base)
-            data = {}
-            if os.path.isfile(CONF_PATH):
-                with open(CONF_PATH, encoding="utf-8") as fh:
-                    data = json.load(fh)
+            data = _read_json_conf()
             data["storage_base"] = base
-            trusted_dir(os.path.dirname(CONF_PATH), 0o700)
-            write_atomic(CONF_PATH, json.dumps(data, indent=2, sort_keys=True) + "\n", 0o644)
-            conf = load_conf()
+        set_apps_base(base)
+    if "min_free_mb" in spec:
+        data = data if data is not None else _read_json_conf()
+        data["min_free_mb"] = _whole(spec["min_free_mb"], "min_free_mb")
+    if "limits" in spec:
+        roles = dict(read_limits())
+        for tier, sections in check_limits(spec["limits"]).items():
+            if sections is None:
+                roles.pop(tier, None)
+            else:
+                roles[tier] = sections
+        trusted_dir(os.path.dirname(_etc(LIMITS_PATH)), 0o755)
+        write_atomic(_etc(LIMITS_PATH), json.dumps({"roles": roles}, indent=2, sort_keys=True) + "\n",
+                     0o644)
+    if data is not None:
+        trusted_dir(os.path.dirname(CONF_PATH), 0o755)
+        write_atomic(CONF_PATH, json.dumps(data, indent=2, sort_keys=True) + "\n", 0o644)
+        conf = load_conf()
     base = conf["storage_base"]
     free = free_bytes(base) if os.path.isdir(base) else None
-    return {"storage_base": base, "free_bytes": free, "min_free_mb": conf["min_free_mb"]}
+    return {"storage_base": base, "free_bytes": free, "min_free_mb": conf["min_free_mb"],
+            "limits": read_limits()}
 
 
 def _established(port):
