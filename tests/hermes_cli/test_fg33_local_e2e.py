@@ -65,6 +65,8 @@ class FakeBox:
         self.approval_seen: dict[str, bool] = {}
         self.instances: list[dict] = []
         self.fail: dict[str, str] = {}
+        self.secrets: dict[tuple, str] = {}
+        self.db_specs: list[tuple[str, str, dict]] = []
 
     def __call__(self, argv, stdin, timeout):
         spec = json.loads(stdin) if stdin else None
@@ -73,41 +75,49 @@ class FakeBox:
             return 1, "", "not via sudo -n"
         if argv[2] == rt.HELPER:
             return self._helper(argv[3], spec)
-        if argv[2] == rt.PROVISIONER and argv[3:5] == ["apps", "db"]:
-            return self._db(argv[5], argv[6], argv[7], argv[8:])
+        if argv[2] == rt.PROVISIONER and argv[3:5] == ["apps", "db"] and len(argv) == 8:
+            return self._db(argv[5], argv[6], argv[7], spec or {})
         return 1, "", "unknown program"
 
     def _helper(self, verb, spec):
         if verb in self.fail:
             return 3, "", self.fail[verb]
-        if verb == "allocate":
-            return 0, json.dumps({"port": self.PORTS[spec["mode"]],
-                                  "mcp_token": f"tok-{spec['mode']}"}), ""
+        if verb == "set-secret":
+            self.secrets[(spec["slug"], spec["mode"], spec["name"])] = spec["value"]
+            return 0, json.dumps({"slug": spec["slug"], "mode": spec["mode"]}), ""
         if verb == "build":
-            return 0, json.dumps({"output": "next build ok"}), ""
-        if verb in ("start", "restart"):
-            return 0, json.dumps({"port": self.PORTS[spec["mode"]]}), ""
-        if verb == "status":
-            if spec.get("all"):
-                return 0, json.dumps({"instances": self.instances}), ""
-            return 0, json.dumps({"active": True, "port": self.PORTS[spec["mode"]]}), ""
+            return 0, json.dumps({"slug": spec["slug"], "mode": spec["mode"], "built": True,
+                                  "release": f"{spec['mode']}-{spec['sha']}"}), ""
+        if verb == "status" and spec.get("all"):
+            return 0, json.dumps({"instances": self.instances, "problems": []}), ""
+        if verb in ("allocate", "start", "restart", "status"):
+            return 0, json.dumps({"slug": spec["slug"], "mode": spec["mode"],
+                                  "port": self.PORTS[spec["mode"]], "active_state": "active",
+                                  "sub_state": "running"}), ""
         if verb == "logs":
-            return 0, json.dumps({"output": "\n".join(f"line {i}" for i in range(spec["lines"]))}), ""
-        return 0, "{}", ""
+            return 0, json.dumps({"slug": spec["slug"], "mode": spec["mode"],
+                                  "lines": "\n".join(f"line {i}" for i in range(spec["lines"]))}), ""
+        return 0, json.dumps({"slug": spec["slug"], "mode": spec["mode"]}), ""
 
-    def _db(self, verb, slug, mode, rest):
+    def _db(self, verb, slug, mode, spec):
+        self.db_specs.append((verb, mode, spec))
         if mode == "prod" and verb in ("create", "migrate", "drop"):
-            ref = rest[1]
+            ref = spec.get("approval_ref")
+            if not ref:
+                return 1, json.dumps({"ok": False, "error": "needs an approved approval_ref"}), ""
             self.approval_seen[f"{verb}:{ref}"] = asyncio.run(self._approved(ref))
         name = rt.app_db_name(slug, mode)
+        if verb == "drop" and spec.get("confirm") != slug:
+            return 1, json.dumps({"ok": False, "error": "confirmation missing"}), ""
         if verb == "migrate":
-            return 0, json.dumps({"db_name": name, "backup_ref": f"bk_{mode}",
-                                  "applied": ["20261025_init.sql"]}), ""
+            return 0, json.dumps({"ok": True, "database": name, "backup_ref": f"bk_{mode}",
+                                  "applied": [m["name"] for m in spec.get("migrations", [])]}), ""
         if verb == "drop":
-            return 0, json.dumps({"backup_ref": "bk_drop"}), ""
+            return 0, json.dumps({"ok": True, "database": name, "backup_ref": "bk_drop"}), ""
         if verb == "status":
-            return 0, json.dumps({"db_name": name, "size_mb": 3, "dsn": "postgres://secret"}), ""
-        return 0, json.dumps({"db_name": name}), ""
+            return 0, json.dumps({"ok": True, "database": name, "size_mb": 3,
+                                  "dsn": "postgres://secret"}), ""
+        return 0, json.dumps({"ok": True, "database": name}), ""
 
     async def _approved(self, ref: str) -> bool:
         if self.dsn is None:
@@ -135,11 +145,15 @@ def test_helper_argv_is_exact_and_specs_are_validated():
     box = FakeBox()
     client = rt.HelperClient(box)
     assert client.helper_argv("build") == ["sudo", "-n", "/usr/local/sbin/aquarium-app-helper", "build"]
-    assert client.db_argv("migrate", "notes", "prod", approval_ref="apr_1") == [
+    assert client.db_argv("migrate", "notes", "prod") == [
         "sudo", "-n", "/usr/local/sbin/aquarium", "apps", "db", "migrate", "notes", "prod",
-        "--approval", "apr_1",
     ]
-    assert client.db_argv("create", "notes", "dev")[-2:] == ["notes", "dev"]
+    assert json.loads(client.db_spec("migrate", "notes", "prod", approval_ref="apr_1",
+                                      migrations=[{"name": "1_init.sql", "sql": "select 1"}])) == {
+        "approval_ref": "apr_1", "migrations": [{"name": "1_init.sql", "sql": "select 1"}]}
+    assert client.db_spec("create", "notes", "dev") is None
+    with pytest.raises(ValueError):
+        client.db_spec("drop", "notes", "dev", confirm="other")
     for bad in ("../etc", "Notes", "a/b", "-x", "", "a" * 41, "trailing-"):
         with pytest.raises(ValueError):
             client.call("start", slug=bad, mode="dev")
@@ -152,18 +166,29 @@ def test_helper_argv_is_exact_and_specs_are_validated():
     with pytest.raises(ValueError):
         client.call("start", slug="notes", mode="dev", path="/etc/shadow")
     with pytest.raises(ValueError):
-        client.call("build", slug="notes", mode="dev", release_sha="HEAD; rm -rf /")
-    for verb in ("build", "start", "stop", "restart", "remove", "allocate"):
+        client.call("build", slug="notes", mode="dev", sha="HEAD; rm -rf /")
+    with pytest.raises(ValueError):  # the helper refuses unknown fields; so do we
+        client.call("start", slug="notes", mode="dev", approval_ref="apr_1")
+    with pytest.raises(ValueError):
+        client.call("remove", slug="notes", mode="dev", confirm="other")
+    with pytest.raises(ValueError):
+        client.call("set-secret", slug="notes", mode="dev", name="../x", value="v")
+    with pytest.raises(PermissionError):
+        client.call("build", slug="notes", mode="prod", sha="a" * 40)
+    for verb in ("create", "migrate", "drop", "suspend", "resume"):
         with pytest.raises(PermissionError):
-            client.call(verb, slug="notes", mode="prod")
-    for verb in ("create", "migrate", "drop", "suspend"):
-        with pytest.raises(PermissionError):
-            client.db_argv(verb, "notes", "prod")
+            client.db_spec(verb, "notes", "prod", confirm="notes")
     assert box.calls == []  # nothing invalid reached sudo
 
     out = client.call("logs", slug="notes", mode="dev", lines=10_000)
     assert box.calls[-1][1] == {"slug": "notes", "mode": "dev", "lines": rt.MAX_LOG_LINES}
-    assert out["output"].count("\n") == rt.MAX_LOG_LINES - 1
+    assert out["lines"].count("\n") == rt.MAX_LOG_LINES - 1
+    box2 = FakeBox()
+    with pytest.raises(rt.HelperError, match="approval_ref"):  # ok:false is an error
+        def refuse(argv, stdin, timeout):
+            return 1, json.dumps({"ok": False, "error": "needs an approved approval_ref"}), ""
+        rt.HelperClient(refuse).db("migrate", "notes", "prod", approval_ref="apr_1")
+    assert box2.calls == []
 
 
 def test_helper_failures_surface_as_helper_errors():
@@ -175,12 +200,12 @@ def test_helper_failures_surface_as_helper_errors():
     box = FakeBox()
     box.fail["build"] = "npm ci: lockfile missing"
     with pytest.raises(rt.HelperError, match="lockfile missing"):
-        rt.HelperClient(box).call("build", slug="notes", mode="dev")
+        rt.HelperClient(box).call("build", slug="notes", mode="dev", sha="a" * 40)
 
 
 def test_paths_names_and_admission(monkeypatch):
     assert rt.app_path("notes", "prod") == "/apps/notes"
-    assert rt.app_path("notes", "dev") == "/apps/notes/~dev"
+    assert rt.app_path("notes", "dev") == "/apps-dev/notes"
     assert rt.app_db_name("notes", "dev") != rt.app_db_name("notes", "prod")
     assert rt.app_db_name("my-app", "dev").startswith("lapp_my_app_")
     assert rt.endpoint_name("notes") == "la-notes"
@@ -416,7 +441,8 @@ def _fake_scaffold(name, root, *, template="minimal", hosting="local", provider=
     project.mkdir(parents=True, exist_ok=True)
     (project / "tool.config.json").write_text(json.dumps(
         {"name": name, "stack": "nextjs-node", "hosting": hosting, "template_version": 1}))
-    (project / "supabase").mkdir(exist_ok=True)
+    (project / "supabase" / "migrations").mkdir(parents=True, exist_ok=True)
+    (project / "supabase" / "migrations" / "20261025000000_init.sql").write_text("create table notes(id int);")
     subprocess.run(["git", "init", "-q", "-b", "main", str(project)], check=True)
     _git(project, "add", "-A")
     _git(project, "commit", "-qm", "scaffold")
@@ -463,13 +489,15 @@ async def test_local_app_scaffold_build_promote_undo_and_remove(
     assert tool.mcp_endpoint_ref == "la-notes"
     assert tool.config_json["app"]["hosting"] == "local"
     token = home / "auth" / "mcp-secrets" / "la-notes-dev"
-    assert token.read_text() == "tok-dev" and token.stat().st_mode & 0o777 == 0o600
+    assert token.stat().st_mode & 0o777 == 0o600 and len(token.read_text()) >= 32
+    assert box.secrets[("notes", "dev", "APP_MCP_TOKEN")] == token.read_text()
     endpoint = (await _fetch(postgres_dsn, "SELECT * FROM app_dev.mcp_endpoints WHERE name='la-notes'"))[0]
     transport = json.loads(endpoint["transport"])
-    assert transport["url"] == "http://127.0.0.1:4501/api/mcp" and transport["auth"] == "bearer"
+    assert transport["url"] == "http://127.0.0.1:4501/apps-dev/notes/api/mcp"
+    assert transport["auth"] == "bearer"
     assert (endpoint["app_kind"], endpoint["secret_ref"]) == ("local", "la-notes-dev")
-    assert "tok-dev" not in json.dumps(dict(endpoint), default=str)
-    assert box.verbs() == ["allocate:dev"]
+    assert token.read_text() not in json.dumps(dict(endpoint), default=str)
+    assert box.verbs() == ["allocate:dev", "set-secret:dev"]
     assert box.verbs(rt.PROVISIONER) == ["apps db create notes dev"]
     with pytest.raises(SystemExit):  # apps are never created in prod
         await tool_cmd._cmd_new_app(args, _ALICE, prod, prod_store, "prod")
@@ -493,14 +521,17 @@ async def test_local_app_scaffold_build_promote_undo_and_remove(
     # build (dev): release from the dev HEAD, instance restarted.
     sha1 = _git(Path(tool.repo_path), "rev-parse", "dev")
     built = await runtime.build(dev, _ALICE, "notes")
-    assert built["release_sha"] == sha1 and built["path"] == "/apps/notes/~dev"
+    assert built["release_sha"] == sha1 and built["path"] == "/apps-dev/notes"
+    assert box.db_specs[-1] == ("migrate", "dev", {"migrations": [
+        {"name": "20261025000000_init.sql", "sql": "create table notes(id int);"}]})
     tool = await dev.get("notes")
     assert (tool.build_state, tool.release_sha) == ("ready", sha1)
     state = await runtime.runtime(dev, _ALICE, "notes")
     assert state["runtime"]["runtime_state"] == "running"
     assert state["deployments"][0]["source_sha"] == sha1
-    assert box.calls[-1][1] == {"slug": "notes", "mode": "dev", "release_sha": sha1}
-    assert (await runtime.status(dev, _ALICE, "notes"))["live"]["active"] is True
+    assert box.calls[-2][1] == {"slug": "notes", "mode": "dev", "sha": sha1}
+    assert box.calls[-1][1] == {"slug": "notes", "mode": "dev"}
+    assert (await runtime.status(dev, _ALICE, "notes"))["live"]["active_state"] == "active"
     assert (await runtime.logs(dev, _OWNER, "notes", lines=3))["lines"] == "line 0\nline 1\nline 2"
     db = await runtime.database(dev, _ALICE, "notes")
     assert db["database"]["db_name"] == rt.app_db_name("notes", "dev")
@@ -527,16 +558,18 @@ async def test_local_app_scaffold_build_promote_undo_and_remove(
     repo = Path(tool.repo_path)
     assert _git(repo, "rev-parse", "main") == sha1 and _git(repo, "rev-parse", "v1^{commit}") == sha1
     prod_ep = (await _fetch(postgres_dsn, "SELECT * FROM app_prod.mcp_endpoints WHERE name='la-notes'"))[0]
-    assert json.loads(prod_ep["transport"])["url"] == "http://127.0.0.1:4301/api/mcp"
+    assert json.loads(prod_ep["transport"])["url"] == "http://127.0.0.1:4301/apps/notes/api/mcp"
     assert (prod_ep["secret_ref"], prod_ep["enabled"]) == ("la-notes-prod", False)
-    assert (home / "auth" / "mcp-secrets" / "la-notes-prod").read_text() == "tok-prod"
+    prod_token = (home / "auth" / "mcp-secrets" / "la-notes-prod").read_text()
+    assert prod_token == box.secrets[("notes", "prod", "APP_MCP_TOKEN")] != token.read_text()
     dev_dbs = await _fetch(postgres_dsn, "SELECT db_name FROM app_dev.app_databases")
     prod_dbs = await _fetch(postgres_dsn, "SELECT db_name, last_backup_ref FROM app_prod.app_databases")
     assert {r["db_name"] for r in dev_dbs} != {r["db_name"] for r in prod_dbs}
     assert prod_dbs[0]["last_backup_ref"] == "bk_prod"
     prod_calls = [(a[3], s) for a, s in box.calls if a[2] == rt.HELPER and s and s.get("mode") == "prod"]
-    assert [v for v, _ in prod_calls] == ["allocate", "build", "restart"]
-    assert all(s["approval_ref"] == result.approval_ref for _, s in prod_calls)
+    assert [v for v, _ in prod_calls] == ["allocate", "set-secret", "build", "restart"]
+    assert prod_calls[2][1] == {"slug": "notes", "mode": "prod", "sha": sha1,
+                                "approval_ref": result.approval_ref}
     change = (await _fetch(postgres_dsn, "SELECT op, inverse_op FROM app_prod.changes WHERE id=$1",
                            result.change_ref))[0]
     assert json.loads(change["inverse_op"]) == {"kind": "data", "table": "tools",
@@ -545,7 +578,7 @@ async def test_local_app_scaffold_build_promote_undo_and_remove(
 
     # prod control now acts under the promotion's approval.
     assert (await runtime.control(prod, _ALICE, "notes", "restart"))["runtime_state"] == "running"
-    assert box.calls[-1][1]["approval_ref"] == result.approval_ref
+    assert box.calls[-1][1] == {"slug": "notes", "mode": "prod"}
     with pytest.raises(KeyError):
         await runtime.control(prod, _BOB, "notes", "stop")
 

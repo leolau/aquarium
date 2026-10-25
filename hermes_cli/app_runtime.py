@@ -6,11 +6,13 @@ Everything that touches the box goes through two root helpers, called with
 ``hermes tool …`` verbs):
 
 * ``/usr/local/sbin/aquarium-app-helper <verb>`` with a JSON spec on stdin
-  (``{"slug", "mode", "release_sha"?, "approval_ref"?, "lines"?}``) and JSON on
-  stdout. Verbs: ``allocate|build|start|stop|restart|route|unroute|set-secret|
-  logs|status|remove`` (item 1.2 owns the helper; it re-validates every spec).
-* ``/usr/local/sbin/aquarium apps db <verb> <slug> <mode> [--approval <ref>]``
-  (item 1.3), verbs ``create|migrate|status|suspend|drop``.
+  (``{"slug", "mode"}`` plus the verb's own fields, e.g. ``build`` takes
+  ``sha``/``approval_ref``) and JSON on stdout. Verbs: ``allocate|build|start|
+  stop|restart|route|unroute|set-secret|logs|status|remove`` (item 1.2 owns
+  the helper; it re-validates every spec and refuses unknown fields).
+* ``/usr/local/sbin/aquarium apps db <verb> <slug> <mode>`` (item 1.3) with an
+  optional JSON object on stdin (``approval_ref``, ``migrations``,
+  ``confirm``), verbs ``create|migrate|status|suspend|resume|drop``.
 
 :class:`HelperClient` builds those argv lists and validates the specs first, so
 a bad slug or a prod verb without an approval never reaches sudo.
@@ -21,14 +23,15 @@ that module is absent), records ``app_deployments``/``tool_runtime`` rows and
 C5 changes.
 
 Paths (decision 4): a local app is served under the main site at
-``/apps/<slug>`` (prod) and ``/apps/<slug>/~dev`` (dev), so one ``/apps/``
-prefix carries the strict CSP and the agent-home Origin/Referer refusal.
+``/apps/<slug>`` (prod) and ``/apps-dev/<slug>`` (dev), the same paths as
+``tool_scaffold.app_base_path`` (Next ``basePath``) and the front door.
 """
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import secrets
 import json
 import os
 import re
@@ -49,23 +52,30 @@ HELPER_VERBS = (
     "allocate", "build", "start", "stop", "restart", "route", "unroute",
     "set-secret", "logs", "status", "remove",
 )
-DB_VERBS = ("create", "migrate", "status", "suspend", "drop")
-#: Helper verbs that change a prod instance; the helper refuses them without
-#: an approved ``approval_ref`` (the rows ``promote_tool`` writes).
-PROD_GATED_VERBS = frozenset(
-    {"allocate", "build", "start", "stop", "restart", "route", "unroute",
-     "set-secret", "remove"}
-)
-PROD_GATED_DB_VERBS = frozenset({"create", "migrate", "suspend", "drop"})
+DB_VERBS = ("create", "migrate", "status", "suspend", "resume", "drop")
+#: Optional stdin fields per helper verb, besides ``slug``/``mode`` (the helper
+#: refuses any other field).
+HELPER_FIELDS: Dict[str, Tuple[str, ...]] = {
+    "allocate": (), "start": (), "stop": (), "restart": (), "route": (), "unroute": (),
+    "status": (), "build": ("sha", "approval_ref"), "logs": ("lines", "build"),
+    "remove": ("confirm",), "set-secret": ("name", "value", "delete"),
+}
+#: Activating a prod release needs an approved ``approval_ref`` (the rows
+#: ``promote_tool`` writes); every prod database verb but ``status`` too.
+PROD_GATED_VERBS = frozenset({"build"})
+PROD_GATED_DB_VERBS = frozenset({"create", "migrate", "suspend", "resume", "drop"})
+#: The app's MCP bearer, delivered to the unit as a systemd credential.
+MCP_TOKEN_NAME = "APP_MCP_TOKEN"
 
 #: A local app's slug is its tool name and becomes a URL path segment and a
 #: unit instance name, so it is stricter than a tool name.
 SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$")
 _REF_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 _SHA_RE = re.compile(r"^[0-9a-f]{7,64}$")
+_SECRET_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 
 PROD_PATH = "/apps/{slug}"
-DEV_PATH = "/apps/{slug}/~dev"
+DEV_PATH = "/apps-dev/{slug}"
 
 MAX_LOG_LINES = 500
 MAX_OUTPUT_CHARS = 64 * 1024
@@ -116,8 +126,8 @@ def app_db_name(slug: str, mode: str) -> str:
     """``lapp_<id>_<mode>``: a slug-derived identifier plus a hash suffix."""
     validate_slug(slug)
     validate_mode(mode)
-    ident = slug.replace("-", "_")[:24]
-    return f"lapp_{ident}_{hashlib.sha256(slug.encode()).hexdigest()[:6]}_{mode}"
+    ident = slug.replace("-", "_")[:30]
+    return f"lapp_{ident}_{hashlib.sha256(slug.encode()).hexdigest()[:8]}_{mode}"
 
 
 def endpoint_name(slug: str) -> str:
@@ -136,7 +146,7 @@ def mcp_transport(port: int, slug: str, mode: str) -> dict:
         raise HelperError(f"helper returned an invalid port: {port!r}")
     return {
         "type": "http",
-        "url": f"http://127.0.0.1:{port}/api/mcp",
+        "url": f"http://127.0.0.1:{port}{app_path(slug, mode)}/api/mcp",
         "auth": "bearer",
     }
 
@@ -171,7 +181,7 @@ def _parse(stdout: str) -> dict:
 
 
 class HelperClient:
-    """Builds and runs the exact argv of the two root helpers."""
+    """Builds and runs the exact argv + stdin of the two root helpers."""
 
     def __init__(
         self,
@@ -188,7 +198,7 @@ class HelperClient:
         self.sudo = tuple(sudo)
         self.timeout = timeout
 
-    # -- argv (pure; what the sudoers rules must allow) ----------------------
+    # -- argv + spec (pure; what the sudoers rules and helpers accept) -------
 
     def helper_argv(self, verb: str) -> List[str]:
         if verb not in HELPER_VERBS:
@@ -196,49 +206,65 @@ class HelperClient:
         return [*self.sudo, self.helper, verb]
 
     def helper_spec(self, verb: str, spec: Dict[str, Any]) -> str:
-        spec = dict(spec)
+        if verb not in HELPER_VERBS:
+            raise ValueError(f"Unknown helper verb: {verb!r}")
+        spec = {k: v for k, v in spec.items() if v is not None}
         if verb == "status" and spec.get("all"):
             if set(spec) != {"all"}:
-                raise ValueError("status --all takes no other field")
+                raise ValueError("status with all takes no other field")
             return json.dumps({"all": True}, sort_keys=True)
-        validate_slug(spec.get("slug"))
-        validate_mode(spec.get("mode"))
+        extra = set(spec) - {"slug", "mode"} - set(HELPER_FIELDS[verb])
+        if extra:
+            raise ValueError(f"Unknown fields for helper {verb}: {sorted(extra)}")
+        slug = validate_slug(spec.get("slug"))
+        mode = validate_mode(spec.get("mode"))
         ref = spec.get("approval_ref")
         if ref is not None and not _REF_RE.fullmatch(str(ref)):
             raise ValueError(f"Invalid approval_ref: {ref!r}")
-        if spec["mode"] == "prod" and verb in PROD_GATED_VERBS and not ref:
+        if mode == "prod" and verb in PROD_GATED_VERBS and not ref:
             raise PermissionError(
                 f"`{verb}` on a prod instance needs an approved approval_ref "
                 "(promote the app first)"
             )
-        sha = spec.get("release_sha")
-        if sha is not None and not _SHA_RE.fullmatch(str(sha)):
-            raise ValueError(f"Invalid release_sha: {sha!r}")
+        if verb == "build" and not _SHA_RE.fullmatch(str(spec.get("sha", ""))):
+            raise ValueError(f"Invalid release sha: {spec.get('sha')!r}")
+        if verb == "remove" and spec.get("confirm") != slug:
+            raise ValueError("remove needs confirm=<slug>")
+        if verb == "set-secret" and not _SECRET_NAME_RE.fullmatch(str(spec.get("name", ""))):
+            raise ValueError(f"Invalid secret name: {spec.get('name')!r}")
         if "lines" in spec:
             spec["lines"] = max(1, min(int(spec["lines"]), MAX_LOG_LINES))
-        allowed = {"slug", "mode", "approval_ref", "release_sha", "lines"}
-        extra = set(spec) - allowed
-        if extra:
-            raise ValueError(f"Unknown helper spec fields: {sorted(extra)}")
-        return json.dumps({k: v for k, v in spec.items() if v is not None}, sort_keys=True)
+        return json.dumps(spec, sort_keys=True)
 
-    def db_argv(
-        self, verb: str, slug: str, mode: str, *, approval_ref: Optional[str] = None,
-    ) -> List[str]:
+    def db_argv(self, verb: str, slug: str, mode: str) -> List[str]:
         if verb not in DB_VERBS:
             raise ValueError(f"Unknown apps db verb: {verb!r}")
         validate_slug(slug)
         validate_mode(mode)
-        argv = [*self.sudo, self.provisioner, "apps", "db", verb, slug, mode]
+        return [*self.sudo, self.provisioner, "apps", "db", verb, slug, mode]
+
+    def db_spec(
+        self, verb: str, slug: str, mode: str, *, approval_ref: Optional[str] = None,
+        migrations: Optional[List[Dict[str, str]]] = None, confirm: Optional[str] = None,
+    ) -> Optional[str]:
+        spec: Dict[str, Any] = {}
         if approval_ref is not None:
             if not _REF_RE.fullmatch(approval_ref):
                 raise ValueError(f"Invalid approval_ref: {approval_ref!r}")
-            argv += ["--approval", approval_ref]
+            spec["approval_ref"] = approval_ref
         elif mode == "prod" and verb in PROD_GATED_DB_VERBS:
-            raise PermissionError(
-                f"`apps db {verb}` on prod needs an approved approval_ref"
-            )
-        return argv
+            raise PermissionError(f"`apps db {verb}` on prod needs an approved approval_ref")
+        if migrations is not None:
+            if verb != "migrate":
+                raise ValueError("only migrate takes migrations")
+            spec["migrations"] = [{"name": m["name"], "sql": m["sql"]} for m in migrations]
+        if verb == "drop":
+            if confirm != slug:
+                raise ValueError("drop needs confirm=<slug>")
+            spec["confirm"] = confirm
+        if verb == "status" and spec:
+            raise ValueError("apps db status takes no fields")
+        return json.dumps(spec, sort_keys=True) if spec else None
 
     # -- calls ---------------------------------------------------------------
 
@@ -249,18 +275,28 @@ class HelperClient:
                 f"{what}: not installed on this box ({argv[len(self.sudo)]}); "
                 "the owner has to install the FG-33 app runtime first"
             )
-        if code != 0:
-            detail = (_cap(err, 2000) or _cap(out, 2000)).strip() or f"exit {code}"
-            raise HelperError(f"{what} failed: {detail}")
-        return _parse(out)
+        parsed = _parse(out)
+        if code != 0 or parsed.get("ok") is False or (
+            isinstance(parsed.get("error"), str) and code != 0
+        ):
+            detail = parsed.get("error") if isinstance(parsed.get("error"), str) else ""
+            detail = detail or (_cap(err, 2000) or _cap(out, 2000)).strip() or f"exit {code}"
+            fix = parsed.get("fix") if isinstance(parsed.get("fix"), str) else ""
+            raise HelperError(f"{what} failed: {detail[:2000]}" + (f" ({fix[:300]})" if fix else ""))
+        return parsed
 
     def call(self, verb: str, **spec: Any) -> dict:
         argv = self.helper_argv(verb)
         return self._exec(argv, self.helper_spec(verb, spec), f"aquarium-app-helper {verb}")
 
-    def db(self, verb: str, slug: str, mode: str, *, approval_ref: Optional[str] = None) -> dict:
-        argv = self.db_argv(verb, slug, mode, approval_ref=approval_ref)
-        return self._exec(argv, None, f"aquarium apps db {verb}")
+    def db(
+        self, verb: str, slug: str, mode: str, *, approval_ref: Optional[str] = None,
+        migrations: Optional[List[Dict[str, str]]] = None, confirm: Optional[str] = None,
+    ) -> dict:
+        argv = self.db_argv(verb, slug, mode)
+        stdin = self.db_spec(verb, slug, mode, approval_ref=approval_ref,
+                             migrations=migrations, confirm=confirm)
+        return self._exec(argv, stdin, f"aquarium apps db {verb}")
 
 
 # ---------------------------------------------------------------------------
@@ -404,6 +440,15 @@ def _can_manage(principal: Principal, tool: Any) -> bool:
     )
 
 
+def _git_raw(repo: Path, *args: str) -> str:
+    proc = subprocess.run(  # noqa: S603 - fixed argv
+        ["git", "-C", str(repo), *args], capture_output=True, text=True, check=False,
+    )
+    if proc.returncode != 0:
+        raise HelperError(f"git {args[0]} failed: {_cap(proc.stderr, 500).strip()}")
+    return proc.stdout
+
+
 def _git(repo: Path, *args: str) -> str:
     proc = subprocess.run(  # noqa: S603 - fixed argv
         ["git", "-C", str(repo), *args], capture_output=True, text=True, check=False,
@@ -470,8 +515,8 @@ class AppRuntime:
     async def _call(self, verb: str, **spec: Any) -> dict:
         return await asyncio.to_thread(lambda: self.helper.call(verb, **spec))
 
-    async def _db(self, verb: str, slug: str, mode: str, *, approval_ref: Optional[str] = None) -> dict:
-        return await asyncio.to_thread(self.helper.db, verb, slug, mode, approval_ref=approval_ref)
+    async def _db(self, verb: str, slug: str, mode: str, **kwargs: Any) -> dict:
+        return await asyncio.to_thread(lambda: self.helper.db(verb, slug, mode, **kwargs))
 
     # -- tool resolution (C2) ------------------------------------------------
 
@@ -499,20 +544,36 @@ class AppRuntime:
 
     # -- provisioning (``hermes tool new --hosting local``) ------------------
 
-    def allocate(self, slug: str, mode: str, *, approval_ref: Optional[str] = None) -> Tuple[int, str]:
-        """Allocate the instance port and store its MCP token; returns ``(port, secret_ref)``."""
-        out = self.helper.call("allocate", slug=slug, mode=mode, approval_ref=approval_ref)
+    def allocate(self, slug: str, mode: str) -> Tuple[int, str]:
+        """Allocate the instance port and mint its MCP bearer; returns ``(port, secret_ref)``.
+
+        The token goes to the unit as the ``APP_MCP_TOKEN`` credential (helper
+        ``set-secret``) and to ``$HERMES_HOME/auth/mcp-secrets/<secret_ref>``
+        for the agent's MCP client. It is never stored in a registry row.
+        """
+        out = self.helper.call("allocate", slug=slug, mode=mode)
         port = out.get("port")
         mcp_transport(port, slug, mode)
+        token = secrets.token_urlsafe(32)
+        self.helper.call("set-secret", slug=slug, mode=mode, name=MCP_TOKEN_NAME, value=token)
         ref = secret_ref(slug, mode)
-        self.write_secret(ref, out.get("mcp_token") or "")
+        self.write_secret(ref, token)
         return port, ref
+
+    @staticmethod
+    def migrations(repo: Path, sha: str) -> List[Dict[str, str]]:
+        """``supabase/migrations/*.sql`` at ``sha``, for ``apps db migrate``."""
+        names = _git(repo, "ls-tree", "--name-only", sha, "supabase/migrations/").split()
+        return [
+            {"name": Path(n).name, "sql": _git_raw(repo, "show", f"{sha}:{n}")}
+            for n in sorted(names) if n.endswith(".sql")
+        ]
 
     async def record_dev_database(self, registry: Any, tool: Any, provisioned: dict) -> dict:
         store = self._store_for(registry)
         await store.initialize()
         db = await store.upsert_database(
-            tool.id, "dev", provisioned.get("db_name") or app_db_name(tool.name, "dev"),
+            tool.id, "dev", provisioned.get("database") or app_db_name(tool.name, "dev"),
             status="ready",
         )
         await store.set_runtime(tool.id, runtime="local", unit=f"aquarium-app@{tool.name}-dev",
@@ -539,8 +600,10 @@ class AppRuntime:
         await store.set_tool_build(tool.id, "building")
         await store.set_runtime(tool.id, runtime="local", runtime_state="building")
         try:
-            built = await self._call("build", slug=slug, mode=mode, release_sha=sha)
-            started = await self._call("restart", slug=slug, mode=mode, release_sha=sha)
+            migrations = await asyncio.to_thread(self.migrations, self.repo_for(tool), sha)
+            await self._db("migrate", slug, mode, migrations=migrations)
+            built = await self._call("build", slug=slug, mode=mode, sha=sha)
+            started = await self._call("restart", slug=slug, mode=mode)
         except HelperError as exc:
             await store.set_tool_build(tool.id, "failed")
             await store.set_runtime(tool.id, runtime="local", runtime_state="failed")
@@ -581,7 +644,7 @@ class AppRuntime:
             await admit(registry, principal, "start", tool=tool.name, mode=mode)
             if not tool.release_sha:
                 raise ValueError(f"{slug!r} has no release yet; run `hermes tool build {slug}`")
-        out = await self._call(verb, slug=slug, mode=mode, approval_ref=approval_ref)
+        out = await self._call(verb, slug=slug, mode=mode)
         state = "stopped" if verb == "stop" else "running"
         runtime = await store.set_runtime(
             tool.id, runtime="local", unit=f"aquarium-app@{slug}-{mode}", runtime_state=state,
@@ -597,7 +660,7 @@ class AppRuntime:
         tool = await self.resolve(registry, principal, name, write=True)
         slug = self.require_local(tool)
         out = await self._call("logs", slug=slug, mode=registry.mode, lines=lines)
-        text = out.get("output") if isinstance(out.get("output"), str) else out.get("lines", "")
+        text = out.get("lines") if out.get("lines") is not None else out.get("output", "")
         if isinstance(text, list):
             text = "\n".join(str(x) for x in text)
         return {"tool": slug, "mode": registry.mode, "lines": _cap(str(text or ""))}
@@ -623,7 +686,7 @@ class AppRuntime:
         out = await self._call("status", slug=slug, mode=registry.mode)
         store = self._store_for(registry)
         await store.initialize()
-        active = out.get("active")
+        active = out.get("active_state") == "active" if "active_state" in out else out.get("active")
         if isinstance(active, bool):
             await store.set_runtime(
                 tool.id, runtime="local",
@@ -632,7 +695,9 @@ class AppRuntime:
                 ),
             )
         payload = await self.runtime(registry, principal, name)
-        payload["live"] = {k: v for k, v in out.items() if k in ("active", "port", "since", "state")}
+        payload["live"] = {k: v for k, v in out.items() if k in (
+            "active_state", "sub_state", "port", "base_path", "release", "active_since",
+            "memory_bytes", "restarts", "routed")}
         return payload
 
     async def database(self, registry: Any, principal: Principal, name: str) -> dict:
@@ -705,10 +770,10 @@ class AppRuntime:
             approval_ref = None
             if mode == "prod":
                 approval_ref = await self._approve(registry, principal, "tool.remove", slug)
-            await self._call("remove", slug=slug, mode=mode, approval_ref=approval_ref)
+            await self._call("remove", slug=slug, mode=mode, confirm=slug)
             db = await store.get_database(tool.id, mode)
             if db is not None and db.status != "dropped":
-                out = await self._db("drop", slug, mode, approval_ref=approval_ref)
+                out = await self._db("drop", slug, mode, approval_ref=approval_ref, confirm=slug)
                 await store.upsert_database(tool.id, mode, db.db_name, status="dropped",
                                             last_backup_ref=out.get("backup_ref"))
                 dropped = db.db_name
@@ -748,19 +813,21 @@ class AppRuntime:
         numbers = [int(t[1:]) for t in tags if t[1:].isdigit()]
         tag = f"v{max(numbers, default=0) + 1}"
 
+        created = {}
         if not has_prod_db:
-            self.helper.db("create", slug, "prod", approval_ref=approval_ref)
-        migrated = self.helper.db("migrate", slug, "prod", approval_ref=approval_ref)
-        port, ref = self.allocate(slug, "prod", approval_ref=approval_ref)
-        self.helper.call("build", slug=slug, mode="prod", release_sha=sha, approval_ref=approval_ref)
-        self.helper.call("restart", slug=slug, mode="prod", release_sha=sha, approval_ref=approval_ref)
+            created = self.helper.db("create", slug, "prod", approval_ref=approval_ref)
+        migrated = self.helper.db("migrate", slug, "prod", approval_ref=approval_ref,
+                                  migrations=self.migrations(repo, sha))
+        port, ref = self.allocate(slug, "prod")
+        self.helper.call("build", slug=slug, mode="prod", sha=sha, approval_ref=approval_ref)
+        self.helper.call("restart", slug=slug, mode="prod")
 
         _git(repo, "update-ref", "refs/heads/main", sha)
         _git(repo, "tag", tag, sha)
         return LocalPromotion(
             slug=slug, release_sha=sha, tag=tag, port=port, secret_ref=ref,
             transport=mcp_transport(port, slug, "prod"),
-            db_name=migrated.get("db_name") or app_db_name(slug, "prod"),
+            db_name=migrated.get("database") or created.get("database") or app_db_name(slug, "prod"),
             backup_ref=migrated.get("backup_ref"),
             applied_migrations=list(migrated.get("applied") or migrated.get("applied_migrations") or []),
         )
