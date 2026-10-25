@@ -463,13 +463,15 @@ async def archive_app(
 
 async def _undo_stop(runtime: Any, tool: Any, slug: str, mode: str, *, running: bool) -> None:
     """Archive could not copy the database: put the instance back the way it was (best effort)."""
+    from hermes_cli import app_runtime as rt
+
     if not tool.release_sha:
         return
     with contextlib.suppress(Exception):
         await runtime._call("route", slug=slug, mode=mode)
     if running:
         with contextlib.suppress(Exception):
-            await runtime._call("start", slug=slug, mode=mode)
+            await runtime._call("start", slug=slug, mode=mode, limits=await rt.unit_limits(tool))
 
 
 async def restore_app(
@@ -508,7 +510,7 @@ async def restore_app(
     if tool.release_sha:
         if lifecycle == "archived":
             await runtime._call("route", slug=slug, mode=mode)
-        out = await runtime._call("start", slug=slug, mode=mode)
+        out = await runtime._call("start", slug=slug, mode=mode, limits=await rt.unit_limits(tool))
         started = True
         if isinstance(out.get("port"), int):
             fields["port"] = out["port"]

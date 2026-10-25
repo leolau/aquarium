@@ -28,6 +28,7 @@ Type=simple
 DynamicUser=yes
 Slice=aquarium-apps.slice
 ExecStart=/usr/bin/python3 -I /usr/local/sbin/aquarium-app-helper run-app
+; NODE_OPTIONS is the fallback; 50-limits.conf sets the heap to half of MemoryMax on each start.
 Environment=NODE_ENV=production NODE_OPTIONS=--max-old-space-size=256 HOSTNAME=127.0.0.1 NEXT_TELEMETRY_DISABLED=1
 CacheDirectory=aquarium-app/%i
 MemoryHigh=384M
