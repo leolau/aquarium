@@ -74,6 +74,9 @@ def looks_sensitive(name: str | None) -> bool:
 # Approval and consent controls: only the human may press these (security
 # review F17/F18). Refused for app_act AND app_act_destructive, by name here
 # and by the page's `data-appmcp-deny` marker (snapshot `denied: true`).
+# Going live is consent too (FG-33 P8-0 0.3): deploy/publish/make live/
+# redeploy/unlink. "delete" stays destructive-only; new Delete buttons carry
+# the page marker instead.
 CONSENT_WORDS = (
     r"approve[sd]?",
     r"approval",
@@ -87,6 +90,11 @@ CONSENT_WORDS = (
     r"trusted",
     r"consent",
     r"acknowledge",
+    r"deploy(?:s|ing)?",
+    r"re-?deploy(?:s|ing)?",
+    r"publish(?:es|ing)?",
+    r"make\s+live",
+    r"unlink(?:s|ing)?",
 )
 
 _CONSENT = re.compile(r"\b(?:" + "|".join(CONSENT_WORDS) + r")\b", re.IGNORECASE)
