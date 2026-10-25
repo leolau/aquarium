@@ -19,6 +19,7 @@ import asyncio
 import json
 import pickle
 import sys
+from typing import NamedTuple
 
 from hermes_cli.config import load_config
 from hermes_cli.datastore import get_store
@@ -45,6 +46,70 @@ async def _bind_owner(conn, store) -> None:
     owner = await PrincipalStore(store._store).get_owner(connection=conn)
     if owner is not None:
         await bind_principal(conn, owner, session=True)
+
+
+class _Source(NamedTuple):
+    """A table whose embeddings are drawn on the map, and how to label it."""
+
+    table: str
+    kind: str
+    topic: str
+
+
+def _sample_sql(sources: list[_Source]) -> str:
+    """Embeddings of up to ``$2`` rows of model ``$1``, by a stable id hash.
+
+    Only ids are hashed and sorted; the (TOASTed) vectors are then fetched by
+    primary key for the picked rows alone, so a 20k sample of a large corpus
+    reads 20k vectors, not all of them.
+    """
+    ids = " UNION ALL ".join(
+        f"SELECT id, '{s.kind}' AS kind FROM {s.table} WHERE embedding_model = $1"
+        for s in sources
+    )
+    vectors = " UNION ALL ".join(
+        f"SELECT t.embedding FROM picked "
+        f"JOIN {s.table} t ON t.id = picked.id AND picked.kind = '{s.kind}'"
+        for s in sources
+    )
+    return (
+        f"WITH picked AS MATERIALIZED ("
+        f"SELECT id, kind FROM ({ids}) u "
+        f"ORDER BY hashtext(id::text), id LIMIT $2"
+        f") {vectors}"
+    )
+
+
+def _project_sql(source: _Source, projection_table: str) -> str:
+    """Insert every model-``$1`` row of ``source`` with its PCA coordinates."""
+    return (
+        f"INSERT INTO {projection_table} "
+        f"(id, kind, owner_user_id, visibility, topic, "
+        f" x, y, model, algorithm, fitted_at) "
+        f"SELECT id, '{source.kind}', owner_user_id, visibility, "
+        f"{source.topic}, "
+        f"-(embedding <#> $2::vector) - $3::float8, "
+        f"-(embedding <#> $4::vector) - $5::float8, "
+        f"$1, $6, NOW() "
+        f"FROM {source.table} WHERE embedding_model = $1"
+    )
+
+
+async def _clear_projection(conn, projection_table: str) -> None:
+    """Empty the projection inside the caller's transaction.
+
+    TRUNCATE leaves no dead tuples behind (a DELETE of the whole map leaves
+    one per row for autovacuum on every refit). A login without the TRUNCATE
+    privilege (``hermes_app`` is granted only SELECT/INSERT/UPDATE/DELETE)
+    falls back to DELETE, so the fit still runs everywhere it ran before.
+    """
+    import asyncpg
+
+    try:
+        async with conn.transaction():
+            await conn.execute(f"TRUNCATE {projection_table}")
+    except asyncpg.InsufficientPrivilegeError:
+        await conn.execute(f"DELETE FROM {projection_table}")
 
 
 async def fit_projection(
@@ -84,21 +149,20 @@ async def fit_projection(
             print("  Initialize the schema first (start a session).\n")
             return
 
-        # Load every user's embeddings (bound as the owner above), but only
-        # those made by the configured model. Two embedding spaces in one PCA
-        # produce a map whose distances mean nothing, and stamping the
-        # configured model on it would make that map indistinguishable from a
-        # good one. Rows from another model are left out and reported.
-        rows = await conn.fetch(
-            f"SELECT id, embedding, owner_user_id, visibility, topic "
-            f"FROM {MEMORY_TABLE} WHERE embedding_model = $1",
-            store.model_id,
-        )
+        # Only rows embedded by the configured model are projected. Two
+        # embedding spaces in one PCA produce a map whose distances mean
+        # nothing, and stamping the configured model on it would make that map
+        # indistinguishable from a good one. Rows from another model are left
+        # out and reported.
         skipped = await conn.fetchval(
             f"SELECT COUNT(*) FROM {MEMORY_TABLE} WHERE embedding_model <> $1",
             store.model_id,
         ) or 0
-        if not rows:
+        mem_total = await conn.fetchval(
+            f"SELECT COUNT(*) FROM {MEMORY_TABLE} WHERE embedding_model = $1",
+            store.model_id,
+        ) or 0
+        if not mem_total:
             print("\n  No memories to project.")
             if skipped:
                 print(
@@ -108,21 +172,22 @@ async def fit_projection(
             print()
             return
 
-        # Load RAG chunks if the table exists (V4).
-        chunk_rows = []
+        # RAG chunks join the map once their table exists (V4).
+        sources = [_Source(MEMORY_TABLE, "memory", "topic")]
         chunk_exists = await conn.fetchval(
             "SELECT to_regclass(current_schema() || '.rag_chunks')"
         )
+        chunk_total = 0
         if chunk_exists:
-            chunk_rows = await conn.fetch(
-                f"SELECT id, embedding, owner_user_id, visibility, "
-                f"document_id::text AS topic "
-                f"FROM {RAG_CHUNKS_TABLE} WHERE embedding_model = $1",
-                store.model_id,
+            sources.append(
+                _Source(RAG_CHUNKS_TABLE, "chunk", "document_id::text")
             )
+            chunk_total = await conn.fetchval(
+                f"SELECT COUNT(*) FROM {RAG_CHUNKS_TABLE} "
+                f"WHERE embedding_model = $1",
+                store.model_id,
+            ) or 0
 
-        mem_total = len(rows)
-        chunk_total = len(chunk_rows)
         total = mem_total + chunk_total
         sampled = total > sample_size
         print(f"\n  algorithm          {algorithm}")
@@ -132,47 +197,61 @@ async def fit_projection(
         if skipped:
             print(f"  skipped (model)   {skipped}")
 
-        mem_embeddings = np.array(
-            [list(row["embedding"]) for row in rows], dtype=np.float64
-        )
-        if chunk_rows:
-            chunk_embeddings = np.array(
-                [list(row["embedding"]) for row in chunk_rows],
-                dtype=np.float64,
-            )
-            embeddings = np.vstack([mem_embeddings, chunk_embeddings])
-        else:
-            chunk_embeddings = np.empty((0, mem_embeddings.shape[1]))
-            embeddings = mem_embeddings
-
-        ids = [str(row["id"]) for row in rows]
-        owners = [row["owner_user_id"] for row in rows]
-        visibilities = [row["visibility"] for row in rows]
-        topics = [row["topic"] for row in rows]
-
         # ── Compute the projection ──
         umap_ok = False
+        umap_points: list[tuple] = []
         if algorithm == "umap":
             try:
                 ensure("memory.projection", prompt=False)
                 import umap
 
+                # UMAP has no linear basis to apply in SQL, so it still
+                # embeds every row in Python.
+                full = []
+                kinds = []
+                for source in sources:
+                    fetched = await conn.fetch(
+                        f"SELECT id, embedding, owner_user_id, visibility, "
+                        f"{source.topic} AS topic "
+                        f"FROM {source.table} WHERE embedding_model = $1",
+                        store.model_id,
+                    )
+                    full.extend(fetched)
+                    kinds.extend([source.kind] * len(fetched))
                 reducer = umap.UMAP(n_components=2, random_state=42)
-                coords = reducer.fit_transform(embeddings)
-                xs = coords[:, 0].tolist()
-                ys = coords[:, 1].tolist()
+                coords = reducer.fit_transform(np.array(
+                    [list(row["embedding"]) for row in full], dtype=np.float64
+                ))
+                umap_points = [
+                    (
+                        str(row["id"]),
+                        kind,
+                        row["owner_user_id"],
+                        row["visibility"],
+                        row["topic"],
+                        float(coords[i, 0]),
+                        float(coords[i, 1]),
+                    )
+                    for i, (row, kind) in enumerate(zip(full, kinds))
+                ]
                 umap_ok = True
             except Exception as exc:
                 print(f"  \u26a0 UMAP failed ({exc}), falling back to PCA")
 
         if not umap_ok:
-            # PCA via SVD (numpy only, no non-numeric dependency)
-            if sampled:
-                indices = np.random.choice(total, sample_size, replace=False)
-                sample_emb = embeddings[indices]
-            else:
-                sample_emb = embeddings
-
+            # PCA via SVD (numpy only). The basis is fitted on at most
+            # ``sample_size`` embeddings, picked in SQL by a stable hash of the
+            # row id so only the sample's vectors leave the database and a
+            # refit over an unchanged corpus draws the same map.
+            sample_emb = np.array(
+                [
+                    list(row["embedding"])
+                    for row in await conn.fetch(
+                        _sample_sql(sources), store.model_id, sample_size
+                    )
+                ],
+                dtype=np.float64,
+            )
             mean = sample_emb.mean(axis=0)
             centered_sample = sample_emb - mean
             _, _, vt = np.linalg.svd(centered_sample, full_matrices=False)
@@ -180,13 +259,8 @@ async def fit_projection(
             # two rows has fewer than the two axes a plot needs. Pad with a
             # zero axis: the map collapses to a line, which is the honest
             # picture of two points, rather than failing the whole fit.
-            components = np.zeros((2, embeddings.shape[1]))
+            components = np.zeros((2, sample_emb.shape[1]))
             components[: min(2, vt.shape[0])] = vt[: min(2, vt.shape[0])]
-
-            # Project every row with the fitted basis.
-            centered = embeddings - mean
-            xs = (centered @ components[0]).tolist()
-            ys = (centered @ components[1]).tolist()
 
         fit_algorithm = "umap" if umap_ok else "pca"
         # jsonb params are sent as JSON text: asyncpg will not encode a bare
@@ -194,55 +268,38 @@ async def fit_projection(
         fit_mean = json.dumps([] if umap_ok else mean.tolist())
         fit_components = json.dumps([] if umap_ok else components.tolist())
 
-        # Split coordinates back into memory and chunk sets.
-        mem_xs = xs[:mem_total]
-        mem_ys = ys[:mem_total]
-        chunk_xs = xs[mem_total:]
-        chunk_ys = ys[mem_total:]
-
         # Write all points + basis in one transaction (idempotent,
         # and a failed fit leaves the previous map intact).
         async with conn.transaction():
-            await conn.execute(f"DELETE FROM {PROJECTION_TABLE}")
-            await conn.executemany(
-                f"INSERT INTO {PROJECTION_TABLE} "
-                f"(id, kind, owner_user_id, visibility, topic, "
-                f" x, y, model, algorithm, fitted_at) "
-                f"VALUES ($1, 'memory', $2, $3, $4, $5, $6, $7, $8, NOW())",
-                [
-                    (
-                        ids[i],
-                        owners[i],
-                        visibilities[i],
-                        topics[i],
-                        mem_xs[i],
-                        mem_ys[i],
-                        store.model_id,
-                        fit_algorithm,
-                    )
-                    for i in range(mem_total)
-                ],
-            )
-            if chunk_rows:
+            await _clear_projection(conn, PROJECTION_TABLE)
+            if umap_ok:
                 await conn.executemany(
                     f"INSERT INTO {PROJECTION_TABLE} "
                     f"(id, kind, owner_user_id, visibility, topic, "
                     f" x, y, model, algorithm, fitted_at) "
-                    f"VALUES ($1, 'chunk', $2, $3, $4, $5, $6, $7, $8, NOW())",
+                    f"VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())",
                     [
-                        (
-                            str(chunk_rows[i]["id"]),
-                            chunk_rows[i]["owner_user_id"],
-                            chunk_rows[i]["visibility"],
-                            chunk_rows[i]["topic"],
-                            chunk_xs[i],
-                            chunk_ys[i],
-                            store.model_id,
-                            fit_algorithm,
-                        )
-                        for i in range(chunk_total)
+                        (*point, store.model_id, fit_algorithm)
+                        for point in umap_points
                     ],
                 )
+                projected = len(umap_points)
+            else:
+                # Every row is placed by the database itself: x = (e - mean)
+                # . c0 = e . c0 - mean . c0, and pgvector's ``<#>`` is the
+                # negated inner product. No embedding is shipped to Python.
+                projected = 0
+                for source in sources:
+                    status = await conn.execute(
+                        _project_sql(source, PROJECTION_TABLE),
+                        store.model_id,
+                        components[0].tolist(),
+                        float(mean @ components[0]),
+                        components[1].tolist(),
+                        float(mean @ components[1]),
+                        fit_algorithm,
+                    )
+                    projected += int(status.rsplit(" ", 1)[-1])
             await conn.execute(
                 f"INSERT INTO {PROJECTION_BASIS_TABLE} "
                 f"(id, algorithm, model, mean, components, "
@@ -272,7 +329,7 @@ async def fit_projection(
                 pickle.dump(reducer, fh)
             tmp_path.replace(umap_path)
 
-        print(f"  projected         {total}")
+        print(f"  projected         {projected}")
         print(
             f"  sampled           "
             f"{'yes (' + str(sample_size) + ')' if sampled else 'no'}"
