@@ -18,12 +18,25 @@ from gateway.session import SessionSource
 from hermes_cli import wa_bridge_owners as owners
 
 
+class _Conn:
+    async def connect(self):
+        return self
+
+    async def close(self):
+        return None
+
+
 class _Store:
+    _store = _Conn()
+
     def __init__(self, people):
         self.people = people
 
     async def get(self, user_id, connection=None):
         return self.people.get(user_id)
+
+    async def resolve_by_channel(self, platform, channel_user_id, connection=None):
+        return None
 
 
 def _p(user_id, role):
@@ -134,12 +147,12 @@ async def test_missing_person_on_own_number_is_refused(home):
 
 @pytest.mark.asyncio
 async def test_store_error_on_own_number_is_refused(home):
-    class Broken:
+    class Broken(_Store):
         async def get(self, user_id, connection=None):
             raise RuntimeError("store down")
 
     owners.record_owner("amy", "amy")
-    out = await _runner(_Adapter("amy"), Broken())._enrich_channel_source_identity(
+    out = await _runner(_Adapter("amy"), Broken({}))._enrich_channel_source_identity(
         _src("85298765432@s.whatsapp.net")
     )
     assert out is None

@@ -257,10 +257,19 @@ def _read_session(db, session_id: str, head: int = 20, tail: int = 10) -> str:
     return json.dumps(response, ensure_ascii=False)
 
 
-def owner_scope_for(user_id: Optional[str], role: Optional[str]) -> Optional[str]:
+#: Owner scope that matches no session, for untrusted sessions with no person.
+UNRESOLVED_OWNER_SCOPE = "\x00unresolved"
+
+
+def owner_scope_for(
+    user_id: Optional[str], role: Optional[str], *, trusted_local: bool = False
+) -> Optional[str]:
     """Whose chats an agent may recall: ``None`` (every chat) for the owner or
-    a session with no resolved person (CLI, cron), else that person's own."""
-    if not user_id or role == "owner":
+    a trusted local session with no resolved person (CLI, cron), else that
+    person's own. An untrusted session with no person sees none."""
+    if not user_id:
+        return None if trusted_local else UNRESOLVED_OWNER_SCOPE
+    if role == "owner":
         return None
     return user_id
 

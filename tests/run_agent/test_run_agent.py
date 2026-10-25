@@ -2862,6 +2862,7 @@ class TestConcurrentToolExecution:
                 session_id=agent.session_id,
                 principal_user_id=None,
                 principal_role="member",
+                principal_trusted_local=True,
                 turn_id="",
                 api_request_id="",
                 enabled_tools=list(agent.valid_tool_names),

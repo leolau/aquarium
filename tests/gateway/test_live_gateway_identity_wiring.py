@@ -26,6 +26,7 @@ import pytest
 import gateway.inbound as inbound
 from gateway.config import Platform
 from gateway.platforms.base import BasePlatformAdapter, SendResult
+import gateway.run as gateway_run
 from gateway.run import GatewayRunner
 from gateway.session import SessionSource, build_session_key
 
@@ -192,7 +193,7 @@ async def test_enrich_resolves_internal_user_via_c1_seam(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_enrich_swallows_resolution_errors(monkeypatch) -> None:
+async def test_enrich_raises_when_configured_store_fails(monkeypatch) -> None:
     adapter = _StubAdapter(SimpleNamespace(extra={"account_id": "wa_A"}))
     runner = _bare_runner({Platform.WHATSAPP: adapter}, principal_store=object())
 
@@ -202,11 +203,27 @@ async def test_enrich_swallows_resolution_errors(monkeypatch) -> None:
     monkeypatch.setattr(inbound, "bind_channel_principal", _boom)
 
     src = _source(Platform.WHATSAPP, "15550007777", "15550007777")
-    # A DB hiccup must never drop the live message — it falls back to
-    # channel-identity keying with the account still stamped.
-    enriched = await runner._enrich_channel_source_identity(src)
-    assert enriched.internal_user_id is None
-    assert enriched.account_id == "wa_A"
+    with pytest.raises(gateway_run.PrincipalResolutionUnavailable):
+        await runner._enrich_channel_source_identity(src)
+
+
+@pytest.mark.asyncio
+async def test_store_failure_refuses_the_turn(monkeypatch) -> None:
+    runner = _bare_runner({}, principal_store=object())
+    runner._recover_telegram_topic_thread_id = lambda _source: None
+    ran = []
+    runner._spawn_inbound_file_registration = lambda *_a: ran.append("files")
+
+    async def _boom(source, *, store):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(inbound, "bind_channel_principal", _boom)
+
+    src = _source(Platform.WHATSAPP, "15550007777", "15550007777")
+    event = SimpleNamespace(text="hi", source=src)
+    reply = await runner._handle_message_with_agent(event, src, "k", 1)
+    assert reply == gateway_run.PRINCIPAL_UNAVAILABLE_REPLY
+    assert ran == []
 
 
 # --- _get_principal_store gating -----------------------------------------------

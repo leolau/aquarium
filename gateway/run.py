@@ -1706,6 +1706,14 @@ logger = logging.getLogger(__name__)
 # ``None`` (app DB not configured), so the FG-03 lookup is cached exactly once.
 _UNSET_PRINCIPAL_STORE = object()
 
+PRINCIPAL_UNAVAILABLE_REPLY = (
+    "Identity service unavailable, please try again in a moment."
+)
+
+
+class PrincipalResolutionUnavailable(RuntimeError):
+    """The configured principal store could not resolve the sender."""
+
 
 _OWN_POLICY_OPEN_ENV = {
     Platform.WECOM: ("WECOM_DM_POLICY", "WECOM_GROUP_POLICY", "WECOM_ALLOW_ALL_USERS"),
@@ -3367,8 +3375,9 @@ class GatewayRunner(
 
         Both are additive and gated: when the adapter exposes no ``account_id``
         and no principal store is configured, ``source`` is returned unchanged
-        (byte-identical session key). Never raises into the message path — a
-        resolution failure logs and falls back to channel-identity keying.
+        (byte-identical session key). When a principal store is configured and
+        resolution fails, raises :class:`PrincipalResolutionUnavailable` so the
+        turn is refused rather than run with no person.
         """
         try:
             adapter = self._source_adapter(source) if self.adapters else None
@@ -3390,13 +3399,14 @@ class GatewayRunner(
                     from gateway.inbound import bind_channel_principal
 
                     await bind_channel_principal(source, store=store)
-                except Exception:
-                    logger.debug(
-                        "Channel principal resolution failed for %s; keying on "
-                        "channel identity.",
+                except Exception as exc:
+                    logger.warning(
+                        "Channel principal resolution failed for %s; refusing "
+                        "the turn.",
                         source.platform,
                         exc_info=True,
                     )
+                    raise PrincipalResolutionUnavailable(str(exc)) from exc
         bridge = getattr(adapter, "bridge_name", None) if adapter is not None else None
         if isinstance(bridge, str) and bridge:
             source = await self._clamp_whatsapp_bridge_person(source, bridge)
@@ -10421,7 +10431,10 @@ class GatewayRunner(
         # channel sender to an internal principal so this turn keys per-account
         # and per-internal-user (a no-op that leaves ``source`` unchanged when
         # neither is configured — see ``_enrich_channel_source_identity``).
-        source = await self._enrich_channel_source_identity(source)
+        try:
+            source = await self._enrich_channel_source_identity(source)
+        except PrincipalResolutionUnavailable:
+            return PRINCIPAL_UNAVAILABLE_REPLY
         if source is None:
             logger.info("inbound message dropped: its WhatsApp bridge person is not available")
             return None
@@ -17465,6 +17478,7 @@ class GatewayRunner(
                     gateway_session_key=session_key,
                     internal_user_id=source.internal_user_id,
                     internal_user_role=source.internal_user_role,
+                    trusted_local=self._get_principal_store() is None,
                     session_task=source.task,
                     session_db=getattr(self._session_db, "_db", self._session_db),
                     fallback_model=self._fallback_model,

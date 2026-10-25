@@ -67,13 +67,13 @@ def test_role_matrix(home, role, denied):
         assert got == frozenset()
 
 
-def test_no_person_means_no_limits_whatever_the_role(home):
+def test_trusted_local_no_person_means_no_limits_whatever_the_role(home):
     from tools.access_policy import denied_tools, files_root
 
     for role in ("viewer", "member", None):
-        assert denied_tools(None, role) == frozenset()
-        assert denied_tools("", role) == frozenset()
-        assert files_root(None, role) is None
+        assert denied_tools(None, role, trusted_local=True) == frozenset()
+        assert denied_tools("", role, trusted_local=True) == frozenset()
+        assert files_root(None, role, trusted_local=True) is None
 
 
 def test_deny_tools_accepts_toolset_names(home, access_config):
