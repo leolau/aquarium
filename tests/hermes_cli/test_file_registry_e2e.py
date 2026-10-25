@@ -448,3 +448,32 @@ async def test_backfill_idempotency_on_storage_path(postgres_dsn: str) -> None:
         assert total == 1, "second backfill must not create a duplicate"
     finally:
         await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_storage_path_lookup_uses_its_index(postgres_dsn: str) -> None:
+    registry = await _registry(postgres_dsn)
+    ada = _principal("ada")
+    asset = await _register(registry, ada)
+    assert (await registry.get_by_storage_path(ada, asset.storage_path)).id == asset.id
+
+    conn = await asyncpg.connect(dsn=postgres_dsn, ssl=False)
+    try:
+        await conn.execute("SET search_path TO app_prod")
+        indexdef = await conn.fetchval(
+            "SELECT indexdef FROM pg_indexes WHERE schemaname = 'app_prod' "
+            "AND indexname = 'file_assets_storage_path_idx'"
+        )
+        assert indexdef is not None and "(storage_path)" in indexdef
+        async with conn.transaction():
+            await conn.execute("SET LOCAL enable_seqscan = off")
+            plan = "\n".join(
+                r[0]
+                for r in await conn.fetch(
+                    "EXPLAIN SELECT 1 FROM file_assets WHERE storage_path = $1 LIMIT 1",
+                    asset.storage_path,
+                )
+            )
+        assert "file_assets_storage_path_idx" in plan
+    finally:
+        await conn.close()

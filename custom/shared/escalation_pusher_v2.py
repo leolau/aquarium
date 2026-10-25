@@ -201,6 +201,19 @@ def format_email_escalation(row, db):
     return text
 
 
+# Serves the pending poll below and the MCP servers' status-filtered lists.
+ESCALATIONS_INDEX_SQL = (
+    "CREATE INDEX IF NOT EXISTS idx_escalations_status_created "
+    "ON escalations(status, created_at)"
+)
+
+
+def ensure_indexes(db):
+    """Add indexes that databases created before they existed are missing."""
+    db.execute(ESCALATIONS_INDEX_SQL)
+    db.commit()
+
+
 def process_pending_escalations():
     """Check for and push pending escalations from both channels."""
     db = get_db()
@@ -237,7 +250,18 @@ def main():
     print(f"[escalation] Telegram user: {TELEGRAM_USER_ID}")
     print(f"[escalation] Check interval: {CHECK_INTERVAL}s")
 
+    indexes_ready = False
     while True:
+        if not indexes_ready:
+            try:
+                db = get_db()
+                try:
+                    ensure_indexes(db)
+                finally:
+                    db.close()
+                indexes_ready = True
+            except sqlite3.OperationalError as e:
+                print(f"[escalation] Index setup deferred: {e}")
         try:
             count = process_pending_escalations()
             if count > 0:

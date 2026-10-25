@@ -30,6 +30,19 @@ def load_config():
     with open(CONFIG_PATH) as f:
         return json.load(f)
 
+# Serves get_unbatched_emails(); partial, so it only holds the unbatched backlog.
+UNBATCHED_INDEX_SQL = (
+    "CREATE INDEX IF NOT EXISTS idx_email_unbatched "
+    "ON email_messages(received_at) WHERE batch_id IS NULL"
+)
+
+
+def ensure_indexes(db):
+    """Add indexes that databases created before they existed are missing."""
+    db.execute(UNBATCHED_INDEX_SQL)
+    db.commit()
+
+
 def get_unbatched_emails(db):
     """Get emails that haven't been assigned to a batch yet."""
     rows = db.execute(
@@ -121,10 +134,17 @@ def main():
     
     # Track pending groups with their first-seen time
     pending_groups = {}  # key -> {'first_seen': timestamp, 'email_ids': set()}
+    indexes_ready = False
     
     while True:
         try:
             db = get_db()
+            if not indexes_ready:
+                try:
+                    ensure_indexes(db)
+                    indexes_ready = True
+                except sqlite3.OperationalError as e:
+                    print(f"[email_batcher] Index setup deferred: {e}")
             unbatched = get_unbatched_emails(db)
             
             if unbatched:

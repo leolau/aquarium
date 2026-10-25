@@ -169,6 +169,9 @@ def migrate():
 
     db.commit()
 
+    db.execute("CREATE INDEX IF NOT EXISTS idx_escalations_status_created ON escalations(status, created_at)")
+    db.commit()
+
     # Step 7: Backfill escalations
     db.execute("UPDATE escalations SET channel = 'whatsapp' WHERE channel IS NULL")
     db.commit()

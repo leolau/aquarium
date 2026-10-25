@@ -118,6 +118,10 @@ CREATE INDEX IF NOT EXISTS {FILE_ASSETS_TABLE}_visibility_idx
 -- me?") and lets a backfill skip an object it has already recorded.
 CREATE INDEX IF NOT EXISTS {FILE_ASSETS_TABLE}_owner_sha_idx
     ON {FILE_ASSETS_TABLE} (owner_user_id, sha256);
+-- `get_by_storage_path` (project file links) and the storage import's
+-- per-object "already registered?" probe look rows up by path alone.
+CREATE INDEX IF NOT EXISTS {FILE_ASSETS_TABLE}_storage_path_idx
+    ON {FILE_ASSETS_TABLE} (storage_path);
 -- For a table created before the Incomings feature shipped. Idempotent, and
 -- mirrored in ``inbound_registry`` for the box where only that side is
 -- initialised.
