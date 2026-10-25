@@ -22,9 +22,11 @@ leases, ``psutil`` for RSS/available memory, the write-retry accounting in
 from __future__ import annotations
 
 import logging
+import json
 import os
 import shutil
 import sqlite3
+import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -48,6 +50,8 @@ BOUND_WRITE_LOCK = "write-lock waits"
 BOUND_LATENCY = "turn latency"
 BOUND_STORAGE = "disk space"
 BOUND_CPU = "cpu load"
+#: FG-33 local apps: their slices, the box reserve and the app storage location.
+BOUND_APPS = "local apps"
 
 #: Bounds a bigger box cannot fix. The single-writer bound is serialisation:
 #: more RAM and more cores do not remove it, the runtime scale-out work does.
@@ -103,6 +107,10 @@ class CapacityThresholds:
     #: below *either* floor instead of refusing files at a fixed size.
     upload_min_free_gb: float = 5.0
     upload_min_free_pct: float = 0.10
+    #: FG-33 local apps: share of a kernel-enforced slice cap (``aquarium.slice``
+    #: 6 GB, ``aquarium-apps.slice`` 3 GB, ``aquarium-db.slice`` 1 GB) in use.
+    watch_apps_ratio: float = 0.80
+    constrained_apps_ratio: float = 0.95
     #: Trailing window for contention and latency.
     window_s: float = 86400.0
 
@@ -227,6 +235,90 @@ class CpuLoad:
         return self.load1 / float(self.cpus)
 
 
+#: FG-33 slices and their designed ``MemoryMax`` in MB (deploy/aquarium*.slice),
+#: used when systemd reports no numeric cap. ``aquarium.slice`` is the parent.
+APPS_PARENT_SLICE = "aquarium.slice"
+APPS_RUN_SLICE = "aquarium-apps.slice"
+APPS_BUILD_SLICE = "aquarium-build.slice"
+APPS_DB_SLICE = "aquarium-db.slice"
+APPS_SLICE_CAPS_MB: Dict[str, float] = {
+    APPS_PARENT_SLICE: 6144.0,
+    APPS_RUN_SLICE: 3072.0,
+    APPS_BUILD_SLICE: 2048.0,
+    APPS_DB_SLICE: 1024.0,
+}
+#: What each slice holds, for the verdict text.
+_APPS_SLICE_LABELS = {
+    APPS_PARENT_SLICE: "all local apps together",
+    APPS_RUN_SLICE: "running app instances",
+    APPS_BUILD_SLICE: "the shared build slot",
+    APPS_DB_SLICE: "the apps database containers",
+}
+#: Slices that may bind the verdict. A build filling its 2 GB slot is the slot
+#: working as designed and ends with the build, so it is shown, never binding.
+_APPS_BINDING_SLICES = (APPS_PARENT_SLICE, APPS_RUN_SLICE, APPS_DB_SLICE)
+#: Root-owned helper config (FG-33 decision 21): the storage base the helper
+#: really uses once Settings has moved it.
+APPS_HELPER_CONF = Path("/etc/aquarium/apps.conf")
+APPS_DEFAULT_STORAGE = "/var/lib/aquarium-apps"
+
+
+@dataclass
+class SliceMemory:
+    current_mb: Optional[float] = None
+    cap_mb: Optional[float] = None
+
+    @property
+    def ratio(self) -> Optional[float]:
+        if self.current_mb is None or not self.cap_mb:
+            return None
+        return self.current_mb / self.cap_mb
+
+
+@dataclass
+class AppsLoad:
+    """FG-33 local apps: slice memory against the kernel caps, the box reserve
+    admission keeps, and disk at the app storage location (decision 21).
+
+    ``installed`` is False on a box without the app runtime: nothing is
+    reported then, and nothing is "unavailable" either.
+    """
+
+    installed: bool = False
+    slices: Dict[str, SliceMemory] = field(default_factory=dict)
+    instances_running: Optional[int] = None
+    #: ``box.reserved_mb`` from the root quota policy.
+    reserved_mb: Optional[float] = None
+    storage_path: Optional[str] = None
+    storage_free_mb: Optional[float] = None
+    storage_total_mb: Optional[float] = None
+    min_free_mb: Optional[float] = None
+    #: The storage location is on another filesystem than the hermes home, so
+    #: the FG-31 disk bound does not already watch it.
+    separate_volume: bool = False
+    #: Apps' source (``$HERMES_HOME/tools``) + releases under the storage base,
+    #: from an hourly-cached walk; ``None`` until measured.
+    disk_used_mb: Optional[float] = None
+
+    def slice(self, name: str) -> SliceMemory:
+        return self.slices.get(name) or SliceMemory(cap_mb=APPS_SLICE_CAPS_MB.get(name))
+
+    @property
+    def apps_rss_bytes(self) -> Optional[int]:
+        current = self.slice(APPS_RUN_SLICE).current_mb
+        return None if current is None else int(current * 1048576)
+
+    @property
+    def apps_disk_bytes(self) -> Optional[int]:
+        return None if self.disk_used_mb is None else int(self.disk_used_mb * 1048576)
+
+    @property
+    def storage_pct(self) -> Optional[float]:
+        if self.storage_free_mb is None or not self.storage_total_mb:
+            return None
+        return 1.0 - self.storage_free_mb / self.storage_total_mb
+
+
 @dataclass
 class CapacityIndicators:
     sessions: SessionLoad = field(default_factory=SessionLoad)
@@ -235,6 +327,7 @@ class CapacityIndicators:
     latency: TurnLatency = field(default_factory=TurnLatency)
     storage: StorageLoad = field(default_factory=StorageLoad)
     cpu: CpuLoad = field(default_factory=CpuLoad)
+    apps: AppsLoad = field(default_factory=AppsLoad)
     profile_count: int = 1
     collected_at: float = field(default_factory=time.time)
     #: Indicators that could not be read, by name, so a surface can say
@@ -755,6 +848,174 @@ def collect_turn_latency(
     return latency
 
 
+#: Hourly cache for the apps' disk walk: ``{roots: (taken_at, mb)}``. A walk
+#: over node_modules is the one expensive read here, so it runs at most hourly
+#: per process and gives up (unmeasured) past its time budget.
+_APPS_DISK_TTL_S = 3600.0
+_APPS_DISK_BUDGET_S = 2.0
+_apps_disk_cache: Dict[Tuple[str, ...], Tuple[float, Optional[float]]] = {}
+
+
+def _tree_mb(roots: Sequence[Path], *, budget_s: float = _APPS_DISK_BUDGET_S) -> Optional[float]:
+    """Allocated size of ``roots`` (no symlinks followed, unreadable parts
+    skipped), or ``None`` if the walk overran its budget."""
+    deadline = time.monotonic() + budget_s
+    total = 0
+    stack = [str(r) for r in roots if r.is_dir()]
+    while stack:
+        if time.monotonic() > deadline:
+            return None
+        try:
+            with os.scandir(stack.pop()) as entries:
+                for entry in entries:
+                    try:
+                        st = entry.stat(follow_symlinks=False)
+                    except OSError:
+                        continue
+                    total += getattr(st, "st_blocks", 0) * 512 or st.st_size
+                    if entry.is_dir(follow_symlinks=False):
+                        stack.append(entry.path)
+        except OSError:
+            continue
+    return total / 1048576.0
+
+
+def _apps_disk_mb(roots: Sequence[Path], *, now: Optional[float] = None) -> Optional[float]:
+    key = tuple(str(r) for r in roots)
+    now = time.monotonic() if now is None else now
+    cached = _apps_disk_cache.get(key)
+    if cached is not None and now - cached[0] < _APPS_DISK_TTL_S:
+        return cached[1]
+    value = _tree_mb(roots)
+    _apps_disk_cache[key] = (now, value)
+    return value
+
+
+def _systemctl_show(units: Sequence[str]) -> Optional[Dict[str, Dict[str, str]]]:
+    """``systemctl show`` for several units in one call, keyed by unit Id."""
+    systemctl = shutil.which("systemctl")
+    if systemctl is None:
+        return None
+    try:
+        proc = subprocess.run(
+            [systemctl, "show", "-p", "Id", "-p", "LoadState", "-p", "FragmentPath",
+             "-p", "MemoryCurrent", "-p", "MemoryMax", *units],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    out: Dict[str, Dict[str, str]] = {}
+    for block in proc.stdout.split("\n\n"):
+        props = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
+        if props.get("Id"):
+            out[props["Id"]] = props
+    return out
+
+
+def _running_app_instances() -> Optional[int]:
+    systemctl = shutil.which("systemctl")
+    if systemctl is None:
+        return None
+    try:
+        proc = subprocess.run(
+            [systemctl, "list-units", "--type=service", "--state=active",
+             "--no-legend", "--plain", "aquarium-app@*.service"],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return sum(1 for line in proc.stdout.splitlines() if line.strip())
+
+
+def _mb(value: str) -> Optional[float]:
+    return int(value) / 1048576.0 if value.isdigit() else None
+
+
+def _apps_storage_settings() -> Tuple[str, Optional[float], Optional[float], Optional[str]]:
+    """(storage base, min free MB, box reserve MB, tools root). The helper's
+    own config wins for base, floor and tools root: it is where builds land."""
+    base: Optional[str] = None
+    tools_root: Optional[str] = None
+    floor: Optional[float] = None
+    reserve: Optional[float] = None
+    try:
+        from hermes_cli import app_quota
+
+        policy = app_quota.load_policy()
+        base = str(app_quota.storage_base_path(policy))
+        floor = float(app_quota.min_free_mb(policy))
+        reserve = float(policy.section("box").get("reserved_mb") or 0) or None
+    except Exception as exc:  # the quota module is optional to the verdict
+        log.debug("capacity: app quota policy unavailable: %s", exc)
+    try:
+        conf = json.loads(APPS_HELPER_CONF.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        conf = None
+    if isinstance(conf, dict):
+        if isinstance(conf.get("storage_base"), str) and os.path.isabs(conf["storage_base"]):
+            base = conf["storage_base"]
+        if isinstance(conf.get("min_free_mb"), int):
+            floor = float(conf["min_free_mb"])
+        if isinstance(conf.get("tools_root"), str) and os.path.isabs(conf["tools_root"]):
+            tools_root = conf["tools_root"]
+    return base or APPS_DEFAULT_STORAGE, floor, reserve, tools_root
+
+
+def collect_apps_load(*, storage_path: Optional[str] = None) -> AppsLoad:
+    """FG-33 local apps, read the way admission reads them: slice
+    ``MemoryCurrent`` against the kernel caps, free space at the storage
+    location. Two ``systemctl`` calls, two ``statvfs``, an hourly walk."""
+    load = AppsLoad()
+    shown = _systemctl_show(list(APPS_SLICE_CAPS_MB))
+    parent = (shown or {}).get(APPS_PARENT_SLICE) or {}
+    # systemd synthesises any slice it is asked about; only a unit file means
+    # the FG-33 runtime is installed.
+    if parent.get("LoadState") != "loaded" or not parent.get("FragmentPath"):
+        return load
+    load.installed = True
+    for name, default_cap in APPS_SLICE_CAPS_MB.items():
+        props = shown.get(name) or {}
+        if props.get("LoadState") != "loaded":
+            load.slices[name] = SliceMemory(cap_mb=default_cap)
+            continue
+        current = props.get("MemoryCurrent", "")
+        load.slices[name] = SliceMemory(
+            # "[not set]" on a loaded slice: nothing running in it.
+            current_mb=_mb(current) if current.isdigit() else 0.0,
+            cap_mb=_mb(props.get("MemoryMax", "")) or default_cap,
+        )
+    load.instances_running = _running_app_instances()
+    base, load.min_free_mb, load.reserved_mb, tools_root = _apps_storage_settings()
+    load.storage_path = base
+    probe = Path(base)
+    while not probe.exists() and probe.parent != probe:
+        probe = probe.parent
+    try:
+        usage = shutil.disk_usage(probe)
+        load.storage_free_mb = usage.free / 1048576.0
+        load.storage_total_mb = usage.total / 1048576.0
+        if storage_path:
+            load.separate_volume = os.stat(probe).st_dev != os.stat(storage_path).st_dev
+    except OSError as exc:
+        log.debug("capacity: app storage unavailable: %s", exc)
+    roots = [Path(base)]
+    if tools_root:
+        roots.append(Path(tools_root))
+    else:
+        try:
+            from hermes_constants import get_hermes_home
+
+            roots.append(Path(get_hermes_home()) / "tools")
+        except Exception:
+            pass
+    load.disk_used_mb = _apps_disk_mb(roots)
+    return load
+
+
 def collect_indicators(
     config: Optional[Dict[str, Any]] = None,
     *,
@@ -795,6 +1056,12 @@ def collect_indicators(
     indicators.cpu = collect_cpu_load()
     if not indicators.cpu.measured:
         indicators.unavailable.append("cpu load")
+    try:
+        indicators.apps = collect_apps_load(storage_path=indicators.storage.path)
+    except Exception as exc:
+        log.debug("capacity: local apps unavailable: %s", exc)
+    if indicators.apps.installed and indicators.apps.storage_free_mb is None:
+        indicators.unavailable.append("app storage")
     try:
         indicators.profile_count = max(1, len(_profile_homes()))
     except Exception as exc:
@@ -939,6 +1206,81 @@ def _cpu_bound(
     return Bound(BOUND_CPU, COMFORTABLE, detail, pressure)
 
 
+def _apps_bound(
+    apps: AppsLoad, memory: MemoryLoad, thresholds: CapacityThresholds
+) -> Optional[Bound]:
+    """The worst of: a binding slice near its kernel cap, the box under the
+    reserve admission keeps, the storage location under its free floor."""
+    if not apps.installed:
+        return None
+    parent = apps.slice(APPS_PARENT_SLICE)
+    running = (
+        f"{apps.instances_running} instance(s) running"
+        if apps.instances_running is not None
+        else "instances unknown"
+    )
+    detail = running
+    if parent.current_mb is not None and parent.cap_mb:
+        detail += f", {parent.current_mb / 1024.0:.1f} of {parent.cap_mb / 1024.0:.0f} GB"
+    candidates: List[Tuple[str, float, str]] = []
+    limit = max(thresholds.constrained_apps_ratio, 1e-6)
+    for name in _APPS_BINDING_SLICES:
+        sl = apps.slice(name)
+        ratio = sl.ratio
+        if ratio is None:
+            continue
+        what = (
+            f"{_APPS_SLICE_LABELS[name]} use {sl.current_mb / 1024.0:.1f} of "
+            f"{(sl.cap_mb or 0.0) / 1024.0:.1f} GB ({name})"
+        )
+        if ratio >= thresholds.constrained_apps_ratio:
+            candidates.append((CONSTRAINED, ratio / limit, f"{what} — at the cap"))
+        elif ratio >= thresholds.watch_apps_ratio:
+            candidates.append((WATCH, ratio / limit, f"{what} — approaching the cap"))
+        else:
+            candidates.append((COMFORTABLE, ratio / limit, detail))
+    if apps.reserved_mb and memory.available_mb is not None:
+        pressure = apps.reserved_mb / max(memory.available_mb, 1.0)
+        if memory.available_mb < apps.reserved_mb:
+            candidates.append((
+                WATCH,
+                pressure,
+                f"{memory.available_mb / 1024.0:.1f} GB available, under the "
+                f"{apps.reserved_mb / 1024.0:.0f} GB box reserve — new app starts "
+                "and builds are refused",
+            ))
+    if apps.storage_free_mb is not None:
+        where = apps.storage_path or "the app storage location"
+        floor = apps.min_free_mb or 0.0
+        free = f"{apps.storage_free_mb / 1024.0:.1f} GB free at {where}"
+        if floor:
+            pressure = floor / max(apps.storage_free_mb, 1.0)
+            if apps.storage_free_mb < floor:
+                candidates.append((
+                    CONSTRAINED, pressure,
+                    f"{free}, under the {floor / 1024.0:.0f} GB floor — builds are refused",
+                ))
+            elif apps.storage_free_mb < 2 * floor:
+                candidates.append((
+                    WATCH, pressure, f"{free} — near the {floor / 1024.0:.0f} GB floor"
+                ))
+        pct = apps.storage_pct
+        if apps.separate_volume and pct is not None:
+            pressure = pct / max(thresholds.constrained_disk_pct, 1e-6)
+            if pct >= thresholds.constrained_disk_pct:
+                candidates.append((CONSTRAINED, pressure, f"{free} ({pct:.0%} used) — nearly full"))
+            elif pct >= thresholds.watch_disk_pct:
+                candidates.append((WATCH, pressure, f"{free} ({pct:.0%} used) — filling up"))
+    if not candidates:
+        return Bound(BOUND_APPS, COMFORTABLE, detail, 0.0)
+    state, pressure, reason = max(
+        candidates, key=lambda c: (_SEVERITY[c[0]], c[1])
+    )
+    if state == COMFORTABLE:
+        reason = detail
+    return Bound(BOUND_APPS, state, reason, pressure)
+
+
 def derive_verdict(
     indicators: CapacityIndicators,
     thresholds: Optional[CapacityThresholds] = None,
@@ -962,6 +1304,7 @@ def derive_verdict(
             _latency_bound(indicators.latency, thresholds),
             _storage_bound(indicators.storage, thresholds),
             _cpu_bound(indicators.cpu, thresholds),
+            _apps_bound(indicators.apps, indicators.memory, thresholds),
         )
         if bound is not None
     ]
@@ -1055,9 +1398,19 @@ def _recommendations(
             "it is conversations, a bigger tier adds cores — and noisy "
             "neighbours on the same box show up here too."
         )
-    if binding.hardware_helps and binding.name != BOUND_STORAGE:
+    if binding.name == BOUND_APPS:
+        out.append(
+            "Stop or archive local apps nobody uses (Tools page, or "
+            "`hermes tool stop <name> --mode prod`); dev instances idle-stop on "
+            "their own. If disk is short, move the app storage location to a "
+            "larger volume in Settings. The slice caps are kernel-enforced: "
+            "raising them means editing deploy/aquarium*.slice and the `box:` "
+            "section of /etc/aquarium/app-quotas.yaml, and only helps with more "
+            "RAM."
+        )
+    if binding.hardware_helps and binding.name not in (BOUND_STORAGE, BOUND_APPS):
         # The sizing basis is memory-shaped; for a full disk the advice is
-        # cleanup, not a bigger instance.
+        # cleanup, not a bigger instance, and local apps have their own caps.
         out.append(_tier_advice(indicators, thresholds))
     if binding.name == BOUND_SESSIONS:
         out.append(
@@ -1102,7 +1455,14 @@ def summary_line(verdict: CapacityVerdict) -> str:
         if ind.contention.available
         else "write-lock waits unknown"
     )
-    return f"Active conversations {sessions} · memory {memory} · {disk} · {cpu} · {waits}"
+    line = f"Active conversations {sessions} · memory {memory} · {disk} · {cpu} · {waits}"
+    if ind.apps.installed:
+        parent = ind.apps.slice(APPS_PARENT_SLICE)
+        line += (
+            f" · local apps {_fmt_optional_gb(parent.current_mb)}"
+            f" of {_fmt_optional_gb(parent.cap_mb)}"
+        )
+    return line
 
 
 def digest_lines(verdict: CapacityVerdict) -> List[str]:
@@ -1166,9 +1526,29 @@ def as_dict(verdict: CapacityVerdict) -> Dict[str, Any]:
             "cpu_count": ind.cpu.cpus,
             "cpu_percent": ind.cpu.percent,
             "profile_count": ind.profile_count,
+            "apps": _apps_dict(ind.apps),
         },
         "unavailable": sorted(ind.unavailable),
         "collected_at": ind.collected_at,
+    }
+
+
+def _apps_dict(apps: AppsLoad) -> Optional[Dict[str, Any]]:
+    if not apps.installed:
+        return None
+    return {
+        "instances_running": apps.instances_running,
+        "apps_rss_bytes": apps.apps_rss_bytes,
+        "apps_disk_bytes": apps.apps_disk_bytes,
+        "slices": {
+            name: {"current_mb": apps.slice(name).current_mb, "cap_mb": apps.slice(name).cap_mb}
+            for name in APPS_SLICE_CAPS_MB
+        },
+        "reserved_mb": apps.reserved_mb,
+        "storage_path": apps.storage_path,
+        "storage_free_mb": apps.storage_free_mb,
+        "storage_total_mb": apps.storage_total_mb,
+        "min_free_mb": apps.min_free_mb,
     }
 
 
