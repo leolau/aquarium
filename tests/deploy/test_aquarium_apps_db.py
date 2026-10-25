@@ -255,6 +255,10 @@ class TestAppsDatabasesEndToEnd:
         rw, ro = _dsn(root, "notes", "dev", "rw"), _dsn(root, "notes", "dev", "ro")
         _q(rw, "INSERT INTO notes (body) VALUES ('second')")
         assert len(_q(ro, "SELECT * FROM notes")) == 2
+        # the template's /api/health reads this as the app's runtime/ro role (item 1.1)
+        for dsn in (rw, ro):
+            assert _q(dsn, "SELECT max(version)::text FROM supabase_migrations.schema_migrations")[0][0] \
+                == "20260102000000"
         with pytest.raises(Exception, match="read-only|permission denied"):
             _q(ro, "INSERT INTO notes (body) VALUES ('nope')")
         edited = {**MIG1, "sql": MIG1["sql"] + " -- edited"}

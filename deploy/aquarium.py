@@ -1662,6 +1662,12 @@ REVOKE ALL ON SCHEMA aquarium_meta FROM PUBLIC;
 CREATE TABLE IF NOT EXISTS aquarium_meta.app (slug text NOT NULL, mode text NOT NULL);
 CREATE TABLE IF NOT EXISTS aquarium_meta.migrations (
   name text PRIMARY KEY, sha256 text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now());
+CREATE SCHEMA IF NOT EXISTS supabase_migrations;
+REVOKE ALL ON SCHEMA supabase_migrations FROM PUBLIC;
+CREATE TABLE IF NOT EXISTS supabase_migrations.schema_migrations (
+  version text PRIMARY KEY, statements text[], name text);
+GRANT USAGE ON SCHEMA supabase_migrations TO {r['rw']}, {r['ro']};
+GRANT SELECT ON supabase_migrations.schema_migrations TO {r['rw']}, {r['ro']};
 ALTER SCHEMA public OWNER TO {r['owner']};
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO {r['rw']}, {r['ro']};
@@ -1781,8 +1787,14 @@ def apply_migration(target: Dict[str, str], db: str, name: str, sql: str) -> Non
     if proc.returncode != 0:
         tail = (proc.stderr or b"").decode(errors="replace").strip().splitlines()[-3:]
         raise Fail(f"migration {name} failed (nothing from it was applied): " + " / ".join(tail)[-400:])
+    # aquarium_meta is the authority; supabase_migrations.schema_migrations mirrors it in the
+    # Supabase CLI shape, so the app's /api/health can report it and `supabase db push`
+    # after a move to supabase.com sees what is applied.
+    version, _, label = name[: -len(".sql")].partition("_")
     apps_sql_ok(target["container"], "INSERT INTO aquarium_meta.migrations (name, sha256) VALUES ("
-                f"{sql_lit(name)}, {sql_lit(hashlib.sha256(sql.encode()).hexdigest())});", db,
+                f"{sql_lit(name)}, {sql_lit(hashlib.sha256(sql.encode()).hexdigest())});\n"
+                "INSERT INTO supabase_migrations.schema_migrations (version, name) VALUES ("
+                f"{sql_lit(version)}, {sql_lit(label)}) ON CONFLICT (version) DO NOTHING;", db,
                 what="recording the migration")
     apps_sql_ok(target["container"], app_grants_sql(db), db, what="re-granting")
 
@@ -1996,11 +2008,14 @@ def restore_app_db(cfg: Dict[str, str], manifest: Dict, staging: Path, entry: Di
         subprocess.run(["docker", "exec", "-i", "-u", "postgres", target["container"], "pg_restore", "-U",
                         "supabase_admin", "--no-owner", "--no-privileges", f"--role={owner}", "-n", "public",
                         "-d", db], stdin=fh, capture_output=True, check=False)
-    apps_sql_ok(target["container"], "TRUNCATE aquarium_meta.migrations;", db, what="clearing migration history")
-    with open(dump, "rb") as fh:
-        subprocess.run(["docker", "exec", "-i", "-u", "postgres", target["container"], "pg_restore", "-U",
-                        "supabase_admin", "--data-only", "-n", "aquarium_meta", "-t", "migrations", "-d", db],
-                       stdin=fh, capture_output=True, check=False)
+    apps_sql_ok(target["container"], app_grants_sql(db), db, what="re-granting")
+    apps_sql_ok(target["container"], "TRUNCATE aquarium_meta.migrations, supabase_migrations.schema_migrations;", db,
+                what="clearing migration history")
+    for schema, table in (("aquarium_meta", "migrations"), ("supabase_migrations", "schema_migrations")):
+        with open(dump, "rb") as fh:
+            subprocess.run(["docker", "exec", "-i", "-u", "postgres", target["container"], "pg_restore", "-U",
+                            "supabase_admin", "--data-only", "-n", schema, "-t", table, "-d", db],
+                           stdin=fh, capture_output=True, check=False)
     apps_sql_ok(target["container"], app_grants_sql(db), db, what="re-granting")
     diff = compare_counts({k: v for k, v in entry["tables"].items() if k.startswith("public.")}, app_counts(target, db))
     say(f"  app database {db}: " + ("row counts match the backup" if not diff else f"{len(diff)} tables differ"))
