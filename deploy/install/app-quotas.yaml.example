@@ -1,0 +1,45 @@
+# FG-33 local-app quota policy (hermes_cli/app_quota.py).
+#
+# Install as root-owned and not group/world-writable, e.g.
+#   install -o root -g root -m 644 app-quotas.yaml.example /etc/aquarium/app-quotas.yaml
+# A file that is not root-owned, is writable by group/others, or does not parse
+# is ignored and the built-in defaults (the values below) apply.
+# Every key is optional; omitted keys keep the built-in default.
+# Per-member overrides and the storage location can also be set by the owner
+# or an admin through PUT /api/quotas/{user_id} and PUT /api/quotas/box.
+
+per_app:
+  memory_high_mb: 384     # systemd MemoryHigh per instance
+  memory_max_mb: 512      # systemd MemoryMax per instance
+  cpu_quota_pct: 50       # systemd CPUQuota per instance
+  disk_mb: 1536           # repo + node_modules + releases
+  db_mb: 500              # one app database (per mode)
+  db_connections: 5
+
+per_member:               # dev and prod copies of one app count once
+  apps_registered: 3
+  apps_running: 2
+  ram_mb: 1024            # running total
+  disk_mb: 4096
+  db_mb: 1024
+  external_apps: 5
+
+roles:                    # replaces per_member/per_app for a role; owner is exempt
+  admin:
+    per_member:
+      apps_registered: 6
+      apps_running: 4
+      ram_mb: 2048
+      disk_mb: 8192
+      db_mb: 2048
+      external_apps: 10
+
+box:                      # refusals; the owner is not exempt
+  apps_max: 6             # admission number N
+  ceiling_mb: 6144        # aquarium.slice MemoryMax
+  reserved_mb: 3072       # MemAvailable kept free for chats and core services
+  build_mb: 2048          # one shared build slot
+
+storage:
+  base_path: null         # app source/releases, apps DB volume, build caches; null = Hermes home
+  min_free_mb: 2048       # admission keeps this much free at base_path
