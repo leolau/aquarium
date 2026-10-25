@@ -1,0 +1,15 @@
+; FG-33 local apps: prune old app database copies once a day; see
+; deploy/aquarium-apps-copies-prune.service. Installed by aq_install_app_runtime;
+; enable once (root): systemctl enable --now aquarium-apps-copies-prune.timer
+
+[Unit]
+Description=FG-33 prune app database copies (daily)
+
+[Timer]
+OnCalendar=*-*-* 05:10:00
+RandomizedDelaySec=10min
+Persistent=true
+Unit=aquarium-apps-copies-prune.service
+
+[Install]
+WantedBy=timers.target
