@@ -1949,6 +1949,8 @@ def remove_project_profile(
 VALID_LINK_KINDS = (
     "file", "arrival", "todo", "goal", "memory",
     "conversation", "sample", "reference", "url",
+    # FG-33 2.8: an app (``tools.name``) linked to the project.
+    "tool",
 )
 VALID_OUTPUT_KINDS = ("artifact", "file", "message", "decision", "report", "code")
 VALID_OUTPUT_STATUSES = ("pending", "in_progress", "delivered", "accepted", "dropped")
