@@ -1245,7 +1245,7 @@ Storage per-app opt-in (decisions 1 and 2) — a departure from the literal
 - [x] P8-0.1 Core boundary PR (human) — prepared for Leo's review
 - [ ] P8-0.2 `run_as: hermes-tools` confirmed; `DATABASE_URL` stripped
 - [x] P8-0.3 app-mcp guard deny markers
-- [ ] P8-0.4 Requester principal ticket
+- [x] P8-0.4 Requester principal ticket
 - [x] P8-0.5 Registry MCP at chat start + transport fix
 - [x] P8-0.6 Registry schema (`external`, columns, reserved names, round-trip)
 - [ ] P8-0.7 Measurements + GoTrue/PostgREST spike recorded
@@ -1294,6 +1294,7 @@ Storage per-app opt-in (decisions 1 and 2) — a departure from the literal
 | 2026-10-25 | 5 | devin (for Yan) | FG-33 | P8-0 0.3: `app-mcp/app_mcp/guard.py` `CONSENT_WORDS` gains deploy/redeploy/publish/make live/unlink (user-only for `app_act` and `app_act_destructive`); `delete` stays destructive-only | Existing agent-home controls affected: none named Publish/Deploy/Redeploy/Make live; the Telegram "Unlink" buttons (`TelegramBotSetup.tsx`, `TelegramLinks.tsx`) become user-only |
 | 2026-10-25 | 9 | devin (for Yan) | FG-33 | P8-0.1: added `agent-home/**`, `app-mcp/**`, `deploy/**`, `hermes_cli/app_templates/**`, `hermes_cli/tool_scaffold.py`, `hermes_cli/hosting/**`, `hermes_cli/app_quota.py`, `hermes_cli/app_runtime.py` to `core_manifest.yaml` and `_FALLBACK_CORE_GLOBS`, with tests; human PR for Leo's review. | Core boundary change (C7); prerequisite for local apps (open decision 19). |
 | 2026-10-25 | 6 | devin (P8-0.6) | FG-33 | Ticked P8-0.6: `tools.kind` accepts `external` (widened in place on existing tables), the seventeen Data-model columns incl. `coder_profile` added additively, reserved names refused case-insensitively, `promote_tool` copies every `_COLUMNS` field except `id`/`mode`/`status` (round-trip test), `Tool`/`ToolKind` mirrored in agent-home types. | P8-0 item 0.6. |
+| 2026-10-25 | 8 | devin (for Yan) | FG-33 | P8-0.4: `hermes_cli/principal_ticket.py` (HMAC ticket, `$HERMES_HOME/auth/principal-ticket.key`), `hermes-tools-cli` verifies it and maps it to `tool --as`, `hermes tool` from the agent fails closed without it, dashboard `/api/tools*` writes act as the caller. Gateway mint in `build_session_agent` is a separate `[needs Leo review]` PR. | Requester, not owner, authors agent-built apps |
 | 2026-10-25 | 7 | devin:workflow | FG-33 | P8-0.5 done: `tools/registry_mcp.apply_registry_endpoints` gives every chat each enabled app endpoint (`la-*`/`xa-*`) its person may see (C2, decision 17), pinned in `sessions.model_config._registry_mcp`; `enabled`/`app_kind`/`secret_ref`/`forward_principal` columns; `transport.auth` is the auth type; app-action approval gate and next-chat-only `list_changed` in `tools/mcp_tool.py`. | Item 0.5. |
 
 ## Cloud-agent prompts (one per phase)

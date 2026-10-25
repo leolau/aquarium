@@ -187,3 +187,17 @@ def test_build_session_agent_without_principal_adds_no_identity(stub_runtime):
     build_session_agent(session_db=object(), session_id="s1")
     kw = stub_runtime["_kwargs"]
     assert "internal_user_id" not in kw and "user_id" not in kw
+
+
+def test_build_session_agent_mints_the_requesters_ticket(stub_runtime, tmp_path, monkeypatch):
+    """FG-33 0.4: the agent's `hermes tool` calls act as the requester."""
+    from gateway.session_chat import build_session_agent
+    from hermes_cli import principal_ticket
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    mia = SimpleNamespace(user_id="mia", display="Mia", role="member")
+    build_session_agent(session_db=object(), principal=mia)
+    assert principal_ticket.verify(principal_ticket.current()) == "mia"
+
+    build_session_agent(session_db=object())
+    assert principal_ticket.current() == ""

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -52,11 +53,51 @@ def _load_config_arg(args) -> dict:
     return parsed
 
 
+_NO_TICKET = (
+    "refused: `hermes tool` from the agent's terminal needs the requester's "
+    "principal ticket, and this call has no valid one (missing, forged or "
+    "expired). Ask again from a chat signed in as the person the tool is for."
+)
+
+
+def _agent_requester() -> Optional[str]:
+    """The requester for an agent-shell call, ``None`` for a person at the box.
+
+    An agent call is one that carries a principal ticket, or that came through
+    ``deploy/hermes-tools-cli`` (which sets ``HERMES_TOOLS_CLI``). Either way it
+    must verify; it never falls back to the owner.
+    """
+    from hermes_cli import principal_ticket
+
+    ticket = os.environ.get(principal_ticket.ENV_VAR, "").strip()
+    if not ticket and not os.environ.get("HERMES_TOOLS_CLI"):
+        return None
+    user_id = principal_ticket.verify(ticket)
+    if user_id is None:
+        raise SystemExit(_NO_TICKET)
+    return user_id
+
+
 async def _resolve_operator(store, as_user: Optional[str]) -> Principal:
-    """Resolve the operator principal: ``--as <user>`` or the enrolled owner."""
+    """Resolve the operator principal.
+
+    From the agent's terminal: the requester named by the principal ticket,
+    with no owner fallback (FG-33 0.4). From a person's own shell: ``--as
+    <user>`` or the enrolled owner, as before.
+    """
     from hermes_cli.access import PrincipalStore
 
     principals = PrincipalStore(store)
+    requester = _agent_requester()
+    if requester is not None:
+        if as_user and as_user != requester:
+            raise SystemExit("refused: --as does not match the requester's principal ticket.")
+        principal = await principals.get(requester)
+        if principal is None or not principal.active:
+            raise SystemExit(
+                f"refused: {requester!r} is not an active principal in this profile."
+            )
+        return principal
     if as_user:
         principal = await principals.get(as_user)
         if principal is None:
