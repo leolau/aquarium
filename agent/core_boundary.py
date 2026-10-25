@@ -4,8 +4,9 @@ The repo is split into two areas:
 
 * **Core** — fixed system machinery (``run_agent.py``, ``model_tools.py``,
   ``toolsets.py``, ``cli.py``, ``hermes_state.py``, the core ``gateway/``, the
-  FG-12 change engine, the FG-18 GTS engine, this guard, and the manifest
-  itself). Enumerated by ``core_manifest.yaml`` at the repo root.
+  FG-12 change engine, the FG-18 GTS engine, the FG-33 app surfaces
+  (``agent-home/``, ``app-mcp/``, ``deploy/``, app templates, scaffolder,
+  hosting adapters, quota and runtime), this guard, and the manifest itself). Enumerated by ``core_manifest.yaml`` at the repo root.
 * **Customizable** — everything else (plugins, skills, user-created tools,
   behavioural ``config.yaml``, user-owned app data).
 
@@ -72,6 +73,14 @@ _FALLBACK_CORE_GLOBS: tuple[str, ...] = (
     "hermes_cli/goals.py",
     "hermes_cli/task_registry.py",
     "hermes_cli/gts.py",
+    "agent-home/**",
+    "app-mcp/**",
+    "deploy/**",
+    "hermes_cli/app_templates/**",
+    "hermes_cli/tool_scaffold.py",
+    "hermes_cli/hosting/**",
+    "hermes_cli/app_quota.py",
+    "hermes_cli/app_runtime.py",
     "agent/core_boundary.py",
     "core_manifest.yaml",
 )

@@ -87,6 +87,76 @@ class TestManifestResolution:
 
 
 # ---------------------------------------------------------------------------
+# FG-33 Core paths (vibe-coded apps, P8-0 item 0.1)
+# ---------------------------------------------------------------------------
+
+# Repo-relative targets the runtime agent must not write. Several do not exist
+# yet (later FG-33 phases add them); the guard must cover them up front.
+FG33_CORE_TARGETS = (
+    "agent-home/src/app/tools/page.tsx",
+    "agent-home/package.json",
+    "app-mcp/app_mcp/guard.py",
+    "deploy/hermes-tools-cli",
+    "deploy/sudoers.d/hermes-tools",
+    "deploy/aquarium-app@.service",
+    "hermes_cli/app_templates/nextjs-supabase/package.json",
+    "hermes_cli/tool_scaffold.py",
+    "hermes_cli/hosting/vercel.py",
+    "hermes_cli/app_quota.py",
+    "hermes_cli/app_runtime.py",
+)
+
+# Neighbours that must stay Customizable (or at least not be caught by the
+# FG-33 globs): the globs are anchored, not prefix matches.
+FG33_NOT_CORE_TARGETS = (
+    "deployment/notes.md",
+    "agent-home-extras/x.ts",
+    "hermes_cli/hosting.py",
+    "hermes_cli/app_templates.py",
+    "hermes_cli/tool_cmd.py",
+    "skills/software-development/vibe-code-app/SKILL.md",
+)
+
+
+class TestFG33CorePaths:
+    @pytest.mark.parametrize("rel", FG33_CORE_TARGETS)
+    def test_shipped_manifest_classes_fg33_paths_as_core(self, rel):
+        root = cb.get_core_root()
+        assert cb.is_core_path(root / rel)
+        assert cb.check_core_write(root / rel) is not None
+
+    @pytest.mark.parametrize("rel", FG33_CORE_TARGETS)
+    def test_fallback_still_protects_fg33_paths(self, rel, fake_repo):
+        (fake_repo / "core_manifest.yaml").unlink()
+        assert cb.load_core_globs() == cb._FALLBACK_CORE_GLOBS
+        assert cb.is_core_path(fake_repo / rel)
+
+    @pytest.mark.parametrize("rel", FG33_NOT_CORE_TARGETS)
+    def test_fg33_neighbours_are_not_core(self, rel):
+        root = cb.get_core_root()
+        assert not cb.is_core_path(root / rel)
+
+    def test_app_source_under_hermes_home_stays_customizable(
+        self, tmp_path, monkeypatch
+    ):
+        # FG-33 D10: an app's own source under $HERMES_HOME/tools/<slug> is
+        # Customizable, even for files named like Core ones.
+        home = tmp_path / "home"
+        monkeypatch.setenv("HERMES_HOME", str(home))
+        app = home / "tools" / "my-app"
+        for rel in ("app/page.tsx", "deploy/notes.md", "agent-home/x.ts"):
+            assert cb.check_core_write(app / rel) is None
+
+    def test_symlink_from_customizable_into_agent_home_is_caught(self, fake_repo):
+        (fake_repo / "agent-home" / "src").mkdir(parents=True)
+        (fake_repo / "agent-home" / "src" / "page.tsx").write_text("x", encoding="utf-8")
+        (fake_repo / "core_manifest.yaml").unlink()
+        link = fake_repo / "skills" / "demo" / "ui"
+        os.symlink(fake_repo / "agent-home", link)
+        assert cb.classify_core_path(link / "src" / "page.tsx") == "agent-home/**"
+
+
+# ---------------------------------------------------------------------------
 # Classification (Core vs Customizable)
 # ---------------------------------------------------------------------------
 
