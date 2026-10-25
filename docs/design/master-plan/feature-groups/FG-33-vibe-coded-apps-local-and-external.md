@@ -1279,16 +1279,12 @@ State when this was written. Re-check each item before acting on it.
 
 **Follow-ups merged and deployed (2026-10-25)**
 
-- #664 D21 row in README §1; #665 `minimal` template pinned to agent-home's next/react; #666 per-app CPU sampling + sustained-high-CPU alerts in `app_watch.py`; #667 `/etc/aquarium` 0711 so non-root code can read (never write) the quota policy; #668 `publish_app_source` called after `tool new`, each successful build and each promote when the Settings GitHub token is set; #669 archive dumps the app database first (`aquarium apps db archive`) and restore reloads it when the database is gone or empty (`apps db restore`); #670 the helper writes each app's MemoryHigh/MemoryMax/CPUQuota from the policy + Settings → App limits into `50-limits.conf` on every start.
+- #664 D21 row in README §1; #665 `minimal` template pinned to agent-home's next/react; #666 per-app CPU sampling + sustained-high-CPU alerts in `app_watch.py`; #667 `/etc/aquarium` 0711 so non-root code can read (never write) the quota policy; #668 `publish_app_source` called after `tool new`, each successful build and each promote when the Settings GitHub token is set; #669 archive dumps the app database first (`aquarium apps db archive`) and restore reloads it when the database is gone or empty (`apps db restore`); #670 the helper writes each app's MemoryHigh/MemoryMax/CPUQuota from the policy + Settings → App limits into `50-limits.conf` on every start; #672 `aquarium apps copies prune` (root timer `aquarium-apps-copies-prune.timer`, daily 05:10 UTC) deletes `.dump` files in `<APPS_BASE>/db-backups/` not made or used (restore touches the copy) for 90 days (`APPS_DB_COPY_KEEP_DAYS`), each deletion audited in `/var/log/aquarium.log`; #673 `app_runtime.unit_limits(tool)` resolves the owner's admin tier + per-person overrides and passes them as `limits` on helper start/restart, `50-limits.conf` also sets Node's heap to half of MemoryMax, and Settings → App limits says changes apply at the next start or restart.
 - After any deploy that changes `deploy/aquarium-app*`, `deploy/aquarium.py` or `deploy/sudoers.d/aquarium-apps`, reinstall with `aq_install_app_runtime` and the `aquarium` admin command: `deploy-hermes.sh` only reports them as STALE.
 
 **Still open (good next PRs, one each, off `develop`)**
 
-1. Settings → App limits reach systemd only for the member (base) tier; admin-tier and per-person overrides don't (the helper has no trusted owner record).
-2. Node's heap stays capped by `NODE_OPTIONS=--max-old-space-size=256`, whatever MemoryMax says.
-3. Settings → App limits doesn't say a change applies at an app's next start.
-4. Archive copies and purge/migrate dumps in `<APPS_BASE>/db-backups/` are never deleted (no retention rule; Leo to decide).
-5. Run real npm/build traffic through the egress proxy on a test box.
+1. Run real npm/build traffic through the egress proxy on a test box.
 
 **Rules for the next agent**
 
