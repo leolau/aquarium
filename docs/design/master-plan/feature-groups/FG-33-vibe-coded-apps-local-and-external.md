@@ -1247,7 +1247,7 @@ Storage per-app opt-in (decisions 1 and 2) — a departure from the literal
 - [x] P8-0.3 app-mcp guard deny markers
 - [ ] P8-0.4 Requester principal ticket
 - [ ] P8-0.5 Registry MCP at chat start + transport fix
-- [ ] P8-0.6 Registry schema (`external`, columns, reserved names, round-trip)
+- [x] P8-0.6 Registry schema (`external`, columns, reserved names, round-trip)
 - [ ] P8-0.7 Measurements + GoTrue/PostgREST spike recorded
 - [ ] P8-1.1 Template files + scaffold flags
 - [ ] P8-1.2 Runtime units + `aquarium-app-helper`
@@ -1293,6 +1293,7 @@ Storage per-app opt-in (decisions 1 and 2) — a departure from the literal
 | 2026-10-25 | 4 | devin (for Yan) | FG-33 | Recorded Yan's answers to open decisions 1, 10, 13 and 15: own Supabase database, not instance (B2); default Vercel/Railway/AWS/Alibaba Cloud accounts (+ default supabase.com org), default-or-own per external tool; a spend cap per project and per account (§4.7, `hosting_accounts`); `internal-coder` / `external-coder` profiles with per-tool `coder_profile` override (§10, new item 2.9). | Yan: "1. sorry, not its own supabase instance, I meant its own supabase DB; 2. create a default vercel, railway, AWS and Alibaba Cloud accounts. And for each external tool, author can decide to use the default one or to use their own accounts; 3. yes, please create a cap for each project and for each account; 4. create a new profile as an internal coder and another one as the external coder. Each tool will use these as default or can override it;" |
 | 2026-10-25 | 5 | devin (for Yan) | FG-33 | P8-0 0.3: `app-mcp/app_mcp/guard.py` `CONSENT_WORDS` gains deploy/redeploy/publish/make live/unlink (user-only for `app_act` and `app_act_destructive`); `delete` stays destructive-only | Existing agent-home controls affected: none named Publish/Deploy/Redeploy/Make live; the Telegram "Unlink" buttons (`TelegramBotSetup.tsx`, `TelegramLinks.tsx`) become user-only |
 | 2026-10-25 | 9 | devin (for Yan) | FG-33 | P8-0.1: added `agent-home/**`, `app-mcp/**`, `deploy/**`, `hermes_cli/app_templates/**`, `hermes_cli/tool_scaffold.py`, `hermes_cli/hosting/**`, `hermes_cli/app_quota.py`, `hermes_cli/app_runtime.py` to `core_manifest.yaml` and `_FALLBACK_CORE_GLOBS`, with tests; human PR for Leo's review. | Core boundary change (C7); prerequisite for local apps (open decision 19). |
+| 2026-10-25 | 6 | devin (P8-0.6) | FG-33 | Ticked P8-0.6: `tools.kind` accepts `external` (widened in place on existing tables), the seventeen Data-model columns incl. `coder_profile` added additively, reserved names refused case-insensitively, `promote_tool` copies every `_COLUMNS` field except `id`/`mode`/`status` (round-trip test), `Tool`/`ToolKind` mirrored in agent-home types. | P8-0 item 0.6. |
 
 ## Cloud-agent prompts (one per phase)
 
