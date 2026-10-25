@@ -1,0 +1,13 @@
+# FG-33: the apps compose project (apps Postgres cluster + opt-in per-app
+# GoTrue/PostgREST/Storage sidecars), attached with compose
+# `cgroup_parent: aquarium-db.slice` (needs dockerd's systemd cgroup driver).
+# Child of aquarium.slice (6 GB). Core.
+[Unit]
+Description=Aquarium apps database containers (FG-33)
+
+[Slice]
+MemoryAccounting=yes
+CPUAccounting=yes
+MemoryMax=1G
+MemorySwapMax=0
+CPUWeight=50

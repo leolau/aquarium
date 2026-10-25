@@ -1,0 +1,61 @@
+# FG-33 build of one local app release: aquarium-app-build@<slug>-<mode>.service.
+# Started only by /usr/local/sbin/aquarium-app-helper `build` (root), which
+# holds the one box-wide build/live-edit flock and writes a runtime drop-in
+# (/run/systemd/system/aquarium-app-build@<inst>.service.d/10-stage.conf)
+# naming the staged source tarball (StandardInput=file:) and the release
+# tarball to write (StandardOutput=truncate:). Both are opened by PID 1, so
+# the throwaway DynamicUser never sees the source repo or the release
+# directory. `build-run` unpacks, runs `npm ci --ignore-scripts` and
+# `next build`, and writes .next/standalone + .next/static + public as a tar
+# on stdout; the helper validates it before installing it root-owned. Core.
+[Unit]
+Description=Aquarium local app build (%i)
+AssertPathExists=/run/systemd/system/aquarium-app-build@%i.service.d/10-stage.conf
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+Slice=aquarium-build.slice
+ExecStart=/usr/bin/python3 -I /usr/local/sbin/aquarium-app-helper build-run
+StandardError=journal
+CacheDirectory=aquarium-build/%i
+Environment=HOME=/tmp NEXT_TELEMETRY_DISABLED=1 npm_config_audit=false npm_config_fund=false npm_config_update_notifier=false
+MemoryHigh=1800M
+MemoryMax=2G
+MemorySwapMax=0
+CPUQuota=200%
+Nice=15
+TasksMax=512
+TimeoutStartSec=20min
+UMask=0022
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+# A filtered call fails with EPERM instead of killing the process (node/npm
+# call fchown when copying files; without capabilities it could not succeed).
+SystemCallErrorNumber=EPERM
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+InaccessiblePaths=-/opt/data -/etc/aquarium -/etc/caddy -/var/run/docker.sock -/run/docker.sock -/root -/var/backups -/var/lib/aquarium-apps
+# The registry needs the internet; loopback and private ranges (every
+# control plane on 127.0.0.1, docker networks) stay closed. DNS goes to the
+# systemd-resolved stub. Host-level "npm registry only" is P8-2 (nftables).
+IPAddressDeny=localhost link-local multicast 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 fc00::/7
+IPAddressAllow=127.0.0.53/32

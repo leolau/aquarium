@@ -1,0 +1,1289 @@
+#!/usr/bin/python3 -I
+"""aquarium-app-helper: root side of FG-33 local apps (runtime units, builds,
+ports, front-door includes, per-app secrets).
+
+Installed root:root 0755 at /usr/local/sbin/aquarium-app-helper by
+``aq_install_app_runtime`` (deploy/install/lib.sh). User ``hermes`` (the API
+and ``hermes_cli/app_runtime.py``, never ``hermes-tools``) may run exactly
+these verbs through sudo (deploy/sudoers.d/aquarium-apps), with NO further
+arguments; the request is one JSON object on stdin:
+
+    allocate    {"slug", "mode"}                       port + env file
+    build       {"slug", "mode", "sha"[, "approval_ref"]}   build + point <mode> at it
+    start       {"slug", "mode"}
+    stop        {"slug", "mode"}
+    restart     {"slug", "mode"}
+    route       {"slug", "mode"}                       Caddy include (forward_auth)
+    unroute     {"slug", "mode"}
+    set-secret  {"slug", "mode", "name", "value"} | {..., "name", "delete": true}
+    logs        {"slug", "mode"[, "lines", "build"]}
+    status      {"slug", "mode"} | {"all": true}
+    remove      {"slug", "mode", "confirm": "<slug>"}  irreversible: needs confirm
+    configure   {} (read) | {"storage_base": "/abs/path"}
+
+The caller is UNTRUSTED: every field is validated here, ports come from the
+box, never the request, and prod activation needs an ``approval_ref``.
+Root-only argv forms (no sudo rule): ``status --all`` (deploy report) and
+``idle-check <slug>-dev`` (the dev idle timer). ``run-app`` and ``build-run``
+run unprivileged inside aquarium-app@ / aquarium-app-build@ units.
+
+Layout (storage base from /etc/aquarium/apps.conf, default /var/lib/aquarium-apps):
+    <base>/<slug>/releases/<mode>-<sha>/   root-owned built artifact (basePath is per mode)
+    <base>/<slug>/<mode> -> releases/<mode>-<sha>
+    /etc/aquarium/apps/<slug>/<mode>.env   PORT, HOSTNAME, APP_SLUG, APP_MODE, APP_BASE_PATH
+    /etc/aquarium/apps/<slug>/<mode>/NAME  root 0600 credentials, one per file (APP_MCP_TOKEN, user secrets)
+    /etc/aquarium/apps/<slug>/db-<mode>-{rw,ro}.dsn  written by `aquarium apps db create`;
+                                           delivered as DATABASE_URL / DATABASE_URL_RO
+    /etc/aquarium/apps/<slug>/ticket-<mode>.key      APP_TICKET_KEY (X-Aquarium-Principal key)
+URL paths on the main site: prod /apps/<slug>, dev /apps-dev/<slug>.
+
+Output is one JSON object on stdout. Exit 0 = done, 2 = rejected input,
+3 = refused (capacity, busy build slot, missing confirmation),
+1 = internal failure. Python 3 stdlib only.
+"""
+
+import contextlib
+import fcntl
+import hashlib
+import hmac
+import json
+import os
+import re
+import shutil
+import socket
+import stat
+import subprocess
+import sys
+import tarfile
+import time
+
+SAFE_PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
+SELF_PATH = "/usr/local/sbin/aquarium-app-helper"
+CONF_PATH = "/etc/aquarium/apps.conf"
+QUOTA_PATH = "/etc/aquarium/app-quotas.yaml"
+ETC_APPS = "/etc/aquarium/apps"
+UNIT_DIR = "/etc/systemd/system"
+RUN_UNIT_DIR = "/run/systemd/system"
+RUN_DIR = "/run/aquarium-apps"
+CADDYFILE = "/etc/caddy/Caddyfile"
+CADDY_DIR = "/etc/caddy/apps.d"
+CADDY_IMPORT = "import /etc/caddy/apps.d/*.caddy"
+PROC_MEMINFO = "/proc/meminfo"
+PROC_NET_TCP = ("/proc/net/tcp", "/proc/net/tcp6")
+NODE = "/usr/bin/node"
+NPM = "/usr/bin/npm"
+#: Owners allowed on every directory from / down to the storage base.
+TRUSTED_UIDS = (0,)
+
+DEFAULTS = {
+    "storage_base": "/var/lib/aquarium-apps",
+    "tools_root": "/opt/data/hermes-home-staging/tools",
+    "tools_user": "hermes-tools",
+    "agent_home": "127.0.0.1:3100",
+    "min_free_mb": 2048,
+}
+#: Storage bases that would put app artifacts inside something a unit hides
+#: or the agent can write.
+FORBIDDEN_BASES = ("/opt/data", "/etc", "/root", "/home", "/proc", "/sys", "/dev",
+                   "/run", "/tmp", "/var/tmp", "/boot", "/usr", "/bin", "/sbin", "/lib")
+
+MODES = ("dev", "prod")
+PORT_RANGES = {"prod": (4300, 4499), "dev": (4500, 4699)}
+BASE_PATHS = {"prod": "/apps/{slug}", "dev": "/apps-dev/{slug}"}
+UNIT_TEMPLATE = "aquarium-app@{inst}.service"
+BUILD_TEMPLATE = "aquarium-app-build@{inst}.service"
+IDLE_UNIT = "aquarium-app-idle-{inst}"
+
+#: FG-33 §6: the 6 GB aquarium.slice ceiling and the box reserve.
+SLICE_CEILING = 6 * 1024 ** 3
+DEFAULT_RESERVED_MB = 3072
+START_REQUEST = 384 * 1024 ** 2      # MemoryHigh of one instance (the sizing figure)
+BUILD_REQUEST = 2 * 1024 ** 3        # the build slice
+DEV_IDLE_SECONDS = 25 * 60           # decision 7: dev idle-stopped after 20–30 min
+IDLE_CHECK_SECONDS = 60
+KEEP_RELEASES = 2                    # besides the ones dev/prod point at
+MAX_SPEC_BYTES = 64 * 1024
+MAX_SECRET_BYTES = 8 * 1024
+MAX_SECRETS = 50
+MAX_LOG_LINES = 500
+MAX_LOG_BYTES = 64 * 1024
+MAX_RELEASE_BYTES = 1024 ** 3
+MAX_SOURCE_BYTES = 256 * 1024 ** 2
+MAX_TAR_ENTRIES = 200_000
+BUILD_TIMEOUT = 25 * 60
+
+#: Same rule as `aquarium apps db` (deploy/aquarium.py APP_SLUG_RE): starts with a letter.
+SLUG_RE = re.compile(r"^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$")
+SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+HOSTPORT_RE = re.compile(r"^127\.0\.0\.1:[0-9]{2,5}$")
+#: Secret names the helper never accepts from set-secret: the unit's own
+#: environment, and the DSNs `aquarium apps db create` writes.
+RESERVED_SECRET_PREFIXES = ("DATABASE_URL", "NEXT_PUBLIC_", "NODE_", "APP_", "CREDENTIALS_")
+RESERVED_SECRET_NAMES = {"PORT", "HOSTNAME", "HOME", "PATH", "LD_PRELOAD", "LD_LIBRARY_PATH"}
+#: Runtime-managed credentials set-secret still accepts despite the APP_ prefix:
+#: the MCP bearer minted by hermes_cli/app_runtime.py for /api/mcp.
+MANAGED_SECRET_NAMES = {"APP_MCP_TOKEN"}
+#: `aquarium apps db create` (deploy/aquarium.py) writes the DSNs here as
+#: db-<mode>-<kind>.dsn; the unit gets rw as DATABASE_URL and ro as DATABASE_URL_RO.
+DSN_CREDENTIALS = (("DATABASE_URL", "rw"), ("DATABASE_URL_RO", "ro"))
+#: agent-home's env file holding AGENT_HOME_APPS_TICKET_SECRET, the master
+#: key of the X-Aquarium-Principal ticket (agent-home/src/lib/apps/ticket.ts).
+AGENT_HOME_ENV = "/etc/aquarium/agent-home.env"
+TICKET_SECRET_KEY = "AGENT_HOME_APPS_TICKET_SECRET"
+
+def app_csp(base_path, mode):
+    """Content-Security-Policy of one instance: every source pinned to the app's own
+    path on the shared origin. Mirrors appContentSecurityPolicy() in
+    agent-home/src/lib/apps/headers.ts (FG-33 decision 4)."""
+    base = "https://{host}" + base_path
+    own = f"{base} {base}/"
+    script = f"{own} 'unsafe-inline' 'unsafe-eval'" if mode == "dev" else f"{own} 'unsafe-inline'"
+    return "; ".join([
+        f"default-src {own}", f"script-src {script}", f"style-src {own} 'unsafe-inline'",
+        f"img-src {own} data: blob:", f"media-src {own} data: blob:", f"font-src {own} data:",
+        f"connect-src {own}", f"worker-src {own}", f"manifest-src {own}", "frame-src 'none'",
+        "child-src 'none'", "object-src 'none'", "base-uri 'none'", f"form-action {own}",
+        "frame-ancestors 'none'",
+    ])
+
+
+#: agent-home's session cookie (agent-home/src/lib/auth/session.ts SESSION_COOKIE).
+SESSION_COOKIE_RE = r"(^|;\s*)agent_home_session=[^;]*"
+SESSION_SET_COOKIE_RE = r"(?i)^\s*agent_home_session=.*$"
+
+
+class InputError(Exception):
+    """Rejected caller input (exit 2)."""
+
+
+class Refused(Exception):
+    """Valid request refused by policy or capacity (exit 3)."""
+
+
+class HelperError(Exception):
+    """Internal failure (exit 1)."""
+
+
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+
+
+def check_slug(slug):
+    if not isinstance(slug, str) or not SLUG_RE.fullmatch(slug) or "--" in slug:
+        raise InputError("invalid slug (starts with a-z; a-z, 0-9 and single dashes, at most 40 characters)")
+    return slug
+
+
+def check_mode(mode):
+    if mode not in MODES:
+        raise InputError("mode must be dev or prod")
+    return mode
+
+
+def split_instance(inst):
+    """``<slug>-<mode>`` → (slug, mode); the mode is the last dash part."""
+    if not isinstance(inst, str) or "-" not in inst:
+        raise InputError("invalid instance")
+    slug, mode = inst.rsplit("-", 1)
+    return check_slug(slug), check_mode(mode)
+
+
+def spec_keys(spec, allowed, required=("slug", "mode")):
+    if not isinstance(spec, dict):
+        raise InputError("the request must be a JSON object")
+    extra = set(spec) - set(allowed) - set(required)
+    if extra:
+        raise InputError(f"unknown field(s): {', '.join(sorted(extra))}")
+    for key in required:
+        if key not in spec:
+            raise InputError(f"{key} is required")
+    if "slug" in required:
+        check_slug(spec["slug"])
+    if "mode" in required:
+        check_mode(spec["mode"])
+    return spec
+
+
+def check_approval(spec):
+    """Prod activation must cite the promotion's approval/change reference."""
+    ref = spec.get("approval_ref")
+    if spec["mode"] == "prod":
+        if not isinstance(ref, str) or not REF_RE.fullmatch(ref):
+            raise InputError("prod needs an approval_ref (the promotion's approval)")
+    elif ref is not None and (not isinstance(ref, str) or not REF_RE.fullmatch(ref)):
+        raise InputError("invalid approval_ref")
+    return ref
+
+
+def check_secret_name(name):
+    if not isinstance(name, str) or not NAME_RE.fullmatch(name):
+        raise InputError("secret names look like MY_API_KEY (A-Z, 0-9, _)")
+    if name in MANAGED_SECRET_NAMES:
+        return name
+    if name in RESERVED_SECRET_NAMES or name.startswith(RESERVED_SECRET_PREFIXES):
+        raise InputError(f"{name} is reserved")
+    return name
+
+
+def read_spec(stream=None):
+    stream = sys.stdin if stream is None else stream
+    raw = stream.read(MAX_SPEC_BYTES + 1)
+    if len(raw) > MAX_SPEC_BYTES:
+        raise InputError("request is too large")
+    if not raw.strip():
+        return {}
+    try:
+        return json.loads(raw)
+    except ValueError:
+        raise InputError("the request is not valid JSON") from None
+
+
+# ---------------------------------------------------------------------------
+# Config and paths
+# ---------------------------------------------------------------------------
+
+
+def _root_file_ok(path):
+    st = os.lstat(path)
+    return (stat.S_ISREG(st.st_mode) and st.st_uid in TRUSTED_UIDS
+            and not st.st_mode & (stat.S_IWGRP | stat.S_IWOTH))
+
+
+def load_conf():
+    conf = dict(DEFAULTS)
+    if os.path.lexists(CONF_PATH):
+        if not _root_file_ok(CONF_PATH):
+            raise HelperError(f"{CONF_PATH} must be a root-owned file nobody else can write")
+        try:
+            with open(CONF_PATH, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError) as exc:
+            raise HelperError(f"cannot read {CONF_PATH}: {exc}") from None
+        if isinstance(data, dict):
+            conf.update({k: v for k, v in data.items() if k in DEFAULTS})
+    check_base(conf["storage_base"])
+    if not isinstance(conf["tools_root"], str) or not os.path.isabs(conf["tools_root"]):
+        raise HelperError("tools_root must be an absolute path")
+    if not isinstance(conf["agent_home"], str) or not HOSTPORT_RE.fullmatch(conf["agent_home"]):
+        raise HelperError("agent_home must be 127.0.0.1:<port>")
+    if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", str(conf["tools_user"])):
+        raise HelperError("invalid tools_user")
+    conf["min_free_mb"] = int(conf["min_free_mb"])
+    return conf
+
+
+def check_base(base):
+    if not isinstance(base, str) or not os.path.isabs(base) or os.path.normpath(base) != base:
+        raise InputError("storage_base must be a normalised absolute path")
+    if base == "/" or any(base == f or base.startswith(f + "/") for f in FORBIDDEN_BASES):
+        raise InputError(f"storage_base may not be under {', '.join(FORBIDDEN_BASES)}")
+    if len(base) > 200 or not re.fullmatch(r"[A-Za-z0-9/._-]+", base):
+        raise InputError("storage_base has unsupported characters")
+    return base
+
+
+def trusted_dir(path, mode=0o755):
+    """Create ``path`` (root, ``mode``) refusing symlinks and untrusted owners on the way."""
+    parts = os.path.normpath(path).split("/")[1:]
+    cur = "/"
+    for part in parts:
+        cur = os.path.join(cur, part)
+        try:
+            st = os.lstat(cur)
+        except FileNotFoundError:
+            os.mkdir(cur, mode)
+            os.chmod(cur, mode)
+            st = os.lstat(cur)
+        if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+            raise HelperError(f"{cur} is not a plain directory")
+        if st.st_uid not in TRUSTED_UIDS or st.st_mode & stat.S_IWOTH and not st.st_mode & stat.S_ISVTX:
+            raise HelperError(f"{cur} is not owned by root or is writable by others")
+    return path
+
+
+def inst_name(slug, mode):
+    return f"{slug}-{mode}"
+
+
+def dynamic_user(prefix, inst):
+    """Per-instance DynamicUser name (decision 5). Without it systemd names
+    every instance of a template after the template prefix, so all apps
+    would share one uid. Hashed to stay within the 31-character limit."""
+    return f"{prefix}-{hashlib.sha256(inst.encode()).hexdigest()[:16]}"
+
+
+def paths(conf, slug, mode):
+    inst = inst_name(slug, mode)
+    app_dir = os.path.join(conf["storage_base"], slug)
+    return {
+        "inst": inst,
+        "unit": UNIT_TEMPLATE.format(inst=inst),
+        "build_unit": BUILD_TEMPLATE.format(inst=inst),
+        "idle_unit": IDLE_UNIT.format(inst=inst),
+        "app_dir": app_dir,
+        "releases": os.path.join(app_dir, "releases"),
+        "current": os.path.join(app_dir, mode),
+        "stage": os.path.join(conf["storage_base"], ".stage", inst),
+        "etc": os.path.join(ETC_APPS, slug),
+        "env": os.path.join(ETC_APPS, slug, f"{mode}.env"),
+        "creds": os.path.join(ETC_APPS, slug, mode),
+        "dropin_dir": os.path.join(UNIT_DIR, UNIT_TEMPLATE.format(inst=inst) + ".d"),
+        "dropin": os.path.join(UNIT_DIR, UNIT_TEMPLATE.format(inst=inst) + ".d", "10-instance.conf"),
+        "build_dropin_dir": os.path.join(RUN_UNIT_DIR, BUILD_TEMPLATE.format(inst=inst) + ".d"),
+        "caddy": os.path.join(CADDY_DIR, f"aquarium-{inst}.caddy"),
+        "dsn": {cred: os.path.join(ETC_APPS, slug, f"db-{mode}-{kind}.dsn") for cred, kind in DSN_CREDENTIALS},
+        "ticket_key": os.path.join(ETC_APPS, slug, f"ticket-{mode}.key"),
+        "base_path": BASE_PATHS[mode].format(slug=slug),
+        "idle_state": os.path.join(RUN_DIR, f"{inst}.idle.json"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Small system helpers
+# ---------------------------------------------------------------------------
+
+
+def bin_path(name):
+    for d in SAFE_PATH.split(":"):
+        p = os.path.join(d, name)
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    raise HelperError(f"{name} is not installed")
+
+
+def run(cmd, timeout=60, **kw):
+    kw.setdefault("capture_output", True)
+    kw.setdefault("text", True)
+    try:
+        return subprocess.run(cmd, timeout=timeout, env={"PATH": SAFE_PATH, "LC_ALL": "C"}, **kw)
+    except subprocess.TimeoutExpired:
+        raise HelperError(f"{os.path.basename(cmd[0])} timed out") from None
+
+
+def systemctl(*args, timeout=60, check=True):
+    proc = run([bin_path("systemctl"), *args], timeout=timeout)
+    if check and proc.returncode != 0:
+        raise HelperError(f"systemctl {' '.join(args)} failed: {(proc.stderr or '').strip()[:200]}")
+    return proc
+
+
+def show(unit, *props):
+    proc = systemctl("show", unit, *[f"--property={p}" for p in props], check=False)
+    out = {}
+    for line in (proc.stdout or "").splitlines():
+        key, _, value = line.partition("=")
+        out[key] = value
+    return out
+
+
+def write_atomic(path, data, mode=0o600):
+    tmp = f"{path}.tmp-{os.getpid()}"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
+    try:
+        with os.fdopen(fd, "wb" if isinstance(data, bytes) else "w") as fh:
+            fh.write(data)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
+def remove_path(path):
+    if os.path.islink(path) or os.path.isfile(path):
+        os.unlink(path)
+    elif os.path.isdir(path):
+        shutil.rmtree(path)
+
+
+@contextlib.contextmanager
+def flock(name, blocking=True):
+    trusted_dir(RUN_DIR, 0o700)
+    fd = os.open(os.path.join(RUN_DIR, name), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+        except BlockingIOError:
+            yield False
+            return
+        yield True
+    finally:
+        os.close(fd)
+
+
+def read_env(path):
+    env = {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                key, sep, value = line.strip().partition("=")
+                if sep and NAME_RE.fullmatch(key):
+                    env[key] = value
+    except FileNotFoundError:
+        pass
+    return env
+
+
+def current_release(p):
+    """Name of the release <mode> points at, or None."""
+    try:
+        target = os.readlink(p["current"])
+    except OSError:
+        return None
+    name = target[len("releases/"):] if target.startswith("releases/") else None
+    if not name or "/" in name or not os.path.isdir(os.path.join(p["releases"], name)):
+        return None
+    return name
+
+
+# ---------------------------------------------------------------------------
+# Admission (re-check of FG-33 §6 box-wide limits; per-member limits are app_quota's)
+# ---------------------------------------------------------------------------
+
+
+def reserved_bytes():
+    """``box.reserved_mb`` from the root-owned quota policy, else 3 GB."""
+    mb = DEFAULT_RESERVED_MB
+    try:
+        if _root_file_ok(QUOTA_PATH):
+            with open(QUOTA_PATH, encoding="utf-8") as fh:
+                in_box = False
+                for line in fh:
+                    if re.match(r"^box:\s*(#.*)?$", line):
+                        in_box = True
+                    elif re.match(r"^\S", line):
+                        in_box = False
+                    elif in_box:
+                        m = re.match(r"^\s+reserved_mb:\s*([0-9]{1,7})\s*(#.*)?$", line)
+                        if m:
+                            mb = int(m.group(1))
+    except OSError:
+        pass
+    return mb * 1024 ** 2
+
+
+def mem_available():
+    with open(PROC_MEMINFO, encoding="ascii") as fh:
+        for line in fh:
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) * 1024
+    raise HelperError("MemAvailable missing from /proc/meminfo")
+
+
+def slice_memory():
+    value = show("aquarium.slice", "MemoryCurrent").get("MemoryCurrent", "")
+    return int(value) if value.isdigit() else 0
+
+
+def admit(request, what):
+    current = slice_memory()
+    if current + request > SLICE_CEILING:
+        raise Refused(f"cannot {what}: local apps would use more than the 6 GB aquarium.slice "
+                      f"ceiling ({current // 2**20} MB in use)")
+    available = mem_available()
+    if available - request < reserved_bytes():
+        raise Refused(f"cannot {what}: the box would drop below its {reserved_bytes() // 2**20} MB "
+                      f"memory reserve ({available // 2**20} MB available)")
+
+
+def free_bytes(path):
+    st = os.statvfs(path)
+    return st.f_bavail * st.f_frsize
+
+
+def admit_disk(conf, what):
+    free = free_bytes(conf["storage_base"])
+    if free < conf["min_free_mb"] * 1024 ** 2:
+        raise Refused(f"cannot {what}: only {free // 2**20} MB free at {conf['storage_base']} "
+                      f"(needs {conf['min_free_mb']} MB)")
+
+
+# ---------------------------------------------------------------------------
+# Ports and env files
+# ---------------------------------------------------------------------------
+
+
+def claimed_ports():
+    ports = {}
+    if not os.path.isdir(ETC_APPS):
+        return ports
+    for slug in sorted(os.listdir(ETC_APPS)):
+        if not SLUG_RE.fullmatch(slug):
+            continue
+        for mode in MODES:
+            port = read_env(os.path.join(ETC_APPS, slug, f"{mode}.env")).get("PORT", "")
+            if port.isdigit():
+                ports[int(port)] = inst_name(slug, mode)
+    return ports
+
+
+def port_free(port):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("127.0.0.1", port))
+        except OSError:
+            return False
+    return True
+
+
+def pick_port(mode, claimed):
+    low, high = PORT_RANGES[mode]
+    for port in range(low, high + 1):
+        if port not in claimed and port_free(port):
+            return port
+    raise Refused(f"no free {mode} port left in {low}-{high}")
+
+
+def env_text(slug, mode, port, base_path):
+    return (f"# Written by aquarium-app-helper; do not edit.\nPORT={port}\nHOSTNAME=127.0.0.1\n"
+            f"APP_SLUG={slug}\nAPP_MODE={mode}\nAPP_BASE_PATH={base_path}\n")
+
+
+def ensure_allocated(conf, slug, mode):
+    p = paths(conf, slug, mode)
+    env = read_env(p["env"])
+    port = env.get("PORT", "")
+    if port.isdigit() and PORT_RANGES[mode][0] <= int(port) <= PORT_RANGES[mode][1]:
+        return p, int(port)
+    trusted_dir(ETC_APPS, 0o700)
+    trusted_dir(p["etc"], 0o700)
+    port = pick_port(mode, claimed_ports())
+    write_atomic(p["env"], env_text(slug, mode, port, p["base_path"]), 0o600)
+    return p, port
+
+
+def require_allocated(conf, slug, mode):
+    p = paths(conf, slug, mode)
+    port = read_env(p["env"]).get("PORT", "")
+    if not port.isdigit():
+        raise InputError(f"{inst_name(slug, mode)} has no port yet (allocate first)")
+    return p, int(port)
+
+
+def secret_names(p):
+    try:
+        names = os.listdir(p["creds"])
+    except FileNotFoundError:
+        return []
+    return sorted(n for n in names if NAME_RE.fullmatch(n) and os.path.isfile(os.path.join(p["creds"], n)))
+
+
+# ---------------------------------------------------------------------------
+# Unit drop-ins
+# ---------------------------------------------------------------------------
+
+
+def instance_dropin(conf, p):
+    release = current_release(p)
+    if not release:
+        raise InputError(f"{p['inst']} has no built release (build first)")
+    rel_dir = os.path.join(p["releases"], release)
+    if not os.path.isfile(os.path.join(rel_dir, "server.js")):
+        raise HelperError(f"release {release} has no server.js")
+    lines = [
+        "# Written by aquarium-app-helper; do not edit (rewritten on every start).",
+        "[Service]",
+        f"User={dynamic_user('aqapp', p['inst'])}",
+        f"EnvironmentFile={p['env']}",
+        # Only this release is visible: the rest of the storage base is an empty tmpfs.
+        f"TemporaryFileSystem={conf['storage_base']}:ro",
+        f"BindReadOnlyPaths={rel_dir}",
+        f"BindPaths=%C/aquarium-app/{p['inst']}:{rel_dir}/.next/cache",
+        f"WorkingDirectory={rel_dir}",
+        f"Environment=APP_RELEASE={release}",
+    ]
+    lines += [f"LoadCredential={n}:{os.path.join(p['creds'], n)}" for n in secret_names(p)]
+    lines += [f"LoadCredential={cred}:{path}" for cred, path in p["dsn"].items() if os.path.isfile(path)]
+    if write_ticket_key(p):
+        lines.append(f"LoadCredential=APP_TICKET_KEY:{p['ticket_key']}")
+    return "\n".join(lines) + "\n", release
+
+
+def ticket_master():
+    """AGENT_HOME_APPS_TICKET_SECRET from agent-home's root-owned env file, or None."""
+    try:
+        if not _root_file_ok(AGENT_HOME_ENV):
+            return None
+    except FileNotFoundError:
+        return None
+    value = read_env(AGENT_HOME_ENV).get(TICKET_SECRET_KEY, "").strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1]
+    return value or None
+
+
+def write_ticket_key(p):
+    """Write this instance's ticket key (hex HMAC-SHA256(master,
+    "aquarium-app-ticket/v1/<slug>/<mode>"), as deriveAppKey() in
+    agent-home/src/lib/apps/ticket.ts). The app holds only its own key."""
+    master = ticket_master()
+    if not master:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(p["ticket_key"])
+        return False
+    slug, mode = p["inst"].rsplit("-", 1)
+    key = hmac.new(master.encode(), f"aquarium-app-ticket/v1/{slug}/{mode}".encode(),
+                   hashlib.sha256).hexdigest()
+    trusted_dir(p["etc"], 0o700)
+    write_atomic(p["ticket_key"], key, 0o600)
+    return True
+
+
+def write_instance_dropin(conf, p):
+    text, release = instance_dropin(conf, p)
+    os.makedirs(p["dropin_dir"], mode=0o755, exist_ok=True)
+    write_atomic(p["dropin"], text, 0o644)
+    return release
+
+
+# ---------------------------------------------------------------------------
+# Tar handling (artifacts are untrusted: app code ran during `next build`)
+# ---------------------------------------------------------------------------
+
+
+def _member_path(name):
+    name = name[2:] if name.startswith("./") else name
+    name = name.rstrip("/")
+    if not name or name == ".":
+        return None
+    if name.startswith("/") or "\x00" in name or "\\" in name:
+        raise InputError(f"unsafe path in archive: {name[:80]!r}")
+    parts = name.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        raise InputError(f"unsafe path in archive: {name[:80]!r}")
+    return "/".join(parts)
+
+
+def _makedirs(root, path):
+    """mkdir -p with 0755 whatever the umask (the runtime uid must read releases)."""
+    if path == root or os.path.isdir(path):
+        return
+    _makedirs(root, os.path.dirname(path))
+    os.mkdir(path, 0o755)
+    os.chmod(path, 0o755)
+
+
+def safe_extract(fileobj, dest, max_bytes, max_entries=MAX_TAR_ENTRIES):
+    """Stream-extract a tar into the empty directory ``dest``.
+
+    Regular files, directories and symlinks that stay inside ``dest`` only;
+    nothing is written through a symlink; no setuid/setgid/sticky bits;
+    size and entry caps."""
+    links, seen, total, count = set(), set(), 0, 0
+    with tarfile.open(fileobj=fileobj, mode="r|*") as tar:
+        for member in tar:
+            count += 1
+            if count > max_entries:
+                raise InputError("archive has too many entries")
+            rel = _member_path(member.name)
+            if rel is None:
+                continue
+            if rel in seen:
+                raise InputError(f"duplicate path in archive: {rel[:80]}")
+            seen.add(rel)
+            parts = rel.split("/")
+            for i in range(1, len(parts)):
+                if "/".join(parts[:i]) in links:
+                    raise InputError(f"archive writes through a symlink: {rel[:80]}")
+            target = os.path.join(dest, rel)
+            parent = os.path.dirname(target)
+            if member.isdir():
+                _makedirs(dest, target)
+                continue
+            _makedirs(dest, parent)
+            if member.issym():
+                link = member.linkname
+                resolved = os.path.normpath(os.path.join(os.path.dirname(rel), link))
+                if (os.path.isabs(link) or resolved == ".." or resolved.startswith("../")
+                        or "\x00" in link):
+                    raise InputError(f"archive link points outside: {rel[:80]}")
+                os.symlink(link, target)
+                links.add(rel)
+                continue
+            if not member.isreg():
+                raise InputError(f"unsupported archive entry type: {rel[:80]}")
+            total += member.size
+            if total > max_bytes:
+                raise InputError("archive is too large")
+            mode = 0o755 if member.mode & 0o111 else 0o644
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
+            src = tar.extractfile(member)
+            with os.fdopen(fd, "wb") as out:
+                shutil.copyfileobj(src, out, 1024 * 1024)
+            os.chmod(target, mode)
+    return count
+
+
+# ---------------------------------------------------------------------------
+# Verbs
+# ---------------------------------------------------------------------------
+
+
+def status_doc(conf, slug, mode):
+    p = paths(conf, slug, mode)
+    env = read_env(p["env"])
+    props = show(p["unit"], "ActiveState", "SubState", "UnitFileState", "MemoryCurrent",
+                 "NRestarts", "ActiveEnterTimestamp")
+    mem = props.get("MemoryCurrent", "")
+    return {
+        "slug": slug, "mode": mode, "unit": p["unit"],
+        "port": int(env["PORT"]) if env.get("PORT", "").isdigit() else None,
+        "base_path": p["base_path"],
+        "release": current_release(p),
+        "active_state": props.get("ActiveState") or "inactive",
+        "sub_state": props.get("SubState") or "dead",
+        "enabled": props.get("UnitFileState") == "enabled",
+        "memory_bytes": int(mem) if mem.isdigit() else None,
+        "restarts": int(props["NRestarts"]) if props.get("NRestarts", "").isdigit() else 0,
+        "active_since": props.get("ActiveEnterTimestamp") if props.get("ActiveEnterTimestamp") not in ("", "n/a") else None,
+        "routed": os.path.isfile(p["caddy"]),
+        "secret_names": secret_names(p),
+    }
+
+
+def all_instances():
+    out = []
+    if os.path.isdir(ETC_APPS):
+        for slug in sorted(os.listdir(ETC_APPS)):
+            if SLUG_RE.fullmatch(slug):
+                for mode in MODES:
+                    if os.path.isfile(os.path.join(ETC_APPS, slug, f"{mode}.env")):
+                        out.append((slug, mode))
+    return out
+
+
+def cmd_allocate(conf, spec):
+    spec_keys(spec, ())
+    with flock("ports.lock"):
+        _, port = ensure_allocated(conf, spec["slug"], spec["mode"])
+    return status_doc(conf, spec["slug"], spec["mode"])
+
+
+def prune_releases(p_dev, p_prod):
+    keep = {current_release(p_dev), current_release(p_prod)} - {None}
+    try:
+        names = os.listdir(p_dev["releases"])
+    except FileNotFoundError:
+        return
+    others = [n for n in names if n not in keep and not n.startswith(".")]
+    others.sort(key=lambda n: os.lstat(os.path.join(p_dev["releases"], n)).st_mtime, reverse=True)
+    for name in others[KEEP_RELEASES:]:
+        remove_path(os.path.join(p_dev["releases"], name))
+
+
+def stage_source(conf, slug, sha, dest):
+    src = os.path.join(conf["tools_root"], slug)
+    st = os.lstat(src) if os.path.lexists(src) else None
+    if st is None or not stat.S_ISDIR(st.st_mode):
+        raise InputError(f"no app source at {src}")
+    # git runs as the tools user: the repo (and its config/attributes) is agent-writable.
+    git = [bin_path("runuser"), "-u", conf["tools_user"], "--", bin_path("env"), "-i",
+           f"PATH={SAFE_PATH}", "HOME=/nonexistent", "GIT_CONFIG_NOSYSTEM=1",
+           "GIT_CONFIG_GLOBAL=/dev/null", bin_path("git"), "-c", f"safe.directory={src}",
+           "-c", "core.fsmonitor=false", "-C", src]
+    proc = run(git + ["cat-file", "-t", sha], timeout=30)
+    if proc.returncode != 0 or proc.stdout.strip() != "commit":
+        raise InputError(f"{sha} is not a commit in {slug}")
+    with open(dest, "wb") as out:
+        proc = subprocess.run(git + ["archive", "--format=tar", sha], stdout=out,
+                              stderr=subprocess.PIPE, timeout=120,
+                              env={"PATH": SAFE_PATH, "LC_ALL": "C"})
+    if proc.returncode != 0:
+        raise HelperError(f"git archive failed: {proc.stderr.decode(errors='replace')[:200]}")
+    if os.path.getsize(dest) > MAX_SOURCE_BYTES:
+        raise Refused("app source is larger than 256 MB")
+
+
+def build_dropin(p, base_path):
+    return ("# Written by aquarium-app-helper for one build; removed afterwards.\n[Service]\n"
+            f"User={dynamic_user('aqbuild', p['inst'])}\n"
+            f"StandardInput=file:{os.path.join(p['stage'], 'source.tar')}\n"
+            f"StandardOutput=truncate:{os.path.join(p['stage'], 'release.tar')}\n"
+            f"Environment=APP_BASE_PATH={base_path} APP_SLUG={p['inst'].rsplit('-', 1)[0]}"
+            f" APP_MODE={p['inst'].rsplit('-', 1)[1]}\n")
+
+
+def cmd_build(conf, spec):
+    spec_keys(spec, ("sha", "approval_ref"), ("slug", "mode", "sha"))
+    slug, mode, sha = spec["slug"], spec["mode"], spec["sha"]
+    if not isinstance(sha, str) or not SHA_RE.fullmatch(sha):
+        raise InputError("sha must be a full 40-character commit id")
+    check_approval(spec)
+    p = paths(conf, slug, mode)
+    release = f"{mode}-{sha}"
+    rel_dir = os.path.join(p["releases"], release)
+    with flock(f"{slug}.lock"):
+        trusted_dir(conf["storage_base"])
+        trusted_dir(p["releases"])
+        built = False
+        if not os.path.isdir(rel_dir):
+            admit_disk(conf, "build")
+            with flock("build.lock", blocking=False) as got:
+                if not got:
+                    raise Refused("another build or live-edit session is running (one slot box-wide)")
+                admit(BUILD_REQUEST, "build")
+                _run_build(conf, p, slug, sha, rel_dir)
+                built = True
+        link_tmp = f"{p['current']}.new"
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(link_tmp)
+        os.symlink(f"releases/{release}", link_tmp)
+        os.replace(link_tmp, p["current"])
+        prune_releases(paths(conf, slug, "dev"), paths(conf, slug, "prod"))
+    doc = status_doc(conf, slug, mode)
+    doc.update(built=built, approval_ref=spec.get("approval_ref"))
+    return doc
+
+
+def _run_build(conf, p, slug, sha, rel_dir):
+    trusted_dir(os.path.dirname(p["stage"]), 0o700)
+    remove_path(p["stage"])
+    os.mkdir(p["stage"], 0o700)
+    os.makedirs(p["build_dropin_dir"], mode=0o755, exist_ok=True)
+    dropin = os.path.join(p["build_dropin_dir"], "10-stage.conf")
+    tmp_rel = f"{rel_dir}.tmp"
+    try:
+        stage_source(conf, slug, sha, os.path.join(p["stage"], "source.tar"))
+        write_atomic(dropin, build_dropin(p, p["base_path"]), 0o644)
+        systemctl("daemon-reload")
+        systemctl("reset-failed", p["build_unit"], check=False)
+        proc = systemctl("start", p["build_unit"], timeout=BUILD_TIMEOUT, check=False)
+        if proc.returncode != 0:
+            raise HelperError(f"build failed; see `logs` with build=true ({p['build_unit']})")
+        remove_path(tmp_rel)
+        os.mkdir(tmp_rel, 0o755)
+        os.chmod(tmp_rel, 0o755)
+        with open(os.path.join(p["stage"], "release.tar"), "rb") as fh:
+            safe_extract(fh, tmp_rel, MAX_RELEASE_BYTES)
+        if not os.path.isfile(os.path.join(tmp_rel, "server.js")):
+            raise HelperError("the build produced no server.js (output: 'standalone' missing?)")
+        _makedirs(tmp_rel, os.path.join(tmp_rel, ".next", "cache"))
+        os.replace(tmp_rel, rel_dir)
+    finally:
+        remove_path(tmp_rel)
+        remove_path(p["stage"])
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(dropin)
+        with contextlib.suppress(OSError):
+            os.rmdir(p["build_dropin_dir"])
+        with contextlib.suppress(HelperError):
+            systemctl("daemon-reload", check=False)
+
+
+def _start(conf, slug, mode, restart=False):
+    p, _ = require_allocated(conf, slug, mode)
+    was_active = show(p["unit"], "ActiveState").get("ActiveState") == "active"
+    if not was_active:
+        admit(START_REQUEST, "start")
+    write_instance_dropin(conf, p)
+    systemctl("daemon-reload")
+    systemctl("reset-failed", p["unit"], check=False)
+    if mode == "prod":
+        systemctl("enable", "--quiet", p["unit"])
+    systemctl("restart" if (restart or was_active) else "start", p["unit"], timeout=90)
+    if mode == "dev":
+        start_idle_timer(p)
+    return status_doc(conf, slug, mode)
+
+
+def start_idle_timer(p):
+    trusted_dir(RUN_DIR, 0o700)
+    write_atomic(p["idle_state"], json.dumps({"last_activity": time.time()}), 0o600)
+    if show(f"{p['idle_unit']}.timer", "ActiveState").get("ActiveState") == "active":
+        return
+    run([bin_path("systemd-run"), f"--unit={p['idle_unit']}", "--collect", "--quiet",
+         f"--on-active={IDLE_CHECK_SECONDS}", f"--on-unit-active={IDLE_CHECK_SECONDS}",
+         "--timer-property=AccuracySec=10s", "--", SELF_PATH, "idle-check", p["inst"]])
+
+
+def cmd_start(conf, spec):
+    spec_keys(spec, ())
+    with flock(f"{spec['slug']}.lock"):
+        return _start(conf, spec["slug"], spec["mode"])
+
+
+def cmd_restart(conf, spec):
+    spec_keys(spec, ())
+    with flock(f"{spec['slug']}.lock"):
+        return _start(conf, spec["slug"], spec["mode"], restart=True)
+
+
+def _stop(conf, slug, mode):
+    p = paths(conf, slug, mode)
+    systemctl("stop", p["unit"], timeout=60, check=False)
+    if mode == "prod":
+        systemctl("disable", "--quiet", p["unit"], check=False)
+    systemctl("stop", f"{p['idle_unit']}.timer", check=False)
+    return p
+
+
+def cmd_stop(conf, spec):
+    spec_keys(spec, ())
+    with flock(f"{spec['slug']}.lock"):
+        _stop(conf, spec["slug"], spec["mode"])
+        return status_doc(conf, spec["slug"], spec["mode"])
+
+
+def caddy_block(conf, slug, mode, port):
+    """One instance's include. Shape and headers follow the front-door contract in
+    agent-home/deploy/Caddyfile.agent-home (FG-33 P8-1 1.5): route{} so the steps run
+    in order, X-Aquarium-App names the instance to /api/apps/auth, the agent-home
+    session cookie never reaches the app and the app can never set it."""
+    p = paths(conf, slug, mode)
+    bp = p["base_path"]
+    matcher = f"@aquarium-app-{p['inst']}"
+    return (
+        f"# Written by aquarium-app-helper (FG-33) for {p['inst']}; do not edit.\n"
+        f"{matcher} path {bp} {bp}/*\n"
+        f"handle {matcher} {{\n"
+        "\troute {\n"
+        "\t\trequest_header -X-Aquarium-Principal\n"
+        f"\t\tforward_auth {conf['agent_home']} {{\n"
+        f"\t\t\turi /api/apps/auth?slug={slug}&mode={mode}\n"
+        f"\t\t\theader_up X-Aquarium-App \"{slug}/{mode}\"\n"
+        "\t\t\tcopy_headers X-Aquarium-Principal\n"
+        "\t\t}\n"
+        f"\t\trequest_header Cookie \"{SESSION_COOKIE_RE}\" \"\"\n"
+        "\t\theader {\n"
+        f"\t\t\tContent-Security-Policy \"{app_csp(bp, mode)}\"\n"
+        "\t\t\tCross-Origin-Opener-Policy \"noopener-allow-popups\"\n"
+        "\t\t\tX-Frame-Options \"DENY\"\n"
+        "\t\t\tX-Content-Type-Options \"nosniff\"\n"
+        "\t\t\tReferrer-Policy \"strict-origin-when-cross-origin\"\n"
+        f"\t\t\tSet-Cookie \"{SESSION_SET_COOKIE_RE}\" \"agent_home_session_refused=; Max-Age=0\"\n"
+        "\t\t\t-Service-Worker-Allowed\n"
+        "\t\t\t-Clear-Site-Data\n"
+        "\t\t\t-Server\n"
+        "\t\t\tdefer\n"
+        "\t\t}\n"
+        f"\t\treverse_proxy 127.0.0.1:{port}\n"
+        "\t}\n"
+        "}\n"
+    )
+
+
+def check_caddy_block(text, conf):
+    """Refuse any include that would expose an app without the agent-home login."""
+    if not re.search(rf"^\t\tforward_auth {re.escape(conf['agent_home'])} \{{$", text, re.M):
+        raise HelperError("refusing a Caddy block without forward_auth to agent-home")
+    if not re.search(r"^\t\t\turi /api/apps/auth\?", text, re.M):
+        raise HelperError("refusing a Caddy block whose forward_auth is not /api/apps/auth")
+    if not re.search(r'^\t\t\theader_up X-Aquarium-App "[a-z0-9-]+/(dev|prod)"$', text, re.M):
+        raise HelperError("refusing a Caddy block that does not name its instance to /api/apps/auth")
+    if "agent_home_session=[^;]*" not in text:
+        raise HelperError("refusing a Caddy block that forwards the agent-home session cookie")
+    if text.count("reverse_proxy") != 1 or text.index("forward_auth") > text.index("reverse_proxy"):
+        raise HelperError("refusing a Caddy block that proxies before forward_auth")
+    return text
+
+
+def caddy_apply(path, new_text):
+    """Write (or with None remove) one include, validate, reload; roll back on failure."""
+    old = None
+    if os.path.isfile(path):
+        with open(path, encoding="utf-8") as fh:
+            old = fh.read()
+    if new_text is None:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(path)
+    else:
+        trusted_dir(CADDY_DIR, 0o755)
+        write_atomic(path, new_text, 0o644)
+    if not os.path.isfile(CADDYFILE):
+        return {"front_door": "no Caddyfile on this box"}
+    proc = run([bin_path("caddy"), "validate", "--config", CADDYFILE, "--adapter", "caddyfile"],
+               timeout=60)
+    if proc.returncode != 0:
+        if old is None:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(path)
+        else:
+            write_atomic(path, old, 0o644)
+        raise HelperError(f"caddy validate failed: {(proc.stderr or proc.stdout or '').strip()[-300:]}")
+    systemctl("reload", "caddy", check=False)
+    with open(CADDYFILE, encoding="utf-8") as fh:
+        imported = any(line.strip() == CADDY_IMPORT for line in fh)
+    return {"front_door": "ok" if imported else f"Caddyfile lacks `{CADDY_IMPORT}`"}
+
+
+def cmd_route(conf, spec):
+    spec_keys(spec, ())
+    slug, mode = spec["slug"], spec["mode"]
+    with flock(f"{slug}.lock"):
+        p, port = require_allocated(conf, slug, mode)
+        text = check_caddy_block(caddy_block(conf, slug, mode, port), conf)
+        extra = caddy_apply(p["caddy"], text)
+    doc = status_doc(conf, slug, mode)
+    doc.update(extra)
+    return doc
+
+
+def cmd_unroute(conf, spec):
+    spec_keys(spec, ())
+    with flock(f"{spec['slug']}.lock"):
+        p = paths(conf, spec["slug"], spec["mode"])
+        extra = caddy_apply(p["caddy"], None) if os.path.isfile(p["caddy"]) else {}
+    doc = status_doc(conf, spec["slug"], spec["mode"])
+    doc.update(extra)
+    return doc
+
+
+def cmd_set_secret(conf, spec):
+    spec_keys(spec, ("name", "value", "delete"), ("slug", "mode", "name"))
+    name = check_secret_name(spec["name"])
+    with flock(f"{spec['slug']}.lock"):
+        p, _ = require_allocated(conf, spec["slug"], spec["mode"])
+        target = os.path.join(p["creds"], name)
+        if spec.get("delete") is True:
+            if "value" in spec:
+                raise InputError("give either value or delete, not both")
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(target)
+        else:
+            value = spec.get("value")
+            if not isinstance(value, str) or not value or "\x00" in value:
+                raise InputError("value must be a non-empty string")
+            if len(value.encode()) > MAX_SECRET_BYTES:
+                raise InputError("value is too large (8 KB max)")
+            trusted_dir(p["etc"], 0o700)
+            trusted_dir(p["creds"], 0o700)
+            if name not in secret_names(p) and len(secret_names(p)) >= MAX_SECRETS:
+                raise Refused(f"at most {MAX_SECRETS} secrets per app and mode")
+            write_atomic(target, value, 0o600)
+        running = show(p["unit"], "ActiveState").get("ActiveState") == "active"
+        return {"slug": spec["slug"], "mode": spec["mode"], "secret_names": secret_names(p),
+                "restart_needed": running}
+
+
+def cmd_logs(conf, spec):
+    spec_keys(spec, ("lines", "build"))
+    lines = spec.get("lines", 200)
+    if not isinstance(lines, int) or isinstance(lines, bool) or not 1 <= lines <= MAX_LOG_LINES:
+        raise InputError(f"lines must be 1-{MAX_LOG_LINES}")
+    p = paths(conf, spec["slug"], spec["mode"])
+    unit = p["build_unit"] if spec.get("build") is True else p["unit"]
+    proc = run([bin_path("journalctl"), "-u", unit, "-n", str(lines), "--no-pager",
+                "-o", "short-iso", "-q"], timeout=30)
+    text = proc.stdout or ""
+    truncated = len(text.encode()) > MAX_LOG_BYTES
+    if truncated:
+        text = text.encode()[-MAX_LOG_BYTES:].decode(errors="replace")
+    return {"slug": spec["slug"], "mode": spec["mode"], "unit": unit, "lines": text,
+            "truncated": truncated}
+
+
+def cmd_status(conf, spec):
+    if isinstance(spec, dict) and spec.get("all") is True:
+        if set(spec) != {"all"}:
+            raise InputError("status with all takes no other field")
+        docs = [status_doc(conf, s, m) for s, m in all_instances()]
+        problems = [f"{d['unit']} is {d['active_state']} ({d['sub_state']})"
+                    for d in docs if d["enabled"] and d["active_state"] != "active"]
+        return {"instances": docs, "problems": problems}
+    spec_keys(spec, ())
+    return status_doc(conf, spec["slug"], spec["mode"])
+
+
+def cmd_remove(conf, spec):
+    spec_keys(spec, ("confirm",))
+    slug, mode = spec["slug"], spec["mode"]
+    if spec.get("confirm") != slug:
+        raise Refused(f"removing {inst_name(slug, mode)} deletes its releases and secrets; "
+                      f"repeat the slug as confirm to go ahead")
+    with flock(f"{slug}.lock"):
+        p = _stop(conf, slug, mode)
+        if os.path.isfile(p["caddy"]):
+            with contextlib.suppress(HelperError):
+                caddy_apply(p["caddy"], None)
+        remove_path(p["dropin_dir"])
+        systemctl("daemon-reload", check=False)
+        systemctl("clean", "--what=cache", p["unit"], check=False)
+        for key in ("env", "creds", "current", "idle_state"):
+            remove_path(p[key])
+        other = paths(conf, slug, "prod" if mode == "dev" else "dev")
+        if os.path.isfile(other["env"]) or os.path.lexists(other["current"]):
+            prune_releases(paths(conf, slug, "dev"), paths(conf, slug, "prod"))
+        else:
+            remove_path(p["app_dir"])
+            with contextlib.suppress(OSError):
+                os.rmdir(p["etc"])
+    return {"slug": slug, "mode": mode, "removed": True}
+
+
+def cmd_configure(conf, spec):
+    spec_keys(spec, ("storage_base",), ())
+    if "storage_base" in spec:
+        base = check_base(spec["storage_base"])
+        if base != conf["storage_base"]:
+            old = conf["storage_base"]
+            if os.path.isdir(old) and any(not n.startswith(".") for n in os.listdir(old)):
+                raise Refused(f"apps already live under {old}; remove or move them first")
+            trusted_dir(base)
+            data = {}
+            if os.path.isfile(CONF_PATH):
+                with open(CONF_PATH, encoding="utf-8") as fh:
+                    data = json.load(fh)
+            data["storage_base"] = base
+            trusted_dir(os.path.dirname(CONF_PATH), 0o700)
+            write_atomic(CONF_PATH, json.dumps(data, indent=2, sort_keys=True) + "\n", 0o644)
+            conf = load_conf()
+    base = conf["storage_base"]
+    free = free_bytes(base) if os.path.isdir(base) else None
+    return {"storage_base": base, "free_bytes": free, "min_free_mb": conf["min_free_mb"]}
+
+
+def _established(port):
+    """Open TCP connections to 127.0.0.1:<port> (the Caddy proxy's)."""
+    n = 0
+    for path in PROC_NET_TCP:
+        try:
+            with open(path, encoding="ascii") as fh:
+                next(fh, None)
+                for line in fh:
+                    cols = line.split()
+                    if len(cols) > 3 and cols[3] == "01" and cols[1].rsplit(":", 1)[-1] == f"{port:04X}":
+                        n += 1
+        except OSError:
+            continue
+    return n
+
+
+def cmd_idle_check(conf, inst):
+    slug, mode = split_instance(inst)
+    if mode != "dev":
+        raise InputError("only dev instances idle-stop")
+    p = paths(conf, slug, mode)
+    with flock(f"{slug}.lock", blocking=False) as got:
+        if not got:
+            return {"slug": slug, "mode": mode, "idle": "busy"}
+        if show(p["unit"], "ActiveState").get("ActiveState") != "active":
+            systemctl("stop", f"{p['idle_unit']}.timer", check=False)
+            return {"slug": slug, "mode": mode, "idle": "stopped"}
+        port = read_env(p["env"]).get("PORT", "")
+        try:
+            with open(p["idle_state"], encoding="utf-8") as fh:
+                last = float(json.load(fh).get("last_activity") or 0)
+        except (OSError, ValueError, AttributeError):
+            last = 0.0
+        now = time.time()
+        if port.isdigit() and _established(int(port)):
+            last = now
+        write_atomic(p["idle_state"], json.dumps({"last_activity": last}), 0o600)
+        if now - last >= DEV_IDLE_SECONDS:
+            _stop(conf, slug, mode)
+            return {"slug": slug, "mode": mode, "idle": "stopped"}
+        return {"slug": slug, "mode": mode, "idle": "active", "idle_seconds": int(now - last)}
+
+
+# ---------------------------------------------------------------------------
+# Unprivileged entry points (inside the units)
+# ---------------------------------------------------------------------------
+
+
+def cmd_run_app():
+    """ExecStart of aquarium-app@: credentials → environment, then node server.js."""
+    env = dict(os.environ)
+    creds = env.get("CREDENTIALS_DIRECTORY")
+    if creds and os.path.isdir(creds):
+        for name in sorted(os.listdir(creds)):
+            if NAME_RE.fullmatch(name):
+                with open(os.path.join(creds, name), encoding="utf-8") as fh:
+                    env[name] = fh.read().rstrip("\r\n")
+    os.execve(NODE, [NODE, "server.js"], env)
+
+
+def cmd_build_run():
+    """ExecStart of aquarium-app-build@: source tar on stdin, release tar on stdout."""
+    cache = os.environ.get("CACHE_DIRECTORY")
+    if not cache or not os.path.isdir(cache):
+        raise HelperError("CACHE_DIRECTORY is not set (run only inside aquarium-app-build@)")
+    work = os.path.join(cache, "work")
+    remove_path(work)
+    os.mkdir(work, 0o700)
+    safe_extract(sys.stdin.buffer, work, MAX_SOURCE_BYTES)
+    for required in ("package.json", "package-lock.json"):
+        if not os.path.isfile(os.path.join(work, required)):
+            raise InputError(f"the app has no {required} (a committed lockfile is required)")
+    env = dict(os.environ, npm_config_cache=os.path.join(cache, "npm"))
+    log = sys.stderr
+    steps = [
+        [NPM, "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
+        [NODE, os.path.join("node_modules", "next", "dist", "bin", "next"), "build"],
+    ]
+    for step in steps:
+        proc = subprocess.run(step, cwd=work, env=env, stdout=log, stderr=log, timeout=BUILD_TIMEOUT)
+        if proc.returncode != 0:
+            raise HelperError(f"{os.path.basename(step[0])} {step[1] if step[0] == NPM else 'next build'} "
+                              f"exited {proc.returncode}")
+    standalone = os.path.join(work, ".next", "standalone")
+    if not os.path.isfile(os.path.join(standalone, "server.js")):
+        raise HelperError("next build produced no .next/standalone/server.js")
+    with tarfile.open(fileobj=sys.stdout.buffer, mode="w|") as out:
+        for name in sorted(os.listdir(standalone)):
+            out.add(os.path.join(standalone, name), arcname=name)
+        static = os.path.join(work, ".next", "static")
+        if os.path.isdir(static) and not os.path.lexists(os.path.join(standalone, ".next", "static")):
+            out.add(static, arcname=".next/static")
+        public = os.path.join(work, "public")
+        if os.path.isdir(public) and not os.path.lexists(os.path.join(standalone, "public")):
+            out.add(public, arcname="public")
+    return None
+
+
+VERBS = {
+    "allocate": cmd_allocate, "build": cmd_build, "start": cmd_start, "stop": cmd_stop,
+    "restart": cmd_restart, "route": cmd_route, "unroute": cmd_unroute,
+    "set-secret": cmd_set_secret, "logs": cmd_logs, "status": cmd_status,
+    "remove": cmd_remove, "configure": cmd_configure,
+}
+USAGE = ("usage: aquarium-app-helper " + "|".join(VERBS) + " < request.json"
+         " | status --all | idle-check <slug>-dev | run-app | build-run")
+
+
+def main(argv=None, stdin=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    # build-run's stdout is the release tarball: messages go to the journal.
+    out = sys.stderr if argv == ["build-run"] else sys.stdout
+    try:
+        if argv in (["run-app"], ["build-run"]):
+            if os.geteuid() == 0:
+                raise HelperError(f"{argv[0]} runs only inside its unit, never as root")
+            if argv[0] == "run-app":
+                cmd_run_app()
+            cmd_build_run()
+            return 0
+        os.environ["PATH"] = SAFE_PATH
+        os.umask(0o077)
+        if os.geteuid() != 0:
+            raise HelperError("aquarium-app-helper must run as root (use sudo -n)")
+        conf = load_conf()
+        if len(argv) == 2 and argv[0] == "idle-check":
+            doc = cmd_idle_check(conf, argv[1])
+        elif argv == ["status", "--all"]:
+            doc = cmd_status(conf, {"all": True})
+        elif len(argv) == 1 and argv[0] in VERBS:
+            doc = VERBS[argv[0]](conf, read_spec(stdin))
+        else:
+            raise InputError(USAGE)
+    except InputError as exc:
+        print(json.dumps({"error": str(exc), "bad_input": True}), file=out)
+        return 2
+    except Refused as exc:
+        print(json.dumps({"error": str(exc), "refused": True}), file=out)
+        return 3
+    except (HelperError, OSError, tarfile.TarError) as exc:
+        message = str(exc)
+        if isinstance(exc, OSError):
+            message = f"{exc.strerror or exc}" + (f": {exc.filename}" if exc.filename else "")
+        print(json.dumps({"error": message[:300]}), file=out)
+        return 1
+    print(json.dumps(doc))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
