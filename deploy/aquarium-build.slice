@@ -1,0 +1,14 @@
+# FG-33: the one shared build/live-edit slot (aquarium-app-build@.service).
+# aquarium-app-helper serialises it with one box-wide flock. Child of
+# aquarium.slice (6 GB). Core.
+[Unit]
+Description=Aquarium local app builds (FG-33, one slot)
+
+[Slice]
+MemoryAccounting=yes
+CPUAccounting=yes
+MemoryMax=2G
+MemorySwapMax=0
+CPUQuota=200%
+CPUWeight=10
+TasksMax=1024

@@ -1,0 +1,40 @@
+# FG-33 local apps. Lets the Hermes runtime (user hermes: the API and
+# hermes_cli/app_runtime.py) drive the root helpers for local apps. Never
+# hermes-tools: the agent reaches these only through allowlisted `hermes tool`
+# verbs (deploy/hermes-tools-cli -> hermes -> API role checks).
+# Every line points at a root-owned copy in /usr/local/sbin, never the
+# checkout (the hermes user can write the checkout). Install: root:root 0440,
+# after `visudo -cf` (deploy/install/lib.sh aq_install_app_runtime).
+#
+# aquarium-app-helper: one verb per line. A rule that lists arguments only
+# matches exactly those, so sudo refuses any further argument; the request
+# (slug, mode, sha, ...) is JSON on stdin and the helper validates every field.
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium-app-helper allocate
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium-app-helper build
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium-app-helper start
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium-app-helper stop
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium-app-helper restart
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium-app-helper route
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium-app-helper unroute
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium-app-helper set-secret
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium-app-helper logs
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium-app-helper status
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium-app-helper remove
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium-app-helper configure
+#
+# Database provisioner (FG-33 P8-1 1.3), in the root-owned /usr/local/sbin/aquarium
+# (installed from deploy/aquarium.py). Exact form:
+#   aquarium apps db <create|migrate|status|suspend|drop> <slug> <dev|prod>
+# The mode is fixed per line; sudo's * also matches spaces, so `aquarium`
+# itself must refuse anything but exactly one slug before the mode. Approval
+# references (prod verbs) and the drop confirmation arrive as JSON on stdin.
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium apps db create * dev
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium apps db create * prod
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium apps db migrate * dev
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium apps db migrate * prod
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium apps db status * dev
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium apps db status * prod
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium apps db suspend * dev
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium apps db suspend * prod
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium apps db drop * dev
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium apps db drop * prod

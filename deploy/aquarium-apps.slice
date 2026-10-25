@@ -1,0 +1,15 @@
+# FG-33: running local app instances (aquarium-app@<slug>-<mode>.service).
+# Child of aquarium.slice (6 GB). Each instance also has its own
+# MemoryHigh=384M / MemoryMax=512M / CPUQuota=50% in the unit; this cap is
+# the binding one. Core.
+[Unit]
+Description=Aquarium local app instances (FG-33)
+
+[Slice]
+MemoryAccounting=yes
+CPUAccounting=yes
+MemoryMax=3G
+MemorySwapMax=0
+CPUQuota=200%
+CPUWeight=20
+TasksMax=1024

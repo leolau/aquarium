@@ -209,6 +209,8 @@ chmod +x agent-home/deploy/start.sh
 log "VPN helper and office file-share support"
 aq_install_vpn_support "$APP"
 aq_install_security_check "$APP"
+# Local apps (FG-33): app/build units and slices, the root helper and its sudoers rule.
+aq_install_app_runtime "$APP" "$HERMES_HOME_DIR"
 
 # ---------------------------------------------------------------- 4. Supabase
 log "Supabase (self-hosted, Docker Compose)"

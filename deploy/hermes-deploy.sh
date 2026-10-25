@@ -341,6 +341,38 @@ if [ -e "$BACKUP_RULE" ] && ! cmp -s "$BACKUP_RULE" "$REPO/deploy/sudoers.d/herm
   echo "    sudo visudo -cf $REPO/deploy/sudoers.d/hermes-backup && sudo install -m 440 -o root -g root $REPO/deploy/sudoers.d/hermes-backup $BACKUP_RULE"
 fi
 
+# FG-33 local apps: units/slices, root helpers and sudoers by glob (installed
+# by aq_install_app_runtime; reported, never installed, here). App instances
+# are aquarium-app@*, outside the hermes-* restart glob above.
+for f in "$REPO"/deploy/aquarium*.service "$REPO"/deploy/aquarium*.timer "$REPO"/deploy/aquarium*.slice; do
+  [ -f "$f" ] || continue
+  dest=/etc/systemd/system/${f##*/}
+  if [ -e "$dest" ] && ! cmp -s "$dest" "$f"; then
+    echo "APP RUNTIME UNIT STALE: $dest differs from the reviewed copy at $AFTER. Install it with:"
+    echo "    sudo install -m 644 -o root -g root $f $dest && sudo systemctl daemon-reload"
+  fi
+done
+for f in "$REPO"/deploy/aquarium-app-*; do
+  case $f in *.service|*.timer|*.slice) continue ;; esac
+  [ -f "$f" ] || continue
+  dest=/usr/local/sbin/${f##*/}
+  if [ -e "$dest" ] && ! cmp -s "$dest" "$f"; then
+    echo "APP RUNTIME HELPER STALE: $dest differs from the reviewed copy at $AFTER. Install it with:"
+    echo "    sudo install -m 755 -o root -g root $f $dest"
+  fi
+done
+APPS_RULE=/etc/sudoers.d/aquarium-apps
+if [ -e "$APPS_RULE" ] && ! cmp -s "$APPS_RULE" "$REPO/deploy/sudoers.d/aquarium-apps"; then
+  echo "APPS SUDOERS RULE STALE: $APPS_RULE differs from the reviewed copy at $AFTER. Install it with:"
+  echo "    sudo visudo -cf $REPO/deploy/sudoers.d/aquarium-apps && sudo install -m 440 -o root -g root $REPO/deploy/sudoers.d/aquarium-apps $APPS_RULE"
+fi
+# Report enabled local apps that are not running; never fails the deploy.
+if [ -x /usr/local/sbin/aquarium-app-helper ]; then
+  /usr/local/sbin/aquarium-app-helper status --all </dev/null 2>/dev/null \
+    | python3 -c 'import json, sys; [print("LOCAL APP DOWN:", p) for p in json.load(sys.stdin).get("problems", [])]' \
+    2>/dev/null || true
+fi
+
 # The deploy tool does not deploy itself: /opt/data/deploy-hermes.sh is a copy
 # installed by hand, so a merged fix to this script changes nothing on the box
 # until someone remembers to install it — and the deploy it was supposed to fix

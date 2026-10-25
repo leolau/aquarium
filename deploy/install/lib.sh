@@ -302,3 +302,35 @@ aq_ssh_check() {  # warn only: never changes SSH (a wrong change can lock the op
   if ! out=$(sshd -T 2>/dev/null); then aq_warn "could not read the SSH server settings (sshd -T)"; return 0; fi
   printf '%s\n' "$out" | aq_ssh_warnings | while IFS= read -r line; do aq_warn "$line"; done
 }
+
+aq_install_app_runtime() {  # APP HERMES_HOME: FG-33 local-app units, slices, root helpers, sudoers
+  local app=$1 home=$2 f conf
+  local units="$AQ_ROOTFS/etc/systemd/system" sbin="$AQ_ROOTFS/usr/local/sbin"
+  visudo -cqf "$app/deploy/sudoers.d/aquarium-apps" \
+    || { aq_fail "deploy/sudoers.d/aquarium-apps does not pass visudo"; return 1; }
+  install -d -m 755 "$units" "$sbin" "$AQ_ROOTFS/etc/sudoers.d" "$AQ_ROOTFS/var/lib/aquarium-apps"
+  install -d -m 700 "$AQ_ROOTFS/etc/aquarium" "$AQ_ROOTFS/etc/aquarium/apps"
+  # By glob, so later FG-33 units/helpers (watch timer, egress helper) need no installer edit.
+  for f in "$app"/deploy/aquarium*.service "$app"/deploy/aquarium*.timer "$app"/deploy/aquarium*.slice; do
+    [ -f "$f" ] || continue
+    install -m 644 "$f" "$units/${f##*/}"
+    chown "$AQ_CODE_OWNER" "$units/${f##*/}"
+  done
+  for f in "$app"/deploy/aquarium-app-*; do
+    case $f in *.service|*.timer|*.slice) continue ;; esac
+    [ -f "$f" ] || continue
+    install -m 755 "$f" "$sbin/${f##*/}"
+    chown "$AQ_CODE_OWNER" "$sbin/${f##*/}"
+  done
+  install -m 440 "$app/deploy/sudoers.d/aquarium-apps" "$AQ_ROOTFS/etc/sudoers.d/aquarium-apps"
+  chown "$AQ_CODE_OWNER" "$AQ_ROOTFS/etc/sudoers.d/aquarium-apps"
+  [ -d "$AQ_ROOTFS/etc/caddy" ] && install -d -m 755 "$AQ_ROOTFS/etc/caddy/apps.d"
+  conf="$AQ_ROOTFS/etc/aquarium/apps.conf"
+  if [ ! -e "$conf" ]; then  # keeps an owner's storage location on re-runs
+    python3 -c 'import json, sys; print(json.dumps({"storage_base": "/var/lib/aquarium-apps", "tools_root": sys.argv[1] + "/tools"}, indent=2))' \
+      "$home" > "$conf"
+    chmod 644 "$conf"
+    chown "$AQ_CODE_OWNER" "$conf"
+  fi
+  if [ -z "$AQ_ROOTFS" ]; then systemctl daemon-reload; fi
+}

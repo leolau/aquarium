@@ -1,0 +1,77 @@
+# FG-33 local app, one instance per app and mode:
+#   aquarium-app@<slug>-<mode>.service    (<mode> = dev | prod)
+# Deliberately NOT hermes-*: deploy/hermes-deploy.sh and `aquarium update`
+# restart every enabled hermes-*.service, and a Core deploy must never
+# restart user apps.
+#
+# Never start an instance by hand. /usr/local/sbin/aquarium-app-helper (root)
+# writes its per-instance drop-in, aquarium-app@<inst>.service.d/10-instance.conf,
+# which pins the release (WorkingDirectory + a read-only bind of only that
+# release), the env file /etc/aquarium/apps/<slug>/<mode>.env (PORT,
+# APP_BASE_PATH, ...) and one LoadCredential= per file in
+# /etc/aquarium/apps/<slug>/<mode>/ (DATABASE_URL, APP_MCP_TOKEN, user
+# secrets). `run-app` copies the credentials into the environment and execs
+# `node server.js` (a Next.js standalone build). Core.
+[Unit]
+Description=Aquarium local app (%i)
+After=network-online.target
+Wants=network-online.target
+AssertPathExists=/etc/systemd/system/aquarium-app@%i.service.d/10-instance.conf
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+DynamicUser=yes
+Slice=aquarium-apps.slice
+ExecStart=/usr/bin/python3 -I /usr/local/sbin/aquarium-app-helper run-app
+Environment=NODE_ENV=production NODE_OPTIONS=--max-old-space-size=256 HOSTNAME=127.0.0.1 NEXT_TELEMETRY_DISABLED=1
+CacheDirectory=aquarium-app/%i
+MemoryHigh=384M
+MemoryMax=512M
+MemorySwapMax=0
+CPUQuota=50%
+CPUWeight=20
+TasksMax=128
+Nice=10
+LimitNOFILE=4096
+UMask=0077
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=2000
+# Hardening (FG-33 §3.3).
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+# A filtered call fails with EPERM instead of killing the process (node/npm
+# call fchown when copying files; without capabilities it could not succeed).
+SystemCallErrorNumber=EPERM
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+InaccessiblePaths=-/opt/data -/etc/aquarium -/etc/caddy -/var/run/docker.sock -/run/docker.sock -/root -/var/backups
+# Interim until the P8-2 per-cgroup nftables egress table: loopback only.
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+[Install]
+WantedBy=multi-user.target
