@@ -81,7 +81,7 @@ def h(tmp_path, monkeypatch):
     }.items():
         monkeypatch.setattr(mod, attr, str(tmp_path / sub))
     monkeypatch.setattr(mod, "PROC_NET_TCP", (str(tmp_path / "proc/net/tcp"),))
-    monkeypatch.setattr(mod, "TRUSTED_UIDS", (0, os.getuid()))
+    monkeypatch.setattr(mod, "TRUSTED_UIDS", (0, os.getuid()))  # windows-footgun: ok — Linux root helper
     monkeypatch.setattr(mod, "FORBIDDEN_BASES", ("/etc", "/opt/data", "/proc"))
     (tmp_path / "proc/net").mkdir(parents=True)
     (tmp_path / "proc/meminfo").write_text("MemTotal: 16000000 kB\nMemAvailable: 9000000 kB\n")
@@ -315,7 +315,7 @@ def test_build_refuses_when_disk_is_short(h, monkeypatch):
 def test_build_refuses_while_the_slot_is_held(h):
     c = conf(h)
     with h.flock("build.lock"):
-        pid = os.fork()
+        pid = os.fork()  # windows-footgun: ok — Linux root helper
         if pid == 0:
             try:
                 h.cmd_build(c, {"slug": "demo", "mode": "dev", "sha": SHA})
@@ -417,6 +417,24 @@ def test_configure_validates_and_refuses_moving_live_apps(h):
     (Path(new) / "demo").mkdir(parents=True)
     with pytest.raises(h.Refused, match="already live"):
         h.cmd_configure(c, {"storage_base": str(h.W / "vol2")})
+
+
+def test_configure_writes_limits_any_user_can_read_and_only_root_can_write(h, monkeypatch):
+    from hermes_cli import app_quota
+
+    limits = h.W / "etc/aquarium/app-limits.json"
+    limits.write_text('{"roles": {}}\n')
+    limits.chmod(0o600)
+    old_umask = os.umask(0o077)  # as main() runs every verb
+    try:
+        h.cmd_configure(conf(h), {"limits": {"member": {"per_member": {"apps_running": 1}}}})
+    finally:
+        os.umask(old_umask)
+    assert stat.S_IMODE(limits.lstat().st_mode) == 0o644
+    monkeypatch.setattr(app_quota, "_ROOT_UID", os.getuid())  # windows-footgun: ok — Linux root helper
+    policy = app_quota.load_policy(h.W / "missing.yaml", limits_path=limits)
+    assert policy.warnings == ()
+    assert app_quota.effective_limits("member", policy=policy).per_member["apps_running"] == 1
 
 
 def test_conf_writable_by_others_is_refused(h):
