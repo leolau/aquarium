@@ -70,7 +70,7 @@ These override any conflicting recommendation in the Design sections below; phas
 - **Decision 6:** Accepted: HTTP `/api/mcp` in the app's own Next.js process.
 - **Decision 7:** Dev is built on demand and idle-stopped after 20–30 min. Per tool, **at most one prod and one dev Node.js process alive at a time**, so no box-wide live-edit slot: each tool's dev instance is its own self-contained `next` process (live-edit runs as that tool's dev instance). Build concurrency is still bounded by the build slice.
 - **Decision 8:** Accepted defaults (3 registered / 2 running apps per member, 512 MB / 50% CPU per app, 1 GB RAM / 4 GB disk / 1 GB DB per member), plus a **Settings → App limits** panel where the owner or an admin edits them. Writes go through an owner/admin-only API to the root-owned policy (via the root helper), with a C5 change row; the agent cannot edit them.
-- **Decision 9:** Members can create and do everything (including prod, sharing, delete) as long as it stays within the limits set. C6 approval for members is dropped. One explicit user confirmation remains before irreversible data loss (database drop, purge, teardown).
+- **Decision 9:** Members can create and do everything (including prod, sharing, delete) as long as it stays within the limits set. C6 approval for members is dropped. One explicit user confirmation remains before irreversible data loss (database drop, purge, teardown). **Clarified (Yan, 2026-10-25):** a release the *agent* starts (`hermes tool promote` from chat or a coding card) still shows the member their own C6 Approve card before it goes live; a member's own click in the Tools page needs no extra prompt.
 - **Decision 14:** Settings gets a **GitHub token** field (owner/admin). If set, app source is pushed to GitHub; if not set on an installation, source is only in the local git repo. On the Hetzner prod box the current GitHub setup is used.
 - **Decision 16:** Accepted: one clarify question, Local pre-selected.
 - **Decision 17:** Every chat can see every app the principal can see (C2), not only project-attached ones. New app MCP tools still appear only from the next chat (prompt-cache safety).
@@ -1237,7 +1237,7 @@ Storage per-app opt-in (decisions 1 and 2) — a departure from the literal
 6. **Local app MCP transport.** **Decided (Yan, 2026-10-25): Accepted: HTTP `/api/mcp` in the app's own Next.js process.** Options as analysed: HTTP `/api/mcp` inside the app's own Next.js process vs keep the gateway-spawned stdio `mcp/server.mjs`. **Recommend HTTP in-app** (D3 one process; no app code as the gateway uid).
 7. **Dev preview and idle policy.** **Decided (Yan, 2026-10-25): Dev is built on demand and idle-stopped after 20–30 min. Per tool, **at most one prod and one dev Node.js process alive at a time**, so no box-wide live-edit slot: each tool's dev instance is its own self-contained `next` process (live-edit runs as that tool's dev instance). Build concurrency is still bounded by the build slice.** Options as analysed: Build-based dev preview started on demand + idle-stop (20–30 min) + one box-wide `next dev` live-edit slot, vs always-on `next dev` per app; prod always-on vs socket-activated. **Recommend build-based dev with idle-stop, one live-edit slot, prod always-on** (owner may opt a prod app into sleep).
 8. **Quota defaults and where policy lives.** **Decided (Yan, 2026-10-25): Accepted defaults (3 registered / 2 running apps per member, 512 MB / 50% CPU per app, 1 GB RAM / 4 GB disk / 1 GB DB per member), plus a **Settings → App limits** panel where the owner or an admin edits them. Writes go through an owner/admin-only API to the root-owned policy (via the root helper), with a C5 change row; the agent cannot edit them.** Options as analysed: `config.yaml` (agent-editable, so advisory) vs root-owned `/etc/aquarium/app-quotas.yaml` + owner-only `quota_overrides`. **Recommend the root file**, with the §6 starting values (3 registered / 2 running local apps per member, 512 MB / 50% CPU per app, 1 GB RAM / 4 GB disk / 1 GB DB per member, apps slice 3 GB, 6 GB FG-33 ceiling, 3 GB box reserve) calibrated on the system-test box.
-9. **Who may do what.** **Decided (Yan, 2026-10-25): Members can create and do everything (including prod, sharing, delete) as long as it stays within the limits set. C6 approval for members is dropped. One explicit user confirmation remains before irreversible data loss (database drop, purge, teardown).** Options as analysed: Members create and run private dev apps; prod, public URLs, sharing, paid resources and deletes need owner/admin + C6 — vs keeping all registry mutations admin-only as today. **Recommend the member-dev / admin-prod split** (§8).
+9. **Who may do what.** **Decided (Yan, 2026-10-25): Members can create and do everything (including prod, sharing, delete) as long as it stays within the limits set. C6 approval for members is dropped. One explicit user confirmation remains before irreversible data loss (database drop, purge, teardown).** Options as analysed: Members create and run private dev apps; prod, public URLs, sharing, paid resources and deletes need owner/admin + C6 — vs keeping all registry mutations admin-only as today. **Recommend the member-dev / admin-prod split** (§8). **Clarified (Yan, 2026-10-25):** a release the *agent* starts (`hermes tool promote` from chat or a coding card) still shows the member their own C6 Approve card before it goes live; a member's own click in the Tools page needs no extra prompt.
 10. **External accounts and credentials.** **Decided (Yan, 2026-10-25): default Vercel, Railway, AWS and Alibaba Cloud accounts (plus the default supabase.com org); each external tool's author chooses default or their own account (§4.2).** Options as analysed: Dedicated owner-managed Aquarium accounts per provider with tokens in `materialize=False` credential kinds used only by in-process adapters, vs each user's own accounts, vs root-only token files under `/etc/aquarium/providers`. **Recommend dedicated owner-managed accounts in v1**, bring-your-own later via the same kinds.
 11. **Provider order.** **Recommend Vercel + supabase.com first**, then Railway, AWS Amplify (App Runner is closed to new customers; Amplify SSR needs a GitHub repo per app), Alibaba FC 3.0 in `cn-hongkong` (no ICP; mainland later with a China-site account).
 12. **supabase.com dev/prod mapping.** Two projects per app (any plan; mirrors C3) vs a persistent dev branch (Pro; ~USD 10/mo per branch) vs dev/prod schemas in one project. The research sections disagreed. **Recommend two projects**, branching later; confirm the cost of a second project.
@@ -1279,15 +1279,18 @@ Storage per-app opt-in (decisions 1 and 2) — a departure from the literal
 - [x] P8-1.6 Quota policy + admission (#640)
 - [ ] P8-1.7 Ops runbook (DNS, Caddy import, apps cluster)
 - [ ] P8-1 system test passed
-- [ ] P8-2.1 Tools page v2
+- [x] P8-2.1 Tools page v2 (#654)
 - [ ] P8-2.2 Tools API (batch health, icons, feedback, idempotency)
-- [ ] P8-2.3 `vibe-code-app` skill
-- [ ] P8-2.4 Monitoring, alerts, lifecycle
-- [ ] P8-2.5 Capacity + drift + backup coverage
-- [ ] P8-2.6 Egress policy + fail-closed supply chain
-- [ ] P8-2.7 Secrets form
-- [ ] P8-2.8 Projects link
-- [ ] P8-2.9 Coder profiles (`internal-coder`, `external-coder`)
+- [x] P8-2.3 `vibe-code-app` skill (#647)
+- [x] P8-2.4 Monitoring, alerts, lifecycle (#656)
+- [x] P8-2.5 Capacity + drift + backup coverage (#651)
+- [x] P8-2.6 Egress policy + fail-closed supply chain (#657)
+- [x] P8-2.7 Secrets form (#648)
+- [x] P8-2.8 Projects link (#649)
+- [x] P8-2.9 Coder profiles (`internal-coder`, `external-coder`) (#653)
+- [x] P8-2.10 Settings panels: App limits, App storage, GitHub token (#655)
+- [x] P8-2.11 Next.js security bump (#650)
+- [x] P8-2.12 `__Host-` session cookie + no `unsafe-eval` on dev pages (#652)
 - [ ] P8-2 system test passed
 - [ ] P8-3.1 Vendor API verification + hosting base
 - [ ] P8-3.2 Credential kinds + Settings hosting group
@@ -1320,6 +1323,7 @@ Storage per-app opt-in (decisions 1 and 2) — a departure from the literal
 | 2026-10-25 | 7 | devin:workflow | FG-33 | P8-0.5 done: `tools/registry_mcp.apply_registry_endpoints` gives every chat each enabled app endpoint (`la-*`/`xa-*`) its person may see (C2, decision 17), pinned in `sessions.model_config._registry_mcp`; `enabled`/`app_kind`/`secret_ref`/`forward_principal` columns; `transport.auth` is the auth type; app-action approval gate and next-chat-only `list_changed` in `tools/mcp_tool.py`. | Item 0.5. |
 | 2026-10-25 | 10 | devin (for Yan) | FG-33 | P8-1.1–1.6 merged (#640–#645) after a cross-review that fixed the helper/DB/front-door/template contract mismatches. Dev path is `/apps-dev/<slug>`; prod DBs on `supabase-apps-db`, dev DBs on the separate `supabase-apps-dev-db` instance (decision 18). Open: 1.7 ops (box install, Caddy import, `AGENT_HOME_APPS_TICKET_SECRET`, `/etc/aquarium/app-quotas.yaml`), the agent-home Next.js bump the template's `npm audit` gate needs, storage base_path → helper `configure`, `__Host-` session cookie. | Parent ticks the checklist once so parallel PRs don't conflict on this doc. |
 | 2026-10-25 | 11 | devin (for Yan) | FG-33 | Recorded Yan's second round: accepted 2, 3, 5, 6, 16, 19, 20; 4 = path routing for local apps (with CSP/cookie/origin mitigations); 7 = one prod + one dev Node process per tool, dev idle-stopped; 8 = defaults + Settings limits panel; 9 = members do everything within limits; 14 = Settings GitHub token, local git otherwise; 17 = every visible app; 18 = separate Supabase instance for all dev DBs; 21 = Settings storage location. Design sections that conflict are superseded by §Decisions recorded. | Yan's answers, 2026-10-25 |
+| 2026-10-25 | 12 | devin (for Yan) | FG-33 | P8-2: 2.1, 2.3–2.12 merged (#647–#657); 2.10 Settings panels, 2.11 Next bump, 2.12 cookie/CSP added as new items (decisions 8/14/21 and P8-1 follow-ups). Cross-review fix #659 (gitignored `logs/route.ts`, secrets form mounted, 2.1↔2.2 health/quota field contract) and 2.2 #658 still open. Yan clarified decision 9: agent-started releases keep the member's C6 Approve card. Open: Leo's box installs (apps-watch timer, helper reinstall for `__Host-` stripping, `aquarium-app-egress enable`, coder profiles), `publish_app_source` not yet called, archive DB dump, CPU sampling, P8-2 system test. | 2.2 ticked when #658 merges. |
 
 ## Cloud-agent prompts (one per phase)
 
