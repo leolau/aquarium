@@ -34,6 +34,12 @@ Usage:
   python scripts/check_runtime_drift.py
   python scripts/check_runtime_drift.py --json
   python scripts/check_runtime_drift.py --notify   # Telegram, only on drift
+  python scripts/check_runtime_drift.py --tool-doctor   # + FG-33 app reconciliation
+
+Where the FG-33 local-app runtime is installed (``/usr/local/sbin/aquarium-app-helper``),
+the weekly run also calls ``hermes tool doctor --json`` (registry rows × app
+instances × app databases) and reports each problem as drift; ``--no-tool-doctor``
+skips it.
 
 Run it with the *deployment's* interpreter — it reports on the Python that
 executes it, not on any Python it can find:
@@ -53,7 +59,6 @@ import tomllib
 from importlib import metadata
 from pathlib import Path
 from typing import Any
-from urllib.request import Request, urlopen
 
 from packaging.requirements import InvalidRequirement, Requirement
 
@@ -270,50 +275,81 @@ def format_report(findings: list[dict[str, str]]) -> str:
     return "\n".join(lines)
 
 
-def _telegram_target() -> tuple[str, str, str]:
-    """Resolve (token, chat_id, thread_id) from the environment.
+def _notify_lib():
+    """``scripts/lib/notify.py``, loaded by path (``python -I`` safe; lazy so a
+    bare copy of this script still answers ``--help``)."""
+    import importlib.util
 
-    ``TELEGRAM_HOME_CHANNEL`` is the destination Hermes' own setup writes;
-    ``TELEGRAM_ALLOWED_USERS`` is the fallback for deployments that never
-    bound a home channel. Thread selection follows the same precedence the
-    rest of the project uses for scheduled delivery: a cron-specific thread
-    overrides the home channel's default topic.
-    """
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.environ.get("TELEGRAM_HOME_CHANNEL", "").strip()
-    if not chat_id:
-        chat_id = os.environ.get("TELEGRAM_ALLOWED_USERS", "").split(",")[0].strip()
-    thread_id = (
-        os.environ.get("TELEGRAM_CRON_THREAD_ID", "").strip()
-        or os.environ.get("TELEGRAM_HOME_CHANNEL_THREAD_ID", "").strip()
-    )
-    return token, chat_id, thread_id
+    name = "aquarium_scripts_lib_notify"
+    if name in sys.modules:
+        return sys.modules[name]
+    path = Path(__file__).resolve().parent / "lib" / "notify.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    sys.modules[name] = module
+    return module
+
+
+def _telegram_target() -> tuple[str, str, str]:
+    """(token, chat_id, thread_id); see ``scripts/lib/notify.py``."""
+    return _notify_lib().telegram_target()
 
 
 def notify(text: str) -> bool:
-    """Send *text* to the configured Telegram destination.
+    """Send *text* to the operator's Telegram (``scripts/lib/notify.py``)."""
+    return _notify_lib().notify(text, tag="drift")
 
-    Returns True on success. A failure here is reported but never fatal —
-    the report has already been printed to the journal by then.
+
+#: The FG-33 local-app runtime; when it is installed the weekly check also
+#: reconciles apps (``hermes tool doctor``, FG-33 P8-2 item 2.4).
+APP_HELPER = Path("/usr/local/sbin/aquarium-app-helper")
+DOCTOR_TIMEOUT_S = 300
+
+
+def _hermes_bin() -> Path:
+    return Path(sys.executable).with_name("hermes")
+
+
+def check_apps(hermes_bin: Path | None = None) -> list[dict[str, str]]:
+    """``hermes tool doctor --json`` as findings: every problem is drift.
+
+    Registry rows × app instances × app databases disagree (an orphan database,
+    a missing instance, ...). A doctor that cannot run is a note, not drift:
+    this check reports on the box, it does not page for its own tooling.
     """
-    token, chat_id, thread_id = _telegram_target()
-    if not token or not chat_id:
-        print("[drift] no Telegram credentials — skipping notification")
-        return False
-    payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
-    if thread_id:
-        payload["message_thread_id"] = thread_id
-    request = Request(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"},
-    )
+    import subprocess
+
+    hermes = hermes_bin or _hermes_bin()
     try:
-        with urlopen(request, timeout=10) as response:  # noqa: S310 — fixed https URL
-            return json.loads(response.read().decode()).get("ok", False)
-    except OSError as exc:
-        print(f"[drift] Telegram notification failed: {exc}")
-        return False
+        proc = subprocess.run(  # noqa: S603 - fixed argv
+            [str(hermes), "tool", "doctor", "--json"],
+            capture_output=True, text=True, timeout=DOCTOR_TIMEOUT_S, check=False,
+        )
+        result = json.loads(proc.stdout) if proc.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        result = None
+    if not isinstance(result, dict) or not isinstance(result.get("problems"), list):
+        return [{
+            "severity": SEVERITY_NOTE, "component": "apps", "expected": "doctor report",
+            "actual": "unavailable",
+            "detail": "`hermes tool doctor --json` did not run; app reconciliation skipped",
+        }]
+    findings = []
+    for problem in result["problems"]:
+        if not isinstance(problem, dict):
+            continue
+        kind = str(problem.get("kind", "problem"))
+        where = problem.get("tool") or problem.get("db_name") or "-"
+        findings.append({
+            "severity": SEVERITY_DRIFT, "component": f"apps:{kind}",
+            "expected": "registry, instances and databases agree",
+            "actual": f"{where} ({problem.get('mode', '-')})",
+            "detail": ", ".join(f"{k}={v}" for k, v in sorted(problem.items())),
+        })
+    return findings
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -325,6 +361,12 @@ def main(argv: list[str] | None = None) -> int:
         "--notify",
         action="store_true",
         help="send a Telegram message when drift is found (silent otherwise)",
+    )
+    parser.add_argument(
+        "--tool-doctor",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="also reconcile FG-33 local apps (default: when the app runtime is installed)",
     )
     parser.add_argument(
         "--pyproject",
@@ -339,6 +381,9 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, tomllib.TOMLDecodeError, IncompleteBaseline) as exc:
         print(f"error: could not read baseline from {args.pyproject}: {exc}")
         return 2
+    run_doctor = args.tool_doctor if args.tool_doctor is not None else APP_HELPER.exists()
+    if run_doctor:
+        findings += check_apps()
 
     drifted = [f for f in findings if f["severity"] == SEVERITY_DRIFT]
     report = format_report(findings)

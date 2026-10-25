@@ -72,7 +72,9 @@ _VPN = {"--json": F}
 #: Anything not listed, at any level, is refused: hermes config/auth/dashboard/
 #: gateway/setup/..., cron tick and --accept-hooks, tool --as and new --root, tool config
 #: --file (the shim reads that file as hermes-tools and passes --json), skills
-#: install --force (keeps the skills security scan), owner init/alias.
+#: install --force (keeps the skills security scan), owner init/alias. The FG-33
+#: lifecycle verbs `tool archive|restore|purge` and `tool set --coder-profile` stay
+#: off on purpose: they are a person's act (Tools page or own shell), never the agent's.
 COMMANDS = {
     "promote": {"--actor": V, "--approve": F},
     "owner": {"subs": {
