@@ -2,7 +2,9 @@
 
 Behaviour and invariants only:
 
-* ``minimal`` renders byte-identical output to the FG-07 inline template;
+* ``minimal`` renders byte-identical output to the FG-07 inline template
+  (``package.json`` excepted: its ``next``/``react`` pins were bumped to
+  match agent-home after the FG-07 snapshot);
 * ``nextjs-supabase`` pins equal the versions the root ``package-lock.json``
   resolves for the agent-home workspace, and the template's own lockfile is in
   sync with its ``package.json``;
@@ -50,7 +52,8 @@ REPO = Path(__file__).resolve().parents[2]
 TOKEN = re.compile(r"\{\{[a-z_]+\}\}")
 APP = "nextjs-supabase"
 
-# sha256 of every file the FG-07 inline-string scaffolder wrote (develop @ 3803355).
+# sha256 of every file the FG-07 inline-string scaffolder wrote (develop @ 3803355),
+# except package.json, which now carries the agent-home-aligned next/react pins.
 MINIMAL_GOLDEN = {
     ("invoices", 4321): {
         "README.md": "998e0de12250e3822e4f9de91645a9bdda9f3c0ed7674258d0622e6b562492ca",
@@ -58,7 +61,7 @@ MINIMAL_GOLDEN = {
         "app/page.tsx": "253c25371e92d58fb56f981439f1f6ff8adfebbf229299a42ae4c5d1b0a5cc75",
         "mcp/server.mjs": "3154bd8f6c7e45c6c06184a37a402a7e94339b370fc360ab6031d54b5b5d42cd",
         "next.config.mjs": "c756de99cd5b24fe69b4f51a23a2529415eb5aed745fd66653928338a88a2349",
-        "package.json": "ffb1d9d161165b54ebb4e964a671bbe83be3fee346520e56478e8c904812ace2",
+        "package.json": "deacd5ccc70bbacac0f252e418375d4f8a1981b85906f586d889aa91dfbf81db",
         "tool.config.json": "d49ecd0e2f241e483d1aa367180b4d02288620b1f0e6e1b2ef9d3a1d1283eba8",
         "tsconfig.json": "e4f875d140920e49b1347c8ed5a57d60e70bd51527d1e2c4c1da46c1525d113c",
     },
@@ -68,7 +71,7 @@ MINIMAL_GOLDEN = {
         "app/page.tsx": "46f78d363410d4a01462abdafc943a7d90be608502a068cb43d2bab2af1470f8",
         "mcp/server.mjs": "a7398015fcf18b47ea6ed3e8e9ecddf75598d311b00b53d60cc266719a3efc20",
         "next.config.mjs": "c756de99cd5b24fe69b4f51a23a2529415eb5aed745fd66653928338a88a2349",
-        "package.json": "b6ec28c00c7369a2994b7e81cb27ec7d9c34d317a68f8f3ea5be8db7a96a7586",
+        "package.json": "d1510816d22f51f69cba2380cfa8de4ab7fc6ea9ba46de565f5f428b9cd1cfaa",
         "tool.config.json": "afabf52d1c1f232df222accf9b8443c53c6d47d6d83fd41f07a82858ebd909d4",
         "tsconfig.json": "e4f875d140920e49b1347c8ed5a57d60e70bd51527d1e2c4c1da46c1525d113c",
     },
