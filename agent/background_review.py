@@ -693,6 +693,9 @@ def _run_review_in_thread(
                 enabled_toolsets=getattr(agent, "enabled_toolsets", None),
                 disabled_toolsets=getattr(agent, "disabled_toolsets", None),
                 skip_memory=True,
+                internal_user_id=getattr(agent, "_internal_user_id", None),
+                internal_user_role=getattr(agent, "_internal_user_role", None),
+                trusted_local=getattr(agent, "_trusted_local", False),
             )
             review_agent._memory_write_origin = "background_review"
             review_agent._memory_write_context = "background_review"

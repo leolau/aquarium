@@ -392,6 +392,7 @@ def run_one_scenario(scenario: Dict[str, Any], enabled: bool, out_dir: Path) -> 
             skip_context_files=True,
             skip_memory=True,
             platform="cli",
+            trusted_local=True,
             max_iterations=15,
         )
         result = agent.run_conversation(

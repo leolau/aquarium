@@ -170,6 +170,7 @@ def test_runtime_resolution_failure_is_not_sticky(monkeypatch):
     assert shell._init_agent() is True
     assert calls["count"] == 2
     assert shell.agent is not None
+    assert shell.agent.kwargs["trusted_local"] is True
 
 
 def test_runtime_resolution_rebuilds_agent_on_routing_change(monkeypatch):

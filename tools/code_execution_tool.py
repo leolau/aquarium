@@ -484,6 +484,17 @@ def _call(tool_name, args):
 _TERMINAL_BLOCKED_PARAMS = {"background", "pty", "notify_on_complete", "watch_patterns"}
 
 
+def _bound_principal_kwargs() -> dict:
+    from tools.access_policy import current_principal_binding
+
+    user_id, role, trusted_local = current_principal_binding()
+    return {
+        "principal_user_id": user_id,
+        "principal_role": role,
+        "principal_trusted_local": trusted_local,
+    }
+
+
 def _rpc_server_loop(
     server_sock: socket.socket,
     task_id: str,
@@ -586,7 +597,8 @@ def _rpc_server_loop(
                         sys.stdout = devnull
                         sys.stderr = devnull
                         result = handle_function_call(
-                            tool_name, tool_args, task_id=task_id
+                            tool_name, tool_args, task_id=task_id,
+                            **_bound_principal_kwargs(),
                         )
                     finally:
                         sys.stdout, sys.stderr = _real_stdout, _real_stderr
@@ -867,7 +879,8 @@ def _rpc_poll_loop(
                             sys.stdout = devnull
                             sys.stderr = devnull
                             tool_result = handle_function_call(
-                                tool_name, tool_args, task_id=task_id
+                                tool_name, tool_args, task_id=task_id,
+                                **_bound_principal_kwargs(),
                             )
                         finally:
                             sys.stdout, sys.stderr = _real_stdout, _real_stderr

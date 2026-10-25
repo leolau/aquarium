@@ -24,12 +24,13 @@ def home(tmp_path, monkeypatch):
     return hermes_home, secret
 
 
-def _call(name, args, user=None, role=None, task_id="t-access"):
+def _call(name, args, user=None, role=None, task_id="t-access", trusted_local=False):
     import model_tools
 
     model_tools.discover_builtin_tools()
     out = model_tools.handle_function_call(
         name, args, task_id=task_id, principal_user_id=user, principal_role=role,
+        principal_trusted_local=trusted_local,
         skip_pre_tool_call_hook=True, skip_tool_request_middleware=True,
     )
     return json.loads(out) if out.strip().startswith("{") else {"raw": out}
@@ -119,8 +120,10 @@ def test_viewer_cannot_write(home):
 
 def test_owner_admin_and_cli_read_anywhere(home):
     _, secret = home
-    for user, role in (("root", "owner"), ("ann", "admin"), (None, None)):
-        res = _call("read_file", {"path": str(secret)}, user, role, task_id=f"t-{user}")
+    for user, role, local in (("root", "owner", False), ("ann", "admin", False), (None, None, True)):
+        res = _call(
+            "read_file", {"path": str(secret)}, user, role, task_id=f"t-{user}", trusted_local=local
+        )
         assert "owner secret" in json.dumps(res), (user, res)
 
 

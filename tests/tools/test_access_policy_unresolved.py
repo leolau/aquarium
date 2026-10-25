@@ -125,6 +125,38 @@ def test_gateway_agent_without_principal_loses_command_tools(home):
 
 
 def test_local_agent_without_principal_is_unchanged(home):
-    agent = _agent()
+    agent = _agent(trusted_local=True)
     names = {t["function"]["name"] for t in agent.tools}
     assert {"terminal", "execute_code", "read_file"} <= names
+
+
+def test_default_agent_without_principal_is_untrusted(home):
+    import inspect
+
+    from agent.agent_init import init_agent
+    from tools.access_policy import files_root
+
+    assert inspect.signature(init_agent).parameters["trusted_local"].default is False
+    agent = _agent()
+    assert agent._trusted_local is False
+    names = {t["function"]["name"] for t in agent.tools}
+    assert "terminal" not in names and "execute_code" not in names
+    root = files_root(agent._internal_user_id, agent._internal_user_role,
+                      trusted_local=agent._trusted_local, session_key="s")
+    assert root is not None and "_unresolved" in root.parts
+
+
+
+def test_sandbox_tool_calls_keep_the_bound_principal():
+    from tools.code_execution_tool import _bound_principal_kwargs
+
+    from tools.access_policy import acting_as
+
+    with acting_as("vic", "viewer", trusted_local=False):
+        assert _bound_principal_kwargs() == {
+            "principal_user_id": "vic",
+            "principal_role": "viewer",
+            "principal_trusted_local": False,
+        }
+    with acting_as(None, None, trusted_local=True):
+        assert _bound_principal_kwargs()["principal_trusted_local"] is True

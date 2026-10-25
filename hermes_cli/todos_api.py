@@ -341,6 +341,8 @@ async def start_todo(request: Request, todo_id: str) -> dict[str, Any]:
             profile_home=_profile_home,
             skip_memory=False,  # a to-do session is the user's work
             context=_ctx,
+            internal_user_id=principal.user_id,
+            internal_user_role=getattr(principal, "role", None),
         )
         if result.error:
             logger.warning(

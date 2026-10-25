@@ -90,6 +90,9 @@ def spawn_seeded_session(
     reasoning_callback: ReasoningCallback | None = None,
     tool_start_callback: ToolStartCallback | None = None,
     tool_complete_callback: ToolCompleteCallback | None = None,
+    internal_user_id: str | None = None,
+    internal_user_role: str | None = None,
+    trusted_local: bool = False,
 ) -> SeededSession:
     """Spawn a seeded agent session and run it to completion (or timeout).
 
@@ -126,6 +129,9 @@ def spawn_seeded_session(
             reasoning_callback=reasoning_callback,
             tool_start_callback=tool_start_callback,
             tool_complete_callback=tool_complete_callback,
+            internal_user_id=internal_user_id,
+            internal_user_role=internal_user_role,
+            trusted_local=trusted_local,
         )
     except Exception as exc:
         log.warning("seeded_session[%s]: failed (%s)", session_id, exc)
@@ -161,6 +167,9 @@ def _run(
     reasoning_callback: ReasoningCallback | None = None,
     tool_start_callback: ToolStartCallback | None = None,
     tool_complete_callback: ToolCompleteCallback | None = None,
+    internal_user_id: str | None = None,
+    internal_user_role: str | None = None,
+    trusted_local: bool = False,
 ) -> SeededSession:
     # -- profile scope (the drift guard) --------------------------------
     #
@@ -192,6 +201,9 @@ def _run(
             reasoning_callback=reasoning_callback,
             tool_start_callback=tool_start_callback,
             tool_complete_callback=tool_complete_callback,
+            internal_user_id=internal_user_id,
+            internal_user_role=internal_user_role,
+            trusted_local=trusted_local,
         )
 
     if cm is not None:
@@ -231,6 +243,9 @@ def _body_inner(
     reasoning_callback: ReasoningCallback | None = None,
     tool_start_callback: ToolStartCallback | None = None,
     tool_complete_callback: ToolCompleteCallback | None = None,
+    internal_user_id: str | None = None,
+    internal_user_role: str | None = None,
+    trusted_local: bool = False,
 ) -> SeededSession:
     import yaml
 
@@ -388,6 +403,9 @@ def _body_inner(
         reasoning_callback=reasoning_callback,
         tool_start_callback=tool_start_callback,
         tool_complete_callback=tool_complete_callback,
+        internal_user_id=internal_user_id,
+        internal_user_role=internal_user_role,
+        trusted_local=trusted_local,
     )
 
     _ctx = context or contextvars.copy_context()

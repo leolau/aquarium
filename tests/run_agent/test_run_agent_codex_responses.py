@@ -50,6 +50,7 @@ def _build_agent(monkeypatch):
         max_iterations=4,
         skip_context_files=True,
         skip_memory=True,
+        trusted_local=True,
     )
     agent._cleanup_task_resources = lambda task_id: None
     agent._persist_session = lambda messages, history=None: None
@@ -70,6 +71,7 @@ def _build_copilot_agent(monkeypatch, *, model="gpt-5.4"):
         max_iterations=4,
         skip_context_files=True,
         skip_memory=True,
+        trusted_local=True,
     )
     agent._cleanup_task_resources = lambda task_id: None
     agent._persist_session = lambda messages, history=None: None
@@ -493,6 +495,7 @@ def _build_xai_agent_with_slash_enum_tool(monkeypatch):
         max_iterations=4,
         skip_context_files=True,
         skip_memory=True,
+        trusted_local=True,
     )
     agent._cleanup_task_resources = lambda task_id: None
     agent._persist_session = lambda messages, history=None: None
@@ -827,6 +830,7 @@ def _build_xai_oauth_agent(monkeypatch):
         max_iterations=4,
         skip_context_files=True,
         skip_memory=True,
+        trusted_local=True,
     )
     agent._cleanup_task_resources = lambda task_id: None
     agent._persist_session = lambda messages, history=None: None

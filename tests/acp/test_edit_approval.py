@@ -52,6 +52,7 @@ def test_write_file_rejection_does_not_mutate_existing_file(tmp_path):
             "write_file",
             {"path": str(target), "content": "after\n"},
             task_id="acp-edit-reject",
+            principal_trusted_local=True,
         )
     )
 
@@ -76,6 +77,7 @@ def test_write_file_approval_mutates_and_request_includes_diff(tmp_path):
             "write_file",
             {"path": str(target), "content": "after\n"},
             task_id="acp-edit-approve",
+            principal_trusted_local=True,
         )
     )
 
@@ -100,6 +102,7 @@ def test_write_file_new_file_request_has_empty_old_text(tmp_path):
             "write_file",
             {"path": str(target), "content": "created\n"},
             task_id="acp-edit-new-file",
+            principal_trusted_local=True,
         )
     )
 
@@ -123,6 +126,7 @@ def test_requester_exception_denies_and_does_not_mutate(tmp_path):
             "write_file",
             {"path": str(target), "content": "after\n"},
             task_id="acp-edit-exception",
+            principal_trusted_local=True,
         )
     )
 
@@ -147,6 +151,7 @@ def test_patch_replace_rejection_does_not_mutate(tmp_path):
                 "new_string": "gamma\n",
             },
             task_id="acp-patch-reject",
+            principal_trusted_local=True,
         )
     )
 
@@ -177,6 +182,7 @@ def test_patch_v4a_rejection_does_not_mutate(tmp_path):
                 ),
             },
             task_id="acp-patch-v4a-reject",
+            principal_trusted_local=True,
         )
     )
 
@@ -208,6 +214,7 @@ def test_patch_v4a_approval_request_includes_patch_targets(tmp_path):
                 ),
             },
             task_id="acp-patch-v4a-proposal",
+            principal_trusted_local=True,
         )
     )
 
@@ -234,6 +241,7 @@ def test_patch_replace_approval_request_includes_full_file_diff(tmp_path):
                 "new_string": "gamma\n",
             },
             task_id="acp-patch-approve",
+            principal_trusted_local=True,
         )
     )
 

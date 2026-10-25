@@ -1889,6 +1889,7 @@ def _run_llm_review(prompt: str) -> Dict[str, Any]:
             max_iterations=9999,
             quiet_mode=True,
             platform="curator",
+            trusted_local=True,
             skip_context_files=True,
             skip_memory=True,
         )

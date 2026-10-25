@@ -1110,6 +1110,9 @@ class APIServerAdapter(BasePlatformAdapter):
             tool_complete_callback=tool_complete_callback,
             gateway_session_key=gateway_session_key,
             platform="api_server",
+            # API_SERVER_KEY is a single operator-level key with no per-person
+            # identity, so a request holding it acts as the operator.
+            trusted_local=True,
         )
 
     # ------------------------------------------------------------------

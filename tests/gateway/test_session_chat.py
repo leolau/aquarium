@@ -164,6 +164,7 @@ def test_api_server_create_agent_delegates_to_shared_builder(monkeypatch):
     assert calls["session_id"] == "abc"
     assert calls["gateway_session_key"] == "k"
     assert calls["session_db"] is adapter._session_db
+    assert calls["trusted_local"] is True
 
 
 def test_build_session_agent_runs_as_the_logged_in_principal(stub_runtime):
@@ -201,3 +202,28 @@ def test_build_session_agent_mints_the_requesters_ticket(stub_runtime, tmp_path,
 
     build_session_agent(session_db=object())
     assert principal_ticket.current() == ""
+
+
+def test_build_session_agent_is_untrusted_by_default(stub_runtime):
+    from gateway.session_chat import build_session_agent
+
+    build_session_agent(session_db=object(), session_id="s1")
+    assert stub_runtime["_kwargs"]["trusted_local"] is False
+
+
+def test_run_session_turn_forwards_principal_and_trust(stub_runtime):
+    from gateway.session_chat import run_session_turn_sync
+
+    vic = SimpleNamespace(user_id="vic", display="Vic", role="viewer")
+    run_session_turn_sync(
+        session_db=object(), user_message="hi", conversation_history=[],
+        principal=vic, trusted_local=False,
+    )
+    kw = stub_runtime["_kwargs"]
+    assert kw["internal_user_id"] == "vic" and kw["internal_user_role"] == "viewer"
+    assert kw["trusted_local"] is False
+
+    run_session_turn_sync(
+        session_db=object(), user_message="hi", conversation_history=[], trusted_local=True
+    )
+    assert stub_runtime["_kwargs"]["trusted_local"] is True

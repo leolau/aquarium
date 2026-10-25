@@ -419,6 +419,7 @@ async def _start(
             profile_home=_profile_home,
             skip_memory=False,
             context=_ctx,
+            trusted_local=True,
         )
 
     # The CLI is the foreground — join the thread so the interpreter

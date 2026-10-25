@@ -1870,6 +1870,7 @@ def _default_spawn_inline(
                 str(profiles.get_profile_dir(host_profile)) if host_profile else None
             ),
             enabled_toolsets=list(enabled_toolsets) if enabled_toolsets else None,
+            trusted_local=True,
             context=contextvars.copy_context(),
             reasoning_callback=lambda text: run_activity.publish_reasoning(key, text),
             tool_start_callback=lambda tc_id, name, args: run_activity.publish_tool(

@@ -10878,6 +10878,9 @@ class GatewayRunner(
                                     skip_memory=True,
                                     enabled_toolsets=["memory"],
                                     session_id=session_entry.session_id,
+                                    internal_user_id=source.internal_user_id,
+                                    internal_user_role=source.internal_user_role,
+                                    trusted_local=self._get_principal_store() is None,
                                     session_db=getattr(self._session_db, "_db", self._session_db),
                                 )
                                 try:
@@ -12962,6 +12965,21 @@ class GatewayRunner(
         _thread_metadata = self._thread_metadata_for_source(source, event_message_id)
 
         try:
+            try:
+                identity = await self._enrich_channel_source_identity(
+                    dataclasses.replace(source)
+                )
+            except PrincipalResolutionUnavailable:
+                await adapter.send(
+                    source.chat_id,
+                    PRINCIPAL_UNAVAILABLE_REPLY,
+                    metadata=_thread_metadata,
+                )
+                return
+            if identity is None:
+                logger.info("background task %s dropped: no person for this sender", task_id)
+                return
+
             user_config = _load_gateway_config()
             model, runtime_kwargs = self._resolve_session_agent_runtime(
                 source=source,
@@ -13033,6 +13051,9 @@ class GatewayRunner(
                     chat_name=source.chat_name,
                     chat_type=source.chat_type,
                     thread_id=source.thread_id,
+                    internal_user_id=identity.internal_user_id,
+                    internal_user_role=identity.internal_user_role,
+                    trusted_local=self._get_principal_store() is None,
                     session_db=getattr(self._session_db, "_db", self._session_db),
                     fallback_model=self._fallback_model,
                 )

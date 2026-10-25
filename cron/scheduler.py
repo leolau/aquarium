@@ -2902,6 +2902,7 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
             skip_memory=True,  # Cron system prompts would corrupt user representations
             inactivity_limit=_cron_inactivity_limit,
             context=_cron_context,
+            trusted_local=True,
         )
         agent = _session.agent
 

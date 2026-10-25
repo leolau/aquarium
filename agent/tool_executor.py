@@ -1211,7 +1211,7 @@ def execute_tool_calls_sequential(agent, assistant_message, messages: list, effe
                     owner_user_id=_owner_scope_for(
                         getattr(agent, "_internal_user_id", None),
                         getattr(agent, "_internal_user_role", None),
-                        trusted_local=getattr(agent, "_trusted_local", True),
+                        trusted_local=getattr(agent, "_trusted_local", False),
                     ),
                 )
             function_result, function_args = _run_agent_tool_execution_middleware(
@@ -1422,7 +1422,7 @@ def execute_tool_calls_sequential(agent, assistant_message, messages: list, effe
                     session_id=agent.session_id or "",
                     principal_user_id=agent._internal_user_id,
                     principal_role=agent._internal_user_role,
-                    principal_trusted_local=getattr(agent, "_trusted_local", True),
+                    principal_trusted_local=getattr(agent, "_trusted_local", False),
                     turn_id=getattr(agent, "_current_turn_id", "") or "",
                     api_request_id=getattr(agent, "_current_api_request_id", "") or "",
                     enabled_tools=list(agent.valid_tool_names) if agent.valid_tool_names else None,
@@ -1467,7 +1467,7 @@ def execute_tool_calls_sequential(agent, assistant_message, messages: list, effe
                     session_id=agent.session_id or "",
                     principal_user_id=agent._internal_user_id,
                     principal_role=agent._internal_user_role,
-                    principal_trusted_local=getattr(agent, "_trusted_local", True),
+                    principal_trusted_local=getattr(agent, "_trusted_local", False),
                     turn_id=getattr(agent, "_current_turn_id", "") or "",
                     api_request_id=getattr(agent, "_current_api_request_id", "") or "",
                     enabled_tools=list(agent.valid_tool_names) if agent.valid_tool_names else None,
