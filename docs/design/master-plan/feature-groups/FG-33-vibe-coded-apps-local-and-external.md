@@ -79,7 +79,12 @@ These override any conflicting recommendation in the Design sections below; phas
 - **Decision 20:** Accepted: add D21 to README §1.
 - **Decision 21:** Settings gets **app storage location** parameters (owner/admin): base path for app source/releases, the apps DB volume and build caches (e.g. a mounted Hetzner volume). Admission uses the free space of that location.
 
-Still open: 11 and 12 (external only).
+### Third round (Leo, 2026-10-25): external decisions
+
+- **Decision 11:** Accepted: Vercel + supabase.com first (P8-3), then Railway, AWS Amplify and Alibaba FC 3.0 in `cn-hongkong` (P8-4).
+- **Decision 12:** Accepted with one change: each external app has a **prod** supabase.com project; its **dev** project is **optional**. The author (or the agent, when it asks the one hosting question) chooses whether the app gets a dev project. Without one, provider previews get no database (never the prod one) until a dev project is added. `tool_hosting.db_project_refs` holds `{"prod": ...}` and adds `"dev"` only when it exists; promotion runs `db push` against prod in both cases. Adding a dev project later is a normal, C6-gated paid resource.
+
+No open decisions are left.
 
 ## Decisions applied
 
@@ -1065,7 +1070,7 @@ preview` [yes], `promote` [yes, unchanged], `doctor` [yes, read-only],
 
 - **Registry rows**: `app_dev.tools` / `app_prod.tools` via C3, unchanged model; dev tiles visible only in dev mode or to admins with the toggle.
 - **Local apps**: `lapp_<id>_dev` / `lapp_<id>_prod` databases on the apps cluster (B2), `aquarium-app@<slug>-dev` / `-prod` units, `dev`/`prod` release symlinks. Promotion = tag + prod migrations + symlink flip + restart. Never data.
-- **External apps**: dev = provider preview/dev environment + supabase.com dev project; prod = production target + prod project. Promotion = adapter `promote()` + `db push`. Never data.
+- **External apps**: dev = provider preview/dev environment + supabase.com dev project when the app has one (optional, decision 12); prod = production target + prod project. Promotion = adapter `promote()` + `db push`. Never data.
 - **Aquarium's own schemas** (`app_dev`, `app_prod`, `app_prod_<profile>`) and the FG-27 `schema_owner` guard are untouched; no app data lives there.
 - **Channels** stay prod-only (D5); an app's MCP is resolved per session mode.
 - **App end-user auth**: default Aquarium identity via forward_auth (`auth: aquarium`); per-app GoTrue only when the app opts into sidecars or is external (`auth: supabase`). Never reuse `AGENT_HOME_SESSION_SECRET` or Aquarium's JWT secret.
@@ -1239,8 +1244,8 @@ Storage per-app opt-in (decisions 1 and 2) — a departure from the literal
 8. **Quota defaults and where policy lives.** **Decided (Yan, 2026-10-25): Accepted defaults (3 registered / 2 running apps per member, 512 MB / 50% CPU per app, 1 GB RAM / 4 GB disk / 1 GB DB per member), plus a **Settings → App limits** panel where the owner or an admin edits them. Writes go through an owner/admin-only API to the root-owned policy (via the root helper), with a C5 change row; the agent cannot edit them.** Options as analysed: `config.yaml` (agent-editable, so advisory) vs root-owned `/etc/aquarium/app-quotas.yaml` + owner-only `quota_overrides`. **Recommend the root file**, with the §6 starting values (3 registered / 2 running local apps per member, 512 MB / 50% CPU per app, 1 GB RAM / 4 GB disk / 1 GB DB per member, apps slice 3 GB, 6 GB FG-33 ceiling, 3 GB box reserve) calibrated on the system-test box.
 9. **Who may do what.** **Decided (Yan, 2026-10-25): Members can create and do everything (including prod, sharing, delete) as long as it stays within the limits set. C6 approval for members is dropped. One explicit user confirmation remains before irreversible data loss (database drop, purge, teardown).** Options as analysed: Members create and run private dev apps; prod, public URLs, sharing, paid resources and deletes need owner/admin + C6 — vs keeping all registry mutations admin-only as today. **Recommend the member-dev / admin-prod split** (§8). **Clarified (Yan, 2026-10-25):** a release the *agent* starts (`hermes tool promote` from chat or a coding card) still shows the member their own C6 Approve card before it goes live; a member's own click in the Tools page needs no extra prompt.
 10. **External accounts and credentials.** **Decided (Yan, 2026-10-25): default Vercel, Railway, AWS and Alibaba Cloud accounts (plus the default supabase.com org); each external tool's author chooses default or their own account (§4.2).** Options as analysed: Dedicated owner-managed Aquarium accounts per provider with tokens in `materialize=False` credential kinds used only by in-process adapters, vs each user's own accounts, vs root-only token files under `/etc/aquarium/providers`. **Recommend dedicated owner-managed accounts in v1**, bring-your-own later via the same kinds.
-11. **Provider order.** **Recommend Vercel + supabase.com first**, then Railway, AWS Amplify (App Runner is closed to new customers; Amplify SSR needs a GitHub repo per app), Alibaba FC 3.0 in `cn-hongkong` (no ICP; mainland later with a China-site account).
-12. **supabase.com dev/prod mapping.** Two projects per app (any plan; mirrors C3) vs a persistent dev branch (Pro; ~USD 10/mo per branch) vs dev/prod schemas in one project. The research sections disagreed. **Recommend two projects**, branching later; confirm the cost of a second project.
+11. **Provider order.** **Decided (Leo, 2026-10-25): Accepted: Vercel + supabase.com first.** Options as analysed: **Recommend Vercel + supabase.com first**, then Railway, AWS Amplify (App Runner is closed to new customers; Amplify SSR needs a GitHub repo per app), Alibaba FC 3.0 in `cn-hongkong` (no ICP; mainland later with a China-site account).
+12. **supabase.com dev/prod mapping.** **Decided (Leo, 2026-10-25): two projects, but the dev project is optional per app (§Decisions recorded, third round).** Options as analysed: Two projects per app (any plan; mirrors C3) vs a persistent dev branch (Pro; ~USD 10/mo per branch) vs dev/prod schemas in one project. The research sections disagreed. **Recommend two projects**, branching later; confirm the cost of a second project.
 13. **External spend policy.** **Decided (Yan, 2026-10-25): a cap for each project and for each account (§4.7).** Options as analysed: **Recommend:** provider-side hard cap/budget action mandatory before connecting (Vercel Spend Management, Railway workspace hard limit, Supabase spend cap, AWS Budgets deny action); `approval_usd` = 0 so every paid resource needs approval; per-member monthly cap 0 until the owner sets one; Alibaba (alert-only budgets) only with concurrency caps. Confirm the default per-app budget (sections proposed USD 20–50).
 14. **Per-app git remote.** **Decided (Yan, 2026-10-25): Settings gets a **GitHub token** field (owner/admin). If set, app source is pushed to GitHub; if not set on an installation, source is only in the local git repo. On the Hetzner prod box the current GitHub setup is used.** Options as analysed: Local git repo always (`main`/`dev`, tags `vN`) vs also pushing to a GitHub org. **Recommend local by default**, GitHub only on user opt-in through C6 or when the provider needs it (AWS Amplify, optionally Railway); Leo names the org.
 15. **Who writes the code.** **Decided (Yan, 2026-10-25): new `internal-coder` and `external-coder` profiles, used by default and overridable per tool (§10).** Options as analysed: Dispatcher-spawned kanban workers with Hermes' own file/terminal tools (+ inline for tiny edits, OpenCode opt-in) vs wiring the box's `opencode-web`/`qoder-daemon` into the agent. **Recommend kanban workers**; keep opencode-web/qoder as a human "open in editor" link only.
@@ -1301,14 +1306,14 @@ State when this was written. Re-check each item before acting on it.
 
 **After P8-2**
 
-- P8-3 (Vercel + supabase.com) needs three things first: Yan's answers to open decisions 11 (provider order) and 12 (supabase.com dev/prod mapping), the default Vercel team, and the default supabase.com org that Leo creates (3.7).
+- P8-3 (Vercel + supabase.com) needs the default Vercel team and the default supabase.com org that Leo creates (3.7). Decisions 11 and 12 are answered (12: the dev supabase.com project is optional per app).
 - P8-4 needs the Railway, AWS and Alibaba accounts.
 - The phase prompts are in §Cloud-agent prompts.
 
 ## Progress checklist
 
 - [x] P8-0.1 Core boundary PR (human) — prepared for Leo's review
-- [ ] P8-0.2 `run_as: hermes-tools` confirmed; `DATABASE_URL` stripped
+- [x] P8-0.2 `run_as: hermes-tools` confirmed; `DATABASE_URL` stripped (prod, 2026-10-25; box details in aquarium-ops)
 - [x] P8-0.3 app-mcp guard deny markers
 - [x] P8-0.4 Requester principal ticket
 - [x] P8-0.5 Registry MCP at chat start + transport fix
@@ -1320,7 +1325,7 @@ State when this was written. Re-check each item before acting on it.
 - [x] P8-1.4 `app_runtime` + CLI verbs + API + local promotion (#645)
 - [x] P8-1.5 Front door (forward_auth, Caddy include) (#643)
 - [x] P8-1.6 Quota policy + admission (#640)
-- [ ] P8-1.7 Ops runbook (DNS, Caddy import, apps cluster)
+- [x] P8-1.7 Ops runbook (DNS, Caddy import, apps cluster) (aquarium-ops FG-33 handoff + PRODUCTION.md §4.2a)
 - [ ] P8-1 system test passed
 - [x] P8-2.1 Tools page v2 (#654)
 - [x] P8-2.2 Tools API (batch health, icons, feedback, idempotency) (#658; cross-review fix #659)
@@ -1369,6 +1374,7 @@ State when this was written. Re-check each item before acting on it.
 | 2026-10-25 | 12 | devin (for Yan) | FG-33 | P8-2: 2.1, 2.3–2.12 merged (#647–#657); 2.10 Settings panels, 2.11 Next bump, 2.12 cookie/CSP added as new items (decisions 8/14/21 and P8-1 follow-ups). Cross-review fix #659 (gitignored `logs/route.ts`, secrets form mounted, 2.1↔2.2 health/quota field contract) and 2.2 #658 still open. Yan clarified decision 9: agent-started releases keep the member's C6 Approve card. Open: Leo's box installs (apps-watch timer, helper reinstall for `__Host-` stripping, `aquarium-app-egress enable`, coder profiles), `publish_app_source` not yet called, archive DB dump, CPU sampling, P8-2 system test. | 2.2 ticked when #658 merges. |
 | 2026-10-25 | 13 | devin (for Yan) | FG-33 | P8-2.2 merged (#658) with cross-review fix #659; `develop` green. Added §Handoff for the next agent: deploy state (prod on P8-1 `3117f72ca`), box setup still missing, unbuilt code follow-ups, working rules. | Yan asked for the remaining work to be handed to another agent. |
 | 2026-10-25 | 14 | devin (for Yan) | FG-33 | Handoff: moved the prod host/path and the observed box state into `leolau/aquarium-ops` `handoffs/FG-33-local-apps-2026-10-25.md`; the public doc now lists only the install steps. | AGENTS.md: this repo is public, and box details belong in aquarium-ops. |
+| 2026-10-25 | 15 | devin (for Leo) | FG-33 | Recorded Leo's answers to decisions 11 (Vercel + supabase.com first) and 12 (two supabase.com projects, the dev one optional per app); no open decisions left. | Leo: "11. Ok; 12. Ok, but make the dev supabase db optional" |
 
 ## Cloud-agent prompts (one per phase)
 
