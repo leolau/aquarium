@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { AccountSecurity } from "@/components/account/AccountSecurity";
+import { AppsSettings } from "@/components/settings/AppsSettings";
 import { EntityGoalSection } from "@/components/settings/EntityGoalSection";
 import { LanguageSwitch } from "@/components/LanguageSwitch";
 import { PushEnroll } from "@/components/push/PushEnroll";
@@ -142,6 +143,8 @@ export function SettingsView({
       <PushEnroll />
 
       <InOutSection canManageMembers={canManageMembers} isOwner={isOwner} />
+
+      {canManageMembers ? <AppsSettings /> : null}
 
       <section data-section="tools" className="mt-6">
         <h2 className="text-sm font-semibold">{t("tools")}</h2>

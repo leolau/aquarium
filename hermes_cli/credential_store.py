@@ -311,6 +311,15 @@ CREDENTIAL_KINDS: Dict[str, KindSpec] = {
         keep_secrets_on_put=True,
         materialize=False,
     ),
+    # Settings -> GitHub token (FG-33 decision 14): app source is pushed to
+    # GitHub with it by hermes_cli/app_source_publish.py. Never materialized:
+    # agent terminals and app processes must not hold it.
+    "github-token": KindSpec(
+        name="github-token",
+        required=("token",),
+        secret_fields=("token",),
+        materialize=False,
+    ),
 }
 
 
