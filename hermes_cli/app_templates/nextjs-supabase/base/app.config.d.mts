@@ -1,0 +1,10 @@
+export declare const APP_NAME: string;
+export declare const APP_SLUG: string;
+export declare const HOSTING: "local" | "external";
+export declare const PROVIDER: string | null;
+export declare const AUTH_MODE: "aquarium" | "supabase" | "none";
+export declare const TEMPLATE_VERSION: string;
+type Env = Record<string, string | undefined>;
+export declare function appMode(env?: Env): "dev" | "prod";
+export declare function basePath(env?: Env): string;
+export declare function standaloneOutput(): boolean;

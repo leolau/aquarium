@@ -1,0 +1,11 @@
+# Secrets never enter git: .env.example lists the names only.
+.env
+.env.*
+!.env.example
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+npm-debug.log*

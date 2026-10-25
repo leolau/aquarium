@@ -1,43 +1,81 @@
-"""In-house tool scaffolder — ``hermes tool new <name>`` (FG-07 / decision D3).
+"""In-house tool scaffolder — ``hermes tool new <name>`` (FG-07 / D3, FG-33 P8-1).
 
 An in-house tool is a **Next.js app in its own Node process** that exposes BOTH
-a **web UI** (for humans) and a **thin MCP server** (for the agent). This module
+a **web UI** (for humans) and an **MCP server** (for the agent). This module
 only *generates the project on disk* and reports a structured
-:class:`ScaffoldResult` (files written + the port + the web URL + the MCP stdio
-transport). Registering the tool in the C2/C3 registry and materializing its MCP
-endpoint into the FG-11 registry is the CLI command's job (``tool_cmd.py``), so
-the pure file generation stays trivially unit-testable and free of any DB / live
--conversation coupling.
+:class:`ScaffoldResult`. Registering the tool in the C2/C3 registry and its MCP
+endpoint in the FG-11 registry is the CLI command's job (``tool_cmd.py``), so
+file generation stays unit-testable and free of DB / live-conversation coupling.
 
-Design choices that keep this cache-safe and dependency-honest:
+Templates are files under ``hermes_cli/app_templates/<template>/`` (shipped as
+package data), rendered by exact ``{{token}}`` substitution only:
 
-* The **thin MCP server** (``mcp/server.mjs``) is written in pure Node with
-  **no npm dependencies** — it speaks line-delimited JSON-RPC over stdio
-  (``initialize`` / ``tools/list`` / ``tools/call``). That means the agent's MCP
-  interface is reachable with just ``node`` on the box (the E2E test drives a
-  real handshake against it) without a Next.js/npm install, and the tool's MCP
-  endpoint is a plain stdio transport the FG-11 registry already understands.
-* The **web UI** is a minimal Next.js App-Router app; its own ``next dev`` /
-  ``next start`` is the tool's independent Node process on its own port. Its
-  root React element carries ``data-component`` per the repo web convention.
-* The tool's **behavioural config** lives in ``tool.config.json`` (and the
-  registry row's ``config_json``) — never a new ``HERMES_*`` env var.
+* ``minimal`` — the FG-07 tool: Next.js UI + dependency-free stdio
+  ``mcp/server.mjs``. Output is byte-identical to the original inline template.
+* ``nextjs-supabase`` — the FG-33 app template: pinned to agent-home's resolved
+  versions, Streamable-HTTP MCP at ``/api/mcp`` (bearer) inside the app's own
+  process, ``/api/health``, a generated ``app/icon.png``,
+  ``supabase/migrations``, and a git repo with ``main`` + ``dev`` branches.
+  ``base/`` holds the shared tree and ``hosting/<local|provider>/`` the files
+  that differ by where the app runs.
+
+Behavioural config lives in ``tool.config.json`` (and the registry row's
+``config_json``) — never a new ``HERMES_*`` env var.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+import shutil
+import struct
+import subprocess
+import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Mapping, Optional, Tuple
 
 #: Deterministic port window for in-house tools (config-overridable, never an
 #: env var). A tool's port is stable across scaffolds of the same name.
 DEFAULT_PORT_BASE = 4300
 DEFAULT_PORT_SPAN = 400
 
+TEMPLATES: Tuple[str, ...] = ("minimal", "nextjs-supabase")
+HOSTINGS: Tuple[str, ...] = ("local", "external")
+#: External hosting providers (= FG-33 ``tool_hosting.provider`` / ``--provider``).
+PROVIDERS: Tuple[str, ...] = ("vercel", "railway", "aws_amplify", "alibaba_fc")
+DEFAULT_PROVIDER = "vercel"
+APP_MODES: Tuple[str, ...] = ("dev", "prod")
+#: Version of the ``nextjs-supabase`` template written into ``tool.config.json``.
+TEMPLATE_VERSION = 1
+
+TEMPLATES_DIR = Path(__file__).resolve().parent / "app_templates"
+
+#: Template files whose names start with ``dot_`` are written as ``.<rest>``
+#: (package data globs skip dotfiles).
+_DOT_PREFIX = "dot_"
 _SLUG = re.compile(r"[^a-z0-9-]+")
+_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+
+#: Secret and runtime names a ``nextjs-supabase`` app reads (names only).
+APP_ENV_NAMES: Tuple[str, ...] = (
+    "DATABASE_URL",
+    "DATABASE_URL_RO",
+    "APP_MCP_TOKEN",
+    "APP_TICKET_KEY",
+    "NEXT_PUBLIC_SUPABASE_URL",
+    "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
+    "SUPABASE_SECRET_KEY",
+    "PORT",
+    "APP_MODE",
+    "APP_PUBLIC_URL",
+    "APP_BASE_PATH",
+)
+
+
+class ScaffoldError(RuntimeError):
+    """The scaffold could not be completed (e.g. ``git`` is missing)."""
 
 
 @dataclass(frozen=True)
@@ -51,9 +89,20 @@ class ScaffoldResult:
     mcp_command: str
     mcp_args: List[str]
     files: List[str] = field(default_factory=list)
+    template: str = "minimal"
+    hosting: str = "local"
+    provider: Optional[str] = None
+    #: ``{"dev": ..., "prod": ...}`` URL prefixes (empty for external apps).
+    base_paths: Dict[str, str] = field(default_factory=dict)
+    #: Loopback MCP URL of the dev instance for HTTP-MCP templates, else None.
+    mcp_url: Optional[str] = None
+    #: The tool.config.json manifest as written.
+    manifest: Dict[str, object] = field(default_factory=dict)
 
     def mcp_transport(self) -> dict:
-        """The stdio MCP transport the FG-11 endpoint registry consumes."""
+        """The MCP transport the FG-11 endpoint registry consumes."""
+        if self.mcp_url:
+            return {"type": "http", "url": self.mcp_url, "auth": "bearer"}
         return {
             "type": "stdio",
             "command": self.mcp_command,
@@ -69,13 +118,240 @@ def resolve_port(name: str, *, base: int = DEFAULT_PORT_BASE,
                  span: int = DEFAULT_PORT_SPAN) -> int:
     """Deterministically map a tool name to a stable port in ``[base, base+span)``.
 
-    Deterministic (not random) so re-scaffolding or restarting a tool reuses the
-    same port, and so the registry's ``web_url`` stays valid across sessions.
+    Deprecated for FG-33 apps, whose ports the root helper allocates; kept as
+    the default for the ``minimal`` template and for callers that pass none.
     """
     digest = 0
     for char in name:
         digest = (digest * 31 + ord(char)) & 0xFFFFFFFF
     return base + (digest % span)
+
+
+def app_base_path(slug: str, mode: str, *, hosting: str = "local") -> str:
+    """URL prefix an app is served under on the main site.
+
+    Local apps: ``/apps/<slug>`` (prod) and ``/apps-dev/<slug>`` (dev), so the
+    two never share a cookie path. External apps own their origin: ``""``.
+    """
+    if mode not in APP_MODES:
+        raise ValueError(f"mode must be one of {APP_MODES}, got {mode!r}")
+    if hosting not in HOSTINGS:
+        raise ValueError(f"hosting must be one of {HOSTINGS}, got {hosting!r}")
+    if not slug or _slug(slug) != slug:
+        raise ValueError(f"Invalid app slug: {slug!r}")
+    if hosting != "local":
+        return ""
+    return f"/apps/{slug}" if mode == "prod" else f"/apps-dev/{slug}"
+
+
+def _check_choices(template: str, hosting: str, provider: Optional[str]) -> Optional[str]:
+    if template not in TEMPLATES:
+        raise ValueError(f"template must be one of {TEMPLATES}, got {template!r}")
+    if hosting not in HOSTINGS:
+        raise ValueError(f"hosting must be one of {HOSTINGS}, got {hosting!r}")
+    if hosting == "local":
+        if provider is not None:
+            raise ValueError("provider applies only to hosting='external'")
+        return None
+    if template == "minimal":
+        raise ValueError("the minimal template supports hosting='local' only")
+    provider = provider or DEFAULT_PROVIDER
+    if provider not in PROVIDERS:
+        raise ValueError(f"provider must be one of {PROVIDERS}, got {provider!r}")
+    return provider
+
+
+def _render(text: str, tokens: Mapping[str, str]) -> str:
+    for key, value in tokens.items():
+        text = text.replace("{{" + key + "}}", value)
+    return text
+
+
+def _template_files(template_dir: Path) -> Dict[str, Path]:
+    """Map output-relative paths to template source files under ``template_dir``."""
+    out: Dict[str, Path] = {}
+    for source in sorted(template_dir.rglob("*")):
+        if not source.is_file() or "__pycache__" in source.parts:
+            continue
+        parts = list(source.relative_to(template_dir).parts)
+        if parts[-1].startswith(_DOT_PREFIX):
+            parts[-1] = "." + parts[-1][len(_DOT_PREFIX):]
+        out["/".join(parts)] = source
+    return out
+
+
+def _template_sources(template: str, hosting: str, provider: Optional[str]) -> Dict[str, Path]:
+    root = TEMPLATES_DIR / template
+    if template == "minimal":
+        return _template_files(root)
+    sources = _template_files(root / "base")
+    sources.update(_template_files(root / "hosting" / (provider or hosting)))
+    return sources
+
+
+# ── generated icon (initials on a name-hashed palette hue) ──────────────────
+
+#: Eight palette hues (degrees); an app's hue is picked by hashing its name.
+ICON_PALETTE_HUES: Tuple[int, ...] = (0, 30, 50, 140, 175, 210, 255, 300)
+
+_GLYPHS: Dict[str, Tuple[str, ...]] = {
+    "A": ("01110", "10001", "10001", "11111", "10001", "10001", "10001"),
+    "B": ("11110", "10001", "10001", "11110", "10001", "10001", "11110"),
+    "C": ("01110", "10001", "10000", "10000", "10000", "10001", "01110"),
+    "D": ("11110", "10001", "10001", "10001", "10001", "10001", "11110"),
+    "E": ("11111", "10000", "10000", "11110", "10000", "10000", "11111"),
+    "F": ("11111", "10000", "10000", "11110", "10000", "10000", "10000"),
+    "G": ("01110", "10001", "10000", "10111", "10001", "10001", "01111"),
+    "H": ("10001", "10001", "10001", "11111", "10001", "10001", "10001"),
+    "I": ("01110", "00100", "00100", "00100", "00100", "00100", "01110"),
+    "J": ("00111", "00010", "00010", "00010", "00010", "10010", "01100"),
+    "K": ("10001", "10010", "10100", "11000", "10100", "10010", "10001"),
+    "L": ("10000", "10000", "10000", "10000", "10000", "10000", "11111"),
+    "M": ("10001", "11011", "10101", "10101", "10001", "10001", "10001"),
+    "N": ("10001", "10001", "11001", "10101", "10011", "10001", "10001"),
+    "O": ("01110", "10001", "10001", "10001", "10001", "10001", "01110"),
+    "P": ("11110", "10001", "10001", "11110", "10000", "10000", "10000"),
+    "Q": ("01110", "10001", "10001", "10001", "10101", "10010", "01101"),
+    "R": ("11110", "10001", "10001", "11110", "10100", "10010", "10001"),
+    "S": ("01111", "10000", "10000", "01110", "00001", "00001", "11110"),
+    "T": ("11111", "00100", "00100", "00100", "00100", "00100", "00100"),
+    "U": ("10001", "10001", "10001", "10001", "10001", "10001", "01110"),
+    "V": ("10001", "10001", "10001", "10001", "10001", "01010", "00100"),
+    "W": ("10001", "10001", "10001", "10101", "10101", "10101", "01010"),
+    "X": ("10001", "10001", "01010", "00100", "01010", "10001", "10001"),
+    "Y": ("10001", "10001", "01010", "00100", "00100", "00100", "00100"),
+    "Z": ("11111", "00001", "00010", "00100", "01000", "10000", "11111"),
+    "0": ("01110", "10001", "10011", "10101", "11001", "10001", "01110"),
+    "1": ("00100", "01100", "00100", "00100", "00100", "00100", "01110"),
+    "2": ("01110", "10001", "00001", "00010", "00100", "01000", "11111"),
+    "3": ("11111", "00010", "00100", "00010", "00001", "10001", "01110"),
+    "4": ("00010", "00110", "01010", "10010", "11111", "00010", "00010"),
+    "5": ("11111", "10000", "11110", "00001", "00001", "10001", "01110"),
+    "6": ("00110", "01000", "10000", "11110", "10001", "10001", "01110"),
+    "7": ("11111", "00001", "00010", "00100", "01000", "01000", "01000"),
+    "8": ("01110", "10001", "10001", "01110", "10001", "10001", "01110"),
+    "9": ("01110", "10001", "10001", "01111", "00001", "00010", "01100"),
+}
+
+
+def app_icon_initials(name: str) -> str:
+    """One or two initials: first letters of the first two words, else the first two characters."""
+    words = [w for w in re.split(r"[^A-Za-z0-9]+", name) if w]
+    if not words:
+        return "?"
+    if len(words) >= 2:
+        return (words[0][0] + words[1][0]).upper()
+    return words[0][:2].upper()
+
+
+def app_icon_hue(name: str) -> int:
+    """The palette hue for ``name`` (deterministic; always in :data:`ICON_PALETTE_HUES`)."""
+    index = hashlib.sha256(name.encode("utf-8")).digest()[0] % len(ICON_PALETTE_HUES)
+    return ICON_PALETTE_HUES[index]
+
+
+def app_icon_rgb(name: str) -> Tuple[int, int, int]:
+    """Background colour of the generated icon: the palette hue at fixed saturation/lightness."""
+    import colorsys
+
+    red, green, blue = colorsys.hls_to_rgb(app_icon_hue(name) / 360.0, 0.42, 0.6)
+    return round(red * 255), round(green * 255), round(blue * 255)
+
+
+def render_app_icon(name: str, size: int = 256) -> bytes:
+    """A deterministic RGBA PNG: initials in white on a rounded square of the app's hue."""
+    background = app_icon_rgb(name) + (255,)
+    clear = (0, 0, 0, 0)
+    white = (255, 255, 255, 255)
+    radius = size * 0.22
+    initials = [c for c in app_icon_initials(name) if c in _GLYPHS]
+    cols = len(initials) * 6 - 1 if initials else 0
+    cell = max(1, int(size * 0.55 / max(cols, 7)))
+    text_w, text_h = cols * cell, 7 * cell
+    left, top = (size - text_w) // 2, (size - text_h) // 2
+
+    def inside_rounded(x: int, y: int) -> bool:
+        cx = min(max(x + 0.5, radius), size - radius)
+        cy = min(max(y + 0.5, radius), size - radius)
+        return (x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2 <= radius ** 2
+
+    def ink(x: int, y: int) -> bool:
+        gx, gy = (x - left) // cell, (y - top) // cell
+        if not (0 <= gx < cols and 0 <= gy < 7) or x < left or y < top:
+            return False
+        glyph_index, column = divmod(gx, 6)
+        if column == 5:
+            return False
+        return _GLYPHS[initials[glyph_index]][gy][column] == "1"
+
+    rows = bytearray()
+    for y in range(size):
+        rows.append(0)
+        for x in range(size):
+            if not inside_rounded(x, y):
+                rows.extend(clear)
+            elif ink(x, y):
+                rows.extend(white)
+            else:
+                rows.extend(background)
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+
+    header = struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header)
+            + chunk(b"IDAT", zlib.compress(bytes(rows), 9)) + chunk(b"IEND", b""))
+
+
+# ── git ──────────────────────────────────────────────────────────────────────
+
+def _git(project: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-c", "user.name=Aquarium scaffold", "-c", "user.email=scaffold@aquarium.invalid",
+         "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", *args],
+        cwd=project, check=True, capture_output=True, text=True, timeout=60,
+    )
+
+
+def _git_init(project: Path, message: str) -> None:
+    """``main`` holds the scaffold commit; ``dev`` (checked out) is where work happens."""
+    if shutil.which("git") is None:
+        raise ScaffoldError("git is required to scaffold this template")
+    try:
+        _git(project, "init", "-q")
+        _git(project, "symbolic-ref", "HEAD", "refs/heads/main")
+        _git(project, "add", "-A")
+        _git(project, "commit", "-q", "-m", message)
+        _git(project, "checkout", "-q", "-b", "dev")
+    except subprocess.CalledProcessError as exc:
+        raise ScaffoldError(f"git init failed: {exc.stderr.strip()}") from exc
+
+
+# ── scaffold ─────────────────────────────────────────────────────────────────
+
+def _app_manifest(name: str, slug: str, *, port: int, web_url: str, hosting: str,
+                  provider: Optional[str], base_paths: Mapping[str, str]) -> Dict[str, object]:
+    return {
+        "name": name,
+        "stack": "nextjs-supabase",
+        "template": "nextjs-supabase",
+        "template_version": TEMPLATE_VERSION,
+        "hosting": hosting,
+        "provider": provider,
+        "port": port,
+        "web_url": web_url,
+        "base_path": dict(base_paths),
+        "health_path": "/api/health",
+        "icon": "app/icon.png",
+        "auth": "aquarium" if hosting == "local" else "supabase",
+        "db": {"migrations": "supabase/migrations"},
+        "mcp": {"transport": "http", "path": "/api/mcp", "auth": "bearer"},
+        "env": list(APP_ENV_NAMES),
+        # Behavioural config lives here (and in the registry row), never in a
+        # HERMES_* env var. Secrets are delivered by the runtime, never written.
+        "config": {},
+    }
 
 
 def scaffold_in_house_tool(
@@ -84,54 +360,76 @@ def scaffold_in_house_tool(
     *,
     port: int | None = None,
     host: str = "127.0.0.1",
+    template: str = "minimal",
+    hosting: str = "local",
+    provider: str | None = None,
 ) -> ScaffoldResult:
-    """Generate a Next.js + thin-MCP in-house tool under ``root/<name>``.
+    """Generate an in-house tool under ``root/<name>`` from ``template``.
 
-    Returns a :class:`ScaffoldResult`. Idempotent per file (overwrites), so a
-    re-scaffold refreshes the template without touching sibling tools.
+    ``hosting`` is ``local`` or ``external``; ``provider`` (external only,
+    default :data:`DEFAULT_PROVIDER`) is one of :data:`PROVIDERS`. ``minimal``
+    is idempotent per file (a re-scaffold refreshes the template);
+    ``nextjs-supabase`` refuses to overwrite an existing app repository.
     """
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", name or ""):
+    if not _NAME.fullmatch(name or ""):
         raise ValueError(f"Invalid tool name: {name!r}")
+    provider = _check_choices(template, hosting, provider)
 
     slug = _slug(name)
     tool_port = port if port is not None else resolve_port(name)
-    web_url = f"http://{host}:{tool_port}"
     project = root / name
-    (project / "app").mkdir(parents=True, exist_ok=True)
-    (project / "mcp").mkdir(parents=True, exist_ok=True)
+    app = template != "minimal"
+    base_paths: Dict[str, str] = {}
+    if app:
+        if (project / ".git").exists():
+            raise FileExistsError(f"{project} is already an app repository")
+        base_paths = {mode: app_base_path(slug, mode, hosting=hosting) for mode in APP_MODES}
+    web_url = f"http://{host}:{tool_port}{base_paths.get('dev', '')}"
+
+    tokens = {
+        "name": name,
+        "slug": slug,
+        "port": str(tool_port),
+        "web_url": web_url,
+        "hosting": hosting,
+        "provider": provider or "",
+        "auth": "aquarium" if hosting == "local" else "supabase",
+        "template_version": str(TEMPLATE_VERSION),
+    }
 
     written: List[str] = []
 
-    def _write(relative: str, content: str) -> None:
+    def _write(relative: str, content: bytes) -> None:
         target = project / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        target.write_bytes(content)
         written.append(relative)
 
-    _write("package.json", _PACKAGE_JSON.format(slug=slug, port=tool_port))
-    _write("next.config.mjs", _NEXT_CONFIG)
-    _write("tsconfig.json", _TSCONFIG)
-    _write("app/layout.tsx", _LAYOUT_TSX.format(name=name))
-    _write("app/page.tsx", _PAGE_TSX.format(name=name, port=tool_port))
-    _write("mcp/server.mjs", _MCP_SERVER_MJS.format(name=name))
-    _write(
-        "tool.config.json",
-        json.dumps(
-            {
-                "name": name,
-                "stack": "nextjs-node",
-                "port": tool_port,
-                "web_url": web_url,
-                "mcp": {"command": "node", "args": ["mcp/server.mjs"]},
-                # Behavioural config lives here (and in the registry row) — never
-                # a HERMES_* env var. Secrets belong in the tool's own .env.
-                "config": {},
-            },
-            indent=2,
+    for relative, source in _template_sources(template, hosting, provider).items():
+        _write(relative, _render(source.read_text(encoding="utf-8"), tokens).encode("utf-8"))
+
+    manifest: Dict[str, object] = {}
+    if app:
+        manifest = _app_manifest(name, slug, port=tool_port, web_url=web_url, hosting=hosting,
+                                 provider=provider, base_paths=base_paths)
+        _write("tool.config.json", (json.dumps(manifest, indent=2) + "\n").encode("utf-8"))
+        _write("app/icon.png", render_app_icon(name))
+        _git_init(project, f"chore: scaffold {name} from the {template} template v{TEMPLATE_VERSION}")
+        return ScaffoldResult(
+            name=name,
+            root=project,
+            port=tool_port,
+            web_url=web_url,
+            mcp_command="",
+            mcp_args=[],
+            files=sorted(written),
+            template=template,
+            hosting=hosting,
+            provider=provider,
+            base_paths=base_paths,
+            mcp_url=f"{web_url}/api/mcp",
+            manifest=manifest,
         )
-        + "\n",
-    )
-    _write("README.md", _README_MD.format(name=name, port=tool_port))
 
     return ScaffoldResult(
         name=name,
@@ -141,190 +439,28 @@ def scaffold_in_house_tool(
         mcp_command="node",
         mcp_args=["mcp/server.mjs"],
         files=sorted(written),
+        manifest=json.loads((project / "tool.config.json").read_text(encoding="utf-8")),
     )
 
 
-_PACKAGE_JSON = """\
-{{
-  "name": "{slug}",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Hermes in-house tool (Next.js web UI + thin MCP server).",
-  "scripts": {{
-    "dev": "next dev -p {port}",
-    "build": "next build",
-    "start": "next start -p {port}",
-    "mcp": "node mcp/server.mjs"
-  }},
-  "dependencies": {{
-    "next": "15.1.6",
-    "react": "19.0.0",
-    "react-dom": "19.0.0"
-  }},
-  "devDependencies": {{
-    "typescript": "5.7.3",
-    "@types/node": "22.10.7",
-    "@types/react": "19.0.7"
-  }}
-}}
-"""
-
-_NEXT_CONFIG = """\
-/** @type {import('next').NextConfig} */
-const nextConfig = { reactStrictMode: true };
-export default nextConfig;
-"""
-
-_TSCONFIG = """\
-{
-  "compilerOptions": {
-    "target": "ES2022",
-    "lib": ["dom", "dom.iterable", "esnext"],
-    "jsx": "preserve",
-    "module": "esnext",
-    "moduleResolution": "bundler",
-    "strict": true,
-    "noEmit": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "plugins": [{ "name": "next" }]
-  },
-  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx"],
-  "exclude": ["node_modules", "mcp"]
-}
-"""
-
-_LAYOUT_TSX = """\
-export const metadata = {{ title: "{name}" }};
-
-export default function RootLayout({{
-  children,
-}}: {{
-  children: React.ReactNode;
-}}) {{
-  return (
-    <html lang="en">
-      <body>{{children}}</body>
-    </html>
-  );
-}}
-"""
-
-# NOTE: the root element carries data-component per the repo web convention.
-_PAGE_TSX = """\
-export default function ToolHome() {{
-  return (
-    <main data-component="ToolHome" style={{{{ padding: "2rem", fontFamily: "sans-serif" }}}}>
-      <h1>{name}</h1>
-      <p>In-house Hermes tool. Web UI on port {port}.</p>
-      <p>The agent talks to this tool through its thin MCP server (mcp/server.mjs).</p>
-    </main>
-  );
-}}
-"""
-
-# Pure-Node, dependency-free thin MCP server: line-delimited JSON-RPC over
-# stdio. Implements initialize / tools/list / tools/call so the agent (and the
-# E2E test) can reach the tool without an npm install.
-_MCP_SERVER_MJS = r"""#!/usr/bin/env node
-// Thin MCP server for the "{name}" in-house tool.
-// Line-delimited JSON-RPC 2.0 over stdio — no npm dependencies.
-"use strict";
-
-const TOOL_NAME = "{name}";
-
-const TOOLS = [
-  {{
-    name: "ping",
-    description: "Health check for the " + TOOL_NAME + " in-house tool.",
-    inputSchema: {{ type: "object", properties: {{}} }},
-  }},
-];
-
-function respond(id, result) {{
-  process.stdout.write(JSON.stringify({{ jsonrpc: "2.0", id, result }}) + "\n");
-}}
-
-function fail(id, code, message) {{
-  process.stdout.write(
-    JSON.stringify({{ jsonrpc: "2.0", id, error: {{ code, message }} }}) + "\n"
-  );
-}}
-
-function handle(msg) {{
-  const {{ id, method, params }} = msg;
-  if (method === "initialize") {{
-    respond(id, {{
-      protocolVersion: "2024-11-05",
-      serverInfo: {{ name: TOOL_NAME, version: "0.1.0" }},
-      capabilities: {{ tools: {{}} }},
-    }});
-  }} else if (method === "tools/list") {{
-    respond(id, {{ tools: TOOLS }});
-  }} else if (method === "tools/call") {{
-    const name = params && params.name;
-    if (name === "ping") {{
-      respond(id, {{
-        content: [{{ type: "text", text: TOOL_NAME + " ok" }}],
-      }});
-    }} else {{
-      fail(id, -32601, "Unknown tool: " + name);
-    }}
-  }} else if (method === "notifications/initialized") {{
-    // notification — no response
-  }} else if (id !== undefined) {{
-    fail(id, -32601, "Unknown method: " + method);
-  }}
-}}
-
-let buffer = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => {{
-  buffer += chunk;
-  let index;
-  while ((index = buffer.indexOf("\n")) >= 0) {{
-    const line = buffer.slice(0, index).trim();
-    buffer = buffer.slice(index + 1);
-    if (!line) continue;
-    try {{
-      handle(JSON.parse(line));
-    }} catch (err) {{
-      fail(null, -32700, "Parse error: " + err.message);
-    }}
-  }}
-}});
-"""
-
-_README_MD = """\
-# {name}
-
-An in-house Hermes tool: a Next.js app running in its own Node process that
-exposes a **web UI** (humans) and a **thin MCP server** (the agent).
-
-## Web UI
-
-```bash
-npm install
-npm run dev        # serves the UI on http://127.0.0.1:{port}
-```
-
-## MCP server (agent interface)
-
-```bash
-npm run mcp        # node mcp/server.mjs — JSON-RPC over stdio, no deps
-```
-
-The Hermes tool registry records this tool's MCP endpoint (via FG-11) so future
-agent sessions can reach it. Configuration lives in `tool.config.json` and the
-registry row's `config_json` — never in a `HERMES_*` env var (secrets only, in
-this tool's own `.env`).
-"""
-
-
 __all__ = [
-    "ScaffoldResult",
-    "scaffold_in_house_tool",
-    "resolve_port",
+    "APP_ENV_NAMES",
+    "APP_MODES",
     "DEFAULT_PORT_BASE",
     "DEFAULT_PORT_SPAN",
+    "DEFAULT_PROVIDER",
+    "HOSTINGS",
+    "ICON_PALETTE_HUES",
+    "PROVIDERS",
+    "TEMPLATES",
+    "TEMPLATE_VERSION",
+    "ScaffoldError",
+    "ScaffoldResult",
+    "app_base_path",
+    "app_icon_hue",
+    "app_icon_initials",
+    "app_icon_rgb",
+    "render_app_icon",
+    "resolve_port",
+    "scaffold_in_house_tool",
 ]

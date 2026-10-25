@@ -1,0 +1,22 @@
+{
+  "name": "{{slug}}",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Hermes in-house tool (Next.js web UI + thin MCP server).",
+  "scripts": {
+    "dev": "next dev -p {{port}}",
+    "build": "next build",
+    "start": "next start -p {{port}}",
+    "mcp": "node mcp/server.mjs"
+  },
+  "dependencies": {
+    "next": "15.1.6",
+    "react": "19.0.0",
+    "react-dom": "19.0.0"
+  },
+  "devDependencies": {
+    "typescript": "5.7.3",
+    "@types/node": "22.10.7",
+    "@types/react": "19.0.7"
+  }
+}

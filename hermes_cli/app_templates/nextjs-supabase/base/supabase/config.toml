@@ -1,0 +1,11 @@
+# Supabase CLI layout, so this app can move to supabase.com unchanged.
+project_id = "{{slug}}"
+
+[db]
+major_version = 15
+
+[db.migrations]
+enabled = true
+
+[realtime]
+enabled = false

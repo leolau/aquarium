@@ -1,0 +1,10 @@
+{
+  "slug": "{{slug}}",
+  "health_path": "/api/health",
+  "mcp_path": "/api/mcp",
+  "start": "node server.js",
+  "requested_limits": {
+    "memory_max_mb": 512,
+    "cpu_quota_percent": 50
+  }
+}
