@@ -59,6 +59,21 @@ core_globs:
   - hermes_cli/task_registry.py
   - hermes_cli/gts.py
 
+  # --- FG-33 vibe-coded apps: main UI, app surfaces, ops, app policy ----
+  # agent-home is Core per D16; app-mcp and deploy/ hold the guards, units,
+  # root helpers and sudoers. The app templates, scaffolder, hosting
+  # adapters, quota policy and runtime decide what every app gets, so the
+  # agent cannot change them. App source under $HERMES_HOME/tools/<slug>
+  # stays Customizable (FG-33 D10).
+  - agent-home/**
+  - app-mcp/**
+  - deploy/**
+  - hermes_cli/app_templates/**
+  - hermes_cli/tool_scaffold.py
+  - hermes_cli/hosting/**
+  - hermes_cli/app_quota.py
+  - hermes_cli/app_runtime.py
+
   # --- The boundary guard itself + this manifest (self-protecting) -------
   - agent/core_boundary.py
   - core_manifest.yaml
