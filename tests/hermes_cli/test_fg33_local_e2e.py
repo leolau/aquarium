@@ -696,3 +696,171 @@ async def test_quota_refusal_stops_build_before_any_helper_call(postgres_dsn, tm
                     "box": 2, "tool": "notes"}
     assert box.calls == []
     assert (await dev.get("notes")).build_state is None
+
+
+# ── decision 14: app source goes to GitHub only when Settings has a token ─────
+
+_GH_TOKEN = "ghp_fake0123456789abcdefTOKEN"
+
+
+class FakeGitHub:
+    """Settings + GitHub API at the ``app_source_publish`` seams; pushes go to
+    bare repos under ``root`` (``file://``) through the real ``git push``."""
+
+    def __init__(self, root: Path, *, token: str | None = _GH_TOKEN, api_status: int = 200) -> None:
+        self.root, self.token, self.api_status = root, token, api_status
+        self.publishes: list[tuple[str, Path]] = []
+        self.api: list[tuple[str, str]] = []
+        self.argv: list[list[str]] = []
+        self.settings_stores: list = []
+
+    def install(self, monkeypatch) -> "FakeGitHub":
+        from hermes_cli import app_source_publish as asp
+
+        real_publish = asp.publish
+
+        async def load_settings(app_store=None):
+            self.settings_stores.append(app_store)
+            return asp.GithubSettings(owner="acme", credential={"owner_user_id": "root", "name": "x"})
+
+        async def resolve_token(settings, cred_store=None):
+            return self.token
+
+        def http(method, url, token, body):
+            assert token == self.token
+            self.api.append((method, url))
+            return self.api_status, {}
+
+        def git(argv, env, timeout):
+            self.argv.append(list(argv))
+            proc = subprocess.run(argv, env=dict(env), capture_output=True, text=True, timeout=timeout)
+            return proc.returncode, proc.stdout, proc.stderr
+
+        def publish(slug, repo_dir, *, settings, token):
+            self.publishes.append((slug, Path(repo_dir)))
+            return real_publish(slug, repo_dir, settings=settings, token=token,
+                                git=git, http=http, web=f"file://{self.root}")
+
+        monkeypatch.setattr(asp, "load_settings", load_settings)
+        monkeypatch.setattr(asp, "resolve_token", resolve_token)
+        monkeypatch.setattr(asp, "publish", publish)
+        return self
+
+    def remote(self, slug: str) -> Path:
+        path = self.root / "acme" / f"aquarium-app-{slug}.git"
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "init", "-q", "--bare", str(path)], check=True)
+        return path
+
+
+async def _new_local_app(postgres_dsn, tmp_path, monkeypatch):
+    await _reset(postgres_dsn)
+    cfg = _config(postgres_dsn)
+    home = tmp_path / "home"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    box = FakeBox(postgres_dsn)
+    monkeypatch.setattr(rt, "_default_runner", box)
+    import hermes_cli.tool_scaffold as tool_scaffold
+    from hermes_cli import tool_cmd
+
+    monkeypatch.setattr(tool_scaffold, "scaffold_in_house_tool", _fake_scaffold)
+    dev = ToolRegistry(get_store("supabase-app", "dev", config=cfg))
+    prod_store = get_store("supabase-app", "prod", config=cfg)
+    await dev.initialize()
+    await ToolRegistry(prod_store).initialize()
+    args = SimpleNamespace(name="notes", template="nextjs-supabase", hosting="local",
+                           provider=None, shared=False, root=str(tmp_path / "tools"))
+    await tool_cmd._cmd_new_app(args, _ALICE, dev, prod_store, "dev")
+    runtime = rt.AppRuntime(rt.HelperClient(box), config=cfg, secrets_dir=home / "auth" / "mcp-secrets")
+    return dev, prod_store, runtime, Path((await dev.get("notes")).repo_path)
+
+
+async def _build_payloads(dsn: str) -> list:
+    rows = await _fetch(dsn, "SELECT c.payload FROM app_prod.changes c JOIN app_prod.approvals a "
+                             "ON a.id = c.approval_ref WHERE a.action = 'hermes tool build notes' "
+                             "ORDER BY a.created_at")
+    return [json.loads(r["payload"]) if isinstance(r["payload"], str) else r["payload"] for r in rows]
+
+
+@pytest.mark.asyncio
+async def test_app_source_is_pushed_after_new_build_and_promote_when_a_token_is_set(
+    postgres_dsn, tmp_path, monkeypatch, no_quota, caplog,
+):
+    gh = FakeGitHub(tmp_path / "gh").install(monkeypatch)
+    gh.remote("notes")
+    caplog.set_level("DEBUG")
+    dev, prod_store, runtime, repo = await _new_local_app(postgres_dsn, tmp_path, monkeypatch)
+    assert gh.publishes == [("notes", repo)]  # after the scaffold commit
+
+    built = await runtime.build(dev, _ALICE, "notes")
+    assert built["source_publish"] == {"published": True, "reason": "token", "repo": "acme/aquarium-app-notes"}
+    assert gh.publishes[-1] == ("notes", repo) and len(gh.publishes) == 2
+    assert (await _build_payloads(postgres_dsn))[-1]["source_publish"]["published"] is True
+    assert gh.settings_stores[-1].mode == "prod"  # Settings are read from the prod store
+
+    # Repeating a push is harmless (idempotent): nothing new, still published.
+    assert (await runtime.build(dev, _ALICE, "notes"))["source_publish"]["published"] is True
+
+    result = await promote_tool(prod_store, "notes", actor="alice", approved=True, runtime=runtime)
+    assert result.source_publish == {"published": True, "reason": "token", "repo": "acme/aquarium-app-notes"}
+    assert len(gh.publishes) == 4 and all(p == ("notes", repo) for p in gh.publishes)
+    remote = gh.remote("notes")
+    sha = _git(repo, "rev-parse", "dev")
+    for ref in ("refs/heads/main", "refs/heads/dev", "refs/tags/v1"):
+        assert subprocess.run(["git", "--git-dir", str(remote), "rev-parse", f"{ref}^{{commit}}"],
+                              capture_output=True, text=True, check=True).stdout.strip() == sha
+
+    # The token is never in a process argv, the repo's stored remotes, a log or a result.
+    assert gh.argv and not any(_GH_TOKEN in a for argv in gh.argv for a in argv)
+    assert _GH_TOKEN not in (repo / ".git" / "config").read_text()
+    assert _GH_TOKEN not in caplog.text
+    assert _GH_TOKEN not in json.dumps(await _build_payloads(postgres_dsn))
+
+
+@pytest.mark.asyncio
+async def test_without_a_token_app_source_stays_local_and_nothing_calls_github(
+    postgres_dsn, tmp_path, monkeypatch, no_quota,
+):
+    gh = FakeGitHub(tmp_path / "gh", token=None).install(monkeypatch)
+    dev, prod_store, runtime, repo = await _new_local_app(postgres_dsn, tmp_path, monkeypatch)
+    built = await runtime.build(dev, _ALICE, "notes")
+    assert built["source_publish"] == {"published": False, "reason": "local-only"}
+    result = await promote_tool(prod_store, "notes", actor="alice", approved=True, runtime=runtime)
+    assert result.source_publish == {"published": False, "reason": "local-only"}
+    assert gh.api == [] and gh.argv == []
+    assert not (tmp_path / "gh").exists()
+    # The local repo is intact and carries the release.
+    assert _git(repo, "rev-parse", "main") == _git(repo, "rev-parse", "v1^{commit}") == built["release_sha"]
+    _git(repo, "fsck", "--no-progress")
+    assert "remote" not in (repo / ".git" / "config").read_text()
+
+
+@pytest.mark.asyncio
+async def test_a_github_failure_never_fails_the_app_operation_and_is_recorded(
+    postgres_dsn, tmp_path, monkeypatch, no_quota,
+):
+    gh = FakeGitHub(tmp_path / "gh", api_status=500).install(monkeypatch)
+    dev, prod_store, runtime, repo = await _new_local_app(postgres_dsn, tmp_path, monkeypatch)
+    built = await runtime.build(dev, _ALICE, "notes")
+    assert built["release_sha"] == _git(repo, "rev-parse", "dev")
+    assert (await dev.get("notes")).build_state == "ready"
+    status = built["source_publish"]
+    assert status["published"] is False and status["reason"] == "error" and "500" in status["error"]
+    assert (await _build_payloads(postgres_dsn))[-1]["source_publish"] == status
+
+    result = await promote_tool(prod_store, "notes", actor="alice", approved=True, runtime=runtime)
+    assert result.source_publish["reason"] == "error"
+    prod = ToolRegistry(prod_store)
+    await prod.initialize()
+    assert (await prod.get("notes")).release_sha == built["release_sha"]
+
+    # Even an unexpected exception from the publisher leaves the build working.
+    from hermes_cli import app_source_publish as asp
+
+    async def broken(*a, **k):
+        raise RuntimeError(f"boom {_GH_TOKEN}")
+
+    monkeypatch.setattr(asp, "publish_app_source", broken)
+    again = await runtime.build(dev, _ALICE, "notes")
+    assert again["source_publish"] == {"published": False, "reason": "error", "error": "publishing failed"}

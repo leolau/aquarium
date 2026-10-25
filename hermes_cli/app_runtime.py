@@ -33,6 +33,7 @@ import asyncio
 import hashlib
 import secrets
 import json
+import logging
 import os
 import re
 import subprocess
@@ -42,6 +43,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from hermes_cli.access import Principal
+
+logger = logging.getLogger(__name__)
 
 HELPER = "/usr/local/sbin/aquarium-app-helper"
 #: Item 2.6's egress helper: ``aquarium-app-egress set`` with ``{"slug", "mode",
@@ -687,10 +690,13 @@ class AppRuntime:
             tool.id, mode=mode, target="dev", source_sha=sha,
             actor_user_id=principal.user_id, ready_state="ready", url=app_path(slug, mode),
         )
+        source_publish = await self.publish_source(tool)
         await self._record(registry, principal, tool, f"hermes tool build {slug}",
-                           {"release_sha": sha, "deployment": deployment})
+                           {"release_sha": sha, "deployment": deployment,
+                            "source_publish": source_publish})
         return {"tool": slug, "mode": mode, "release_sha": sha, "deployment": deployment,
-                "path": app_path(slug, mode), "log": _cap(built.get("output", ""), 4000)}
+                "path": app_path(slug, mode), "log": _cap(built.get("output", ""), 4000),
+                "source_publish": source_publish}
 
     async def control(self, registry: Any, principal: Principal, name: str, verb: str) -> dict:
         """``start|stop|restart`` the instance of the registry's mode."""
@@ -854,6 +860,33 @@ class AppRuntime:
         await self._record(registry, principal, tool, f"hermes tool delete {tool.name}",
                            {"mode": mode, "dropped_database": dropped}, reversible=False)
         return {"tool": tool.name, "mode": mode, "removed": True, "dropped_database": dropped}
+
+    # -- source publishing (decision 14) -------------------------------------
+
+    async def publish_source(self, tool: Any) -> dict:
+        """Push the app's git history to GitHub when Settings has a token.
+
+        Best-effort: never raises, so a GitHub problem never fails the app
+        operation. Without a token (or box git) it is a no-op and the source
+        stays in the local repo. The result says what happened.
+        """
+        from hermes_cli import app_source_publish
+        from hermes_cli.datastore import get_store
+
+        slug = getattr(tool, "name", "")
+        try:
+            out = await app_source_publish.publish_app_source(
+                slug, self.repo_for(tool),
+                app_store=get_store("supabase-app", "prod", config=self.config),
+            )
+        except Exception as exc:  # noqa: BLE001 - publishing is best-effort
+            logger.warning("app %s: source not pushed to GitHub (%s)", slug, type(exc).__name__)
+            return {"published": False, "reason": "error", "error": "publishing failed"}
+        if out.get("published"):
+            logger.info("app %s: source pushed to GitHub %s", slug, out.get("repo"))
+        elif out.get("reason") != "local-only":
+            logger.warning("app %s: source not pushed to GitHub: %s", slug, out.get("error"))
+        return out
 
     # -- promotion (called by tools_registry.promote_tool after C6) ----------
 

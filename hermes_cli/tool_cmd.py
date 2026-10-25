@@ -275,6 +275,7 @@ async def _run(args, action: str) -> None:
             f"  change={result.change_ref}\n"
             f"  promotion={result.promotion_ref}"
         )
+        _print_source_publish(getattr(result, "source_publish", None))
         return
 
 
@@ -403,6 +404,7 @@ async def _cmd_new_app(args, principal, registry, prod_store, mode) -> None:
     )
     if hosting == "local":
         await runtime.record_dev_database(registry, tool, {**provisioned, "port": port})
+    source_publish = await runtime.publish_source(tool)
     await _record_provenance(
         prod_store,
         actor_user_id=principal.user_id,
@@ -411,15 +413,26 @@ async def _cmd_new_app(args, principal, registry, prod_store, mode) -> None:
         mode=tool.mode,
         visibility=tool.visibility,
         payload={"kind": tool.kind, "hosting": hosting, "template": template,
-                 "provider": provider},
+                 "provider": provider, "source_publish": source_publish},
     )
     print(f"Scaffolded {hosting} app {name!r} (template {template}) in mode dev:")
     print(f"  path:    {scaffold.root}")
     if hosting == "local":
         print(f"  preview: {rt.app_path(name, 'dev')}  (after `hermes tool build {name}`)")
         print(f"  MCP:     {endpoint_ref} (HTTP, bearer)")
+    _print_source_publish(source_publish)
     print(f"Registered (status={tool.status}). Build with `hermes tool build {name}`, "
           f"then promote with `hermes tool promote {name}`.")
+
+
+def _print_source_publish(result: Optional[dict]) -> None:
+    """One line on where the app's source went (decision 14); silent when local-only."""
+    if not result or result.get("reason") == "local-only":
+        return
+    if result.get("published"):
+        print(f"  source:  pushed to GitHub {result.get('repo')}")
+    else:
+        print(f"  source:  kept in the local git repo; GitHub push failed: {result.get('error')}")
 
 
 async def _cmd_app(args, action, principal, registry) -> None:
@@ -447,6 +460,7 @@ async def _cmd_app(args, action, principal, registry) -> None:
             result = await runtime.build(registry, principal, args.name)
             print(f"Built {result['tool']!r} at {result['release_sha'][:12]}; "
                   f"dev preview: {result['path']}")
+            _print_source_publish(result.get("source_publish"))
         elif action in ("start", "stop", "restart"):
             result = await runtime.control(registry, principal, args.name, action)
             print(f"{result['tool']} ({result['mode']}): {result['runtime_state']}")
