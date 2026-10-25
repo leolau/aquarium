@@ -91,8 +91,9 @@ describe("Approve N cards & resume work", () => {
     expect(new Set(keys).size).toBe(3);
     // Only the last request refreshes the page.
     expect(router.refresh).toHaveBeenCalledTimes(1);
-    // Confirmed: the button can't be pressed again.
-    fireEvent.click(screen.getByRole("button", { name: "Done ✓" }));
+    // Confirmed: the button can't be pressed again. It stays busy until the
+    // refresh transition lands, which can render after the status line.
+    fireEvent.click(await screen.findByRole("button", { name: "Done ✓" }, { timeout: 5000 }));
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
