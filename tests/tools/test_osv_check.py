@@ -199,3 +199,130 @@ class TestLiveOsvQuery:
             assert len(result) == 0
         except Exception:
             pytest.skip("OSV API unreachable")
+
+
+# ---------------------------------------------------------------------------
+# Fail-closed lockfile mode (FG-33 local apps)
+# ---------------------------------------------------------------------------
+
+from tools import osv_check  # noqa: E402
+
+
+def _pkg(name, version="1.0.0", **kw):
+    entry = {"version": version, "resolved": f"https://registry.npmjs.org/{name}/-/{name}-{version}.tgz",
+             "integrity": "sha512-AAAA"}
+    entry.update(kw)
+    return entry
+
+
+def _lock(**pkgs):
+    return {"lockfileVersion": 3, "packages": {"": {"name": "app"},
+                                               **{f"node_modules/{k}": v for k, v in pkgs.items()}}}
+
+
+GOOD_LOCK = _lock(next=_pkg("next", "15.0.0"), **{"@types/node": _pkg("@types/node", "22.0.0")})
+
+
+class TestCheckLockfile:
+    def _osv(self, answer):
+        calls = []
+
+        def fake(queries):
+            calls.append(queries)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer(queries)
+
+        return patch("tools.osv_check._query_osv_batch", side_effect=fake), calls
+
+    def test_clean_lockfile_passes(self, tmp_path):
+        path = tmp_path / "package-lock.json"
+        path.write_text(json.dumps(GOOD_LOCK))
+        p, calls = self._osv(lambda qs: [{} for _ in qs])
+        with p:
+            verdict = osv_check.check_lockfile(path)
+        assert verdict.ok and verdict.packages == 2 and verdict.reasons == []
+        assert sorted(q["package"]["name"] for q in calls[0]) == ["@types/node", "next"]
+        assert all(q["package"]["ecosystem"] == "npm" for q in calls[0])
+
+    def test_malware_anywhere_in_the_tree_refuses(self):
+        p, _ = self._osv(lambda qs: [{"vulns": [{"id": "MAL-2025-9"}]} if q["package"]["name"] == "next" else {}
+                                     for q in qs])
+        with p:
+            verdict = osv_check.check_lockfile(GOOD_LOCK)
+        assert not verdict.ok and verdict.malware == [{"package": "next", "version": "15.0.0", "ids": ["MAL-2025-9"]}]
+
+    def test_regular_cves_do_not_refuse(self):
+        p, _ = self._osv(lambda qs: [{"vulns": [{"id": "GHSA-1"}, {"id": "CVE-2024-2"}]} for _ in qs])
+        with p:
+            assert osv_check.check_lockfile(GOOD_LOCK).ok
+
+    @pytest.mark.parametrize("answer", [
+        Exception("connection refused"),
+        TimeoutError("slow"),
+        lambda qs: None,
+        lambda qs: [{}],
+        lambda qs: [{"next_page_token": "t"} for _ in qs],
+        lambda qs: ["x" for _ in qs],
+    ])
+    def test_osv_trouble_fails_closed(self, answer):
+        p, _ = self._osv(answer)
+        with p:
+            verdict = osv_check.check_lockfile(GOOD_LOCK)
+        assert not verdict.ok and verdict.reasons
+
+    @pytest.mark.parametrize("lock", [
+        {"lockfileVersion": 1, "dependencies": {}},
+        {"lockfileVersion": 3},
+        _lock(x=_pkg("x", resolved="git+ssh://git@github.com/x/x.git")),
+        _lock(x=_pkg("x", resolved="https://evil.example.com/x.tgz")),
+        _lock(x=_pkg("x", integrity=None)),
+        _lock(x=_pkg("x", integrity="sha1-abc")),
+        _lock(x={"link": True, "resolved": "../x"}),
+        _lock(x=_pkg("x", version="")),
+        [],
+    ])
+    def test_unpinned_or_malformed_lockfiles_refuse_without_asking_osv(self, lock):
+        p, calls = self._osv(lambda qs: [{} for _ in qs])
+        with p:
+            verdict = osv_check.check_lockfile(lock)
+        assert not verdict.ok and calls == []
+
+    def test_missing_unreadable_and_oversized_lockfiles_refuse(self, tmp_path):
+        assert not osv_check.check_lockfile(tmp_path / "package-lock.json").ok
+        bad = tmp_path / "bad.json"
+        bad.write_text("{not json")
+        assert not osv_check.check_lockfile(bad).ok
+        big = tmp_path / "big.json"
+        big.write_text(json.dumps(GOOD_LOCK))
+        assert not osv_check.check_lockfile(big, max_bytes=10).ok
+
+    def test_package_ceiling(self):
+        lock = _lock(**{f"p{i}": _pkg(f"p{i}") for i in range(4)})
+        p, _ = self._osv(lambda qs: [{} for _ in qs])
+        with p:
+            assert not osv_check.check_lockfile(lock, max_packages=3).ok
+            assert osv_check.check_lockfile(lock, max_packages=4).ok
+
+    def test_large_trees_are_batched(self):
+        lock = _lock(**{f"p{i}": _pkg(f"p{i}") for i in range(2500)})
+        p, calls = self._osv(lambda qs: [{} for _ in qs])
+        with p:
+            assert osv_check.check_lockfile(lock).ok
+        assert [len(c) for c in calls] == [1000, 1000, 500]
+
+    def test_cli_exit_codes(self, tmp_path, capsys):
+        path = tmp_path / "package-lock.json"
+        path.write_text(json.dumps(GOOD_LOCK))
+        p, _ = self._osv(lambda qs: [{} for _ in qs])
+        with p:
+            assert osv_check.main([str(path)]) == 0
+        p, _ = self._osv(Exception("offline"))
+        with p:
+            assert osv_check.main([str(path)]) == 1
+        assert osv_check.main([]) == 2
+
+    def test_mcp_package_check_stays_fail_open(self):
+        """The npx/uvx launch check keeps its documented fail-open behaviour."""
+        with patch("tools.osv_check._query_osv", side_effect=ConnectionError("offline")):
+            assert check_package_for_malware("npx", ["-y", "some-package"]) is None
