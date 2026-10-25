@@ -34,6 +34,7 @@ def build_session_agent(
     gateway_session_key: Optional[str] = None,
     platform: str = "api_server",
     principal: Any = None,
+    trusted_local: bool = False,
 ) -> Any:
     """Create an :class:`AIAgent` for a persisted session.
 
@@ -46,6 +47,8 @@ def build_session_agent(
 
     *principal* is the logged-in person the turn runs for (C1). Without it the
     agent has no identity and its memory/RAG reads fall back to the owner.
+    *trusted_local* marks a caller that is the operator itself; with neither,
+    the agent runs with the unresolved role.
     """
     from run_agent import AIAgent
     from gateway.run import (
@@ -108,6 +111,7 @@ def build_session_agent(
         fallback_model=fallback_model,
         reasoning_config=reasoning_config,
         gateway_session_key=gateway_session_key,
+        trusted_local=trusted_local,
         **identity,
     )
 
@@ -128,6 +132,7 @@ def run_session_turn_sync(
     platform: str = "api_server",
     on_agent_ready=None,
     principal: Any = None,
+    trusted_local: bool = False,
 ) -> Tuple[dict, dict]:
     """Run one synchronous one-brain turn for a persisted session.
 
@@ -153,6 +158,7 @@ def run_session_turn_sync(
         gateway_session_key=gateway_session_key,
         platform=platform,
         principal=principal,
+        trusted_local=trusted_local,
     )
     t1 = time.monotonic()
     if on_agent_ready is not None:

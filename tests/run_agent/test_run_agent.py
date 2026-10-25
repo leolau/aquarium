@@ -111,6 +111,7 @@ def agent():
             quiet_mode=True,
             skip_context_files=True,
             skip_memory=True,
+            trusted_local=True,
         )
         a.client = MagicMock()
         return a
@@ -1040,6 +1041,7 @@ class TestInit:
                 quiet_mode=True,
                 skip_context_files=True,
                 skip_memory=True,
+                trusted_local=True,
             )
             assert a.valid_tool_names == {"web_search", "terminal"}
 
@@ -1323,6 +1325,7 @@ class TestBuildSystemPrompt:
                 base_url="https://openrouter.ai/api/v1",
                 quiet_mode=True,
                 skip_context_files=True,
+                trusted_local=True,
                 skip_memory=True,
             )
 

@@ -32,6 +32,7 @@ def _make_agent(session_db, *, platform: str):
             session_db=session_db,
             session_id=f"{platform}-session",
             platform=platform,
+            trusted_local=True,
         )
     agent.client = MagicMock()
     agent.client.chat.completions.create.return_value = _mock_response(

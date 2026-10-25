@@ -484,7 +484,7 @@ class AIAgent:
         gateway_session_key: str = None,
         internal_user_id: Optional[str] = None,
         internal_user_role: Optional[str] = None,
-        trusted_local: bool = True,
+        trusted_local: bool = False,
         session_task: Optional[str] = None,
         skip_context_files: bool = False,
         load_soul_identity: bool = False,
@@ -5944,7 +5944,8 @@ def main(
             disabled_toolsets=disabled_toolsets_list,
             save_trajectories=save_trajectories,
             verbose_logging=verbose,
-            log_prefix_chars=log_prefix_chars
+            log_prefix_chars=log_prefix_chars,
+            trusted_local=True,
         )
     except RuntimeError as e:
         print(f"❌ Failed to initialize agent: {e}")

@@ -3111,6 +3111,16 @@ class GatewaySlashCommandsMixin:
             from run_agent import AIAgent
             from agent.manual_compression_feedback import summarize_manual_compression
             from agent.model_metadata import estimate_request_tokens_rough
+            from gateway.run import PRINCIPAL_UNAVAILABLE_REPLY, PrincipalResolutionUnavailable
+
+            try:
+                identity = await self._enrich_channel_source_identity(
+                    dataclasses.replace(source)
+                )
+            except PrincipalResolutionUnavailable:
+                return PRINCIPAL_UNAVAILABLE_REPLY
+            if identity is None:
+                return PRINCIPAL_UNAVAILABLE_REPLY
 
             session_key = self._session_key_for_source(source)
             model, runtime_kwargs = self._resolve_session_agent_runtime(
@@ -3147,6 +3157,9 @@ class GatewaySlashCommandsMixin:
                 skip_memory=True,
                 enabled_toolsets=["memory"],
                 session_id=session_entry.session_id,
+                internal_user_id=identity.internal_user_id,
+                internal_user_role=identity.internal_user_role,
+                trusted_local=self._get_principal_store() is None,
                 session_db=getattr(self._session_db, "_db", self._session_db),
             )
             try:

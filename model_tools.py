@@ -923,7 +923,7 @@ def handle_function_call(
     session_id: Optional[str] = None,
     principal_user_id: Optional[str] = None,
     principal_role: Optional[str] = None,
-    principal_trusted_local: bool = True,
+    principal_trusted_local: bool = False,
     turn_id: Optional[str] = None,
     api_request_id: Optional[str] = None,
     user_task: Optional[str] = None,

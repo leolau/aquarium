@@ -257,7 +257,7 @@ def init_agent(
     gateway_session_key: str = None,
     internal_user_id: Optional[str] = None,
     internal_user_role: Optional[str] = None,
-    trusted_local: bool = True,
+    trusted_local: bool = False,
     session_task: Optional[str] = None,
     skip_context_files: bool = False,
     load_soul_identity: bool = False,

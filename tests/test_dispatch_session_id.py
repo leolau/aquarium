@@ -42,6 +42,7 @@ class TestSessionIdForwarding:
                 {"code": "print(1)"},
                 task_id="t1",
                 session_id="sess-xyz",
+                principal_trusted_local=True,
                 skip_pre_tool_call_hook=True,
             )
         assert captured.get("session_id") == "sess-xyz"

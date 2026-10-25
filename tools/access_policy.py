@@ -219,6 +219,12 @@ def current_principal() -> Tuple[Optional[str], Optional[str]]:
     return user_id, role
 
 
+def current_principal_binding() -> Tuple[Optional[str], Optional[str], bool]:
+    """``(user_id, role, trusted_local)`` bound for the current tool call."""
+    user_id, role, trusted_local, _key = _principal.get()
+    return user_id, role, trusted_local
+
+
 def current_files_root() -> Optional[Path]:
     user_id, role, trusted_local, session_key = _principal.get()
     return files_root(user_id, role, trusted_local=trusted_local, session_key=session_key)

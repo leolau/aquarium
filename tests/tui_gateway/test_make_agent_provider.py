@@ -58,6 +58,7 @@ def test_make_agent_passes_resolved_provider():
         assert call_kwargs.kwargs["base_url"] == "https://api.anthropic.com"
         assert call_kwargs.kwargs["api_key"] == "sk-test-key"
         assert call_kwargs.kwargs["api_mode"] == "anthropic_messages"
+        assert call_kwargs.kwargs["trusted_local"] is True
 
 
 def test_make_agent_forwards_provider_routing():
