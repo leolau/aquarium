@@ -136,6 +136,7 @@ function LimitsForm({ view, saved, onSaved, onEdit }: FormProps<LimitsView>) {
     });
   return (
     <>
+      <p className="text-xs text-[var(--color-muted)]" data-testid="apps-limits-restart-note">{t("limitsRestartNote")}</p>
       {TIERS.map((tier) => {
         const editable = view.editable[tier];
         return (

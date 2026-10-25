@@ -903,10 +903,13 @@ async def promote_tool(
             from hermes_cli.app_runtime import AppRuntime
 
             await connection.execute(approval_sql, approval_ref, f"tool:{name}", actor)
+            from hermes_cli.app_runtime import unit_limits
+
             has_prod_db = await _has_prod_app_database(connection, prod, name)
+            limits = await unit_limits(tool)
             plan = await asyncio.to_thread(
                 (runtime or AppRuntime()).promote_local,
-                tool, approval_ref=approval_ref, has_prod_db=has_prod_db,
+                tool, approval_ref=approval_ref, has_prod_db=has_prod_db, limits=limits,
             )
             overrides = {"release_sha": plan.release_sha, "build_state": "ready"}
             promoted_values = [

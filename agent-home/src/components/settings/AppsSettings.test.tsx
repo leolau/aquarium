@@ -57,6 +57,7 @@ describe("AppsSettings", () => {
     expect(running.value).toBe("2");
     expect(screen.getByText("Not set")).toBeTruthy();
     expect(screen.getByText("Source stays in local git only.")).toBeTruthy();
+    expect(screen.getByTestId("apps-limits-restart-note").textContent).toMatch(/next time it starts or restarts/);
   });
 
   it("saves one tier through the project action, sending only that tier", async () => {

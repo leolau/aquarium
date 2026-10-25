@@ -514,14 +514,29 @@ def reserved_bytes():
     return quota_section("box").get("reserved_mb", DEFAULT_RESERVED_MB) * 1024 ** 2
 
 
-def app_limits():
-    """MemoryHigh/MemoryMax (MB) and CPUQuota (%) of every app instance:
+def check_owner_limits(requested):
+    """The ``limits`` field of start/restart: the app owner's tier and per-person
+    values, resolved by hermes_cli/app_runtime.py ``unit_limits`` (only hermes may
+    run this helper). Wrong shapes are refused; out-of-range values are skipped
+    in app_limits like the file layers'."""
+    if requested is None:
+        return {}
+    if not isinstance(requested, dict) or set(requested) - set(APP_LIMIT_BOUNDS):
+        raise InputError("limits must be an object of " + ", ".join(sorted(APP_LIMIT_BOUNDS)))
+    for key, value in requested.items():
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise InputError(f"limits.{key} must be an integer")
+    return requested
+
+
+def app_limits(owner=None):
+    """MemoryHigh/MemoryMax (MB) and CPUQuota (%) of one app instance:
     DEFAULT_APP_LIMITS, then app-quotas.yaml ``per_app``, then the Settings ->
     App limits member tier, the same base tier as hermes_cli/app_quota.py
-    ``load_policy().section("per_app")``. The helper has no trusted record of an
-    app's owner, so admin-tier and per-member overrides do not reach systemd.
-    Files that are not root-owned, and values outside APP_LIMIT_BOUNDS, are
-    skipped (the earlier value stays), as app_quota does."""
+    ``load_policy().section("per_app")``, then ``owner``: the app owner's admin
+    tier and per-person overrides (check_owner_limits). Files that are not
+    root-owned, and values outside APP_LIMIT_BOUNDS, are skipped (the earlier
+    value stays), as app_quota does."""
     limits = dict(DEFAULT_APP_LIMITS)
     layers = [quota_section("per_app")]
     try:
@@ -530,6 +545,7 @@ def app_limits():
         member = None
     if isinstance(member, dict) and isinstance(member.get("per_app"), dict):
         layers.append(member["per_app"])
+    layers.append(owner or {})
     for layer in layers:
         for key, (low, high) in APP_LIMIT_BOUNDS.items():
             value = layer.get(key)
@@ -713,8 +729,15 @@ def write_instance_dropin(conf, p):
     return release
 
 
+def node_heap_mb(limits):
+    """Node's --max-old-space-size: half of MemoryMax, leaving the rest for
+    buffers, native code and Next.js workers (512M -> 256, the unit's fallback)."""
+    return max(64, limits["memory_max_mb"] // 2)
+
+
 def write_limits_dropin(p, limits):
-    """Root-owned caps overriding the unit's fallback MemoryHigh/MemoryMax/CPUQuota."""
+    """Root-owned caps overriding the unit's fallback MemoryHigh/MemoryMax/CPUQuota
+    and Node heap (a later Environment= of the same variable wins)."""
     text = "\n".join([
         "# Written by aquarium-app-helper from the app limits policy; do not edit "
         "(rewritten on every start).",
@@ -722,6 +745,7 @@ def write_limits_dropin(p, limits):
         f"MemoryHigh={limits['memory_high_mb']}M",
         f"MemoryMax={limits['memory_max_mb']}M",
         f"CPUQuota={limits['cpu_quota_pct']}%",
+        f"Environment=NODE_OPTIONS=--max-old-space-size={node_heap_mb(limits)}",
     ]) + "\n"
     os.makedirs(p["dropin_dir"], mode=0o755, exist_ok=True)
     write_atomic(p["limits_dropin"], text, 0o644)
@@ -961,10 +985,10 @@ def _run_build(conf, p, slug, sha, rel_dir):
             systemctl("daemon-reload", check=False)
 
 
-def _start(conf, slug, mode, restart=False):
+def _start(conf, slug, mode, restart=False, owner=None):
     p, _ = require_allocated(conf, slug, mode)
     was_active = show(p["unit"], "ActiveState").get("ActiveState") == "active"
-    limits = app_limits()
+    limits = app_limits(owner)
     if not was_active:
         admit(limits["memory_high_mb"] * 1024 ** 2, "start")
     write_instance_dropin(conf, p)
@@ -990,15 +1014,17 @@ def start_idle_timer(p):
 
 
 def cmd_start(conf, spec):
-    spec_keys(spec, ())
+    spec_keys(spec, ("limits",))
+    owner = check_owner_limits(spec.get("limits"))
     with flock(f"{spec['slug']}.lock"):
-        return _start(conf, spec["slug"], spec["mode"])
+        return _start(conf, spec["slug"], spec["mode"], owner=owner)
 
 
 def cmd_restart(conf, spec):
-    spec_keys(spec, ())
+    spec_keys(spec, ("limits",))
+    owner = check_owner_limits(spec.get("limits"))
     with flock(f"{spec['slug']}.lock"):
-        return _start(conf, spec["slug"], spec["mode"], restart=True)
+        return _start(conf, spec["slug"], spec["mode"], restart=True, owner=owner)
 
 
 def _stop(conf, slug, mode):

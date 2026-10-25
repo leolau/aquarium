@@ -741,3 +741,39 @@ def test_session_cookie_regexes_strip_both_names_and_nothing_else(h):
 def test_app_csp_never_allows_eval(h, mode):
     csp = h.app_csp(f"/apps{'-dev' if mode == 'dev' else ''}/demo", mode)
     assert "'unsafe-eval'" not in csp and "script-src https://{host}/apps" in csp
+
+
+def _node_heap(h, inst="demo-dev"):
+    text = (h.W / f"etc/systemd/system/aquarium-app@{inst}.service.d/50-limits.conf").read_text()
+    return re.search(r"^Environment=NODE_OPTIONS=--max-old-space-size=(\d+)$", text, re.M).group(1)
+
+
+def test_owner_limits_from_app_runtime_override_the_member_tier(h):
+    c = _started(h)
+    h.cmd_configure(c, {"limits": {"member": {"per_app": {"cpu_quota_pct": 80}}}})
+    h.cmd_restart(c, {"slug": "demo", "mode": "dev",
+                      "limits": {"memory_high_mb": 768, "memory_max_mb": 1024, "cpu_quota_pct": 150}})
+    assert _limits_dropin(h) == {"MemoryHigh": "768M", "MemoryMax": "1024M", "CPUQuota": "150%"}
+    assert _node_heap(h) == "512"
+    h.cmd_restart(c, {"slug": "demo", "mode": "dev", "limits": {"memory_max_mb": 4096}})
+    # out of APP_LIMIT_BOUNDS: skipped, the member tier and defaults stay
+    assert _limits_dropin(h) == {"MemoryHigh": "384M", "MemoryMax": "512M", "CPUQuota": "80%"}
+
+
+def test_node_heap_follows_memory_max_and_defaults_to_the_unit_fallback(h):
+    c = _started(h)
+    assert _node_heap(h) == "256"
+    unit = (Path(__file__).resolve().parents[2] / "deploy/aquarium-app@.service").read_text()
+    assert "--max-old-space-size=256" in unit and h.DEFAULT_APP_LIMITS["memory_max_mb"] == 512
+    h.cmd_start(c, {"slug": "demo", "mode": "dev", "limits": {"memory_max_mb": 128}})
+    assert _node_heap(h) == "64"
+    assert all(h.node_heap_mb({"memory_max_mb": m}) < m for m in range(128, 3073, 64))
+
+
+@pytest.mark.parametrize("limits", [
+    [], {"disk_mb": 10}, {"cpu_quota_pct": "100"}, {"memory_max_mb": True}, {"memory_max_mb": 1.5},
+])
+def test_start_refuses_malformed_owner_limits(h, limits):
+    c = _started(h)
+    with pytest.raises(h.InputError):
+        h.cmd_start(c, {"slug": "demo", "mode": "dev", "limits": limits})

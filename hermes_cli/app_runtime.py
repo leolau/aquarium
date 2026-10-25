@@ -63,7 +63,7 @@ DB_VERBS = ("create", "migrate", "status", "suspend", "resume", "drop", "archive
 #: Optional stdin fields per helper verb, besides ``slug``/``mode`` (the helper
 #: refuses any other field).
 HELPER_FIELDS: Dict[str, Tuple[str, ...]] = {
-    "allocate": (), "start": (), "stop": (), "restart": (), "route": (), "unroute": (),
+    "allocate": (), "start": ("limits",), "stop": (), "restart": ("limits",), "route": (), "unroute": (),
     "status": (), "build": ("sha", "approval_ref"), "logs": ("lines", "build"),
     "remove": ("confirm",), "set-secret": ("name", "value", "delete"),
 }
@@ -281,6 +281,12 @@ class HelperClient:
             raise ValueError(f"Invalid secret name: {spec.get('name')!r}")
         if "lines" in spec:
             spec["lines"] = max(1, min(int(spec["lines"]), MAX_LOG_LINES))
+        if "limits" in spec:
+            limits = spec["limits"]
+            if not isinstance(limits, dict) or set(limits) - set(UNIT_LIMIT_KEYS) or not all(
+                isinstance(v, int) and not isinstance(v, bool) for v in limits.values()
+            ):
+                raise ValueError(f"Invalid unit limits: {limits!r}")
         return json.dumps(spec, sort_keys=True)
 
     def db_argv(self, verb: str, slug: str, mode: str) -> List[str]:
@@ -484,6 +490,43 @@ async def measure_usage(registry: Any, principal: Principal) -> Tuple[Any, Any]:
     return usage, box
 
 
+#: Per-app limits the helper writes into each app's systemd unit (50-limits.conf).
+UNIT_LIMIT_KEYS = ("memory_high_mb", "memory_max_mb", "cpu_quota_pct")
+
+
+async def unit_limits(tool: Any) -> Optional[Dict[str, int]]:
+    """The app owner's per-app memory/CPU limits, for the helper's ``start``/``restart``.
+
+    ``app_quota`` resolves them from the owner's role tier (member or admin) and
+    their per-person overrides; the root helper can read neither, so it gets them
+    here (only ``hermes`` may run it) and still bounds-checks them. ``None`` (no
+    owner, unlimited, or the stores are unreachable) leaves the helper's own
+    defaults → app-quotas.yaml → Settings member tier.
+    """
+    owner_id = getattr(tool, "owner_user_id", None)
+    if not owner_id:
+        return None
+    try:
+        from hermes_cli import app_quota
+        from hermes_cli.access import PrincipalStore
+        from hermes_cli.config import load_config
+        from hermes_cli.datastore import get_store
+
+        store = get_store("supabase-app", "prod", config=load_config() or {})
+        owner = await PrincipalStore(store).get(owner_id)
+        if owner is None or not owner.active:
+            return None
+        per_app = (await app_quota.QuotaStore(store).limits_for(owner)).per_app
+    except Exception as exc:  # noqa: BLE001 - the helper's own policy still applies
+        logger.warning("app limits for %s: owner tier unavailable (%s)", getattr(tool, "name", "?"), exc)
+        return None
+    limits = {
+        key: per_app[key] for key in UNIT_LIMIT_KEYS
+        if isinstance(per_app.get(key), int) and not isinstance(per_app.get(key), bool)
+    }
+    return limits or None
+
+
 async def admit(registry: Any, principal: Principal, action: str, **context: Any) -> None:
     usage, box = await measure_usage(registry, principal)
     check_admission(principal, action, usage=usage, box=box, **context)
@@ -682,7 +725,7 @@ class AppRuntime:
             migrations = await asyncio.to_thread(self.migrations, self.repo_for(tool), sha)
             await self._db("migrate", slug, mode, migrations=migrations)
             built = await self._call("build", slug=slug, mode=mode, sha=sha)
-            started = await self._call("restart", slug=slug, mode=mode)
+            started = await self._call("restart", slug=slug, mode=mode, limits=await unit_limits(tool))
             await self._call("route", slug=slug, mode=mode)
         except HelperError as exc:
             await store.set_tool_build(tool.id, "failed")
@@ -901,7 +944,9 @@ class AppRuntime:
 
     # -- promotion (called by tools_registry.promote_tool after C6) ----------
 
-    def promote_local(self, tool: Any, *, approval_ref: str, has_prod_db: bool) -> LocalPromotion:
+    def promote_local(
+        self, tool: Any, *, approval_ref: str, has_prod_db: bool, limits: Optional[Dict[str, int]] = None,
+    ) -> LocalPromotion:
         """FG-33 §3.7 steps 1-3: tag ``vN`` on ``main``, migrate prod, build, flip, restart.
 
         ``approval_ref`` must already be committed as an approved row, because
@@ -930,7 +975,7 @@ class AppRuntime:
                                   migrations=self.migrations(repo, sha))
         port, ref = self.allocate(slug, "prod")
         self.helper.call("build", slug=slug, mode="prod", sha=sha, approval_ref=approval_ref)
-        self.helper.call("restart", slug=slug, mode="prod")
+        self.helper.call("restart", slug=slug, mode="prod", limits=limits)
         self.helper.call("route", slug=slug, mode="prod")
 
         _git(repo, "update-ref", "refs/heads/main", sha)
