@@ -11,7 +11,6 @@ the numpy reference so the move into SQL cannot change the map.
 from __future__ import annotations
 
 import asyncpg
-import numpy as np
 import pytest
 
 from hermes_cli import memory_projection
@@ -28,6 +27,13 @@ from tests.hermes_cli.test_memory_explorer_e2e import (  # noqa: F401
     postgres_dsn,
 )
 from tests.hermes_cli.test_memory_explorer_e2e import ALICE
+from tools.lazy_deps import ensure
+
+# numpy is not installed by the CI extras (it ships only in the voice extra);
+# fit_projection installs it on demand. Do the same before importing it here,
+# so this module does not depend on another test having run the fit first.
+ensure("memory.projection.pca", prompt=False)
+import numpy as np  # noqa: E402
 
 _DIM = 256
 
