@@ -13,6 +13,7 @@ const KIND_LABEL: Record<ToolKind, string> = {
   in_house: "Built by the agent",
   remote: "External service",
   builtin: "Comes with Aquarium",
+  external: "Hosted elsewhere",
 };
 
 function ToolRow({ tool }: { tool: Tool }) {

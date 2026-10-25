@@ -281,9 +281,15 @@ export interface OnboardingReadinessResponse {
 }
 
 /** A registry tool's provenance kind (mirror of the Python tools registry). */
-export type ToolKind = "in_house" | "remote" | "builtin";
+export type ToolKind = "in_house" | "remote" | "builtin" | "external";
 /** A registry tool's enable status. */
 export type ToolStatus = "enabled" | "disabled";
+/** Where a vibe-coded app runs (FG-33); null for legacy tools. */
+export type ToolHosting = "local" | "external";
+/** Coarse build state for an app tile (FG-33). */
+export type ToolBuildState = "draft" | "building" | "ready" | "failed";
+/** Where an app tile's icon came from (FG-33). */
+export type ToolIconSource = "generated" | "uploaded" | "favicon";
 
 /**
  * A FG-07 tool-registry entry (mirror of `tools_registry.Tool.as_dict`): a
@@ -303,6 +309,26 @@ export interface Tool {
   mcp_endpoint_ref: string | null;
   web_url: string | null;
   config_json: Record<string, unknown>;
+  /* FG-33 app columns: optional so an older backend still type-checks. */
+  hosting?: ToolHosting | null;
+  display_name?: string | null;
+  description?: string | null;
+  icon?: string | null;
+  icon_color?: string | null;
+  icon_asset_id?: string | null;
+  icon_source?: ToolIconSource | null;
+  /** Browser-facing https URL; `web_url` stays the internal probe address. */
+  public_url?: string | null;
+  dashboard_url?: string | null;
+  repo_path?: string | null;
+  release_sha?: string | null;
+  project_slug?: string | null;
+  build_state?: ToolBuildState | null;
+  always_on?: boolean | null;
+  limits_json?: Record<string, unknown> | null;
+  secret_names?: string[] | null;
+  /** null = default by hosting (`internal-coder` / `external-coder`). */
+  coder_profile?: string | null;
 }
 
 /** The C2-scoped tool registry from `/api/tools` for a datastore mode. */
