@@ -83,6 +83,32 @@ _RRF_K = 60
 DEFAULT_MIN_SCORE = 0.35
 
 
+#: ``hnsw.ef_search`` for the vector arm: the candidate list must be at least
+#: the arm's ``LIMIT``, with headroom for rows the scope filter rejects.
+_HNSW_EF_SEARCH = 100
+
+
+def _pgvector_version(version: Optional[str]) -> tuple:
+    parts = []
+    for piece in (version or "").split("."):
+        digits = "".join(ch for ch in piece if ch.isdigit())
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts)
+
+
+def _vector_scan_settings(version: Optional[str]) -> Dict[str, str]:
+    """``hnsw.*`` settings this pgvector version understands (may be empty)."""
+    parsed = _pgvector_version(version)
+    settings: Dict[str, str] = {}
+    if parsed >= (0, 5):
+        settings["hnsw.ef_search"] = str(_HNSW_EF_SEARCH)
+    if parsed >= (0, 8):
+        settings["hnsw.iterative_scan"] = "relaxed_order"
+    return settings
+
+
 def _schema_sql(dim: int) -> str:
     return f"""
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -242,6 +268,9 @@ class RagStore:
         # store's embedder, schema routing and vector-codec setup, and nothing
         # about a memory row.
         self._memory = memory_store
+        #: ``hnsw.*`` settings applied per search; ``None`` until the pgvector
+        #: version has been read once.
+        self._vector_scan_settings: Optional[Dict[str, str]] = None
 
     @property
     def dim(self) -> int:
@@ -479,74 +508,14 @@ class RagStore:
         if not text:
             return []
         embedding = self._memory.embedder.embed(text)
-
-        params: List[object] = [
-            embedding,
-            self.model_id,
-            text,
-            max(0.0, min(float(min_score), 1.0)),
-        ]
-        clauses = [f"{RAG_CHUNKS_TABLE}.embedding_model = $2"]
-        next_index = 5
-        if source_kind:
-            clauses.append(f"d.source_kind = ${next_index}")
-            params.append(source_kind)
-            next_index += 1
-        predicate = scope_filter(
+        sql, params = self._search_sql(
             principal,
-            column=f"{RAG_CHUNKS_TABLE}.visibility",
-            start_index=next_index,
-            grant_item_kind=GRANT_ITEM_KIND,
-            id_column=f"{RAG_CHUNKS_TABLE}.document_id",
-            role_elevation=self.role_reads,
-            owner_column=f"{RAG_CHUNKS_TABLE}.owner_user_id",
+            embedding,
+            text,
+            top_k=top_k,
+            min_score=min_score,
+            source_kind=source_kind,
         )
-        clauses.append(predicate.sql)
-        params.extend(predicate.params)
-        where = " AND ".join(clauses)
-
-        sql = f"""
-        WITH visible AS (
-            SELECT {RAG_CHUNKS_TABLE}.id, {RAG_CHUNKS_TABLE}.document_id,
-                   {RAG_CHUNKS_TABLE}.text, {RAG_CHUNKS_TABLE}.section,
-                   {RAG_CHUNKS_TABLE}.owner_user_id,
-                   {RAG_CHUNKS_TABLE}.embedding, {RAG_CHUNKS_TABLE}.fts,
-                   d.title, d.source_kind, d.source_ref
-            FROM {RAG_CHUNKS_TABLE}
-            JOIN {RAG_DOCUMENTS_TABLE} d
-              ON d.id = {RAG_CHUNKS_TABLE}.document_id
-            WHERE {where}
-        ),
-        vector_arm AS (
-            SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> $1) AS rank
-            FROM visible
-            WHERE 1 - (embedding <=> $1) >= $4
-            ORDER BY embedding <=> $1
-            LIMIT {_ARM_DEPTH}
-        ),
-        lexical_arm AS (
-            SELECT id,
-                   ROW_NUMBER() OVER (
-                       ORDER BY ts_rank_cd(
-                           fts, websearch_to_tsquery('simple', $3)
-                       ) DESC
-                   ) AS rank
-            FROM visible
-            WHERE fts @@ websearch_to_tsquery('simple', $3)
-            LIMIT {_ARM_DEPTH}
-        )
-        SELECT v.id, v.document_id, v.title, v.section, v.source_kind,
-               v.source_ref, v.text, v.owner_user_id,
-               va.rank AS vector_rank, la.rank AS lexical_rank,
-               COALESCE(1.0 / ({_RRF_K} + va.rank), 0)
-                 + COALESCE(1.0 / ({_RRF_K} + la.rank), 0) AS score
-        FROM visible v
-        LEFT JOIN vector_arm va ON va.id = v.id
-        LEFT JOIN lexical_arm la ON la.id = v.id
-        WHERE va.rank IS NOT NULL OR la.rank IS NOT NULL
-        ORDER BY score DESC, v.document_id, v.id
-        LIMIT {top_k}
-        """
 
         own = connection is None
         conn = connection or await self._connect()
@@ -556,6 +525,7 @@ class RagStore:
             async with conn.transaction():
                 await bind_principal(conn, principal)
                 await bind_elevated_reads(conn, self.role_reads)
+                await self._tune_vector_scan(conn)
                 rows = await conn.fetch(sql, *params)
             return [
                 RagHit(
@@ -584,6 +554,150 @@ class RagStore:
         finally:
             if own:
                 await conn.close()
+
+    def _search_sql(
+        self,
+        principal: Principal,
+        embedding: List[float],
+        text: str,
+        *,
+        top_k: int,
+        min_score: float,
+        source_kind: Optional[str],
+    ) -> "tuple[str, List[object]]":
+        """The hybrid-search statement and its parameters.
+
+        Each arm reads ``rag_chunks`` directly and is referenced exactly once,
+        so neither is a materialised "visible rows" CTE that both arms would
+        scan in full. That shape is what lets the vector arm be an HNSW
+        ``ORDER BY embedding <=> $1 LIMIT n`` scan and the lexical arm a GIN
+        bitmap scan on ``fts``. The visibility predicate is applied inside each
+        arm, so scope semantics are unchanged.
+
+        The similarity floor is applied *after* the nearest-neighbour ``LIMIT``:
+        rows within the floor are a prefix of the distance ordering, so this is
+        the same set as filtering first, but it keeps the floor out of the index
+        scan (where it would make an iterative scan walk the whole graph looking
+        for rows that can never qualify). ``nearest`` is ``MATERIALIZED`` so the
+        rank is computed by an explicit sort on the exact distance — with
+        ``hnsw.iterative_scan = relaxed_order`` the index may emit slightly out
+        of order.
+        """
+        params: List[object] = [
+            embedding,
+            self.model_id,
+            text,
+            max(0.0, min(float(min_score), 1.0)),
+        ]
+        clauses = [f"{RAG_CHUNKS_TABLE}.embedding_model = $2"]
+        next_index = 5
+        if source_kind:
+            clauses.append(f"d.source_kind = ${next_index}")
+            params.append(source_kind)
+            next_index += 1
+        predicate = scope_filter(
+            principal,
+            column=f"{RAG_CHUNKS_TABLE}.visibility",
+            start_index=next_index,
+            grant_item_kind=GRANT_ITEM_KIND,
+            id_column=f"{RAG_CHUNKS_TABLE}.document_id",
+            role_elevation=self.role_reads,
+            owner_column=f"{RAG_CHUNKS_TABLE}.owner_user_id",
+        )
+        clauses.append(predicate.sql)
+        params.extend(predicate.params)
+        where = " AND ".join(clauses)
+        visible_chunks = (
+            f"FROM {RAG_CHUNKS_TABLE} "
+            f"JOIN {RAG_DOCUMENTS_TABLE} d "
+            f"ON d.id = {RAG_CHUNKS_TABLE}.document_id "
+            f"WHERE {where}"
+        )
+
+        sql = f"""
+        WITH nearest AS MATERIALIZED (
+            SELECT {RAG_CHUNKS_TABLE}.id,
+                   {RAG_CHUNKS_TABLE}.embedding <=> $1 AS distance
+            {visible_chunks}
+            ORDER BY {RAG_CHUNKS_TABLE}.embedding <=> $1
+            LIMIT {_ARM_DEPTH}
+        ),
+        vector_arm AS (
+            SELECT id, ROW_NUMBER() OVER (ORDER BY distance) AS rank
+            FROM nearest
+            WHERE 1 - distance >= $4
+        ),
+        lexical_arm AS (
+            SELECT {RAG_CHUNKS_TABLE}.id,
+                   ROW_NUMBER() OVER (
+                       ORDER BY ts_rank_cd(
+                           {RAG_CHUNKS_TABLE}.fts,
+                           websearch_to_tsquery('simple', $3)
+                       ) DESC
+                   ) AS rank
+            {visible_chunks}
+              AND {RAG_CHUNKS_TABLE}.fts @@ websearch_to_tsquery('simple', $3)
+            ORDER BY rank
+            LIMIT {_ARM_DEPTH}
+        ),
+        fused AS (
+            SELECT COALESCE(va.id, la.id) AS id,
+                   va.rank AS vector_rank, la.rank AS lexical_rank,
+                   COALESCE(1.0 / ({_RRF_K} + va.rank), 0)
+                     + COALESCE(1.0 / ({_RRF_K} + la.rank), 0) AS score
+            FROM vector_arm va
+            FULL JOIN lexical_arm la ON la.id = va.id
+        )
+        SELECT c.id, c.document_id, d.title, c.section, d.source_kind,
+               d.source_ref, c.text, c.owner_user_id,
+               f.vector_rank, f.lexical_rank, f.score
+        FROM fused f
+        JOIN {RAG_CHUNKS_TABLE} c ON c.id = f.id
+        JOIN {RAG_DOCUMENTS_TABLE} d ON d.id = c.document_id
+        ORDER BY f.score DESC, c.document_id, c.id
+        LIMIT {top_k}
+        """
+        return sql, params
+
+    async def _tune_vector_scan(self, conn: "asyncpg.Connection") -> None:
+        """Keep a filtered HNSW scan from returning fewer rows than its LIMIT.
+
+        HNSW applies the ``WHERE`` clause after the graph search, so with the
+        default ``ef_search`` of 40 a scope/model filter that rejects a third
+        of the candidates leaves the arm short. pgvector >= 0.8 can keep
+        scanning until the LIMIT is met (``hnsw.iterative_scan``); older
+        versions only have a wider candidate list. Both settings are
+        transaction-local, and are set inside a savepoint so an unknown
+        setting degrades to the plain scan instead of aborting the search.
+        """
+        import asyncpg
+
+        if self._vector_scan_settings is None:
+            try:
+                async with conn.transaction():
+                    version = await conn.fetchval(
+                        "SELECT extversion FROM pg_extension "
+                        "WHERE extname = 'vector'"
+                    )
+            except asyncpg.PostgresError:
+                version = None
+            self._vector_scan_settings = _vector_scan_settings(version)
+        settings = self._vector_scan_settings
+        if not settings:
+            return
+        assignments = ", ".join(
+            f"set_config('{name}', ${index}, true)"
+            for index, name in enumerate(settings, start=1)
+        )
+        try:
+            async with conn.transaction():
+                await conn.execute(
+                    f"SELECT {assignments}", *settings.values()
+                )
+        except asyncpg.PostgresError:
+            # Remember the failure: retrying on every search would cost a
+            # savepoint round trip for a setting this server will never accept.
+            self._vector_scan_settings = {}
 
     async def forget(
         self,

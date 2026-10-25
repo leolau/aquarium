@@ -253,6 +253,9 @@ async def _run(
 
     bound = _since_bound(since)
     total = 0
+    # One Postgres connection for the whole replay: a connect per row was most
+    # of a full backfill's cost (tens of thousands of rows on a real box).
+    pg = None if dry_run else await registry._connect()  # noqa: SLF001
     try:
         for surface in surfaces:
             count = 0
@@ -262,11 +265,13 @@ async def _run(
                 count += 1
                 if dry_run:
                     continue
-                await registry.register(principal, **fields)
+                await registry.register(principal, connection=pg, **fields)
             print(f"{surface}: {count} arrival(s)" + (" (dry run)" if dry_run else ""))
             total += count
     finally:
         conn.close()
+        if pg is not None:
+            await pg.close()
 
     if not dry_run:
         linked = await _link_legacy_files(registry, principal)

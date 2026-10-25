@@ -91,5 +91,61 @@ class TestEmailPollerXoauth2(unittest.TestCase):
         conn_good.authenticate.assert_called_once()
 
 
+def _full_db():
+    conn = _db()
+    conn.execute(
+        """CREATE TABLE email_messages (
+            id TEXT PRIMARY KEY, account_id TEXT NOT NULL, from_addr TEXT NOT NULL,
+            from_name TEXT, to_addrs TEXT, cc_addrs TEXT, subject TEXT,
+            body_text TEXT, body_html TEXT, has_attachments INTEGER,
+            attachment_info TEXT, message_id TEXT UNIQUE, in_reply_to TEXT,
+            thread_id TEXT, folder TEXT DEFAULT 'INBOX',
+            received_at TEXT NOT NULL, batch_id TEXT, raw_headers TEXT)"""
+    )
+    conn.commit()
+    return conn
+
+
+RAW = (
+    b'From: Ada <ada@example.com>\r\nTo: alice@gmail.com\r\n'
+    b'Subject: Quote\r\nMessage-ID: <rfc-1@mail>\r\n'
+    b'Date: Mon, 10 Aug 2026 09:30:00 +0000\r\n\r\nthe quote\r\n'
+)
+
+
+class TestDuplicateMessageNotReRegistered(unittest.TestCase):
+    """The same Message-ID in two folders is stored once; INSERT OR IGNORE
+    never raises, so the poller must check rowcount before mirroring it."""
+
+    def setUp(self):
+        email_poller.poll_status['accounts'] = {}
+
+    @patch.object(email_poller.google_oauth, 'get_access_token', return_value='tok')
+    @patch.object(email_poller.google_oauth, 'credentials_for_email', return_value=CRED)
+    def test_second_folder_copy_is_skipped(self, _cred, _tok):
+        conn_mock = MagicMock()
+        conn_mock.select.return_value = ('OK', [b'1'])
+
+        # UIDs are per folder: the All Mail copy has a higher UID than the
+        # INBOX one, so it is fetched in the same pass.
+        searches = iter([b'7', b'9'])
+
+        def uid(cmd, *args):
+            if cmd == 'SEARCH':
+                return ('OK', [next(searches)])
+            return ('OK', [(b'x (RFC822)', RAW)])
+
+        conn_mock.uid.side_effect = uid
+        registered = []
+        fake = MagicMock()
+        fake.register_item = lambda **kw: registered.append(kw) or 'item-1'
+        account = dict(ACCOUNT, folders=['INBOX', '[Gmail]/All Mail'])
+        with patch.object(email_poller.imaplib, 'IMAP4_SSL', return_value=conn_mock), \
+                patch.dict(sys.modules, {'shared.inbound_registration': fake}):
+            new = email_poller.poll_account(account, _full_db())
+        self.assertEqual(new, 1)
+        self.assertEqual([r['external_id'] for r in registered], ['rfc-1@mail'])
+
+
 if __name__ == '__main__':
     unittest.main()

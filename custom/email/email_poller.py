@@ -357,7 +357,7 @@ def poll_account(account, db):
 
                         # Insert into DB (dedup by message_id)
                         try:
-                            db.execute(
+                            inserted = db.execute(
                                 """INSERT OR IGNORE INTO email_messages
                                    (id, account_id, from_addr, from_name, to_addrs, cc_addrs,
                                     subject, body_text, body_html, has_attachments, attachment_info,
@@ -367,6 +367,11 @@ def poll_account(account, db):
                                  subject, text_body, html_body, has_attachments, attachment_info,
                                  message_id, in_reply_to, thread_id, folder, received_at, raw_headers)
                             )
+                            if inserted.rowcount == 0:
+                                # OR IGNORE never raises: a message_id already
+                                # stored (e.g. the same mail in two folders)
+                                # lands here and must not be re-registered.
+                                raise sqlite3.IntegrityError('duplicate message_id')
                             total_new += 1
 
                             # Mirror the message into the shared inbound

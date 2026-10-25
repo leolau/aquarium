@@ -217,3 +217,60 @@ class TestSkipUnchanged:
         created, updated, cancelled = poller.sync_events(db, "gcal1", None)
         assert (created, updated, cancelled) == (0, 0, 0)
         assert poller._test_registrations == []
+
+
+class TestMirrorOnlyOnChange:
+    """raw_json moves on etag / RSVP changes the Inbox never shows; those must
+    still update SQLite but not re-register the event in Postgres."""
+
+    def _sync_once(self, poller, db, monkeypatch, event):
+        api_capture([event], monkeypatch, poller)
+        return poller.sync_events(db, "gcal1", None)
+
+    def test_new_event_registers(self, poller, db, monkeypatch):
+        add_account(db)
+        self._sync_once(poller, db, monkeypatch, make_event())
+        assert len(poller._test_registrations) == 1
+
+    def test_rsvp_only_change_updates_without_registering(
+        self, poller, db, monkeypatch
+    ):
+        add_account(db)
+        event = make_event()
+        self._sync_once(poller, db, monkeypatch, event)
+        poller._test_registrations.clear()
+
+        rsvp = dict(
+            event,
+            etag='"2"',
+            attendees=[{"email": "x@y.z", "responseStatus": "accepted"}],
+        )
+        _, updated, _ = self._sync_once(poller, db, monkeypatch, rsvp)
+        assert updated == 1
+        assert poller._test_registrations == []
+        row = db.execute("SELECT raw_json FROM calendar_events").fetchone()
+        assert json.loads(row["raw_json"])["etag"] == '"2"'
+        assert poller._test_attendee_calls[-1] is not None
+
+    @pytest.mark.parametrize(
+        "change",
+        [
+            {"summary": "Retro"},
+            {"description": "agenda"},
+            {"location": "Room 2"},
+            {"start": {"dateTime": "2026-10-02T09:00:00Z"}},
+            {"end": {"dateTime": "2026-10-01T10:00:00Z"}},
+            {"organizer": {"email": "b@b.c", "displayName": "B"}},
+            {"htmlLink": "https://calendar/x"},
+            {"recurringEventId": "series-1"},
+            {"hangoutLink": "https://meet/abc"},
+        ],
+    )
+    def test_mirrored_change_registers(self, poller, db, monkeypatch, change):
+        add_account(db)
+        event = make_event()
+        self._sync_once(poller, db, monkeypatch, event)
+        poller._test_registrations.clear()
+
+        self._sync_once(poller, db, monkeypatch, dict(event, **change))
+        assert len(poller._test_registrations) == 1

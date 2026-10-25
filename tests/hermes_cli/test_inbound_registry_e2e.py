@@ -883,3 +883,233 @@ async def test_owner_page_reads_off_the_occurred_index(postgres_dsn: str) -> Non
         assert "Sort" not in plan
     finally:
         await conn.close()
+
+
+async def _row_version(dsn: str, external_id: str) -> tuple:
+    conn = await asyncpg.connect(dsn=dsn, ssl=False)
+    try:
+        await conn.execute("SET search_path TO app_prod")
+        row = await conn.fetchrow(
+            f"SELECT xmin::text AS xmin, updated_at FROM {INBOUND_ITEMS_TABLE} "
+            "WHERE external_id = $1",
+            external_id,
+        )
+        return (row["xmin"], row["updated_at"])
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_identical_re_registration_does_not_rewrite_the_row(
+    postgres_dsn: str,
+) -> None:
+    """A poller re-registering an item it already mirrored is a read, not a
+    write: no new tuple version, ``updated_at`` untouched, same item back."""
+    registry = await _registry(postgres_dsn)
+    leo = _principal("leo", role="owner")
+    when = datetime(2026, 8, 10, 9, 30, tzinfo=timezone.utc)
+    fields = dict(
+        external_id="rfc-same",
+        subject="Quote",
+        body="the quote 報價單",
+        sender_name="Ada",
+        occurred_at=when,
+        ends_at=when + timedelta(hours=1),
+        metadata={"folder": "INBOX", "to": ["leo@example.com"]},
+        has_attachments=True,
+    )
+    first = await _arrive(registry, leo, **fields)
+    before = await _row_version(postgres_dsn, "rfc-same")
+
+    again = await _arrive(registry, leo, **fields)
+
+    assert again == first
+    assert await _row_version(postgres_dsn, "rfc-same") == before
+
+
+@pytest.mark.asyncio
+async def test_changed_re_registration_still_updates(postgres_dsn: str) -> None:
+    """Each mirrored field on its own is enough to make the upsert write."""
+    registry = await _registry(postgres_dsn)
+    leo = _principal("leo", role="owner")
+    when = datetime(2026, 8, 10, 9, 30, tzinfo=timezone.utc)
+    base = dict(
+        external_id="rfc-moves",
+        subject="Standup",
+        body="daily",
+        occurred_at=when,
+        metadata={"status": "confirmed"},
+    )
+    item = await _arrive(registry, leo, **base)
+    changes = [
+        {"subject": "Standup (moved)"},
+        {"body": "weekly"},
+        {"occurred_at": when + timedelta(days=1)},
+        {"ends_at": when + timedelta(hours=2)},
+        {"metadata": {"status": "cancelled"}},
+        {"has_attachments": True},
+        {"sender_name": "Bob"},
+        {"conversation": "thread-2"},
+        {"kind": "event"},
+        {"importance": "high"},
+    ]
+    for change in changes:
+        base.update(change)
+        before = await _row_version(postgres_dsn, "rfc-moves")
+        updated = await _arrive(registry, leo, **base)
+        assert updated.id == item.id
+        for key, value in change.items():
+            assert getattr(updated, key) == value, key
+        assert await _row_version(postgres_dsn, "rfc-moves") != before, change
+
+    # Search follows the new text, not the first registration's.
+    page = await registry.list(leo, query="weekly")
+    assert [i.external_id for i in page.items] == ["rfc-moves"]
+
+
+@pytest.mark.asyncio
+async def test_re_poll_without_verdict_is_a_no_op_once_triaged(
+    postgres_dsn: str,
+) -> None:
+    """A re-poll carries no importance; once triage stamped one, the re-poll
+    neither erases it nor rewrites the row to keep it."""
+    registry = await _registry(postgres_dsn)
+    leo = _principal("leo", role="owner")
+    when = datetime(2026, 8, 10, tzinfo=timezone.utc)
+    await _arrive(registry, leo, external_id="rfc-t", occurred_at=when)
+    await registry.set_importance(
+        leo,
+        surface="email",
+        external_id="rfc-t",
+        account_id="leo@example.com",
+        importance="high",
+    )
+    before = await _row_version(postgres_dsn, "rfc-t")
+    again = await _arrive(registry, leo, external_id="rfc-t", occurred_at=when)
+    assert again.importance == "high"
+    assert await _row_version(postgres_dsn, "rfc-t") == before
+
+
+@pytest.mark.asyncio
+async def test_concurrent_identical_registrations_make_one_row(
+    postgres_dsn: str,
+) -> None:
+    """Racing the same arrival still yields one row and a returned item each."""
+    registry = await _registry(postgres_dsn)
+    leo = _principal("leo", role="owner")
+    when = datetime(2026, 8, 10, tzinfo=timezone.utc)
+    items = await asyncio.gather(
+        *(
+            _arrive(registry, leo, external_id="rfc-race", occurred_at=when)
+            for _ in range(8)
+        )
+    )
+    assert len({i.id for i in items}) == 1
+    page = await registry.list(leo)
+    assert [i.external_id for i in page.items] == ["rfc-race"]
+
+
+@pytest.mark.asyncio
+async def test_re_registering_a_mailbox_writes_nothing(postgres_dsn: str) -> None:
+    """The cost being cut: re-registering N unchanged arrivals used to write N
+    new tuple versions (each re-indexing search_tsv); now it writes none."""
+    registry = await _registry(postgres_dsn)
+    leo = _principal("leo", role="owner")
+    when = datetime(2026, 8, 10, tzinfo=timezone.utc)
+    n = 200
+    conn = await registry._connect()
+    try:
+        for i in range(n):
+            await _arrive(
+                registry, leo, external_id=f"bulk-{i}", occurred_at=when,
+                body=f"message {i}", connection=conn,
+            )
+    finally:
+        await conn.close()
+
+    conn = await registry._connect()
+    try:
+        async with conn.transaction():
+            for i in range(n):
+                await _arrive(
+                    registry, leo, external_id=f"bulk-{i}", occurred_at=when,
+                    body=f"message {i}", connection=conn,
+                )
+            written = await conn.fetchval(
+                "SELECT n_tup_ins + n_tup_upd FROM pg_stat_xact_user_tables "
+                "WHERE relname = $1",
+                INBOUND_ITEMS_TABLE,
+            )
+    finally:
+        await conn.close()
+    assert written == 0
+
+
+@pytest.mark.asyncio
+async def test_backfill_uses_one_connection(
+    postgres_dsn: str, tmp_path, monkeypatch
+) -> None:
+    """A replay of many rows opens one Postgres connection, not one per row,
+    and a second replay of the same SQLite rewrites nothing."""
+    import sqlite3
+
+    from hermes_cli import incomings_backfill
+
+    await _registry(postgres_dsn)
+    store = get_store("supabase-app", "prod", config=_config(postgres_dsn))
+    db_path = tmp_path / "pipeline.db"
+    pipeline = sqlite3.connect(db_path)
+    pipeline.execute(
+        """CREATE TABLE messages (
+            id TEXT PRIMARY KEY, source_phone TEXT, sender_phone TEXT,
+            sender_name TEXT, chat_id TEXT, is_group INTEGER, text TEXT,
+            media_type TEXT, media_path TEXT, media_mimetype TEXT,
+            timestamp TEXT, received_at TEXT, batch_id TEXT, raw_json TEXT)"""
+    )
+    pipeline.executemany(
+        "INSERT INTO messages (id, source_phone, sender_phone, chat_id, "
+        "is_group, text, timestamp) VALUES (?, '852', '853', 'c', 0, ?, ?)",
+        [
+            (f"wa-{i}", f"hello {i}", f"2026-08-10T09:{i % 60:02d}:00+00:00")
+            for i in range(50)
+        ],
+    )
+    pipeline.commit()
+    pipeline.close()
+
+    connects = 0
+    real_connect = type(store).connect
+
+    async def counting_connect(self, *args, **kwargs):
+        nonlocal connects
+        connects += 1
+        return await real_connect(self, *args, **kwargs)
+
+    # The store is a frozen dataclass, so count at the class.
+    monkeypatch.setattr(type(store), "connect", counting_connect)
+    monkeypatch.setattr(incomings_backfill, "get_store", lambda *a, **k: store)
+
+    async def run() -> None:
+        assert (
+            await incomings_backfill._run(
+                db_path=str(db_path),
+                surfaces=("whatsapp",),
+                since=None,
+                dry_run=False,
+                actor=None,
+            )
+            == 0
+        )
+
+    await run()
+    first_pass = connects
+    assert first_pass < 50
+
+    before = await _row_version(postgres_dsn, "wa-7")
+    await run()
+    assert await _row_version(postgres_dsn, "wa-7") == before
+
+    page = await InboundRegistry(store).list(
+        _principal("leo", role="owner"), surfaces=["whatsapp"], limit=200
+    )
+    assert len(page.items) == 50

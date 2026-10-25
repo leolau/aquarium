@@ -17,6 +17,8 @@ against a fake store:
 from __future__ import annotations
 
 import asyncio
+import math
+import random
 import shutil
 import subprocess
 import time
@@ -38,6 +40,7 @@ from plugins.memory.supabase_pgvector.rag import (
     RAG_CHUNKS_TABLE,
     RAG_DOCUMENTS_TABLE,
     RagStore,
+    _vector_scan_settings,
 )
 from plugins.memory.supabase_pgvector.store import PgvectorMemoryStore
 
@@ -687,3 +690,286 @@ async def test_rls_alone_honours_a_document_grant_on_the_chunk_table(
         or "eleven percent" not in row["text"]
         for row in chunks
     )
+
+
+# ---------------------------------------------------------------------------
+# Query shape: both arms must be able to use their indexes
+# ---------------------------------------------------------------------------
+
+def test_vector_scan_settings_follow_the_pgvector_version() -> None:
+    assert _vector_scan_settings(None) == {}
+    assert _vector_scan_settings("0.4.4") == {}
+    assert _vector_scan_settings("0.7.4") == {"hnsw.ef_search": "100"}
+    assert _vector_scan_settings("0.8.0") == {
+        "hnsw.ef_search": "100",
+        "hnsw.iterative_scan": "relaxed_order",
+    }
+    assert "hnsw.iterative_scan" in _vector_scan_settings("1.0.0-dev")
+
+
+_SHAPE_DIM = 256
+
+
+def _clustered_vector(rng: random.Random, centre: list[float]) -> list[float]:
+    raw = [c + rng.gauss(0.0, 0.5) for c in centre]
+    norm = math.sqrt(sum(x * x for x in raw))
+    return [x / norm for x in raw]
+
+
+async def _bulk_corpus(store: RagStore, *, chunks_per_doc: int = 12) -> list[float]:
+    """Insert a filtered-heavy corpus directly; returns a query vector.
+
+    Two thirds of the chunks are either another embedding model or another
+    member's private rows, so a post-filtered HNSW scan with the default
+    ``ef_search`` returns fewer rows than the arm's LIMIT.
+    """
+    rng = random.Random(1729)
+    centre = [rng.gauss(0.0, 1.0) for _ in range(_SHAPE_DIM)]
+    owners = [
+        ("root", "shared", store.model_id, "gdrive"),
+        ("mia", "private:mia", store.model_id, "gdrive"),
+        ("moe", "private:moe", store.model_id, "transcript"),
+        ("moe", "private:moe", store.model_id, "gdrive"),
+        ("root", "shared", "other-model", "gdrive"),
+        ("ada", "private:ada", "other-model", "gdrive"),
+    ]
+    conn = await store._connect()
+    try:
+        for index in range(60):
+            owner, visibility, model, kind = owners[index % len(owners)]
+            document_id = await conn.fetchval(
+                f"""
+                INSERT INTO {RAG_DOCUMENTS_TABLE} (owner_user_id, visibility,
+                    source_kind, source_ref, title, content_hash,
+                    embedding_model, chunk_count)
+                VALUES ($1, $2, $3, $4, $5, 'h', $6, $7) RETURNING id
+                """,
+                owner, visibility, kind, f"ref-{index}", f"Doc {index}",
+                model, chunks_per_doc,
+            )
+            await conn.executemany(
+                f"""
+                INSERT INTO {RAG_CHUNKS_TABLE} (document_id, owner_user_id,
+                    visibility, ordinal, text, embedding, embedding_model,
+                    section, fts)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, '',
+                        to_tsvector('simple', $5))
+                """,
+                [
+                    (
+                        document_id, owner, visibility, ordinal,
+                        f"tender clause {index} part {ordinal} "
+                        + ("pricing firm" if ordinal % 3 == 0 else "background"),
+                        _clustered_vector(rng, centre), model,
+                    )
+                    for ordinal in range(chunks_per_doc)
+                ],
+            )
+        await conn.execute(
+            "INSERT INTO item_grants (item_kind, item_id, user_id, grant_type, "
+            "granted_by, status) SELECT 'document', id, 'mia', 'watcher', "
+            "owner_user_id, 'accepted' FROM rag_documents "
+            "WHERE source_ref = 'ref-2'"
+        )
+        await conn.execute(f"ANALYZE {RAG_CHUNKS_TABLE}; ANALYZE {RAG_DOCUMENTS_TABLE}")
+    finally:
+        await conn.close()
+    return _clustered_vector(rng, centre)
+
+
+async def _drop_filter_indexes(store: RagStore) -> None:
+    """Leave HNSW as the only ordered path for the vector arm.
+
+    On a few hundred rows a btree on a filter column plus a sort is genuinely
+    cheaper, so the planner would otherwise never pick the graph scan here.
+    """
+    conn = await store._connect()
+    try:
+        await conn.execute(
+            f"DROP INDEX {RAG_CHUNKS_TABLE}_model_idx, "
+            f"{RAG_CHUNKS_TABLE}_visibility_idx, "
+            f"{RAG_CHUNKS_TABLE}_document_idx"
+        )
+    finally:
+        await conn.close()
+
+
+async def _fetch_search(
+    store: RagStore,
+    principal: Principal,
+    sql: str,
+    params: list,
+    *,
+    planner: str,
+    tune: bool,
+    explain: bool = False,
+) -> list:
+    conn = await store._connect()
+    try:
+        async with conn.transaction():
+            await bind_principal(conn, principal)
+            await bind_elevated_reads(conn, store.role_reads)
+            await conn.execute(planner)
+            if tune:
+                await store._tune_vector_scan(conn)
+            prefix = "EXPLAIN (COSTS OFF) " if explain else ""
+            return await conn.fetch(prefix + sql, *params)
+    finally:
+        await conn.close()
+
+
+#: The test corpus is small enough that the planner rightly prefers a scan,
+#: so each arm's index is forced separately: HNSW is an ordered index scan,
+#: GIN only ever a bitmap scan.
+_FORCE_HNSW = "SET LOCAL enable_seqscan = off; SET LOCAL enable_bitmapscan = off"
+_FORCE_GIN = "SET LOCAL enable_seqscan = off; SET LOCAL enable_indexscan = off"
+_EXACT = (
+    "SET LOCAL enable_indexscan = off; SET LOCAL enable_bitmapscan = off"
+)
+
+
+@pytest.mark.asyncio
+async def test_search_arms_use_the_hnsw_and_gin_indexes(postgres_dsn: str) -> None:
+    """The arms must be index-capable, not scans over a materialised CTE.
+
+    The old shape shared one ``visible`` CTE between both arms, which Postgres
+    materialises, so no amount of planner pressure reached either index.
+    """
+    store = await _fresh(postgres_dsn)
+    query = await _bulk_corpus(store)
+    await _drop_filter_indexes(store)
+    for principal in (OWNER, MEMBER):
+        sql, params = store._search_sql(
+            principal, query, "pricing firm",
+            top_k=5, min_score=0.0, source_kind=None,
+        )
+        plans = {}
+        for name, planner in (("hnsw", _FORCE_HNSW), ("gin", _FORCE_GIN)):
+            plans[name] = "\n".join(
+                row[0]
+                for row in await _fetch_search(
+                    store, principal, sql, params,
+                    planner=planner, tune=True, explain=True,
+                )
+            )
+        assert (
+            f"Index Scan using {RAG_CHUNKS_TABLE}_embedding_idx" in plans["hnsw"]
+        ), plans["hnsw"]
+        assert (
+            f"Bitmap Index Scan on {RAG_CHUNKS_TABLE}_fts_idx" in plans["gin"]
+        ), plans["gin"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role_reads", [False, True])
+async def test_index_search_matches_an_exact_scan(
+    postgres_dsn: str, role_reads: bool
+) -> None:
+    """Scope, ranks and fusion through the indexes are the brute-force ones.
+
+    The lexical arm is exact by construction (GIN only answers ``@@``), so its
+    plan must reproduce the exact result row for row. HNSW is approximate, so
+    the vector plan is held to a recall floor instead, and to the property
+    the post-filter used to break: the arm still fills its LIMIT when most
+    candidates are filtered out (2/3 here; 5/6 with ``source_kind``).
+    """
+    store = await _fresh(postgres_dsn, role_reads=role_reads)
+    query = await _bulk_corpus(store)
+    await _drop_filter_indexes(store)
+    seen = 0
+    for principal in (OWNER, ADMIN, MEMBER):
+        for source_kind in (None, "transcript"):
+            case = (principal.user_id, source_kind)
+            sql, params = store._search_sql(
+                principal, query, "pricing firm",
+                top_k=50, min_score=0.0, source_kind=source_kind,
+            )
+            exact = await _fetch_search(
+                store, principal, sql, params, planner=_EXACT, tune=False,
+            )
+            seen += len(exact)
+            lexical = await _fetch_search(
+                store, principal, sql, params, planner=_FORCE_GIN, tune=True,
+            )
+            assert [tuple(row) for row in lexical] == [
+                tuple(row) for row in exact
+            ], case
+
+            # A term nothing contains isolates the vector arm (<= 30 rows,
+            # so the final LIMIT cuts nothing).
+            sql, params = store._search_sql(
+                principal, query, "no-such-term",
+                top_k=50, min_score=0.0, source_kind=source_kind,
+            )
+            exact = await _fetch_search(
+                store, principal, sql, params, planner=_EXACT, tune=False,
+            )
+            vector = await _fetch_search(
+                store, principal, sql, params, planner=_FORCE_HNSW, tune=True,
+            )
+            exact_ids = {row["id"] for row in exact}
+            vector_ids = {row["id"] for row in vector}
+            assert len(vector) == len(exact), case
+            assert len(vector_ids & exact_ids) >= 0.9 * len(exact_ids), case
+            assert [row["vector_rank"] for row in vector] == list(
+                range(1, len(vector) + 1)
+            ), case
+    assert seen, "the corpus must give the comparison something to compare"
+
+
+@pytest.mark.asyncio
+async def test_a_filtered_hnsw_arm_needs_the_scan_settings(
+    postgres_dsn: str,
+) -> None:
+    """Without the settings a post-filtered HNSW scan comes back short."""
+    store = await _fresh(postgres_dsn)
+    query = await _bulk_corpus(store)
+    await _drop_filter_indexes(store)
+    sql, params = store._search_sql(
+        MEMBER, query, "no-such-term",
+        top_k=50, min_score=0.0, source_kind=None,
+    )
+    plain = await _fetch_search(
+        store, MEMBER, sql, params, planner=_FORCE_HNSW, tune=False,
+    )
+    tuned = await _fetch_search(
+        store, MEMBER, sql, params, planner=_FORCE_HNSW, tune=True,
+    )
+    assert len(plain) < 30
+    assert len(tuned) == 30
+
+
+@pytest.mark.asyncio
+async def test_iterative_scan_is_set_for_the_search_transaction(
+    postgres_dsn: str,
+) -> None:
+    store = await _fresh(postgres_dsn)
+    conn = await store._connect()
+    try:
+        async with conn.transaction():
+            await store._tune_vector_scan(conn)
+            ef_search = await conn.fetchval("SHOW hnsw.ef_search")
+            iterative = await conn.fetchval(
+                "SELECT current_setting('hnsw.iterative_scan', true)"
+            )
+        after = await conn.fetchval("SHOW hnsw.ef_search")
+    finally:
+        await conn.close()
+    assert ef_search == "100"
+    assert iterative == "relaxed_order"
+    assert after != "100"  # SET LOCAL: nothing leaks past the search
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_scan_setting_degrades_instead_of_failing(
+    postgres_dsn: str,
+) -> None:
+    """A server that rejects a setting still answers, without the setting."""
+    store = await _fresh(postgres_dsn)
+    await _ingest_corpus(store)
+    store._vector_scan_settings = {"work_mem": "not-a-size"}
+
+    hits = await store.search(OWNER, "sealed envelope bids close", top_k=3)
+
+    assert hits and "sealed envelope" in hits[0].text
+    assert store._vector_scan_settings == {}

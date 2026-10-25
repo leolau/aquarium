@@ -161,6 +161,102 @@ CREATE INDEX IF NOT EXISTS {INBOUND_ITEMS_TABLE}_search_idx
     ON {INBOUND_ITEMS_TABLE} USING GIN (search_tsv);
 """
 
+#: The mirrored columns a re-registration may change, in ``$6``..``$18``
+#: parameter order. ``visibility`` and the identity are never rewritten.
+_REGISTER_COLS = (
+    "kind",
+    "conversation",
+    "conversation_name",
+    "sender_id",
+    "sender_name",
+    "subject",
+    "body",
+    "occurred_at",
+    "ends_at",
+    "importance",
+    "has_attachments",
+    "metadata",
+    "search_text",
+)
+_REGISTER_VALUES = (
+    "$6::text, $7::text, $8::text, $9::text, $10::text, $11::text, $12::text, "
+    "COALESCE($13::timestamptz, NOW()), $14::timestamptz, $15::text, "
+    "$16::boolean, $17::jsonb, $18::text"
+)
+
+
+def _columns_of(alias: str) -> str:
+    return ", ".join(f"{alias}.{c}" for c in _REGISTER_COLS)
+
+
+def _effective(alias: str, source: str) -> str:
+    """What the upsert would store, against row ``alias``.
+
+    ``importance`` keeps the stored verdict when the re-poll carries none, so
+    it is compared after the same COALESCE the update applies.
+    """
+    return ", ".join(
+        f"COALESCE({source}.importance, {alias}.importance)"
+        if c == "importance"
+        else f"{source}.{c}"
+        for c in _REGISTER_COLS
+    )
+
+
+#: Upsert one arrival, writing only when something mirrored changed.
+#:
+#: Pollers and backfills re-register items they have already mirrored, and an
+#: unconditional ``DO UPDATE`` rewrote the whole row each time (new tuple, GIN
+#: and btree entries, WAL) just to bump ``updated_at``. Here an identical
+#: re-registration is a single index lookup that returns the stored row: the
+#: ``unchanged`` arm short-circuits the INSERT, and the ``DO UPDATE ... WHERE``
+#: guard covers a row that appeared after this statement's snapshot.
+REGISTER_SQL = f"""
+WITH incoming ({", ".join(_REGISTER_COLS)}) AS (
+    SELECT {_REGISTER_VALUES}
+),
+unchanged AS (
+    SELECT cur.* FROM {INBOUND_ITEMS_TABLE} cur, incoming
+     WHERE cur.owner_user_id = $1 AND cur.surface = $3
+       AND cur.account_id = $4 AND cur.external_id = $5
+       AND ({_columns_of("cur")})
+           IS NOT DISTINCT FROM ({_effective("cur", "incoming")})
+),
+upserted AS (
+    INSERT INTO {INBOUND_ITEMS_TABLE} (
+        owner_user_id, visibility, surface, account_id, external_id,
+        {", ".join(_REGISTER_COLS)})
+    SELECT $1::text, $2::text, $3::text, $4::text, $5::text, incoming.*
+      FROM incoming
+     WHERE NOT EXISTS (SELECT 1 FROM unchanged)
+    ON CONFLICT (owner_user_id, surface, account_id, external_id)
+    DO UPDATE SET
+        kind = EXCLUDED.kind,
+        conversation = EXCLUDED.conversation,
+        conversation_name = EXCLUDED.conversation_name,
+        sender_id = EXCLUDED.sender_id,
+        sender_name = EXCLUDED.sender_name,
+        subject = EXCLUDED.subject,
+        body = EXCLUDED.body,
+        occurred_at = EXCLUDED.occurred_at,
+        ends_at = EXCLUDED.ends_at,
+        -- A re-poll carries no triage verdict, so it must not erase the one
+        -- the triage agent already wrote.
+        importance = COALESCE(EXCLUDED.importance, {INBOUND_ITEMS_TABLE}.importance),
+        has_attachments = EXCLUDED.has_attachments,
+        metadata = EXCLUDED.metadata,
+        search_text = EXCLUDED.search_text,
+        updated_at = NOW()
+    WHERE ({_columns_of(INBOUND_ITEMS_TABLE)})
+          IS DISTINCT FROM ({_effective(INBOUND_ITEMS_TABLE, "EXCLUDED")})
+    RETURNING *
+)
+SELECT * FROM upserted
+UNION ALL
+SELECT * FROM unchanged
+"""
+
+
 #: Links an attachment back to the arrival that carried it, so a file detail
 #: page can show "arrived in this email" and an item can list its files.
 #: Added separately because ``file_assets`` already exists.
@@ -443,38 +539,7 @@ class InboundRegistry:
         own = connection is None
         conn = connection or await self._connect()
         try:
-            row = await conn.fetchrow(
-                f"""INSERT INTO {INBOUND_ITEMS_TABLE} (
-                        owner_user_id, visibility, surface, account_id,
-                        external_id, kind, conversation, conversation_name,
-                        sender_id, sender_name, subject, body,
-                        occurred_at, ends_at, importance, has_attachments,
-                        metadata, search_text)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-                            COALESCE($13, NOW()), $14, $15, $16,
-                            $17::jsonb, $18)
-                    ON CONFLICT (owner_user_id, surface, account_id, external_id)
-                    DO UPDATE SET
-                        kind = EXCLUDED.kind,
-                        conversation = EXCLUDED.conversation,
-                        conversation_name = EXCLUDED.conversation_name,
-                        sender_id = EXCLUDED.sender_id,
-                        sender_name = EXCLUDED.sender_name,
-                        subject = EXCLUDED.subject,
-                        body = EXCLUDED.body,
-                        occurred_at = EXCLUDED.occurred_at,
-                        ends_at = EXCLUDED.ends_at,
-                        -- A re-poll carries no triage verdict, so it must not
-                        -- erase the one the triage agent already wrote.
-                        importance = COALESCE(
-                            EXCLUDED.importance,
-                            {INBOUND_ITEMS_TABLE}.importance
-                        ),
-                        has_attachments = EXCLUDED.has_attachments,
-                        metadata = EXCLUDED.metadata,
-                        search_text = EXCLUDED.search_text,
-                        updated_at = NOW()
-                    RETURNING *""",
+            params = (
                 principal.user_id,
                 vis,
                 surface,
@@ -494,6 +559,19 @@ class InboundRegistry:
                 json.dumps(metadata or {}),
                 search_text,
             )
+            row = await conn.fetchrow(REGISTER_SQL, *params)
+            if row is None:
+                # A concurrent registration inserted the row after this
+                # statement's snapshot and it already matched: read it back.
+                row = await conn.fetchrow(
+                    f"""SELECT * FROM {INBOUND_ITEMS_TABLE}
+                         WHERE owner_user_id = $1 AND surface = $2
+                           AND account_id = $3 AND external_id = $4""",
+                    principal.user_id,
+                    surface,
+                    account_id or "",
+                    str(external_id),
+                )
         finally:
             if own:
                 await conn.close()
