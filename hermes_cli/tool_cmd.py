@@ -17,7 +17,14 @@ Subcommands:
 * ``config <name> --json ... | --file ...`` — replace a tool's ``config_json``
   (validated: no ``HERMES_*`` non-secret keys).
 * ``promote <name>`` — approval-gated (C6) dev→prod promotion, recording the
-  shared C5 approval/change/promotion rows.
+  shared C5 approval/change/promotion rows; for a local app it also runs the
+  FG-33 local promotion plan (tag, prod migration, release flip, restart).
+* ``new <name> --template nextjs-supabase --hosting local|external
+  [--provider …]`` — an FG-33 vibe-coded app (local: dev port, MCP token and
+  dev database provisioned by the root helpers).
+* ``build|start|stop|restart|logs|status|preview <name>`` and ``doctor`` —
+  the FG-33 local app runtime (:mod:`hermes_cli.app_runtime`); app verbs
+  default to ``--mode dev``.
 
 Routine dev authoring/enable/disable/config each record a C5 provenance change
 (pre-approved — the operator is performing it directly); only ``promote`` is
@@ -26,6 +33,7 @@ C6-gated.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import os
@@ -155,11 +163,29 @@ async def _record_provenance(
         print(f"warning: could not record provenance change: {exc}")
 
 
+#: FG-33 local app verbs (``hermes_cli.app_runtime``).
+_APP_VERBS = ("build", "start", "stop", "restart", "logs", "status", "preview", "doctor")
+
+
+def _is_app_new(args) -> bool:
+    """An FG-33 app, not the FG-07 minimal tool (whose output stays unchanged)."""
+    return bool(
+        getattr(args, "hosting", None)
+        or getattr(args, "provider", None)
+        or getattr(args, "template", None) not in (None, "minimal")
+    )
+
+
 async def _run(args, action: str) -> None:
     from hermes_cli.datastore import get_store, resolve_mode
     from hermes_cli.tools_registry import ToolRegistry, promote_tool
 
-    mode = getattr(args, "mode", None) or resolve_mode(None)
+    explicit_mode = getattr(args, "mode", None)
+    if action in _APP_VERBS or (action == "new" and _is_app_new(args)):
+        # Apps are authored and previewed in dev; prod only when asked for.
+        mode = explicit_mode or "dev"
+    else:
+        mode = explicit_mode or resolve_mode(None)
     prod_store = get_store("supabase-app", "prod")
     principal = await _resolve_operator(prod_store, getattr(args, "as_user", None))
 
@@ -167,7 +193,14 @@ async def _run(args, action: str) -> None:
     await registry.initialize()
 
     if action == "new":
-        await _cmd_new(args, principal, registry, prod_store, mode)
+        if _is_app_new(args):
+            await _cmd_new_app(args, principal, registry, prod_store, mode)
+        else:
+            await _cmd_new(args, principal, registry, prod_store, mode)
+        return
+
+    if action in _APP_VERBS:
+        await _cmd_app(args, action, principal, registry)
         return
 
     if action == "list":
@@ -221,7 +254,7 @@ async def _run(args, action: str) -> None:
             actor=principal.user_id,
         )
         print(
-            f"Promoted tool {result.tool_name!r} dev→prod.\n"
+            f"Promoted tool {result.tool_name!r} dev→prod (it lands disabled).\n"
             f"  approval={result.approval_ref}\n"
             f"  change={result.change_ref}\n"
             f"  promotion={result.promotion_ref}"
@@ -285,6 +318,140 @@ async def _cmd_new(args, principal, registry, prod_store, mode) -> None:
           "`hermes tool promote %s`." % (name, name))
 
 
+async def _cmd_new_app(args, principal, registry, prod_store, mode) -> None:
+    """``tool new --template/--hosting/--provider``: an FG-33 vibe-coded app."""
+    from hermes_cli import app_runtime as rt
+    from hermes_cli.mcp_endpoints import MCPEndpointRegistry
+    from hermes_cli.tool_scaffold import scaffold_in_house_tool
+    from hermes_constants import get_hermes_home
+
+    name = args.name
+    template = getattr(args, "template", None) or "nextjs-supabase"
+    hosting = getattr(args, "hosting", None) or "local"
+    provider = getattr(args, "provider", None)
+    if mode != "dev":
+        raise SystemExit("refused: apps are created in dev; promote them to prod later.")
+    if hosting == "external" and not provider:
+        raise SystemExit("refused: --hosting external needs --provider.")
+    if hosting == "local" and provider:
+        raise SystemExit("refused: --provider is only for --hosting external.")
+    try:
+        rt.validate_slug(name)
+        await rt.admit(registry, principal, "create", tool=name, hosting=hosting)
+    except (ValueError, rt.AdmissionRefused) as exc:
+        raise SystemExit(f"refused: {exc}") from exc
+
+    visibility = "shared" if getattr(args, "shared", False) else None
+    tools_root = Path(getattr(args, "root", "") or (get_hermes_home() / "tools"))
+    runtime = rt.AppRuntime(tools_root=tools_root)
+    port = None
+    try:
+        if hosting == "local":
+            port, ref = runtime.allocate(name, "dev")
+        try:
+            scaffold = scaffold_in_house_tool(
+                name, tools_root, template=template, hosting=hosting,
+                provider=provider, **({"port": port} if port else {}),
+            )
+        except TypeError as exc:
+            raise SystemExit(
+                "refused: this build has no app templates yet (FG-33 P8-1.1)."
+            ) from exc
+        provisioned = runtime.helper.db("create", name, "dev") if hosting == "local" else {}
+    except rt.HelperError as exc:
+        raise SystemExit(f"error: {exc}") from exc
+
+    app_config: dict = {}
+    manifest = Path(scaffold.root) / "tool.config.json"
+    if manifest.is_file():
+        try:
+            app_config = {"app": json.loads(manifest.read_text(encoding="utf-8"))}
+        except (OSError, json.JSONDecodeError):
+            app_config = {}
+
+    endpoint_ref = None
+    if hosting == "local":
+        endpoints = MCPEndpointRegistry(registry.store)
+        await endpoints.initialize()
+        endpoint = await endpoints.register(
+            principal, rt.endpoint_name(name), "in_house",
+            rt.mcp_transport(port, name, "dev"), visibility=visibility,
+            app_kind="local", secret_ref=ref,
+        )
+        endpoint_ref = endpoint.name
+    tool = await registry.create(
+        principal, name, "in_house" if hosting == "local" else "external",
+        visibility=visibility, status="disabled", mcp_endpoint_ref=endpoint_ref,
+        web_url=f"http://127.0.0.1:{port}" if port else None, config=app_config,
+        hosting=hosting, repo_path=str(scaffold.root), build_state="draft",
+    )
+    if hosting == "local":
+        await runtime.record_dev_database(registry, tool, {**provisioned, "port": port})
+    await _record_provenance(
+        prod_store,
+        actor_user_id=principal.user_id,
+        action=f"hermes tool new {name}",
+        target_ref=name,
+        mode=tool.mode,
+        visibility=tool.visibility,
+        payload={"kind": tool.kind, "hosting": hosting, "template": template,
+                 "provider": provider},
+    )
+    print(f"Scaffolded {hosting} app {name!r} (template {template}) in mode dev:")
+    print(f"  path:    {scaffold.root}")
+    if hosting == "local":
+        print(f"  preview: {rt.app_path(name, 'dev')}  (after `hermes tool build {name}`)")
+        print(f"  MCP:     {endpoint_ref} (HTTP, bearer)")
+    print(f"Registered (status={tool.status}). Build with `hermes tool build {name}`, "
+          f"then promote with `hermes tool promote {name}`.")
+
+
+async def _cmd_app(args, action, principal, registry) -> None:
+    from hermes_cli import app_runtime as rt
+    from hermes_cli.datastore import get_store
+    from hermes_cli.tools_registry import ToolRegistry
+
+    runtime = rt.AppRuntime()
+    try:
+        if action == "doctor":
+            registries = {}
+            for m in ("dev", "prod"):
+                registries[m] = ToolRegistry(get_store("supabase-app", m))
+                await registries[m].initialize()
+            result = await runtime.doctor(registries, principal)
+            if getattr(args, "json", False):
+                print(json.dumps(result, indent=2, sort_keys=True))
+                return
+            if result["ok"]:
+                print("No problems: registry rows, app instances and databases agree.")
+            for problem in result["problems"]:
+                print("  - " + ", ".join(f"{k}={v}" for k, v in problem.items()))
+            return
+        if action == "build":
+            result = await runtime.build(registry, principal, args.name)
+            print(f"Built {result['tool']!r} at {result['release_sha'][:12]}; "
+                  f"dev preview: {result['path']}")
+        elif action in ("start", "stop", "restart"):
+            result = await runtime.control(registry, principal, args.name, action)
+            print(f"{result['tool']} ({result['mode']}): {result['runtime_state']}")
+        elif action == "logs":
+            result = await runtime.logs(registry, principal, args.name,
+                                        lines=getattr(args, "lines", 200) or 200)
+            print(result["lines"])
+        elif action == "status":
+            print(json.dumps(await runtime.status(registry, principal, args.name),
+                             indent=2, sort_keys=True, default=str))
+        elif action == "preview":
+            tool = await runtime.resolve(registry, principal, args.name, write=False)
+            print(runtime.preview(tool, registry.mode))
+    except KeyError as exc:
+        raise SystemExit(f"error: no tool named {args.name!r} visible to you") from exc
+    except (PermissionError, ValueError, rt.AdmissionRefused) as exc:
+        raise SystemExit(f"refused: {exc}") from exc
+    except rt.HelperError as exc:
+        raise SystemExit(f"error: {exc}") from exc
+
+
 def cmd_tool(args) -> None:
     """Dispatch ``hermes tool`` subcommands (default ``list``)."""
     action = getattr(args, "tool_action", None) or "list"
@@ -321,6 +488,18 @@ def register_tool_subparser(subparsers) -> None:
         "--shared", action="store_true",
         help="Register as shared instead of private to the operator",
     )
+    new.add_argument(
+        "--template", choices=("minimal", "nextjs-supabase"), default=None,
+        help="App template (FG-33); omit for the FG-07 minimal tool",
+    )
+    new.add_argument(
+        "--hosting", choices=("local", "external"), default=None,
+        help="Where the app runs: on this box (local) or a provider (external)",
+    )
+    new.add_argument(
+        "--provider", choices=("vercel", "railway", "aws_amplify", "alibaba_fc"),
+        default=None, help="Hosting provider for --hosting external",
+    )
     new.set_defaults(func=cmd_tool, tool_action="new")
 
     listp = sub.add_parser("list", help="List tools visible to the operator")
@@ -345,6 +524,30 @@ def register_tool_subparser(subparsers) -> None:
     )
     promote.add_argument("name")
     promote.set_defaults(func=cmd_tool, tool_action="promote")
+
+    app_help = {
+        "build": "Build the app's dev HEAD and (re)start its dev instance",
+        "start": "Start the app instance of --mode (default dev)",
+        "stop": "Stop the app instance of --mode (default dev)",
+        "restart": "Restart the app instance of --mode (default dev)",
+        "logs": "Show a capped tail of the app instance's journal",
+        "status": "Show the app's runtime state and recent deployments",
+        "preview": "Print the app's browser path for --mode (default dev)",
+    }
+    for verb, text in app_help.items():
+        verb_parser = sub.add_parser(verb, help=text)
+        verb_parser.add_argument("name")
+        # Also accepted after the verb; overrides the group-level --mode.
+        verb_parser.add_argument("--mode", choices=("dev", "prod"),
+                                 default=argparse.SUPPRESS)
+        if verb == "logs":
+            verb_parser.add_argument("--lines", type=int, default=200)
+        verb_parser.set_defaults(func=cmd_tool, tool_action=verb)
+    doctor = sub.add_parser(
+        "doctor", help="Reconcile app registry rows, instances and databases (read-only)"
+    )
+    doctor.add_argument("--json", action="store_true")
+    doctor.set_defaults(func=cmd_tool, tool_action="doctor")
 
     parser.set_defaults(func=cmd_tool)
 

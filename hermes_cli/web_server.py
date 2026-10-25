@@ -360,6 +360,12 @@ app.include_router(_projects_outputs_router)
 app.include_router(_projects_live_router)
 app.include_router(_projects_changes_router)
 app.include_router(_projects_board_router)
+try:  # FG-33 1.6 quota policy router; absent until that item lands
+    from hermes_cli.quotas_api import router as _quotas_router  # noqa: E402
+except ImportError:
+    _quotas_router = None
+if _quotas_router is not None:
+    app.include_router(_quotas_router)
 from hermes_cli.projects_idempotency import ProjectsIdempotencyMiddleware  # noqa: E402
 app.add_middleware(ProjectsIdempotencyMiddleware)  # innermost: runs after auth
 
@@ -13726,6 +13732,116 @@ async def tool_health(request: Request, name: str, mode: Optional[str] = None):
 
     reachable, detail = await asyncio.to_thread(_probe)
     return {"name": name, "reachable": reachable, "detail": detail, "web_url": tool.web_url}
+
+
+class ToolModeRequest(BaseModel):
+    mode: Optional[str] = None
+
+
+def _app_mode(mode: Optional[str]) -> str:
+    """FG-33 app routes act on dev unless prod is asked for."""
+    return mode if mode in ("dev", "prod") else "dev"
+
+
+async def _app_tool_call(request: Request, mode: Optional[str], fn):
+    """Run one ``AppRuntime`` act as the signed-in caller (C1).
+
+    Who may act is checked per app inside ``AppRuntime.resolve`` (C2: the
+    app's owner, an admin or the owner; private apps of others are a 404),
+    so members manage their own apps within the quota policy (decision 9).
+    """
+    from hermes_cli.app_runtime import AdmissionRefused, AppRuntime, HelperError
+    from hermes_cli.datastore import get_store
+    from hermes_cli.tools_registry import ToolRegistry
+
+    try:
+        operator = await _comms_resolve_principal(request)
+        registry = ToolRegistry(get_store("supabase-app", _app_mode(mode)))
+        await registry.initialize()
+        return await fn(AppRuntime(), registry, operator)
+    except HTTPException:
+        raise
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Tool not found")
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except AdmissionRefused as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except HelperError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+
+@app.post("/api/tools/{name}/build")
+async def build_tool_app(request: Request, name: str, body: ToolModeRequest):
+    """Build a local app's dev HEAD and (re)start its dev instance."""
+    return await _app_tool_call(
+        request, body.mode, lambda rt, reg, who: rt.build(reg, who, name)
+    )
+
+
+@app.post("/api/tools/{name}/start")
+async def start_tool_app(request: Request, name: str, body: ToolModeRequest):
+    return await _app_tool_call(
+        request, body.mode, lambda rt, reg, who: rt.control(reg, who, name, "start")
+    )
+
+
+@app.post("/api/tools/{name}/stop")
+async def stop_tool_app(request: Request, name: str, body: ToolModeRequest):
+    return await _app_tool_call(
+        request, body.mode, lambda rt, reg, who: rt.control(reg, who, name, "stop")
+    )
+
+
+@app.post("/api/tools/{name}/restart")
+async def restart_tool_app(request: Request, name: str, body: ToolModeRequest):
+    return await _app_tool_call(
+        request, body.mode, lambda rt, reg, who: rt.control(reg, who, name, "restart")
+    )
+
+
+@app.get("/api/tools/{name}/logs")
+async def tool_app_logs(
+    request: Request, name: str, mode: Optional[str] = None, lines: int = 200
+):
+    """A capped journal tail of a local app instance (its owner or an admin)."""
+    return await _app_tool_call(
+        request, mode, lambda rt, reg, who: rt.logs(reg, who, name, lines=lines)
+    )
+
+
+@app.get("/api/tools/{name}/runtime")
+async def tool_app_runtime(request: Request, name: str, mode: Optional[str] = None):
+    """Runtime state, browser path and recent deployments of an app (C2 read)."""
+    return await _app_tool_call(
+        request, mode, lambda rt, reg, who: rt.runtime(reg, who, name)
+    )
+
+
+@app.get("/api/tools/{name}/database")
+async def tool_app_database(request: Request, name: str, mode: Optional[str] = None):
+    """A local app's database binding for the mode (never a DSN)."""
+    return await _app_tool_call(
+        request, mode, lambda rt, reg, who: rt.database(reg, who, name)
+    )
+
+
+@app.delete("/api/tools/{name}")
+async def delete_tool_app(
+    request: Request, name: str, mode: Optional[str] = None, confirm: str = ""
+):
+    """Delete a tool in a mode; a local app also loses its instance and database.
+
+    Irreversible, so it needs ``?confirm=<name>`` (decision 9's one explicit
+    confirmation before data loss).
+    """
+    return await _app_tool_call(
+        request, mode, lambda rt, reg, who: rt.remove(reg, who, name, confirm=confirm)
+    )
 
 
 @app.get("/api/tools/changes")

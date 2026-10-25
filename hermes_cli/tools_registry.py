@@ -813,6 +813,7 @@ async def promote_tool(
     actor: str,
     approved: bool = False,
     approval_callback: Any = None,
+    runtime: Any = None,
 ) -> ToolPromotionResult:
     """Promote one tool definition from ``app_dev`` to ``app_prod`` (C6-gated).
 
@@ -823,6 +824,17 @@ async def promote_tool(
     the shared C3 audit tables. No application data is copied; only the tool's
     definition/config crosses the boundary. The promoted tool lands
     ``disabled`` so an operator explicitly enables it in prod.
+
+    A local app (``hosting='local'``) also runs the FG-33 §3.7 plan after the
+    approval: the approval row is committed first (the root helpers check it),
+    then ``runtime.promote_local`` tags ``vN`` on ``main``, migrates the prod
+    database (pg_dump first), builds and flips the prod release and restarts
+    it; the prod row then carries the release SHA and the app's endpoint row is
+    copied with the prod instance's transport. ``runtime`` defaults to
+    :class:`hermes_cli.app_runtime.AppRuntime`.
+
+    The change row's ``op``/``inverse_op`` are single FG-12 ``data`` ops on the
+    prod ``tools`` row, which the undo engine (``changes._apply``) replays.
     """
     from hermes_cli.changes import initialize_changes
     from hermes_cli.datastore import app_schema
@@ -876,6 +888,28 @@ async def promote_tool(
         approval_ref = _new_ref("apr")
         change_ref = _new_ref("chg")
         promotion_ref = _new_ref("prm")
+        approval_sql = f"""
+            INSERT INTO {prod}.approvals
+                (id, action, target_ref, actor, decision)
+            VALUES ($1, 'tool.promote', $2, $3, 'approved')
+        """
+
+        plan = None
+        if tool.hosting == "local":
+            import asyncio
+
+            from hermes_cli.app_runtime import AppRuntime
+
+            await connection.execute(approval_sql, approval_ref, f"tool:{name}", actor)
+            has_prod_db = await _has_prod_app_database(connection, prod, name)
+            plan = await asyncio.to_thread(
+                (runtime or AppRuntime()).promote_local,
+                tool, approval_ref=approval_ref, has_prod_db=has_prod_db,
+            )
+            overrides = {"release_sha": plan.release_sha, "build_state": "ready"}
+            promoted_values = [
+                overrides.get(c, v) for c, v in zip(_PROMOTED_COLUMNS, promoted_values)
+            ]
 
         async with connection.transaction():
             existing = await connection.fetchrow(
@@ -884,35 +918,10 @@ async def promote_tool(
                 """,
                 name,
             )
-            operation = "replace" if existing is not None else "add"
-            if existing is None:
-                inverse_op: dict[str, object] = {
-                    "op": "remove",
-                    "path": f"/tools/{name}",
-                }
-            else:
-                inverse_op = {
-                    "op": "replace",
-                    "path": f"/tools/{name}",
-                    "value": _row_to_tool(existing).as_dict(),
-                }
-            forward_op = [
-                {
-                    "op": operation,
-                    "path": f"/tools/{name}",
-                    "value": tool.as_dict(),
-                }
-            ]
-            await connection.execute(
-                f"""
-                INSERT INTO {prod}.approvals
-                    (id, action, target_ref, actor, decision)
-                VALUES ($1, 'tool.promote', $2, $3, 'approved')
-                """,
-                approval_ref,
-                f"tool:{name}",
-                actor,
-            )
+            if plan is None:
+                await connection.execute(
+                    approval_sql, approval_ref, f"tool:{name}", actor
+                )
             await connection.execute(
                 f"""
                 INSERT INTO {prod}.{TOOLS_TABLE} ({insert_columns})
@@ -924,6 +933,16 @@ async def promote_tool(
                 f"tol_{uuid.uuid4().hex}",
                 *promoted_values,
             )
+            promoted = await connection.fetchrow(
+                f"SELECT * FROM {prod}.{TOOLS_TABLE} WHERE name = $1", name
+            )
+            forward_op = _row_state_op(name, promoted)
+            inverse_op = _row_state_op(name, existing)
+            if plan is not None and tool.mcp_endpoint_ref:
+                await _copy_endpoint_to_prod(
+                    connection, dev, prod, tool.mcp_endpoint_ref,
+                    transport=plan.transport, secret_ref=plan.secret_ref,
+                )
             await connection.execute(
                 f"""
                 INSERT INTO {prod}.changes
@@ -936,8 +955,8 @@ async def promote_tool(
                 change_ref,
                 actor,
                 actor,
-                json.dumps(forward_op, sort_keys=True),
-                json.dumps([inverse_op], sort_keys=True),
+                json.dumps(forward_op, sort_keys=True, default=str),
+                json.dumps(inverse_op, sort_keys=True, default=str),
                 approval_ref,
                 tool.visibility,
             )
@@ -954,6 +973,11 @@ async def promote_tool(
                 change_ref,
                 actor,
             )
+            if plan is not None:
+                await (runtime or AppRuntime()).record_promotion(
+                    connection, promoted["id"], plan, actor=actor,
+                    approval_ref=approval_ref, change_ref=change_ref,
+                )
     finally:
         await connection.close()
 
@@ -962,6 +986,77 @@ async def promote_tool(
         approval_ref=approval_ref,
         change_ref=change_ref,
         tool_name=name,
+    )
+
+
+#: Timestamps are left to the database when an undo/redo replays a row.
+_STATE_SKIP = frozenset({"created_at", "updated_at"})
+_JSONB_COLUMNS = frozenset({"config_json", "limits_json"})
+
+
+def _row_state_op(name: str, row: Optional["asyncpg.Record"]) -> dict:
+    """An FG-12 ``data`` op putting the prod ``tools`` row into ``row``'s state.
+
+    ``table`` is unqualified because the undo engine refuses dotted names; it
+    runs on a prod store connection whose ``search_path`` is the prod schema.
+    ``row=None`` means "no such row" (undoing a first promotion deletes it).
+    """
+    state = None
+    if row is not None:
+        state = {}
+        for key, value in dict(row).items():
+            if key in _STATE_SKIP:
+                continue
+            if key in _JSONB_COLUMNS and value is not None and not isinstance(value, str):
+                value = json.dumps(value, sort_keys=True)
+            state[key] = value
+    return {"kind": "data", "table": TOOLS_TABLE, "pk": {"name": name}, "state": state}
+
+
+async def _has_prod_app_database(connection: "asyncpg.Connection", prod: str, name: str) -> bool:
+    if await connection.fetchval(f"SELECT to_regclass('{prod}.app_databases')") is None:
+        return False
+    return bool(await connection.fetchval(
+        f"""
+        SELECT 1 FROM {prod}.app_databases d JOIN {prod}.{TOOLS_TABLE} t ON t.id = d.tool_id
+        WHERE t.name = $1 AND d.mode = 'prod' AND d.status <> 'dropped'
+        """,
+        name,
+    ))
+
+
+async def _copy_endpoint_to_prod(
+    connection: "asyncpg.Connection", dev: str, prod: str, endpoint: str, *,
+    transport: Mapping[str, object], secret_ref: str,
+) -> None:
+    """Copy a local app's endpoint row to prod, pointed at the prod instance.
+
+    Lands disabled like the tool row (``enabled`` follows ``tools.status``).
+    """
+    from hermes_cli.mcp_endpoints import _SCHEMA_SQL, ENDPOINTS_TABLE
+
+    if await connection.fetchval(f"SELECT to_regclass('{dev}.{ENDPOINTS_TABLE}')") is None:
+        return
+    # Runs inside promote_tool's transaction: SET LOCAL ends with it.
+    await connection.execute(f"SET LOCAL search_path TO {prod}")
+    await connection.execute(_SCHEMA_SQL)
+    await apply_scope_rls(connection, ENDPOINTS_TABLE)
+    await connection.execute(
+        f"""
+        INSERT INTO {prod}.{ENDPOINTS_TABLE}
+            (id, name, kind, transport, owner_user_id, visibility, mode, enabled,
+             app_kind, secret_ref, forward_principal)
+        SELECT $2, name, kind, $3::jsonb, owner_user_id, visibility, 'prod', FALSE,
+               app_kind, $4, forward_principal
+        FROM {dev}.{ENDPOINTS_TABLE} WHERE name = $1
+        ON CONFLICT (name) DO UPDATE SET
+            transport = EXCLUDED.transport,
+            secret_ref = EXCLUDED.secret_ref,
+            app_kind = EXCLUDED.app_kind,
+            forward_principal = EXCLUDED.forward_principal
+        """,
+        endpoint, f"mep_{uuid.uuid4().hex}", json.dumps(dict(transport), sort_keys=True),
+        secret_ref,
     )
 
 

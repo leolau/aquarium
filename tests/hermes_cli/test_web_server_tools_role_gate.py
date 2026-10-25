@@ -102,6 +102,12 @@ def _call(client, method, path, body):
     return getattr(client, method)(path, **kwargs)
 
 
+_APP_RUNTIME_ROUTES = {
+    "/api/tools/{name}/build", "/api/tools/{name}/start", "/api/tools/{name}/stop",
+    "/api/tools/{name}/restart", "/api/tools/{name}",
+}
+
+
 def test_every_change_route_is_gated():
     """Every non-GET tool/MCP endpoint carries the role check — a new one can't
     slip past it, and the list above covers all of them."""
@@ -116,6 +122,10 @@ def test_every_change_route_is_gated():
         # A person's own servers: open to every signed-in person, scoped to the
         # caller (tests/hermes_cli/test_personal_mcp.py, test_route_authorization.py).
         if path.startswith("/api/mcp/personal"):
+            continue
+        # FG-33 local apps: a member runs their own app (decision 9); the
+        # per-app owner check is in AppRuntime.resolve (test_fg33_local_e2e.py).
+        if path in _APP_RUNTIME_ROUTES:
             continue
         for method in methods - {"GET", "HEAD", "OPTIONS"}:
             deps = {d.call for d in route.dependant.dependencies}
