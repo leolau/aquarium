@@ -80,6 +80,25 @@ HANDLER_CHECKED = {
     "GET /api/tools/{name}/runtime": ("member", "_app_tool_call"),
     "GET /api/tools/{name}/database": ("member", "_app_tool_call"),
     "DELETE /api/tools/{name}": ("member", "_app_tool_call"),
+    # FG-33 P8-2 2.2 (hermes_cli/tools_api.py): reads are C2-scoped; writes need
+    # the app's owner, an admin or the owner (decision 9), checked per app.
+    "GET /api/tools/{name}": ("member", "_app_tool_call"),
+    "GET /api/tools/{name}/mcp": ("member", "_app_tool_call"),
+    "PUT /api/tools/{name}/enabled": ("member", "_app_tool_call"),
+    "PUT /api/tools/{name}/config": ("member", "_app_tool_call"),
+    "POST /api/tools/{name}/promote": ("member", "_app_tool_call"),
+    "PUT /api/tools/{name}/icon": ("member", "_app_tool_call"),
+    "PUT /api/tools/{name}/visibility": ("member", "_app_tool_call"),
+    "PUT /api/tools/{name}/mcp": ("member", "_app_tool_call"),
+    "PUT /api/tools/{name}/secrets": ("member", "_app_tool_call"),
+    "PUT /api/tools/{name}/egress": ("member", "_app_tool_call"),
+    "POST /api/tools/{name}/favicon-refresh": ("member", "_app_tool_call"),
+    "POST /api/tools/{name}/feedback": ("member", "_app_tool_call"),
+    # FG-33 P8-2 2.4 lifecycle (hermes_cli/app_lifecycle_api.py, mounted by 2.2):
+    # the app's owner, an admin or the owner (AppRuntime.resolve, decision 9).
+    "POST /api/tools/{name}/archive": ("member", "_lifecycle_call"),
+    "POST /api/tools/{name}/restore": ("member", "_lifecycle_call"),
+    "POST /api/tools/{name}/purge": ("member", "_lifecycle_call"),
     "PUT /api/access/roles/{role}": ("admin", "_require_role_limits_editor"),
     "POST /api/profiles/suggestions/{suggestion_id}/adopt": ("owner", "principal.is_owner"),
     "POST /api/profiles/suggestions/{suggestion_id}/dismiss": ("owner", "principal.is_owner"),
@@ -378,6 +397,7 @@ SIGNED_IN = {
     "GET /api/tools",
     "GET /api/tools/{name}/health",
     "GET /api/tools/changes",
+    "GET /api/tools/quota",
     "GET /api/mcp/catalog",
     "GET /api/memory",
     "GET /api/skills/hub/sources",

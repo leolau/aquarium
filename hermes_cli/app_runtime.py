@@ -44,6 +44,9 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from hermes_cli.access import Principal
 
 HELPER = "/usr/local/sbin/aquarium-app-helper"
+#: Item 2.6's egress helper: ``aquarium-app-egress set`` with ``{"slug", "mode",
+#: "hosts"}`` on stdin replaces the instance's internet allowlist.
+EGRESS_HELPER = "/usr/local/sbin/aquarium-app-egress"
 PROVISIONER = "/usr/local/sbin/aquarium"
 SUDO: Tuple[str, ...] = ("sudo", "-n")
 
@@ -74,6 +77,18 @@ SLUG_RE = re.compile(r"^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$")
 _REF_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 _SHA_RE = re.compile(r"^[0-9a-f]{7,64}$")
 _SECRET_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+#: Names a person may not set through the secrets form: the unit's own
+#: environment, the DSNs and the runtime-managed MCP bearer (``APP_*``). The
+#: helper refuses most of these too; this keeps them from reaching sudo.
+USER_SECRET_RESERVED_PREFIXES = ("DATABASE_URL", "NEXT_PUBLIC_", "NODE_", "APP_", "CREDENTIALS_")
+USER_SECRET_RESERVED_NAMES = frozenset({"PORT", "HOSTNAME", "HOME", "PATH", "LD_PRELOAD", "LD_LIBRARY_PATH"})
+#: Same host rule and default cap as ``deploy/aquarium-app-egress`` (the helper
+#: re-checks both, and its admin policy may lower the cap).
+MAX_EGRESS_HOSTS = 20
+_EGRESS_HOST_RE = re.compile(
+    r"^(?:\*\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+)
+_EGRESS_REFUSED_SUFFIXES = (".local", ".internal", ".localhost", ".localdomain", ".lan", ".arpa")
 
 PROD_PATH = "/apps/{slug}"
 DEV_PATH = "/apps-dev/{slug}"
@@ -150,6 +165,31 @@ def mcp_transport(port: int, slug: str, mode: str) -> dict:
         "url": f"http://127.0.0.1:{port}{app_path(slug, mode)}/api/mcp",
         "auth": "bearer",
     }
+
+
+def validate_user_secret_name(name: Any) -> str:
+    if not isinstance(name, str) or not _SECRET_NAME_RE.fullmatch(name):
+        raise ValueError("A secret name is UPPER_SNAKE_CASE, at most 64 characters")
+    if name in USER_SECRET_RESERVED_NAMES or name.startswith(USER_SECRET_RESERVED_PREFIXES):
+        raise ValueError(f"{name} is reserved for the app runtime")
+    return name
+
+
+def validate_egress_hosts(hosts: Any) -> List[str]:
+    """A sorted, de-duplicated list of public DNS names (a leading ``*.`` is allowed; no ports)."""
+    if not isinstance(hosts, (list, tuple)):
+        raise ValueError("hosts must be a list of host names")
+    out = set()
+    for raw in hosts:
+        host = raw.strip().lower() if isinstance(raw, str) else ""
+        if not _EGRESS_HOST_RE.fullmatch(host):
+            raise ValueError(f"Not a public host name: {raw!r}")
+        if host.endswith(_EGRESS_REFUSED_SUFFIXES):
+            raise ValueError(f"Not a public host name: {raw!r}")
+        out.add(host)
+    if len(out) > MAX_EGRESS_HOSTS:
+        raise ValueError(f"At most {MAX_EGRESS_HOSTS} egress hosts per app")
+    return sorted(out)
 
 
 def _default_runner(argv: List[str], stdin: Optional[str], timeout: float) -> Tuple[int, str, str]:
@@ -289,6 +329,30 @@ class HelperClient:
     def call(self, verb: str, **spec: Any) -> dict:
         argv = self.helper_argv(verb)
         return self._exec(argv, self.helper_spec(verb, spec), f"aquarium-app-helper {verb}")
+
+    def set_secret(
+        self, slug: str, mode: str, name: str, *, value: Optional[str] = None,
+        delete: bool = False,
+    ) -> dict:
+        """Set or delete one app secret (helper ``set-secret``); never logs the value."""
+        name = validate_user_secret_name(name)
+        if delete:
+            if value is not None:
+                raise ValueError("give either a value or delete, not both")
+            return self.call("set-secret", slug=slug, mode=mode, name=name, delete=True)
+        if not isinstance(value, str) or not value or "\x00" in value:
+            raise ValueError("a secret value must be a non-empty string")
+        return self.call("set-secret", slug=slug, mode=mode, name=name, value=value)
+
+    def set_egress(self, slug: str, mode: str, hosts: Sequence[str]) -> dict:
+        """Replace an instance's internet allowlist through item 2.6's egress helper."""
+        spec = {
+            "slug": validate_slug(slug),
+            "mode": validate_mode(mode),
+            "hosts": validate_egress_hosts(hosts),
+        }
+        argv = [*self.sudo, EGRESS_HELPER, "set"]
+        return self._exec(argv, json.dumps(spec, sort_keys=True), "aquarium-app-egress set")
 
     def db(
         self, verb: str, slug: str, mode: str, *, approval_ref: Optional[str] = None,
@@ -941,5 +1005,7 @@ __all__ = [
     "endpoint_name",
     "mcp_transport",
     "secret_ref",
+    "validate_egress_hosts",
     "validate_slug",
+    "validate_user_secret_name",
 ]
