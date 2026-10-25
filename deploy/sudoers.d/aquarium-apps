@@ -33,7 +33,7 @@ hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium-app-egress status
 #
 # Database provisioner (FG-33 P8-1 1.3), in the root-owned /usr/local/sbin/aquarium
 # (installed from deploy/aquarium.py). Exact form:
-#   aquarium apps db <create|migrate|status|suspend|resume|drop> <slug> <dev|prod>
+#   aquarium apps db <create|migrate|status|suspend|resume|drop|archive|restore> <slug> <dev|prod>
 # The mode is fixed per line; sudo's * also matches spaces, so `aquarium`
 # itself must refuse anything but exactly one slug before the mode. Approval
 # references (prod verbs) and the drop confirmation arrive as JSON on stdin.
@@ -49,3 +49,7 @@ hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium apps db resume * dev
 hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium apps db resume * prod
 hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium apps db drop * dev
 hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium apps db drop * prod
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium apps db archive * dev
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium apps db archive * prod
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium apps db restore * dev
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium apps db restore * prod

@@ -369,3 +369,66 @@ class TestAppsDatabasesEndToEnd:
         assert left == "0"
         assert not (root / "etc/aquarium/apps/other-app").exists()
         assert answer(cli(root, "apps", "db", "status", "other-app", "dev"))["exists"] is False
+
+    def test_archive_copy_fails_safe_and_restore_reloads_only_a_lost_database(self, cluster, tmp_path):
+        root, conf = cluster
+        assert answer(cli(root, "apps", "db", "create", "keep", "dev"))["ok"]
+        assert answer(cli(root, "apps", "db", "migrate", "keep", "dev", spec={"migrations": [MIG1]}))["ok"]
+        rw = _dsn(root, "keep", "dev", "rw")
+        backups = root / "var/lib/aquarium-apps/db-backups"
+
+        # A failing pg_dump: nothing is suspended and no partial copy is left behind.
+        fake = tmp_path / "bin"
+        fake.mkdir()
+        real_docker = shutil.which("docker")
+        (fake / "docker").write_text(f'#!/bin/sh\ncase "$*" in *pg_dump*) echo boom >&2; exit 1;; esac\n'
+                                     f'exec {real_docker} "$@"\n')
+        (fake / "docker").chmod(0o755)
+        before = set(backups.glob("*")) if backups.exists() else set()
+        out = answer(cli(root, "apps", "db", "archive", "keep", "dev", path=f"{fake}:{os.environ['PATH']}"))
+        assert not out["ok"] and "boom" in out["error"]
+        assert set(backups.glob("*")) == before
+        assert _q(rw, "SELECT count(*) FROM notes")[0][0] == 1
+
+        out = answer(cli(root, "apps", "db", "archive", "keep", "dev"))
+        assert out["ok"]
+        copy = root / out["backup_ref"].lstrip("/")
+        assert copy.parent == backups and stat.S_IMODE(backups.stat().st_mode) == 0o700
+        assert stat.S_IMODE(copy.stat().st_mode) == 0o600 and out["size_bytes"] == copy.stat().st_size > 0
+        with pytest.raises(Exception, match="too many connections|connection limit"):
+            _q(rw, "SELECT 1")
+
+        # Only the archive copy of this database is accepted.
+        other = aq.app_db_name("notes", "dev")
+        for ref in (None, "/etc/passwd", out["backup_ref"].replace(aq.app_db_name("keep", "dev"), other)):
+            spec = {} if ref is None else {"backup_ref": ref}
+            assert not answer(cli(root, "apps", "db", "restore", "keep", "dev", spec=spec))["ok"]
+
+        # Database still there with its rows: restore only resumes it.
+        res = answer(cli(root, "apps", "db", "restore", "keep", "dev", spec={"backup_ref": out["backup_ref"]}))
+        assert res["ok"] and res["existed"] and res["restored"] is False
+        _q(rw, "INSERT INTO notes (body) VALUES ('kept')")
+        assert _q(rw, "SELECT count(*) FROM notes")[0][0] == 2
+
+        # Database lost while archived: restore reloads the copy and the runtime grants work again.
+        out = answer(cli(root, "apps", "db", "archive", "keep", "dev"))
+        subprocess.run(["docker", "exec", conf["APPS_DB_DEV_CONTAINER"], "psql", "-U", "supabase_admin", "-c",
+                        f"DROP DATABASE {aq.app_db_name('keep', 'dev')} WITH (FORCE)"], check=True,
+                       capture_output=True)
+        res = answer(cli(root, "apps", "db", "restore", "keep", "dev", spec={"backup_ref": out["backup_ref"]}))
+        assert res["ok"] and res["existed"] is False and res["restored"] is True
+        rw = _dsn(root, "keep", "dev", "rw")
+        assert sorted(r[0] for r in _q(rw, "SELECT body FROM notes")) == ["first", "kept"]
+        _q(rw, "INSERT INTO notes (body) VALUES ('after restore')")
+        assert answer(cli(root, "apps", "db", "status", "keep", "dev"))["migrations"] == [MIG1["name"]]
+
+    def test_prod_archive_and_restore_need_an_approval(self, cluster):
+        root, conf = cluster
+        assert not answer(cli(root, "apps", "db", "archive", "notes", "prod"))["ok"]
+        out = answer(cli(root, "apps", "db", "archive", "notes", "prod", spec={"approval_ref": approve(conf, "notes")}))
+        assert out["ok"]
+        spec = {"backup_ref": out["backup_ref"]}
+        assert not answer(cli(root, "apps", "db", "restore", "notes", "prod", spec=spec))["ok"]
+        res = answer(cli(root, "apps", "db", "restore", "notes", "prod",
+                         spec={**spec, "approval_ref": approve(conf, "notes")}))
+        assert res["ok"] and res["restored"] is False

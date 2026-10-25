@@ -12,7 +12,8 @@ Everything that touches the box goes through two root helpers, called with
   the helper; it re-validates every spec and refuses unknown fields).
 * ``/usr/local/sbin/aquarium apps db <verb> <slug> <mode>`` (item 1.3) with an
   optional JSON object on stdin (``approval_ref``, ``migrations``,
-  ``confirm``), verbs ``create|migrate|status|suspend|resume|drop``.
+  ``confirm``, ``backup_ref``), verbs
+  ``create|migrate|status|suspend|resume|drop|archive|restore``.
 
 :class:`HelperClient` builds those argv lists and validates the specs first, so
 a bad slug or a prod verb without an approval never reaches sudo.
@@ -55,7 +56,7 @@ HELPER_VERBS = (
     "allocate", "build", "start", "stop", "restart", "route", "unroute",
     "set-secret", "logs", "status", "remove",
 )
-DB_VERBS = ("create", "migrate", "status", "suspend", "resume", "drop")
+DB_VERBS = ("create", "migrate", "status", "suspend", "resume", "drop", "archive", "restore")
 #: Optional stdin fields per helper verb, besides ``slug``/``mode`` (the helper
 #: refuses any other field).
 HELPER_FIELDS: Dict[str, Tuple[str, ...]] = {
@@ -66,7 +67,7 @@ HELPER_FIELDS: Dict[str, Tuple[str, ...]] = {
 #: Activating a prod release needs an approved ``approval_ref`` (the rows
 #: ``promote_tool`` writes); every prod database verb but ``status`` too.
 PROD_GATED_VERBS = frozenset({"build"})
-PROD_GATED_DB_VERBS = frozenset({"create", "migrate", "suspend", "resume", "drop"})
+PROD_GATED_DB_VERBS = frozenset({"create", "migrate", "suspend", "resume", "drop", "archive", "restore"})
 #: The app's MCP bearer, delivered to the unit as a systemd credential.
 MCP_TOKEN_NAME = "APP_MCP_TOKEN"
 
@@ -75,6 +76,8 @@ MCP_TOKEN_NAME = "APP_MCP_TOKEN"
 #: Same rule as ``aquarium apps db`` (``deploy/aquarium.py`` ``APP_SLUG_RE``) and the helper.
 SLUG_RE = re.compile(r"^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$")
 _REF_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+#: An ``apps db archive`` copy (the provisioner re-checks it is its own file).
+_BACKUP_REF_RE = re.compile(r"^/[A-Za-z0-9_./-]{1,400}/lapp_[a-z0-9_]+-[0-9]{8}T[0-9]{6}Z-archive\.dump$")
 _SHA_RE = re.compile(r"^[0-9a-f]{7,64}$")
 _SECRET_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 #: Names a person may not set through the secrets form: the unit's own
@@ -287,6 +290,7 @@ class HelperClient:
     def db_spec(
         self, verb: str, slug: str, mode: str, *, approval_ref: Optional[str] = None,
         migrations: Optional[List[Dict[str, str]]] = None, confirm: Optional[str] = None,
+        backup_ref: Optional[str] = None,
     ) -> Optional[str]:
         spec: Dict[str, Any] = {}
         if approval_ref is not None:
@@ -303,6 +307,12 @@ class HelperClient:
             if confirm != slug:
                 raise ValueError("drop needs confirm=<slug>")
             spec["confirm"] = confirm
+        if (backup_ref is not None) != (verb == "restore"):
+            raise ValueError("restore needs backup_ref (the archive copy), and only restore takes it")
+        if backup_ref is not None:
+            if not _BACKUP_REF_RE.fullmatch(backup_ref):
+                raise ValueError(f"Invalid backup_ref: {backup_ref!r}")
+            spec["backup_ref"] = backup_ref
         if verb == "status" and spec:
             raise ValueError("apps db status takes no fields")
         return json.dumps(spec, sort_keys=True) if spec else None
@@ -357,10 +367,11 @@ class HelperClient:
     def db(
         self, verb: str, slug: str, mode: str, *, approval_ref: Optional[str] = None,
         migrations: Optional[List[Dict[str, str]]] = None, confirm: Optional[str] = None,
+        backup_ref: Optional[str] = None,
     ) -> dict:
         argv = self.db_argv(verb, slug, mode)
         stdin = self.db_spec(verb, slug, mode, approval_ref=approval_ref,
-                             migrations=migrations, confirm=confirm)
+                             migrations=migrations, confirm=confirm, backup_ref=backup_ref)
         return self._exec(argv, stdin, f"aquarium apps db {verb}")
 
 

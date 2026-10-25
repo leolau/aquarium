@@ -49,6 +49,9 @@ CREATE TABLE IF NOT EXISTS app_databases (
     dropped_at TIMESTAMPTZ,
     UNIQUE (tool_id, mode)
 );
+ALTER TABLE app_databases ADD COLUMN IF NOT EXISTS archive_ref TEXT;
+ALTER TABLE app_databases ADD COLUMN IF NOT EXISTS archive_bytes BIGINT;
+ALTER TABLE app_databases ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
 CREATE TABLE IF NOT EXISTS app_deployments (
     id TEXT PRIMARY KEY,
     tool_id TEXT NOT NULL REFERENCES tools(id) ON DELETE CASCADE,
@@ -119,6 +122,10 @@ class AppDatabase:
     last_size_mb: Optional[int] = None
     last_backup_ref: Optional[str] = None
     applied_migrations: List[Any] = field(default_factory=list)
+    #: The copy ``apps db archive`` took when the app was archived (restore reloads it).
+    archive_ref: Optional[str] = None
+    archive_bytes: Optional[int] = None
+    archived_at: Optional[datetime] = None
 
     def as_dict(self) -> dict:
         return {
@@ -127,6 +134,8 @@ class AppDatabase:
             "features": list(self.features), "quota_mb": self.quota_mb,
             "last_size_mb": self.last_size_mb, "last_backup_ref": self.last_backup_ref,
             "applied_migrations": list(self.applied_migrations),
+            "archive_ref": self.archive_ref, "archive_bytes": self.archive_bytes,
+            "archived_at": _iso(self.archived_at),
         }
 
 
@@ -137,6 +146,8 @@ def _row_to_db(row: "asyncpg.Record") -> AppDatabase:
         features=list(_json(row["features"]) or []), quota_mb=row["quota_mb"],
         last_size_mb=row["last_size_mb"], last_backup_ref=row["last_backup_ref"],
         applied_migrations=list(_json(row["applied_migrations"]) or []),
+        archive_ref=row["archive_ref"], archive_bytes=row["archive_bytes"],
+        archived_at=row["archived_at"],
     )
 
 
@@ -211,6 +222,22 @@ class AppStore:
                 last_backup_ref, migrations, quota_mb,
             )
             return _row_to_db(row)
+
+        return await self._with(_run, connection)
+
+    async def record_archive(
+        self, tool_id: str, mode: str, *, archive_ref: str, archive_bytes: Optional[int],
+        connection: Optional["asyncpg.Connection"] = None,
+    ) -> Optional[AppDatabase]:
+        """Remember the archive copy of a database and mark it suspended."""
+        async def _run(conn):
+            row = await conn.fetchrow(
+                "UPDATE app_databases SET status = 'suspended', archive_ref = $3, "
+                "archive_bytes = $4, archived_at = NOW(), last_backup_ref = $3 "
+                "WHERE tool_id = $1 AND mode = $2 RETURNING *",
+                tool_id, mode, archive_ref, archive_bytes,
+            )
+            return _row_to_db(row) if row is not None else None
 
         return await self._with(_run, connection)
 

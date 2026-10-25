@@ -1462,7 +1462,7 @@ def _restore_apply(cfg: Dict[str, str], manifest: Dict, staging: Path, args: arg
 
 APP_SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
 APP_MODES = ("prod", "dev")
-APP_DB_VERBS = ("create", "migrate", "status", "suspend", "resume", "drop")
+APP_DB_VERBS = ("create", "migrate", "status", "suspend", "resume", "drop", "archive", "restore")
 APP_DB_NAME_RE = re.compile(r"^lapp_[a-z0-9_]{1,30}_[0-9a-f]{8}_(?:prod|dev)$")
 APPROVAL_REF_RE = re.compile(r"^apr_[0-9a-f]{32}$")
 MIGRATION_NAME_RE = re.compile(r"^[0-9]{1,20}_[A-Za-z0-9_.-]{1,80}\.sql$")
@@ -1751,6 +1751,20 @@ def app_safety_dump(cfg: Dict[str, str], target: Dict[str, str], db: str, why: s
     return real(dest)
 
 
+def app_archive_dump(cfg: Dict[str, str], db: str, ref: object) -> Path:
+    """The archive copy ``archive`` wrote for ``db`` (``backup_ref``); nothing else may be restored."""
+    folder = P(f"{cfg['APPS_BASE'].rstrip('/')}/db-backups")
+    name = Path(ref).name if isinstance(ref, str) else ""
+    if (not isinstance(ref, str) or real(folder / name) != ref
+            or not re.fullmatch(re.escape(db) + r"-[0-9]{8}T[0-9]{6}Z-archive\.dump", name)):
+        raise Fail(f"backup_ref {ref!r} is not an archive copy of {db}",
+                   "Pass the backup_ref that `apps db archive` returned.")
+    dump = folder / name
+    if dump.is_symlink() or not dump.is_file():
+        raise Fail(f"the archive copy {ref} is missing", "Restore the app database from a backup instead.")
+    return dump
+
+
 def app_counts(target: Dict[str, str], db: str) -> Dict[str, int]:
     proc = apps_psql(target["container"], COUNT_SQL + ";", db, timeout=900)
     counts: Dict[str, int] = {}
@@ -1838,7 +1852,8 @@ def set_conn_limit(target: Dict[str, str], db: str, limit: int) -> None:
 def apps_db_verb(cfg: Dict[str, str], verb: str, slug: str, mode: str) -> Dict:
     slug, mode = apps_slug(slug), apps_mode(mode)
     allowed = {"create": ["approval_ref"], "migrate": ["approval_ref", "migrations"], "status": [],
-               "suspend": ["approval_ref"], "resume": ["approval_ref"], "drop": ["approval_ref", "confirm"]}[verb]
+               "suspend": ["approval_ref"], "resume": ["approval_ref"], "drop": ["approval_ref", "confirm"],
+               "archive": ["approval_ref"], "restore": ["approval_ref", "backup_ref"]}[verb]
     spec = read_apps_spec(allowed)
     target = apps_target(cfg, mode)
     db = app_db_name(slug, mode)
@@ -1854,6 +1869,8 @@ def apps_db_verb(cfg: Dict[str, str], verb: str, slug: str, mode: str) -> Dict:
         audit(f"apps db create {slug} {mode}: {db} ({'new' if created else 'repaired'})")
         return {"ok": True, "verb": verb, "slug": slug, "mode": mode, "database": db, "target": target["container"],
                 "created": created, "dsn_files": dsns, "approval_ref": approval}
+    if verb == "restore":
+        return app_db_unarchive(cfg, target, slug, mode, spec)
     if not app_db_exists(target, db):
         raise Fail(f"{db} does not exist", f"Run `aquarium apps db create {slug} {mode}` first.")
     if verb == "migrate":
@@ -1887,6 +1904,14 @@ def apps_db_verb(cfg: Dict[str, str], verb: str, slug: str, mode: str) -> Dict:
         set_conn_limit(target, db, 0 if verb == "suspend" else int(cfg["APPS_DB_CONN_LIMIT"]))
         audit(f"apps db {verb} {slug} {mode}")
         return {"ok": True, "verb": verb, "slug": slug, "mode": mode, "database": db, "approval_ref": approval}
+    if verb == "archive":
+        # The copy comes first: if it fails, nothing is suspended (Fail propagates).
+        backup = app_safety_dump(cfg, target, db, "archive")
+        size = P(backup).stat().st_size
+        set_conn_limit(target, db, 0)
+        audit(f"apps db archive {slug} {mode}: {db}, copy {backup} ({size} bytes), suspended")
+        return {"ok": True, "verb": verb, "slug": slug, "mode": mode, "database": db, "backup_ref": backup,
+                "size_bytes": size, "approval_ref": approval}
     backup = app_safety_dump(cfg, target, db, "pre-drop")
     apps_sql_ok(target["container"], f"DROP DATABASE {sql_ident(db)} WITH (FORCE);", what="dropping the database")
     apps_sql_ok(target["container"], "".join(f"DROP ROLE IF EXISTS {sql_ident(r)};\n" for r in app_roles(db).values()),
@@ -1899,6 +1924,22 @@ def apps_db_verb(cfg: Dict[str, str], verb: str, slug: str, mode: str) -> Dict:
     audit(f"apps db drop {slug} {mode}: {db}, final dump {backup}")
     return {"ok": True, "verb": verb, "slug": slug, "mode": mode, "database": db, "backup_ref": backup,
             "approval_ref": approval}
+
+
+def app_db_unarchive(cfg: Dict[str, str], target: Dict[str, str], slug: str, mode: str, spec: Dict) -> Dict:
+    """Undo ``archive``: reload the archive copy when the database is gone or has no rows, then resume."""
+    db = app_db_name(slug, mode)
+    dump = app_archive_dump(cfg, db, spec.get("backup_ref"))
+    approval = require_prod_approval(cfg, slug, "restore", spec) if mode == "prod" else None
+    exists = app_db_exists(target, db)
+    rows = sum(v for k, v in app_counts(target, db).items() if k.startswith("public.")) if exists else 0
+    restored = not exists or rows == 0
+    if restored:
+        replace_app_db(cfg, target, slug, mode, dump)
+    set_conn_limit(target, db, int(cfg["APPS_DB_CONN_LIMIT"]))
+    audit(f"apps db restore {slug} {mode}: {db} " + (f"reloaded from {real(dump)}" if restored else "resumed"))
+    return {"ok": True, "verb": "restore", "slug": slug, "mode": mode, "database": db, "restored": restored,
+            "existed": exists, "backup_ref": real(dump), "approval_ref": approval}
 
 
 def apps_cluster_targets(cfg: Dict[str, str], which: str) -> List[Dict[str, str]]:
@@ -2006,12 +2047,21 @@ def restore_app_db(cfg: Dict[str, str], manifest: Dict, staging: Path, entry: Di
         raise Fail(f"the backup entry for {db} does not name its app")
     target = apps_target(cfg, mode)
     apps_require_cluster(target)
+    replace_app_db(cfg, target, slug, mode, staging / entry["file"])
+    diff = compare_counts({k: v for k, v in entry["tables"].items() if k.startswith("public.")}, app_counts(target, db))
+    say(f"  app database {db}: " + ("row counts match the backup" if not diff else f"{len(diff)} tables differ"))
+    audit(f"restore app db {db} from {manifest.get('created')}")
+    return diff
+
+
+def replace_app_db(cfg: Dict[str, str], target: Dict[str, str], slug: str, mode: str, dump: Path) -> None:
+    """Recreate one app database from a pg_dump (a safety dump of the current one first)."""
+    db = app_db_name(slug, mode)
     if app_db_exists(target, db):
         say(f"  safety dump: {app_safety_dump(cfg, target, db, 'pre-restore')}")
         apps_sql_ok(target["container"], f"DROP DATABASE {sql_ident(db)} WITH (FORCE);", what="clearing the database")
     ensure_app_db(cfg, target, slug, mode)
     owner = app_roles(db)["owner"]
-    dump = staging / entry["file"]
     with open(dump, "rb") as fh:
         subprocess.run(["docker", "exec", "-i", "-u", "postgres", target["container"], "pg_restore", "-U",
                         "supabase_admin", "--no-owner", "--no-privileges", f"--role={owner}", "-n", "public",
@@ -2025,10 +2075,6 @@ def restore_app_db(cfg: Dict[str, str], manifest: Dict, staging: Path, entry: Di
                             "supabase_admin", "--data-only", "-n", schema, "-t", table, "-d", db],
                            stdin=fh, capture_output=True, check=False)
     apps_sql_ok(target["container"], app_grants_sql(db), db, what="re-granting")
-    diff = compare_counts({k: v for k, v in entry["tables"].items() if k.startswith("public.")}, app_counts(target, db))
-    say(f"  app database {db}: " + ("row counts match the backup" if not diff else f"{len(diff)} tables differ"))
-    audit(f"restore app db {db} from {manifest.get('created')}")
-    return diff
 
 
 def apps_slug_arg(slug: str) -> str:

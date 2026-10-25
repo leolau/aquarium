@@ -30,11 +30,15 @@ or an admin, no C6 approval; ``purge`` needs one explicit confirmation (the
 tool name). Prod database verbs still get an approved row that records that
 confirmation, because the provisioner checks one before any prod change.
 
-* **archive** — stop and unroute the instance, refuse database connections
-  (``apps db suspend``), switch the tool and its MCP endpoint off. Nothing is
-  deleted; ``restore`` undoes it.
-* **restore** — resume the database, route and start the instance again, and
-  switch the tool back on if archive switched it off.
+* **archive** — stop and unroute the instance, copy the database and then
+  refuse connections to it (``apps db archive``: the copy lands root-only 0600
+  in ``<APPS_BASE>/db-backups/`` and its path, size and time are recorded on the
+  ``app_databases`` row), switch the tool and its MCP endpoint off. If the copy
+  fails nothing is suspended, the instance is routed and started again, and the
+  error is raised. Nothing is deleted; ``restore`` undoes it.
+* **restore** — reload the archive copy if the database is gone or has no rows,
+  otherwise just resume it (``apps db restore``), route and start the instance
+  again, and switch the tool back on if archive switched it off.
 * **purge** (only from ``archived``) — remove the instance, drop the database
   (the provisioner keeps its final dump), delete the MCP secret and endpoint,
   and the source when no other mode still uses it. The tools row stays as a
@@ -412,23 +416,34 @@ async def archive_app(
     runtime: Any, registry: Any, principal: Principal, name: str, *,
     state: Any = None, reason: str = "owner",
 ) -> dict:
-    """Stop, unroute and suspend a local app in the registry's mode (reversible)."""
+    """Stop, unroute, copy and suspend a local app in the registry's mode (reversible)."""
+    from hermes_cli import app_runtime as rt
+
     mode = registry.mode
     tool = await runtime.resolve(registry, principal, name, write=True)
     slug = runtime.require_local(tool)
     store = _store_for(registry)
     await store.initialize()
-    lifecycle, _row = await _lifecycle_of(store, tool)
+    lifecycle, row = await _lifecycle_of(store, tool)
     if lifecycle in ("archived", "purged"):
         raise LifecycleConflict(f"{slug!r} ({mode}) is already {lifecycle}")
     await runtime._call("stop", slug=slug, mode=mode)
     await runtime._call("unroute", slug=slug, mode=mode)
     db = await store.get_database(tool.id, mode)
     suspended = False
+    archive: Dict[str, Any] = {}
     if db is not None and db.status == "ready":
-        approval = await runtime._approve(registry, principal, "tool.archive", slug) if mode == "prod" else None
-        await runtime._db("suspend", slug, mode, approval_ref=approval)
-        await store.upsert_database(tool.id, mode, db.db_name, status="suspended")
+        try:
+            approval = await runtime._approve(registry, principal, "tool.archive", slug) if mode == "prod" else None
+            out = await runtime._db("archive", slug, mode, approval_ref=approval)
+            if not isinstance(out.get("backup_ref"), str):
+                raise rt.HelperError(f"aquarium apps db archive returned no copy for {slug!r} ({mode})")
+        except Exception:
+            await _undo_stop(runtime, tool, slug, mode, running=row.get("runtime_state") == "running")
+            raise
+        size = out.get("size_bytes") if isinstance(out.get("size_bytes"), int) else None
+        await store.record_archive(tool.id, mode, archive_ref=out["backup_ref"], archive_bytes=size)
+        archive = {"database_archive": out["backup_ref"], "database_archive_bytes": size}
         suspended = True
     previous = tool.status
     if previous == "enabled":
@@ -440,9 +455,20 @@ async def archive_app(
     with (state or WatchState()) as st:
         st.moved(mode, tool.id, "archived", now, status_before_archive=previous)
     payload = {"mode": mode, "lifecycle_state": "archived", "database_suspended": suspended,
-               "status_before": previous, "by": reason}
+               **archive, "status_before": previous, "by": reason}
     await runtime._record(registry, principal, tool, f"hermes tool archive {slug}", payload)
     return {"tool": slug, **payload}
+
+
+async def _undo_stop(runtime: Any, tool: Any, slug: str, mode: str, *, running: bool) -> None:
+    """Archive could not copy the database: put the instance back the way it was (best effort)."""
+    if not tool.release_sha:
+        return
+    with contextlib.suppress(Exception):
+        await runtime._call("route", slug=slug, mode=mode)
+    if running:
+        with contextlib.suppress(Exception):
+            await runtime._call("start", slug=slug, mode=mode)
 
 
 async def restore_app(
@@ -467,9 +493,14 @@ async def restore_app(
     if tool.release_sha:
         await rt.admit(registry, principal, "start", tool=tool.name, mode=mode)
     db = await store.get_database(tool.id, mode)
+    reloaded = False
     if db is not None and db.status == "suspended":
         approval = await runtime._approve(registry, principal, "tool.restore", slug) if mode == "prod" else None
-        await runtime._db("resume", slug, mode, approval_ref=approval)
+        if lifecycle == "archived" and db.archive_ref:
+            out = await runtime._db("restore", slug, mode, approval_ref=approval, backup_ref=db.archive_ref)
+            reloaded = out.get("restored") is True
+        else:  # archived before archive took a copy
+            await runtime._db("resume", slug, mode, approval_ref=approval)
         await store.upsert_database(tool.id, mode, db.db_name, status="ready")
     started = False
     fields: Dict[str, Any] = {}
@@ -494,7 +525,8 @@ async def restore_app(
         runtime_state="running" if started else "stopped",
         unit=f"aquarium-app@{slug}-{mode}", last_visit_at=_dt(now), **fields,
     )
-    payload = {"mode": mode, "lifecycle_state": "active", "from": lifecycle, "started": started}
+    payload = {"mode": mode, "lifecycle_state": "active", "from": lifecycle, "started": started,
+               "database_reloaded": reloaded}
     await runtime._record(registry, principal, tool, f"hermes tool restore {slug}", payload)
     return {"tool": slug, **payload}
 
@@ -664,6 +696,8 @@ async def _watch_app(
     cpu_usage: Callable[[str], Optional[int]], cpu_quota: Optional[int], dry_run: bool,
     report: dict, box: Dict[str, str], down: List[str],
 ) -> None:
+    from hermes_cli import app_runtime as rt
+
     slug = tool.name
     row = await store.get_runtime(tool.id) or {}
     lifecycle = row.get("lifecycle_state") or "active"
@@ -737,7 +771,18 @@ async def _watch_app(
     if nxt != lifecycle and action != "archive":
         st.moved(mode, tool.id, nxt, now)
     if action == "archive":
-        await archive_app(runtime, registry, owner, slug, state=_Held(st), reason="watch")
+        try:
+            await archive_app(runtime, registry, owner, slug, state=_Held(st), reason="watch")
+        except rt.HelperError as exc:
+            nxt = lifecycle
+            report["alerts"].append({"tool": slug, "mode": mode, "kind": "archive-failed",
+                                     "error": str(exc)[:500]})
+            await notify_owner(
+                tool.owner_user_id, f"Your app {slug} could not be archived",
+                f"{slug} ({mode}) stays stopped with its database untouched: "
+                f"the database copy failed ({str(exc)[:300]}).",
+                f"app-archive-failed:{slug}:{mode}",
+            )
     report["apps"].append({"tool": slug, "mode": mode, "lifecycle": nxt,
                            "health": fields.get("health", row.get("health")),
                            "cpu_pct": cpu_pct})

@@ -14,7 +14,7 @@ keys in `/etc/aquarium/aquarium.conf` (`APPS_*`, see `DEFAULTS` in `deploy/aquar
 ## Commands (root only, `/usr/local/sbin/aquarium`)
 
     aquarium apps cluster up|status|down <prod|dev|all>
-    aquarium apps db create|migrate|status|suspend|resume|drop <slug> <prod|dev>
+    aquarium apps db create|migrate|status|suspend|resume|drop|archive|restore <slug> <prod|dev>
 
 The `apps db` argv is exactly what the sudoers file from item 1.2 allows the service user to run.
 Anything else the verb needs arrives as one JSON object on **stdin** (never argv, so nothing leaks
@@ -25,6 +25,7 @@ into `ps` or the sudo log):
 | `approval_ref` | every `prod` verb except `status` | id of an `approved` row in `<APPS_APPROVALS_SCHEMA>.approvals` with `target_ref = 'tool:<slug>'`, at most 24 h old; one use per verb |
 | `migrations` | `migrate` | `[{"name": "<digits>_<name>.sql", "sql": "..."}]`, the app's `supabase/migrations/*.sql` at the promoted SHA |
 | `confirm` | `drop` | must equal the slug: the explicit confirmation before irreversible data loss (decision 9) |
+| `backup_ref` | `restore` | the path `archive` returned; only an `archive` copy of this database in `<APPS_BASE>/db-backups/` is accepted |
 
 Each verb prints exactly one JSON line (`{"ok": true, ...}` or `{"ok": false, "error": ..., "fix": ...}`).
 
@@ -42,6 +43,14 @@ Each verb prints exactly one JSON line (`{"ok": true, ...}` or `{"ok": false, "e
 migration whose text changed after it was applied is refused. In `prod` a `pg_dump` is taken first
 (`<APPS_BASE>/db-backups/`). `suspend` sets `CONNECTION LIMIT 0` and ends sessions; `resume`
 restores the limits. `drop` dumps, then drops the database, its roles and its DSN files.
+
+`archive` (used by `hermes tool archive` and the 90-day watch) dumps the database to
+`<APPS_BASE>/db-backups/<db>-<utc>-archive.dump` (dir 0700, file 0600) and only then suspends it; if
+the dump fails nothing is suspended and the verb fails. It returns `backup_ref` and `size_bytes`,
+which Hermes records on the app's `app_databases` row (`archive_ref`, `archive_bytes`, `archived_at`).
+`restore` (used by `hermes tool restore`) reloads that copy when the database is gone or its `public`
+tables hold no rows (a safety dump of an empty-but-present database is taken first), then resumes it;
+a database that still has rows is only resumed.
 
 ## Backups
 

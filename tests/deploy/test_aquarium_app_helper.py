@@ -598,10 +598,16 @@ def test_sudoers_helper_lines_allow_only_the_verb():
     assert not any(r.startswith("hermes-tools") for r in rules)
 
 
+def aq_db_verbs():
+    """`APP_DB_VERBS` of deploy/aquarium.py: every verb the provisioner accepts has its sudoers lines."""
+    m = re.search(r"^APP_DB_VERBS = \((.*)\)$", (DEPLOY / "aquarium.py").read_text(), re.M)
+    return re.findall(r'"([a-z]+)"', m.group(1))
+
+
 def test_sudoers_db_argv_for_item_1_3():
     db = sorted(r.split("NOPASSWD: ", 1)[1] for r in _rules() if "aquarium apps db" in r)
     expected = sorted(f"/usr/local/sbin/aquarium apps db {v} * {m}"
-                      for v in ("create", "migrate", "status", "suspend", "resume", "drop") for m in ("dev", "prod"))
+                      for v in aq_db_verbs() for m in ("dev", "prod"))
     assert db == expected
 
 
