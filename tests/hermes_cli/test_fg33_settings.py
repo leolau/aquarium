@@ -43,7 +43,7 @@ def h(tmp_path, monkeypatch):
     etc = tmp_path / "etc" / "aquarium"
     etc.mkdir(parents=True)
     monkeypatch.setattr(mod, "CONF_PATH", str(etc / "apps.conf"))
-    monkeypatch.setattr(mod, "TRUSTED_UIDS", (0, os.getuid()))
+    monkeypatch.setattr(mod, "TRUSTED_UIDS", (0, os.getuid()))  # windows-footgun: ok — Linux root helper
     monkeypatch.setattr(mod, "FORBIDDEN_BASES", ("/etc", "/opt/data", "/proc"))
     (etc / "apps.conf").write_text(json.dumps({"storage_base": str(tmp_path / "srv" / "apps"),
                                                "tools_root": str(tmp_path / "tools")}))
@@ -102,7 +102,7 @@ def test_sudoers_allows_configure_with_no_argument():
 
 @pytest.fixture
 def root_is_me(monkeypatch):
-    monkeypatch.setattr(app_quota, "_ROOT_UID", os.getuid())
+    monkeypatch.setattr(app_quota, "_ROOT_UID", os.getuid())  # windows-footgun: ok — Linux root helper
 
 
 def _limits_file(tmp_path, roles, mode=0o644):
