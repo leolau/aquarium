@@ -2271,7 +2271,7 @@ def save_offsite_status(st: Dict) -> None:
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640)
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         json.dump(st, fh, sort_keys=True)
-    if os.geteuid() == 0:
+    if os.geteuid() == 0:  # windows-footgun: ok — Linux-only server CLI
         # The dashboard (service user) reads progress and results; no secrets are in this file.
         with contextlib.suppress(KeyError):
             os.chown(tmp, 0, pwd.getpwnam(load_config()["SERVICE_USER"]).pw_gid)
@@ -2520,7 +2520,7 @@ def _running_alive(st: Dict) -> bool:
     pid = running.get("pid")
     if pid:
         try:
-            os.kill(int(pid), 0)
+            os.kill(int(pid), 0)  # windows-footgun: ok — Linux-only server CLI
         except ProcessLookupError:
             return False
         except PermissionError:

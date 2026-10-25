@@ -27,7 +27,7 @@ def _install(root: Path, app: Path = REPO, home: str = "/srv/hermes-home"):
     fake_bin.mkdir(parents=True, exist_ok=True)
     (fake_bin / "visudo").write_text(f'#!/bin/sh\nexec {VISUDO} "$@"\n')
     (fake_bin / "visudo").chmod(0o755)
-    env = {**os.environ, "AQ_ROOTFS": str(root), "AQ_CODE_OWNER": f"{os.getuid()}:{os.getgid()}",
+    env = {**os.environ, "AQ_ROOTFS": str(root), "AQ_CODE_OWNER": f"{os.getuid()}:{os.getgid()}",  # windows-footgun: ok — bash installer, Linux only
            "PATH": f"{fake_bin}:{os.environ['PATH']}"}
     return subprocess.run(["bash", "-c", f'set -euo pipefail; . "{LIB}"; aq_install_app_runtime "{app}" "{home}"'],
                           capture_output=True, text=True, env=env)
