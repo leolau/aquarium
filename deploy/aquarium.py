@@ -3111,7 +3111,7 @@ def apply_layout(cfg: Dict[str, str], plan: Dict) -> int:
             os.rename(partial, rel)
         step("3. Env files to /etc/aquarium")
         P(ETC).mkdir(parents=True, exist_ok=True)
-        os.chmod(P(ETC), 0o700)
+        os.chmod(P(ETC), 0o711)  # traverse-only: env files are 0600, the quota policy 0644
         for src, dst in plan["env_moves"].items():
             if not P(dst).exists():
                 write_private(P(dst), P(src).read_bytes())

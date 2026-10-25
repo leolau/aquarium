@@ -55,7 +55,8 @@ if TYPE_CHECKING:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
-#: Root-owned policy file. Installed by the ops runbook (P8-1 1.7).
+#: Root-owned policy file (0644 in the 0711 /etc/aquarium), installed by
+#: ``aq_install_app_runtime`` so non-root readers see it.
 POLICY_PATH = Path("/etc/aquarium/app-quotas.yaml")
 #: Settings -> App limits (decision 8): root JSON the app helper's
 #: ``configure`` verb writes, merged after :data:`POLICY_PATH`.

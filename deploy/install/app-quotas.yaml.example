@@ -1,7 +1,9 @@
 # FG-33 local-app quota policy (hermes_cli/app_quota.py).
 #
-# Install as root-owned and not group/world-writable, e.g.
+# aq_install_app_runtime (deploy/install/lib.sh) installs this as
+# /etc/aquarium/app-quotas.yaml (root, 0644) when it is missing; by hand:
 #   install -o root -g root -m 644 app-quotas.yaml.example /etc/aquarium/app-quotas.yaml
+# 0644 matters: the watcher and agent run as non-root users and must read it.
 # A file that is not root-owned, is writable by group/others, or does not parse
 # is ignored and the built-in defaults (the values below) apply.
 # Every key is optional; omitted keys keep the built-in default.

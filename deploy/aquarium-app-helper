@@ -1200,7 +1200,7 @@ def set_apps_base(base):
     pattern = re.compile(r"^\s*(?:export\s+)?APPS_BASE\s*=")
     kept = [ln for ln in lines if not pattern.match(ln)]
     kept.append(f"APPS_BASE={base}")
-    trusted_dir(os.path.dirname(_etc(AQUARIUM_CONF)), 0o755)
+    trusted_dir(os.path.dirname(_etc(AQUARIUM_CONF)), 0o711)
     write_atomic(_etc(AQUARIUM_CONF), "\n".join(kept) + "\n", mode)
 
 
@@ -1227,11 +1227,11 @@ def cmd_configure(conf, spec):
                 roles.pop(tier, None)
             else:
                 roles[tier] = sections
-        trusted_dir(os.path.dirname(_etc(LIMITS_PATH)), 0o755)
+        trusted_dir(os.path.dirname(_etc(LIMITS_PATH)), 0o711)
         write_atomic(_etc(LIMITS_PATH), json.dumps({"roles": roles}, indent=2, sort_keys=True) + "\n",
                      0o644)
     if data is not None:
-        trusted_dir(os.path.dirname(CONF_PATH), 0o755)
+        trusted_dir(os.path.dirname(CONF_PATH), 0o711)
         write_atomic(CONF_PATH, json.dumps(data, indent=2, sort_keys=True) + "\n", 0o644)
         conf = load_conf()
     base = conf["storage_base"]

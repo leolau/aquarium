@@ -10,6 +10,8 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -50,6 +52,121 @@ def test_installs_every_unit_slice_helper_and_sudoers(tmp_path):
     assert (root / "etc/caddy/apps.d").is_dir()
     conf = json.loads((root / "etc/aquarium/apps.conf").read_text())
     assert conf == {"storage_base": "/var/lib/aquarium-apps", "tools_root": "/srv/hermes-home/tools"}
+
+
+def _mode(path: Path) -> int:
+    return stat.S_IMODE(path.lstat().st_mode)
+
+
+@needs_visudo
+def test_quota_policy_is_world_readable_but_secrets_are_not(tmp_path):
+    root = tmp_path / "root"
+    assert _install(root).returncode == 0
+    etc = root / "etc/aquarium"
+    assert _mode(etc) == 0o711  # anyone may open a known name, nobody may list
+    assert _mode(etc / "apps") == 0o700
+    policy = etc / "app-quotas.yaml"
+    assert policy.read_bytes() == (REPO / "deploy/install/app-quotas.yaml.example").read_bytes()
+    assert _mode(policy) == 0o644
+    assert _mode(etc / "apps.conf") == 0o644
+
+
+@needs_visudo
+def test_rerun_fixes_modes_on_a_box_installed_before_without_touching_secrets(tmp_path):
+    root = tmp_path / "root"
+    etc = root / "etc/aquarium"
+    (etc / "apps/demo").mkdir(parents=True)
+    etc.chmod(0o700)
+    files = {
+        "app-quotas.yaml": ("per_member:\n  apps_running: 1\n", 0o600),
+        "app-limits.json": ('{"roles": {}}\n', 0o600),
+        "agent-home.env": ("SECRET=x\n", 0o600),
+        "apps-db-prod.env": ("PASSWORD=x\n", 0o600),
+        "apps/demo/db-prod-rw.dsn": ("postgres://x\n", 0o600),
+    }
+    for name, (body, mode) in files.items():
+        (etc / name).write_text(body)
+        (etc / name).chmod(mode)
+    proc = _install(root)
+    assert proc.returncode == 0, proc.stderr
+    assert "readable by every user" not in proc.stderr
+    assert _mode(etc) == 0o711
+    assert _mode(etc / "apps") == 0o700
+    for name in ("app-quotas.yaml", "app-limits.json"):
+        assert _mode(etc / name) == 0o644, name
+    for name, (body, mode) in files.items():
+        assert (etc / name).read_text() == body, name  # an owner's policy edits are kept
+        if name.endswith((".env", ".dsn")):
+            assert _mode(etc / name) == 0o600, name
+
+
+@needs_visudo
+def test_rerun_warns_about_a_world_readable_secret_and_leaves_it(tmp_path):
+    root = tmp_path / "root"
+    (root / "etc/aquarium").mkdir(parents=True)
+    leaked = root / "etc/aquarium/offsite.env"
+    leaked.write_text("KEY=x\n")
+    leaked.chmod(0o644)
+    proc = _install(root)
+    assert proc.returncode == 0, proc.stderr
+    assert f"{leaked} is readable by every user" in proc.stderr
+    assert _mode(leaked) == 0o644
+
+
+def _sudo_ok() -> bool:
+    if VISUDO is None or not shutil.which("sudo") or os.name != "posix":
+        return False
+    return subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode == 0
+
+
+_READ_AS_NOBODY = r"""
+import json, os, sys
+from pathlib import Path
+from hermes_cli import app_quota
+etc = Path(sys.argv[1])
+os.setgroups([]); os.setgid(65534); os.setuid(65534)
+policy = app_quota.load_policy(etc / "app-quotas.yaml", limits_path=etc / "app-limits.json")
+out = {"source": policy.source, "warnings": list(policy.warnings),
+       "member": app_quota.effective_limits("member", policy=policy).per_member,
+       "admin": app_quota.effective_limits("admin", policy=policy).per_member}
+for key, probe in (("secret", lambda: (etc / "agent-home.env").read_text()),
+                   ("listing", lambda: os.listdir(etc)), ("apps", lambda: os.listdir(etc / "apps"))):
+    try:
+        probe()
+        out[key] = "readable"
+    except PermissionError:
+        out[key] = "denied"
+print(json.dumps(out))
+"""
+
+
+@pytest.mark.skipif(not _sudo_ok(), reason="needs passwordless sudo and visudo")
+def test_a_non_root_process_reads_the_installed_policy_and_settings_but_no_secret():
+    root = Path(tempfile.mkdtemp(prefix="aq-quota-", dir="/var/tmp"))
+    root.chmod(0o755)
+    etc = root / "etc/aquarium"
+    try:
+        install = subprocess.run(
+            ["sudo", "-n", "env", f"AQ_ROOTFS={root}", "AQ_CODE_OWNER=0:0", f"PATH={os.environ['PATH']}",
+             "bash", "-c", f'set -euo pipefail; . "{LIB}"; aq_install_app_runtime "{REPO}" /srv/hermes-home'],
+            capture_output=True, text=True)
+        assert install.returncode == 0, install.stderr
+        writes = {"app-quotas.yaml": ("per_member:\n  apps_running: 1\n", "644"),
+                  "app-limits.json": ('{"roles": {"admin": {"per_member": {"apps_running": 7}}}}\n', "644"),
+                  "agent-home.env": ("SECRET=x\n", "600")}
+        for name, (body, mode) in writes.items():
+            subprocess.run(["sudo", "-n", "sh", "-c", f'cat > "$1" && chmod {mode} "$1"', "sh", str(etc / name)],
+                           input=body, text=True, check=True)
+        proc = subprocess.run(["sudo", "-n", "env", f"PYTHONPATH={REPO}", sys.executable, "-c",
+                               _READ_AS_NOBODY, str(etc)], capture_output=True, text=True, cwd="/")
+        assert proc.returncode == 0, proc.stderr
+        seen = json.loads(proc.stdout.strip().splitlines()[-1])
+        assert seen["warnings"] == []
+        assert seen["member"]["apps_running"] == 1  # from app-quotas.yaml
+        assert seen["admin"]["apps_running"] == 7  # from Settings -> App limits
+        assert (seen["secret"], seen["listing"], seen["apps"]) == ("denied", "denied", "denied")
+    finally:
+        subprocess.run(["sudo", "-n", "rm", "-rf", str(root)], check=False)
 
 
 @needs_visudo

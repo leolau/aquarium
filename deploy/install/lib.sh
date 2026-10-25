@@ -309,7 +309,10 @@ aq_install_app_runtime() {  # APP HERMES_HOME: FG-33 local-app units, slices, ro
   visudo -cqf "$app/deploy/sudoers.d/aquarium-apps" \
     || { aq_fail "deploy/sudoers.d/aquarium-apps does not pass visudo"; return 1; }
   install -d -m 755 "$units" "$sbin" "$AQ_ROOTFS/etc/sudoers.d" "$AQ_ROOTFS/var/lib/aquarium-apps"
-  install -d -m 700 "$AQ_ROOTFS/etc/aquarium" "$AQ_ROOTFS/etc/aquarium/apps"
+  # Traverse-only, no listing: non-root code (watcher, agent) reads the quota policy and
+  # apps.conf by name; the secrets beside them stay root 0600 and apps/ stays 0700.
+  install -d -m 711 "$AQ_ROOTFS/etc/aquarium"
+  install -d -m 700 "$AQ_ROOTFS/etc/aquarium/apps"
   # By glob, so later FG-33 units/helpers (watch timer, egress helper) need no installer edit.
   for f in "$app"/deploy/aquarium*.service "$app"/deploy/aquarium*.timer "$app"/deploy/aquarium*.slice; do
     [ -f "$f" ] || continue
@@ -332,5 +335,20 @@ aq_install_app_runtime() {  # APP HERMES_HOME: FG-33 local-app units, slices, ro
     chmod 644 "$conf"
     chown "$AQ_CODE_OWNER" "$conf"
   fi
+  f="$AQ_ROOTFS/etc/aquarium/app-quotas.yaml"
+  if [ ! -e "$f" ] && [ ! -L "$f" ] && [ -f "$app/deploy/install/app-quotas.yaml.example" ]; then
+    install -m 644 "$app/deploy/install/app-quotas.yaml.example" "$f"  # keeps an owner's edits on re-runs
+  fi
+  # The quota policy must be readable by everyone but writable only by root
+  # (hermes_cli/app_quota.py ignores a file that is not), also on boxes installed before.
+  for f in apps.conf app-quotas.yaml app-limits.json; do
+    f="$AQ_ROOTFS/etc/aquarium/$f"
+    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    chmod 644 "$f"
+    chown "$AQ_CODE_OWNER" "$f"
+  done
+  find "$AQ_ROOTFS/etc/aquarium" -maxdepth 1 -type f -perm /o=r \
+    ! -name apps.conf ! -name app-quotas.yaml ! -name app-limits.json ! -name aquarium.conf ! -name app-egress.json \
+    | while IFS= read -r f; do aq_warn "$f is readable by every user; if it holds a secret run: chmod 600 $f"; done
   if [ -z "$AQ_ROOTFS" ]; then systemctl daemon-reload; fi
 }

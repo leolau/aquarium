@@ -419,6 +419,24 @@ def test_configure_validates_and_refuses_moving_live_apps(h):
         h.cmd_configure(c, {"storage_base": str(h.W / "vol2")})
 
 
+def test_configure_writes_limits_any_user_can_read_and_only_root_can_write(h, monkeypatch):
+    from hermes_cli import app_quota
+
+    limits = h.W / "etc/aquarium/app-limits.json"
+    limits.write_text('{"roles": {}}\n')
+    limits.chmod(0o600)
+    old_umask = os.umask(0o077)  # as main() runs every verb
+    try:
+        h.cmd_configure(conf(h), {"limits": {"member": {"per_member": {"apps_running": 1}}}})
+    finally:
+        os.umask(old_umask)
+    assert stat.S_IMODE(limits.lstat().st_mode) == 0o644
+    monkeypatch.setattr(app_quota, "_ROOT_UID", os.getuid())
+    policy = app_quota.load_policy(h.W / "missing.yaml", limits_path=limits)
+    assert policy.warnings == ()
+    assert app_quota.effective_limits("member", policy=policy).per_member["apps_running"] == 1
+
+
 def test_conf_writable_by_others_is_refused(h):
     os.chmod(h.CONF_PATH, 0o666)
     with pytest.raises(h.HelperError, match="root-owned"):
