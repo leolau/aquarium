@@ -200,6 +200,11 @@ SIGNED_IN = {
     # goals_api: goal reads
     "GET /api/registry/goals/entity",
     "GET /api/registry/goals/purpose",
+    # projects_categories_api: shared board columns any signed-in user manages
+    "GET /api/registry/project-categories",
+    "POST /api/registry/project-categories",
+    "PATCH /api/registry/project-categories/{category_id}",
+    "DELETE /api/registry/project-categories/{category_id}",
     # projects_api: project membership and project role checked per project
     "GET /api/registry/projects",
     "POST /api/registry/projects",
