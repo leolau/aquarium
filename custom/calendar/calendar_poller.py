@@ -136,6 +136,16 @@ def parse_event_time(event):
         )
 
 
+#: calendar_events columns whose values reach the inbound registry mirror,
+#: in the order sync_events builds its ``mirrored`` tuple.
+_MIRRORED_COLUMNS = (
+    'calendar_id', 'summary', 'description', 'location',
+    'start_time', 'end_time', 'all_day', 'status',
+    'organizer_email', 'organizer_name', 'recurring_event_id',
+    'html_link', 'conference_link',
+)
+
+
 def sync_events(db, account_id, credentials, calendar_id='primary'):
     """Sync events from a single calendar using incremental sync."""
     access_token = get_access_token(account_id, credentials)
@@ -250,12 +260,32 @@ def sync_events(db, account_id, credentials, calendar_id='primary'):
         # an UPDATE + register_item (fresh event loop + Postgres connect) +
         # sync_attendees — that per-event cost is what burned ~90% CPU.
         existing = db.execute(
-            "SELECT id, status, raw_json FROM calendar_events WHERE google_event_id = ? AND account_id = ?",
+            "SELECT id, status, raw_json, " + ", ".join(_MIRRORED_COLUMNS)
+            + " FROM calendar_events WHERE google_event_id = ? AND account_id = ?",
             (google_event_id, account_id)
         ).fetchone()
 
         if existing and existing['raw_json'] == raw and existing['status'] == status:
             continue
+
+        # raw_json also moves on etag/updated/attendee RSVPs, none of which
+        # reach the Inbox; only re-mirror when a field the registry holds did.
+        mirrored = (
+            calendar_id,
+            event.get('summary', ''),
+            event.get('description', ''),
+            event.get('location', ''),
+            start_time, end_time, int(all_day),
+            status,
+            organizer.get('email', ''),
+            organizer.get('displayName', ''),
+            event.get('recurringEventId', ''),
+            event.get('htmlLink', ''),
+            conference_link,
+        )
+        mirror_changed = existing is None or tuple(
+            existing[c] for c in _MIRRORED_COLUMNS
+        ) != mirrored
 
         event_id = existing['id'] if existing else str(uuid.uuid4())
 
@@ -318,33 +348,34 @@ def sync_events(db, account_id, credentials, calendar_id='primary'):
         # Mirror into the shared inbound registry, on both the create and the
         # update branch: the upsert keys on the Google event id, so a
         # rescheduled meeting moves in the Inbox instead of appearing twice.
-        try:
-            from shared.inbound_registration import register_item
-            register_item(
-                surface='calendar',
-                external_id=google_event_id,
-                account_id=account_id,
-                kind='event',
-                conversation=event.get('recurringEventId') or google_event_id,
-                conversation_name=calendar_id,
-                sender_id=organizer.get('email', ''),
-                sender_name=organizer.get('displayName', ''),
-                subject=event.get('summary', ''),
-                body=event.get('description', '') or '',
-                occurred_at=start_time,
-                ends_at=end_time,
-                metadata={
-                    'location': event.get('location', ''),
-                    'html_link': event.get('htmlLink', ''),
-                    'conference_link': conference_link,
-                    'status': status,
-                    'all_day': bool(all_day),
-                },
-            )
-        except ImportError:
-            pass
-        except Exception as e:
-            print(f"[calendar] Inbound registration failed for {google_event_id}: {e}")
+        if mirror_changed:
+            try:
+                from shared.inbound_registration import register_item
+                register_item(
+                    surface='calendar',
+                    external_id=google_event_id,
+                    account_id=account_id,
+                    kind='event',
+                    conversation=event.get('recurringEventId') or google_event_id,
+                    conversation_name=calendar_id,
+                    sender_id=organizer.get('email', ''),
+                    sender_name=organizer.get('displayName', ''),
+                    subject=event.get('summary', ''),
+                    body=event.get('description', '') or '',
+                    occurred_at=start_time,
+                    ends_at=end_time,
+                    metadata={
+                        'location': event.get('location', ''),
+                        'html_link': event.get('htmlLink', ''),
+                        'conference_link': conference_link,
+                        'status': status,
+                        'all_day': bool(all_day),
+                    },
+                )
+            except ImportError:
+                pass
+            except Exception as e:
+                print(f"[calendar] Inbound registration failed for {google_event_id}: {e}")
 
         # Sync attendees
         sync_attendees(db, event_id, event.get('attendees', []))

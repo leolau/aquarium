@@ -263,7 +263,7 @@ def process_message(msg, source_phone, bridge_port=None):
     # Write to SQLite immediately
     db = get_db()
     try:
-        db.execute(
+        inserted = db.execute(
             """INSERT OR IGNORE INTO messages 
                (id, source_phone, sender_phone, sender_name, chat_id, is_group, 
                 text, media_type, media_path, media_mimetype, timestamp, received_at, batch_id, raw_json)
@@ -273,6 +273,8 @@ def process_message(msg, source_phone, bridge_port=None):
              json.dumps(msg))
         )
         db.commit()
+        if inserted.rowcount == 0:
+            return  # duplicate: OR IGNORE skips it instead of raising
     except sqlite3.IntegrityError:
         return  # duplicate
     except Exception as e:
