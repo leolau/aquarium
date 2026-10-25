@@ -35,7 +35,8 @@ confirmation, because the provisioner checks one before any prod change.
   in ``<APPS_BASE>/db-backups/`` and its path, size and time are recorded on the
   ``app_databases`` row), switch the tool and its MCP endpoint off. If the copy
   fails nothing is suspended, the instance is routed and started again, and the
-  error is raised. Nothing is deleted; ``restore`` undoes it.
+  error is raised. Nothing is deleted; ``restore`` undoes it. A root timer
+  (``aquarium apps copies prune``) deletes copies nobody made or used for 90 days.
 * **restore** — reload the archive copy if the database is gone or has no rows,
   otherwise just resume it (``apps db restore``), route and start the instance
   again, and switch the tool back on if archive switched it off.

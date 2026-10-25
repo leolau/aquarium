@@ -141,6 +141,8 @@ DEFAULTS: Dict[str, str] = {
     "APPS_DB_DEV_MEM": "384m",
     "APPS_DB_MAX_CONNECTIONS": "100",
     "APPS_DB_CONN_LIMIT": "5",
+    # Copies in <APPS_BASE>/db-backups/ unused this many days are deleted (aquarium apps copies prune).
+    "APPS_DB_COPY_KEEP_DAYS": "90",
     "APPS_DB_STATEMENT_TIMEOUT": "30s",
     "APPS_DB_CGROUP_PARENT": "aquarium-db.slice",
     "APPS_APPROVALS_SCHEMA": "app_prod",
@@ -1751,8 +1753,10 @@ def app_safety_dump(cfg: Dict[str, str], target: Dict[str, str], db: str, why: s
     return real(dest)
 
 
-def app_archive_dump(cfg: Dict[str, str], db: str, ref: object) -> Path:
-    """The archive copy ``archive`` wrote for ``db`` (``backup_ref``); nothing else may be restored."""
+def app_archive_dump(cfg: Dict[str, str], db: str, ref: object, need: bool = True) -> Optional[Path]:
+    """The archive copy ``archive`` wrote for ``db`` (``backup_ref``); nothing else may be restored.
+
+    With ``need=False`` a copy that is gone (``apps copies prune``) is ``None`` instead of an error."""
     folder = P(f"{cfg['APPS_BASE'].rstrip('/')}/db-backups")
     name = Path(ref).name if isinstance(ref, str) else ""
     if (not isinstance(ref, str) or real(folder / name) != ref
@@ -1760,6 +1764,8 @@ def app_archive_dump(cfg: Dict[str, str], db: str, ref: object) -> Path:
         raise Fail(f"backup_ref {ref!r} is not an archive copy of {db}",
                    "Pass the backup_ref that `apps db archive` returned.")
     dump = folder / name
+    if not need and not os.path.lexists(dump):
+        return None
     if dump.is_symlink() or not dump.is_file():
         raise Fail(f"the archive copy {ref} is missing", "Restore the app database from a backup instead.")
     return dump
@@ -1929,17 +1935,54 @@ def apps_db_verb(cfg: Dict[str, str], verb: str, slug: str, mode: str) -> Dict:
 def app_db_unarchive(cfg: Dict[str, str], target: Dict[str, str], slug: str, mode: str, spec: Dict) -> Dict:
     """Undo ``archive``: reload the archive copy when the database is gone or has no rows, then resume."""
     db = app_db_name(slug, mode)
-    dump = app_archive_dump(cfg, db, spec.get("backup_ref"))
+    app_archive_dump(cfg, db, spec.get("backup_ref"), need=False)
     approval = require_prod_approval(cfg, slug, "restore", spec) if mode == "prod" else None
     exists = app_db_exists(target, db)
     rows = sum(v for k, v in app_counts(target, db).items() if k.startswith("public.")) if exists else 0
     restored = not exists or rows == 0
+    # The copy is needed only to reload; a database that still has data just resumes.
+    dump = app_archive_dump(cfg, db, spec.get("backup_ref"), need=restored)
+    if dump is not None:
+        os.utime(dump)  # used: the prune clock starts again
     if restored:
         replace_app_db(cfg, target, slug, mode, dump)
     set_conn_limit(target, db, int(cfg["APPS_DB_CONN_LIMIT"]))
     audit(f"apps db restore {slug} {mode}: {db} " + (f"reloaded from {real(dump)}" if restored else "resumed"))
     return {"ok": True, "verb": "restore", "slug": slug, "mode": mode, "database": db, "restored": restored,
-            "existed": exists, "backup_ref": real(dump), "approval_ref": approval}
+            "existed": exists, "backup_ref": real(dump) if dump is not None else spec.get("backup_ref"),
+            "approval_ref": approval}
+
+
+def apps_copies_prune(cfg: Dict[str, str], days: Optional[int] = None, dry_run: bool = False) -> Dict:
+    """Delete app database copies in ``<APPS_BASE>/db-backups/`` nobody made or used for ``days`` days.
+
+    Archive copies, pre-migrate/pre-drop dumps and purge's final dump all live there; restore
+    touches the copy it reads. Only regular ``*.dump`` files directly in the folder are deleted;
+    each one gets an audit line."""
+    keep = int(days if days is not None else cfg.get("APPS_DB_COPY_KEEP_DAYS", DEFAULTS["APPS_DB_COPY_KEEP_DAYS"]))
+    if keep < 1:
+        raise Fail("the copy retention must be at least 1 day")
+    folder = P(f"{cfg['APPS_BASE'].rstrip('/')}/db-backups")
+    cutoff = time.time() - keep * 86400
+    deleted: List[Dict] = []
+    kept = 0
+    if folder.is_dir() and not folder.is_symlink():
+        for path in sorted(folder.iterdir()):
+            if path.is_symlink() or not path.is_file() or path.suffix != ".dump":
+                continue
+            st = path.stat()
+            if st.st_mtime >= cutoff:
+                kept += 1
+                continue
+            item = {"path": real(path), "size_bytes": st.st_size,
+                    "last_used": _dt.datetime.fromtimestamp(st.st_mtime, _dt.timezone.utc).isoformat(timespec="seconds")}
+            if not dry_run:
+                path.unlink()
+                audit(f"apps copies prune: deleted {item['path']} ({st.st_size} bytes, unused since "
+                      f"{item['last_used']}, older than {keep} days)")
+            deleted.append(item)
+    return {"ok": True, "verb": "prune", "keep_days": keep, "dry_run": dry_run, "deleted": deleted,
+            "kept": kept, "freed_bytes": sum(d["size_bytes"] for d in deleted)}
 
 
 def apps_cluster_targets(cfg: Dict[str, str], which: str) -> List[Dict[str, str]]:
@@ -1979,6 +2022,11 @@ def cmd_apps(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
             with open(path, "w", encoding="utf-8") as fh:
                 fcntl.flock(fh, fcntl.LOCK_EX)
                 return apps_answer(apps_db_verb(cfg, args.verb, args.slug, args.mode))
+        except Fail as error:
+            return apps_answer({"ok": False, "verb": args.verb, "error": str(error), "fix": error.fix})
+    if args.area == "copies":
+        try:
+            return apps_answer(apps_copies_prune(cfg, args.days, args.dry_run))
         except Fail as error:
             return apps_answer({"ok": False, "verb": args.verb, "error": str(error), "fix": error.fix})
     for target in apps_cluster_targets(cfg, args.target):
@@ -3331,6 +3379,10 @@ def parser() -> argparse.ArgumentParser:
     q.add_argument("verb", choices=list(APP_DB_VERBS))
     q.add_argument("slug")
     q.add_argument("mode", choices=list(APP_MODES))
+    q = apps.add_parser("copies", help="app database copies in <APPS_BASE>/db-backups/ (root timer prunes daily)")
+    q.add_argument("verb", choices=["prune"])
+    q.add_argument("--days", type=int, help="delete copies unused this many days (default APPS_DB_COPY_KEEP_DAYS, 90)")
+    q.add_argument("--dry-run", action="store_true", help="list what would be deleted, delete nothing")
     q = apps.add_parser("cluster", help="the apps Postgres clusters (prod, and the separate dev instance)")
     q.add_argument("verb", choices=["up", "down", "status"])
     q.add_argument("target", nargs="?", default="all", choices=["all", *APP_MODES])

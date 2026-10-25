@@ -16,6 +16,7 @@ import socket
 import stat
 import subprocess
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -433,3 +434,63 @@ class TestAppsDatabasesEndToEnd:
         res = answer(cli(root, "apps", "db", "restore", "keep", "prod",
                          spec={**spec, "approval_ref": approve(conf, "keep")}))
         assert res["ok"] and res["restored"] is True  # a new database has no rows yet: the copy is reloaded
+
+
+# --------------------------------------------------------------------------- copy retention
+
+
+def _copies(root: Path) -> Path:
+    folder = root / aq.DEFAULTS["APPS_BASE"].lstrip("/") / "db-backups"
+    folder.mkdir(parents=True)
+    return folder
+
+
+def test_prune_deletes_only_copies_unused_for_the_retention_days(tmp_path):
+    folder = _copies(tmp_path)
+    old = time.time() - 91 * 86400
+    stale = folder / "app_notes_prod-20260101T000000Z-archive.dump"
+    fresh = folder / "app_notes_prod-20261020T000000Z-pre-migrate.dump"
+    other = folder / "README.txt"
+    for f in (stale, fresh, other):
+        f.write_bytes(b"x" * 10)
+    os.utime(stale, (old, old))
+    os.utime(other, (old, old))
+    link = folder / "app_x_prod-20260101T000000Z-archive.dump"
+    link.symlink_to(tmp_path / "elsewhere")
+    os.utime(link, (old, old), follow_symlinks=False)
+
+    dry = answer(cli(tmp_path, "apps", "copies", "prune", "--dry-run"))
+    assert dry["ok"] and [Path(d["path"]).name for d in dry["deleted"]] == [stale.name]
+    assert stale.exists()
+
+    out = answer(cli(tmp_path, "apps", "copies", "prune"))
+    assert out["keep_days"] == 90 and out["kept"] == 1 and out["freed_bytes"] == 10
+    assert not stale.exists() and fresh.exists() and other.exists() and link.is_symlink()
+    log = (tmp_path / "var/log/aquarium.log").read_text()
+    assert f"deleted {aq.DEFAULTS['APPS_BASE']}/db-backups/{stale.name}" in log and fresh.name not in log
+
+
+def test_prune_honours_a_shorter_retention_and_refuses_zero(tmp_path):
+    folder = _copies(tmp_path)
+    copy = folder / "app_notes_dev-20261001T000000Z-pre-drop.dump"
+    copy.write_bytes(b"x")
+    ten = time.time() - 10 * 86400
+    os.utime(copy, (ten, ten))
+    assert answer(cli(tmp_path, "apps", "copies", "prune"))["deleted"] == []
+    assert len(answer(cli(tmp_path, "apps", "copies", "prune", "--days", "7"))["deleted"]) == 1
+    assert not answer(cli(tmp_path, "apps", "copies", "prune", "--days", "0"))["ok"]
+
+
+def test_a_pruned_archive_copy_is_still_a_valid_ref_but_only_optional(tmp_path):
+    cfg = {**aq.DEFAULTS}
+    os.environ["AQUARIUM_TEST_PREFIX"] = str(tmp_path)
+    try:
+        folder = _copies(tmp_path)
+        ref = aq.real(folder / "app_notes_prod-20260101T000000Z-archive.dump")
+        assert aq.app_archive_dump(cfg, "app_notes_prod", ref, need=False) is None
+        with pytest.raises(aq.Fail):
+            aq.app_archive_dump(cfg, "app_notes_prod", ref)
+        with pytest.raises(aq.Fail):  # a wrong name is refused even when the copy is optional
+            aq.app_archive_dump(cfg, "app_notes_prod", aq.real(folder / "x.dump"), need=False)
+    finally:
+        del os.environ["AQUARIUM_TEST_PREFIX"]

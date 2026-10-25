@@ -1,0 +1,16 @@
+; FG-33 local apps: delete app database copies nobody made or used for 90 days,
+; started daily by aquarium-apps-copies-prune.timer. No [Install]: only the timer starts it.
+;
+; Runs as root because <APPS_BASE>/db-backups/ is root-only (0700). Copies are
+; archive copies, pre-migrate/pre-drop dumps and purge's final dump; restore
+; touches the copy it reads. Each deletion is a line in /var/log/aquarium.log.
+; The age is APPS_DB_COPY_KEEP_DAYS in the aquarium config (default 90).
+
+[Unit]
+Description=FG-33 prune app database copies unused for 90 days
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/aquarium apps copies prune
+Nice=10
+IOSchedulingClass=idle
