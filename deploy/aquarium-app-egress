@@ -1,0 +1,1002 @@
+#!/usr/bin/python3 -I
+"""aquarium-app-egress: egress policy for FG-33 local apps (P8-2 2.6).
+
+A running local app (aquarium-app@<slug>-<mode>.service) and an app build
+(aquarium-app-build@<slug>-<mode>.service) may reach only:
+
+* on loopback: the app's own listener, the app's database port(s) (from its
+  DSN files) and its own port on the allowlisting proxy. Every other loopback
+  port (dashboard 9119, app-mcp, embed, Kong, other apps) is dropped.
+* the internet: only through the proxy, only HTTPS (CONNECT), only to hosts
+  on the app's allowlist (set by the app's owner or an admin, within the
+  admin policy). A build reaches only the policy's build hosts (the npm
+  registry) plus api.osv.dev for the supply-chain gate.
+
+Enforcement is one nftables table, ``inet aquarium_egress``, owned by this
+helper, matching ``socket cgroupv2`` on aquarium-apps.slice /
+aquarium-build.slice and each instance's own cgroup. nft resolves a cgroup
+path to its id when the rule is loaded, so the table is rebuilt from
+``ExecStartPre=+`` of every instance (``attach``) and build (``attach-build``)
+start, when the new cgroup exists and before any app code runs; if that
+fails the unit does not start. The units' ``IPAddressDeny=``/``Allow=``
+filters stay underneath as a second layer.
+
+Sudo verbs (user hermes, deploy/sudoers.d/aquarium-apps; JSON on stdin):
+
+    set     {"slug", "hosts": [...], "mode"?}   owner's allowlist (mode omitted = dev and prod)
+    get     {"slug", "mode"?}
+    policy  {}                                  the admin policy in force
+    status  {}
+
+Root-only argv forms (no sudo rule): ``enable`` / ``disable`` (operator),
+``refresh`` (ExecStartPre=+ of the proxy unit), ``attach <slug>-<mode>``,
+``attach-build <slug>-<mode>`` (also the fail-closed OSV gate over the
+staged package-lock.json). ``proxy`` runs unprivileged in
+aquarium-app-egress-proxy.service.
+
+Admin policy: /etc/aquarium/app-egress.json (root-owned, not group/world
+writable, else ignored), keys as DEFAULT_POLICY. Built-in deny patterns
+always apply. Output is one JSON object on stdout (stderr for ``attach*``).
+Exit 0 = done, 2 = rejected input, 3 = refused by policy, 1 = internal
+failure. Python 3 stdlib only.
+"""
+
+import asyncio
+import contextlib
+import fcntl
+import http.client
+import ipaddress
+import json
+import os
+import re
+import signal
+import ssl
+import stat
+import subprocess
+import sys
+import tarfile
+import urllib.parse
+
+SAFE_PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
+SELF_PATH = "/usr/local/sbin/aquarium-app-egress"
+ETC_APPS = "/etc/aquarium/apps"
+POLICY_PATH = "/etc/aquarium/app-egress.json"
+UNIT_DIR = "/etc/systemd/system"
+RUN_UNIT_DIR = "/run/systemd/system"
+RUN_DIR = "/run/aquarium-egress"
+PROXY_VIEW = "/run/aquarium-egress-proxy"     # RO bind of RUN_DIR/proxy inside the proxy unit
+CGROUP_ROOT = "/sys/fs/cgroup"
+PROXY_UNIT = "aquarium-app-egress-proxy.service"
+TRUSTED_UIDS = (0,)
+
+TABLE = "aquarium_egress"
+APPS_SLICE = "aquarium.slice/aquarium-apps.slice"
+BUILD_SLICE = "aquarium.slice/aquarium-build.slice"
+APP_UNIT = "aquarium-app@{inst}.service"
+BUILD_UNIT = "aquarium-app-build@{inst}.service"
+DROPIN_NAME = "20-egress.conf"
+PROXY_HOST = "127.0.0.1"
+PROXY_OFFSET = 10000          # app port 4300-4699 -> proxy port 14300-14699
+BUILD_PROXY_PORT = 14299
+OSV_HOST = "api.osv.dev"
+OSV_BATCH_PATH = "/v1/querybatch"
+OSV_BATCH = 1000
+OSV_TIMEOUT = 30
+NPM_REGISTRY = "https://registry.npmjs.org/"
+
+MODES = ("dev", "prod")
+SLUG_RE = re.compile(r"^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$")
+LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+HOST_RE = re.compile(rf"^(?:\*\.)?(?:{LABEL}\.)+{LABEL}$")
+NPM_NAME_RE = re.compile(r"^(?:@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9._~-][a-z0-9._~-]*$", re.I)
+VERSION_RE = re.compile(r"^[0-9A-Za-z.+-]{1,64}$")
+MAX_SPEC_BYTES = 64 * 1024
+MAX_HEAD_BYTES = 8 * 1024
+
+#: Never allowed, whatever the admin policy says (the policy file adds to these).
+BUILTIN_DENY = ("localhost", "*.localhost", "*.local", "*.internal", "*.localdomain",
+                "*.home.arpa", "*.arpa", "metadata.google.internal")
+DEFAULT_POLICY = {
+    "max_hosts": 20,              # per app and mode
+    "allow": ["*"],               # patterns an owner may allowlist ("*" = any public host)
+    "deny": [],                   # added to BUILTIN_DENY
+    "ports": [443],               # CONNECT ports the proxy accepts
+    "build_hosts": ["registry.npmjs.org"],
+    "osv": "fail-closed",         # build gate over package-lock.json; "off" only for offline boxes
+    "max_lock_packages": 3000,
+    "max_lock_bytes": 20 * 1024 * 1024,
+    "loopback_ports": [],         # extra loopback ports every app may reach (e.g. a shared app-mcp)
+}
+
+APP_DROPIN = """\
+# Written by aquarium-app-egress enable (FG-33 P8-2 2.6); removed by disable.
+# The table is rebuilt before app code runs; a failure stops the start.
+[Service]
+ExecStartPre=+/usr/bin/python3 -I {self} attach %i
+EnvironmentFile=-{run}/env/%i.env
+"""
+BUILD_DROPIN = """\
+# Written by aquarium-app-egress enable (FG-33 P8-2 2.6); removed by disable.
+# attach-build loads the nft rules for this build's cgroup (only the proxy
+# port on loopback) and runs the fail-closed OSV gate before the build; if
+# either fails the build does not start. Only then is 127.0.0.1 opened in
+# the unit's address filter, for the proxy.
+[Service]
+ExecStartPre=+/usr/bin/python3 -I {self} attach-build %i
+IPAddressAllow=127.0.0.1/32
+Environment={env}
+"""
+
+
+class InputError(Exception):
+    """Rejected caller input (exit 2)."""
+
+
+class Refused(Exception):
+    """Valid request refused by policy (exit 3)."""
+
+
+class HelperError(Exception):
+    """Internal failure (exit 1)."""
+
+
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+
+
+def check_slug(slug):
+    if not isinstance(slug, str) or not SLUG_RE.fullmatch(slug) or "--" in slug:
+        raise InputError("slug must match ^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$ with no '--'")
+    return slug
+
+
+def check_mode(mode):
+    if mode not in MODES:
+        raise InputError("mode must be dev or prod")
+    return mode
+
+
+def split_instance(inst):
+    if not isinstance(inst, str) or "-" not in inst:
+        raise InputError("instance must be <slug>-<mode>")
+    slug, mode = inst.rsplit("-", 1)
+    return check_slug(slug), check_mode(mode)
+
+
+def normalize_host(host):
+    """A DNS name or ``*.``-wildcard, lower-cased; IP literals, ports, schemes refused."""
+    if not isinstance(host, str):
+        raise InputError("hosts must be strings")
+    h = host.strip().lower().rstrip(".")
+    if len(h) > 253 or not HOST_RE.fullmatch(h):
+        raise InputError(f"not a host name: {host[:80]!r} (DNS names only, optional leading '*.')")
+    labels = h.split(".")
+    if labels[-1].isdigit():
+        raise InputError(f"IP addresses are not allowed: {host[:80]!r}")
+    if h.startswith("*.") and len(labels) < 3:
+        raise InputError(f"a wildcard needs at least two labels after '*.': {host[:80]!r}")
+    return h
+
+
+def matches(pattern, host):
+    """Does ``pattern`` ("*", "*.suffix" or exact) cover the concrete ``host``?"""
+    if pattern == "*":
+        return True
+    if pattern.startswith("*."):
+        return host.endswith(pattern[1:])
+    return host == pattern
+
+
+def covers(pattern, host):
+    """Does ``pattern`` cover everything ``host`` (maybe a wildcard) can match?"""
+    if not host.startswith("*."):
+        return matches(pattern, host)
+    if pattern == "*":
+        return True
+    return pattern.startswith("*.") and (host[1:].endswith(pattern[1:]))
+
+
+def overlaps(a, b):
+    """Can some concrete host match both patterns?"""
+    if a == "*" or b == "*":
+        return True
+    if a.startswith("*.") and b.startswith("*."):
+        return a[1:].endswith(b[1:]) or b[1:].endswith(a[1:])
+    if a.startswith("*."):
+        return matches(a, b)
+    if b.startswith("*."):
+        return matches(b, a)
+    return a == b
+
+
+# ---------------------------------------------------------------------------
+# Files and policy
+# ---------------------------------------------------------------------------
+
+
+def _root_file_ok(path):
+    st = os.lstat(path)
+    return (stat.S_ISREG(st.st_mode) and st.st_uid in TRUSTED_UIDS
+            and not st.st_mode & (stat.S_IWGRP | stat.S_IWOTH))
+
+
+def load_policy():
+    policy = {k: (list(v) if isinstance(v, list) else v) for k, v in DEFAULT_POLICY.items()}
+    try:
+        if _root_file_ok(POLICY_PATH):
+            with open(POLICY_PATH, encoding="utf-8") as fh:
+                raw = json.load(fh)
+        else:
+            raw = {}
+    except (FileNotFoundError, ValueError, OSError):
+        raw = {}
+    if not isinstance(raw, dict):
+        raw = {}
+    for key in ("max_hosts", "max_lock_packages", "max_lock_bytes"):
+        if isinstance(raw.get(key), int) and not isinstance(raw.get(key), bool) and raw[key] >= 0:
+            policy[key] = raw[key]
+    for key in ("allow", "deny", "build_hosts"):
+        if isinstance(raw.get(key), list):
+            out = []
+            for item in raw[key]:
+                with contextlib.suppress(InputError):
+                    out.append("*" if item == "*" and key == "allow" else normalize_host(item))
+            policy[key] = out
+    for key in ("ports", "loopback_ports"):
+        if isinstance(raw.get(key), list):
+            policy[key] = sorted({p for p in raw[key]
+                                  if isinstance(p, int) and not isinstance(p, bool) and 0 < p < 65536})
+    if raw.get("osv") in ("fail-closed", "off"):
+        policy["osv"] = raw["osv"]
+    policy["deny"] = sorted(set(BUILTIN_DENY) | set(policy["deny"]))
+    return policy
+
+
+def trusted_dir(path, mode):
+    """mkdir -p ``path`` as root with ``mode``, refusing symlinks and foreign owners."""
+    parts = os.path.abspath(path).split("/")[1:]
+    cur = "/"
+    for part in parts:
+        cur = os.path.join(cur, part)
+        try:
+            st = os.lstat(cur)
+        except FileNotFoundError:
+            os.mkdir(cur, mode)
+            os.chmod(cur, mode)
+            st = os.lstat(cur)
+        if not stat.S_ISDIR(st.st_mode) or st.st_uid not in TRUSTED_UIDS:
+            raise HelperError(f"untrusted path component: {cur}")
+    os.chmod(path, mode)
+    return path
+
+
+def write_atomic(path, data, mode):
+    tmp = f"{path}.tmp{os.getpid()}"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, mode)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(data)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)
+
+
+@contextlib.contextmanager
+def flock():
+    trusted_dir(RUN_DIR, 0o700)
+    fd = os.open(os.path.join(RUN_DIR, "lock"), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
+def read_env(path):
+    out = {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                if "=" in line and not line.lstrip().startswith("#"):
+                    k, v = line.rstrip("\n").split("=", 1)
+                    out[k.strip()] = v.strip()
+    except FileNotFoundError:
+        pass
+    return out
+
+
+def egress_file(slug, mode):
+    return os.path.join(ETC_APPS, slug, f"egress-{mode}.json")
+
+
+def read_hosts(slug, mode):
+    try:
+        with open(egress_file(slug, mode), encoding="utf-8") as fh:
+            hosts = json.load(fh).get("hosts", [])
+    except (FileNotFoundError, ValueError, AttributeError):
+        return []
+    out = []
+    for h in hosts if isinstance(hosts, list) else []:
+        with contextlib.suppress(InputError):
+            out.append(normalize_host(h))
+    return out
+
+
+def host_verdict(host, hosts, policy):
+    """Concrete ``host`` → None if the proxy may connect, else the reason."""
+    if any(matches(d, host) for d in policy["deny"]):
+        return "denied by the admin policy"
+    if not any(matches(a, host) for a in policy["allow"]):
+        return "outside the admin policy"
+    if not any(matches(h, host) for h in hosts):
+        return "not on this app's egress allowlist"
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Compile: instances → env files, proxy allowlist, nft table
+# ---------------------------------------------------------------------------
+
+
+def instances():
+    """Allocated instances: (slug, mode, app port) from /etc/aquarium/apps/<slug>/<mode>.env."""
+    out = []
+    try:
+        slugs = sorted(os.listdir(ETC_APPS))
+    except FileNotFoundError:
+        return out
+    for slug in slugs:
+        if not SLUG_RE.fullmatch(slug) or "--" in slug:
+            continue
+        for mode in MODES:
+            port = read_env(os.path.join(ETC_APPS, slug, f"{mode}.env")).get("PORT", "")
+            if port.isdigit() and 1024 <= int(port) <= 65535 - PROXY_OFFSET:
+                out.append((slug, mode, int(port)))
+    return out
+
+
+def db_ports(slug, mode):
+    """Loopback ports of the app's DSN files (written by `aquarium apps db create`)."""
+    ports = set()
+    for kind in ("rw", "ro"):
+        try:
+            with open(os.path.join(ETC_APPS, slug, f"db-{mode}-{kind}.dsn"), encoding="utf-8") as fh:
+                parts = urllib.parse.urlsplit(fh.read().strip())
+            if parts.hostname in ("127.0.0.1", "localhost", "::1"):
+                ports.add(parts.port or 5432)
+        except (FileNotFoundError, ValueError):
+            continue
+    return sorted(ports)
+
+
+def proxy_env(port):
+    url = f"http://{PROXY_HOST}:{port}"
+    pairs = [("HTTPS_PROXY", url), ("HTTP_PROXY", url), ("https_proxy", url), ("http_proxy", url),
+             ("NO_PROXY", "127.0.0.1,localhost,::1"), ("no_proxy", "127.0.0.1,localhost,::1"),
+             ("NODE_USE_ENV_PROXY", "1")]
+    return pairs
+
+
+def build_hosts(policy):
+    hosts = list(policy["build_hosts"])
+    if policy["osv"] != "off" and OSV_HOST not in hosts:
+        hosts.append(OSV_HOST)
+    return hosts
+
+
+def cgroup_dir(rel):
+    return os.path.join(CGROUP_ROOT, rel)
+
+
+def instance_cgroup(inst):
+    return f"{APPS_SLICE}/{APP_UNIT.format(inst=inst)}"
+
+
+def build_cgroup(inst):
+    return f"{BUILD_SLICE}/{BUILD_UNIT.format(inst=inst)}"
+
+
+def ruleset(apps, apps_slice=True, build_slice=True):
+    """nft script replacing the whole table in one transaction.
+
+    ``apps`` = [(inst, [loopback ports])] for instances whose cgroup exists.
+    A slice's jump is emitted only if its cgroup exists (nft refuses a path
+    that does not)."""
+    lines = [f"table inet {TABLE}", f"delete table inet {TABLE}", f"table inet {TABLE} {{",
+             "  chain output {", "    type filter hook output priority filter; policy accept;"]
+    if apps_slice:
+        lines.append(f'    socket cgroupv2 level 2 "{APPS_SLICE}" jump apps')
+    if build_slice:
+        lines.append(f'    socket cgroupv2 level 2 "{BUILD_SLICE}" jump build')
+    lines += ["  }", "  chain apps {", "    ct state established,related accept"]
+    for inst, ports in apps:
+        cg = instance_cgroup(inst)
+        port_set = ", ".join(str(p) for p in sorted(set(ports)))
+        lines.append(f'    socket cgroupv2 level 3 "{cg}" ip daddr 127.0.0.1 tcp dport {{ {port_set} }} accept')
+    lines += ['    limit rate 6/minute log prefix "aquarium-egress app drop: "', "    counter drop", "  }",
+              "  chain build {", "    ct state established,related accept",
+              f"    ip daddr {PROXY_HOST} tcp dport {BUILD_PROXY_PORT} accept",
+              '    limit rate 6/minute log prefix "aquarium-egress build drop: "', "    counter drop",
+              "  }", "}"]
+    return "\n".join(lines) + "\n"
+
+
+def bin_path(name):
+    for d in SAFE_PATH.split(":"):
+        path = os.path.join(d, name)
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    raise HelperError(f"{name} not found in {SAFE_PATH}")
+
+
+def run(cmd, timeout=60, **kw):
+    kw.setdefault("capture_output", True)
+    kw.setdefault("text", True)
+    return subprocess.run(cmd, timeout=timeout, env={"PATH": SAFE_PATH, "LC_ALL": "C"}, **kw)
+
+
+def load_table(script):
+    proc = run([bin_path("nft"), "-f", "-"], input=script)
+    if proc.returncode != 0:
+        raise HelperError(f"nft refused the egress table: {proc.stderr.strip()[:300]}")
+
+
+def table_loaded():
+    try:
+        return run([bin_path("nft"), "list", "table", "inet", TABLE]).returncode == 0
+    except HelperError:
+        return False
+
+
+def compile_all(policy, load_nft=True):
+    """Write every instance's proxy env file and the proxy allowlist; reload the table.
+
+    Returns the instances that got nft rules."""
+    trusted_dir(RUN_DIR, 0o700)
+    env_dir = trusted_dir(os.path.join(RUN_DIR, "env"), 0o700)
+    proxy_dir = trusted_dir(os.path.join(RUN_DIR, "proxy"), 0o755)
+    listeners = {str(BUILD_PROXY_PORT): {"inst": "build", "hosts": build_hosts(policy)}}
+    insts = instances()
+    for slug, mode, port in insts:
+        inst = f"{slug}-{mode}"
+        pport = port + PROXY_OFFSET
+        listeners[str(pport)] = {"inst": inst, "hosts": read_hosts(slug, mode)}
+        write_atomic(os.path.join(env_dir, f"{inst}.env"),
+                     "".join(f"{k}={v}\n" for k, v in proxy_env(pport)), 0o600)
+    allow = {"version": 1, "ports": policy["ports"], "deny": policy["deny"],
+             "allow": policy["allow"], "listeners": listeners}
+    write_atomic(os.path.join(proxy_dir, "allow.json"), json.dumps(allow, sort_keys=True), 0o644)
+    if not load_nft:
+        return []
+    for _attempt in range(3):
+        apps = []
+        for slug, mode, port in insts:
+            inst = f"{slug}-{mode}"
+            if os.path.isdir(cgroup_dir(instance_cgroup(inst))):
+                apps.append((inst, [port, port + PROXY_OFFSET, *db_ports(slug, mode),
+                                    *policy["loopback_ports"]]))
+        script = ruleset(apps, os.path.isdir(cgroup_dir(APPS_SLICE)),
+                         os.path.isdir(cgroup_dir(BUILD_SLICE)))
+        try:
+            load_table(script)
+            return [inst for inst, _ in apps]
+        except HelperError:
+            # A cgroup may have vanished between listing and loading (an instance stopped).
+            if all(os.path.isdir(cgroup_dir(instance_cgroup(i))) for i, _ in apps):
+                raise
+    raise HelperError("could not load the egress table (cgroups kept changing)")
+
+
+def enabled():
+    return os.path.isfile(os.path.join(UNIT_DIR, "aquarium-app@.service.d", DROPIN_NAME))
+
+
+# ---------------------------------------------------------------------------
+# Supply-chain gate: fail-closed OSV over package-lock.json.
+# Same rules as tools/osv_check.check_lockfile (a parity test pins them); this
+# copy exists because a root helper must not import from the checkout.
+# ---------------------------------------------------------------------------
+
+
+def lockfile_findings(lock, max_packages):
+    """(reasons, [(name, version)]) for a parsed package-lock.json."""
+    reasons, pkgs = [], set()
+    if not isinstance(lock, dict) or lock.get("lockfileVersion") not in (2, 3):
+        return ["package-lock.json must be lockfileVersion 2 or 3 (npm 7+)"], []
+    packages = lock.get("packages")
+    if not isinstance(packages, dict):
+        return ["package-lock.json has no packages map"], []
+    entries = [(k, v) for k, v in packages.items() if k != ""]
+    if len(entries) > max_packages:
+        reasons.append(f"{len(entries)} packages exceed the ceiling of {max_packages}")
+    for key, entry in entries:
+        if not isinstance(entry, dict) or not isinstance(key, str) or "node_modules/" not in key:
+            reasons.append(f"{str(key)[:80]}: not an installed package (workspaces/links are not allowed)")
+            continue
+        name = entry.get("name") or key.rsplit("node_modules/", 1)[1]
+        version = entry.get("version")
+        if entry.get("link"):
+            reasons.append(f"{name}: linked packages are not allowed")
+            continue
+        if not isinstance(name, str) or not NPM_NAME_RE.fullmatch(name) or \
+                not isinstance(version, str) or not VERSION_RE.fullmatch(version):
+            reasons.append(f"{str(key)[:80]}: missing or invalid name/version")
+            continue
+        if not entry.get("inBundle"):
+            resolved, integrity = entry.get("resolved"), entry.get("integrity")
+            if not isinstance(resolved, str) or not resolved.startswith(NPM_REGISTRY):
+                reasons.append(f"{name}@{version}: resolved outside {NPM_REGISTRY}")
+            if not isinstance(integrity, str) or not integrity.startswith("sha512-"):
+                reasons.append(f"{name}@{version}: no sha512 integrity")
+        pkgs.add((name, version))
+    return reasons, sorted(pkgs)
+
+
+def malware_from_results(pkgs, results):
+    """Map OSV querybatch results onto packages; incomplete answers fail closed."""
+    if not isinstance(results, list) or len(results) != len(pkgs):
+        raise HelperError("OSV returned an incomplete answer")
+    found = []
+    for (name, version), res in zip(pkgs, results):
+        if not isinstance(res, dict):
+            raise HelperError("OSV returned an invalid answer")
+        ids = [v.get("id", "") for v in res.get("vulns") or [] if isinstance(v, dict)]
+        mal = [i for i in ids if isinstance(i, str) and i.startswith("MAL-")]
+        if mal:
+            found.append({"package": name, "version": version, "ids": mal[:5]})
+        elif res.get("next_page_token"):
+            raise HelperError(f"OSV answer for {name}@{version} is paginated; refusing (fail closed)")
+    return found
+
+
+def osv_querybatch(queries):
+    """POST one querybatch to api.osv.dev through the build proxy port."""
+    body = json.dumps({"queries": queries}).encode()
+    conn = http.client.HTTPSConnection(PROXY_HOST, BUILD_PROXY_PORT, timeout=OSV_TIMEOUT,
+                                       context=ssl.create_default_context())
+    conn.set_tunnel(OSV_HOST, 443)
+    try:
+        conn.request("POST", OSV_BATCH_PATH, body=body, headers={
+            "Content-Type": "application/json", "User-Agent": "aquarium-app-egress/1"})
+        resp = conn.getresponse()
+        data = resp.read(64 * 1024 * 1024)
+        if resp.status != 200:
+            raise HelperError(f"OSV answered HTTP {resp.status}")
+        return json.loads(data).get("results")
+    finally:
+        conn.close()
+
+
+def osv_gate(lock, policy):
+    reasons, pkgs = lockfile_findings(lock, policy["max_lock_packages"])
+    if reasons:
+        raise Refused("supply-chain gate: " + "; ".join(reasons[:10]))
+    if policy["osv"] == "off":
+        return {"packages": len(pkgs), "osv": "off"}
+    malware = []
+    try:
+        for i in range(0, len(pkgs), OSV_BATCH):
+            chunk = pkgs[i:i + OSV_BATCH]
+            results = osv_querybatch([{"package": {"name": n, "ecosystem": "npm"}, "version": v}
+                                      for n, v in chunk])
+            malware += malware_from_results(chunk, results)
+    except (OSError, ValueError, http.client.HTTPException, HelperError) as exc:
+        raise Refused(f"supply-chain gate: OSV check failed, refusing the build (fail closed): {exc}")
+    if malware:
+        names = ", ".join(f"{m['package']}@{m['version']} ({', '.join(m['ids'])})" for m in malware[:5])
+        raise Refused(f"supply-chain gate: known malware in the lockfile: {names}")
+    return {"packages": len(pkgs), "osv": "clean"}
+
+
+def staged_source(inst):
+    """The source tarball aquarium-app-helper staged for this build (from its drop-in)."""
+    dropin = os.path.join(RUN_UNIT_DIR, BUILD_UNIT.format(inst=inst) + ".d", "10-stage.conf")
+    if not _root_file_ok(dropin):
+        raise HelperError(f"{dropin} is not a root-owned file")
+    with open(dropin, encoding="utf-8") as fh:
+        for line in fh:
+            if line.startswith("StandardInput=file:"):
+                path = line.strip().split(":", 1)[1]
+                if os.path.isabs(path) and _root_file_ok(path):
+                    return path
+                break
+    raise HelperError("the build drop-in names no root-owned staged source")
+
+
+def read_lockfile(tar_path, max_bytes):
+    with tarfile.open(tar_path, "r:") as tar:
+        for member in tar:
+            if member.name in ("package-lock.json", "./package-lock.json"):
+                if not member.isreg():
+                    raise Refused("package-lock.json is not a regular file")
+                if member.size > max_bytes:
+                    raise Refused(f"package-lock.json is larger than {max_bytes} bytes")
+                try:
+                    return json.loads(tar.extractfile(member).read())
+                except ValueError as exc:
+                    raise Refused(f"package-lock.json is not valid JSON: {exc}") from exc
+    raise Refused("the app has no committed package-lock.json")
+
+
+# ---------------------------------------------------------------------------
+# Verbs
+# ---------------------------------------------------------------------------
+
+
+def spec_keys(spec, allowed, required):
+    if not isinstance(spec, dict):
+        raise InputError("request must be a JSON object")
+    extra = set(spec) - set(allowed) - set(required)
+    if extra:
+        raise InputError(f"unknown fields: {sorted(extra)}")
+    missing = [k for k in required if k not in spec]
+    if missing:
+        raise InputError(f"missing fields: {missing}")
+
+
+def spec_modes(spec):
+    if "mode" in spec and spec["mode"] is not None:
+        return [check_mode(spec["mode"])]
+    return list(MODES)
+
+
+def read_spec(stream):
+    data = stream.read(MAX_SPEC_BYTES + 1)
+    if len(data) > MAX_SPEC_BYTES:
+        raise InputError("request too large")
+    try:
+        return json.loads(data or "{}")
+    except ValueError as exc:
+        raise InputError(f"request is not JSON: {exc}") from exc
+
+
+def cmd_set(spec):
+    spec_keys(spec, ("mode",), ("slug", "hosts"))
+    slug = check_slug(spec["slug"])
+    modes = spec_modes(spec)
+    if not isinstance(spec["hosts"], list):
+        raise InputError("hosts must be a list")
+    policy = load_policy()
+    hosts = sorted({normalize_host(h) for h in spec["hosts"]})
+    if len(hosts) > policy["max_hosts"]:
+        raise Refused(f"{len(hosts)} hosts exceed the admin limit of {policy['max_hosts']}")
+    for host in hosts:
+        if any(overlaps(d, host) for d in policy["deny"]):
+            raise Refused(f"{host} is denied by the admin policy")
+        if not any(covers(a, host) for a in policy["allow"]):
+            raise Refused(f"{host} is outside the admin policy")
+    app_dir = os.path.join(ETC_APPS, slug)
+    if not os.path.isdir(app_dir):
+        raise InputError(f"{slug} has no allocated instance")
+    with flock():
+        for mode in modes:
+            path = egress_file(slug, mode)
+            if hosts:
+                write_atomic(path, json.dumps({"hosts": hosts}) + "\n", 0o600)
+            else:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(path)
+        compile_all(policy, load_nft=False)
+    return {"slug": slug, "modes": modes, "hosts": hosts, "max_hosts": policy["max_hosts"],
+            "enforced": enabled()}
+
+
+def cmd_get(spec):
+    spec_keys(spec, ("mode",), ("slug",))
+    slug = check_slug(spec["slug"])
+    return {"slug": slug, "egress": {m: read_hosts(slug, m) for m in spec_modes(spec)},
+            "policy": public_policy(load_policy()), "enforced": enabled()}
+
+
+def public_policy(policy):
+    return {k: policy[k] for k in ("max_hosts", "allow", "deny", "ports", "build_hosts", "osv",
+                                   "loopback_ports")}
+
+
+def cmd_policy(spec):
+    spec_keys(spec, (), ())
+    return public_policy(load_policy())
+
+
+def cmd_status(spec):
+    spec_keys(spec, (), ())
+    active = run([bin_path("systemctl"), "is-active", PROXY_UNIT]).stdout.strip()
+    return {"enabled": enabled(), "table_loaded": table_loaded(), "proxy": active or "unknown",
+            "instances": len(instances())}
+
+
+def cmd_refresh():
+    with flock():
+        attached = compile_all(load_policy())
+    return {"refreshed": True, "instances_with_rules": attached}
+
+
+def cmd_attach(inst):
+    slug, mode = split_instance(inst)
+    if not read_env(os.path.join(ETC_APPS, slug, f"{mode}.env")).get("PORT", "").isdigit():
+        raise HelperError(f"{inst} is not allocated")
+    if not os.path.isdir(cgroup_dir(instance_cgroup(inst))):
+        raise HelperError(f"no cgroup for {inst}: attach runs only as ExecStartPre=+ of its unit")
+    with flock():
+        attached = compile_all(load_policy())
+    if inst not in attached:
+        raise HelperError(f"egress rules for {inst} were not loaded")
+    return {"attached": inst}
+
+
+def cmd_attach_build(inst):
+    split_instance(inst)
+    if not os.path.isdir(cgroup_dir(build_cgroup(inst))):
+        raise HelperError(f"no cgroup for the {inst} build: attach-build runs only as ExecStartPre=+")
+    policy = load_policy()
+    with flock():
+        compile_all(policy)
+    if not table_loaded():
+        raise HelperError("the egress table is not loaded")
+    gate = osv_gate(read_lockfile(staged_source(inst), policy["max_lock_bytes"]), policy)
+    return {"attached_build": inst, "supply_chain": gate}
+
+
+def build_env():
+    return " ".join(f"{k}={v}" for k, v in proxy_env(BUILD_PROXY_PORT)) + \
+        f" npm_config_proxy=http://{PROXY_HOST}:{BUILD_PROXY_PORT}" \
+        f" npm_config_https_proxy=http://{PROXY_HOST}:{BUILD_PROXY_PORT}"
+
+
+def cmd_enable():
+    for template, text in (("aquarium-app@.service.d", APP_DROPIN.format(self=SELF_PATH, run=RUN_DIR)),
+                           ("aquarium-app-build@.service.d",
+                            BUILD_DROPIN.format(self=SELF_PATH, env=build_env()))):
+        d = os.path.join(UNIT_DIR, template)
+        os.makedirs(d, mode=0o755, exist_ok=True)
+        write_atomic(os.path.join(d, DROPIN_NAME), text, 0o644)
+    doc = cmd_refresh()
+    run([bin_path("systemctl"), "daemon-reload"])
+    proc = run([bin_path("systemctl"), "enable", "--now", PROXY_UNIT], timeout=90)
+    if proc.returncode != 0:
+        raise HelperError(f"could not start {PROXY_UNIT}: {proc.stderr.strip()[:200]}")
+    return {"enabled": True, "restart_to_use_proxy": doc["instances_with_rules"]}
+
+
+def cmd_disable():
+    for template in ("aquarium-app@.service.d", "aquarium-app-build@.service.d"):
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(os.path.join(UNIT_DIR, template, DROPIN_NAME))
+    run([bin_path("systemctl"), "disable", "--now", PROXY_UNIT], timeout=90)
+    run([bin_path("nft"), "delete", "table", "inet", TABLE])
+    run([bin_path("systemctl"), "daemon-reload"])
+    return {"enabled": False}
+
+
+# ---------------------------------------------------------------------------
+# The allowlisting proxy (unprivileged; aquarium-app-egress-proxy.service)
+# ---------------------------------------------------------------------------
+
+
+def addr_ok(addr):
+    """Only global unicast addresses: never loopback, private, link-local, CGNAT, metadata."""
+    try:
+        ip = ipaddress.ip_address(addr.split("%", 1)[0])
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return ip.is_global and not ip.is_multicast
+
+
+class Proxy:
+    MAX_CONN_PER_PORT = 64
+    CONNECT_TIMEOUT = 10
+    IDLE_TIMEOUT = 15 * 60
+
+    def __init__(self, allow_path, log=None):
+        self.allow_path = allow_path
+        self.allow = {"listeners": {}, "ports": [], "deny": list(BUILTIN_DENY), "allow": []}
+        self.mtime = None
+        self.servers = {}
+        self.active = {}
+        self.log = log or (lambda doc: print(json.dumps(doc), file=sys.stderr, flush=True))
+
+    def load(self):
+        try:
+            mtime = os.stat(self.allow_path).st_mtime_ns
+        except FileNotFoundError:
+            mtime = None
+        if mtime == self.mtime:
+            return False
+        self.mtime = mtime
+        allow = {"listeners": {}, "ports": [], "deny": list(BUILTIN_DENY), "allow": []}
+        if mtime is not None:
+            with contextlib.suppress(OSError, ValueError):
+                with open(self.allow_path, encoding="utf-8") as fh:
+                    raw = json.load(fh)
+                if isinstance(raw, dict):
+                    allow.update({k: raw[k] for k in ("listeners", "ports", "allow") if k in raw})
+                    allow["deny"] = sorted(set(BUILTIN_DENY) | set(raw.get("deny") or []))
+        self.allow = allow
+        return True
+
+    def verdict(self, port, host, target_port):
+        entry = self.allow["listeners"].get(str(port))
+        if not entry:
+            return "no egress for this listener"
+        if target_port not in self.allow["ports"]:
+            return f"port {target_port} is not allowed"
+        policy = {"deny": self.allow["deny"], "allow": self.allow["allow"]}
+        return host_verdict(host, entry.get("hosts") or [], policy)
+
+    async def sync_listeners(self):
+        wanted = {int(p) for p in self.allow["listeners"] if str(p).isdigit()}
+        for port in set(self.servers) - wanted:
+            self.servers.pop(port).close()
+        for port in wanted - set(self.servers):
+            try:
+                self.servers[port] = await asyncio.start_server(
+                    lambda r, w, p=port: self.handle(p, r, w), PROXY_HOST, port)
+            except OSError as exc:
+                self.log({"event": "listen_failed", "port": port, "error": str(exc)})
+
+    async def resolve(self, host, port):
+        loop = asyncio.get_running_loop()
+        infos = await asyncio.wait_for(loop.getaddrinfo(host, port, type=1), self.CONNECT_TIMEOUT)
+        return [info[4][0] for info in infos]
+
+    async def handle(self, port, reader, writer):
+        entry = self.allow["listeners"].get(str(port), {})
+        inst = entry.get("inst", "?")
+        if self.active.get(port, 0) >= self.MAX_CONN_PER_PORT:
+            writer.close()
+            return
+        self.active[port] = self.active.get(port, 0) + 1
+        host, target_port = "", 0
+        try:
+            head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 10)
+            if len(head) > MAX_HEAD_BYTES:
+                raise ValueError("request head too large")
+            parts = head.split(b"\r\n", 1)[0].decode("latin-1").split()
+            if len(parts) != 3 or parts[0] != "CONNECT":
+                await self.reply(writer, 405, "only HTTPS through CONNECT is allowed")
+                return
+            target = parts[1]
+            host, _, port_s = target.rpartition(":")
+            target_port = int(port_s) if port_s.isdigit() else 0
+            try:
+                host = normalize_host(host)
+            except InputError:
+                await self.deny(writer, inst, target, 0, "not a host name")
+                return
+            if host.startswith("*."):
+                await self.deny(writer, inst, host, target_port, "not a host name")
+                return
+            reason = self.verdict(port, host, target_port)
+            if reason:
+                await self.deny(writer, inst, host, target_port, reason)
+                return
+            addrs = await self.resolve(host, target_port)
+            if not addrs or not all(addr_ok(a) for a in addrs):
+                await self.deny(writer, inst, host, target_port, "resolves to a non-public address")
+                return
+            up_r = up_w = None
+            for addr in addrs:
+                with contextlib.suppress(OSError, asyncio.TimeoutError):
+                    up_r, up_w = await asyncio.wait_for(asyncio.open_connection(addr, target_port),
+                                                        self.CONNECT_TIMEOUT)
+                    break
+            if up_w is None:
+                await self.reply(writer, 502, "upstream unreachable")
+                return
+            self.log({"event": "connect", "inst": inst, "host": host, "port": target_port})
+            writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+            await writer.drain()
+            await asyncio.gather(self.pipe(reader, up_w), self.pipe(up_r, writer))
+        except (asyncio.IncompleteReadError, asyncio.LimitOverrunError, asyncio.TimeoutError,
+                ValueError, OSError, UnicodeError) as exc:
+            self.log({"event": "error", "inst": inst, "host": host, "error": type(exc).__name__})
+        finally:
+            self.active[port] -= 1
+            with contextlib.suppress(Exception):
+                writer.close()
+
+    async def pipe(self, src, dst):
+        try:
+            while True:
+                data = await asyncio.wait_for(src.read(65536), self.IDLE_TIMEOUT)
+                if not data:
+                    break
+                dst.write(data)
+                await dst.drain()
+        except (OSError, asyncio.TimeoutError):
+            pass
+        finally:
+            with contextlib.suppress(Exception):
+                dst.close()
+
+    async def reply(self, writer, code, text):
+        writer.write(f"HTTP/1.1 {code} {text}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".encode())
+        with contextlib.suppress(OSError):
+            await writer.drain()
+
+    async def deny(self, writer, inst, host, port, reason):
+        self.log({"event": "deny", "inst": inst, "host": host, "port": port, "reason": reason})
+        await self.reply(writer, 403, f"egress refused: {reason}")
+
+    async def serve(self, stop=None, poll=1.0):
+        stop = stop or asyncio.Event()
+        while not stop.is_set():
+            if self.load():
+                await self.sync_listeners()
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(stop.wait(), poll)
+        for server in self.servers.values():
+            server.close()
+
+
+def cmd_proxy():
+    if os.geteuid() == 0:
+        raise HelperError("the proxy never runs as root (aquarium-app-egress-proxy.service)")
+    proxy = Proxy(os.path.join(PROXY_VIEW, "allow.json"))
+
+    async def main_loop():
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, stop.set)
+        await proxy.serve(stop)
+
+    asyncio.run(main_loop())
+
+
+# ---------------------------------------------------------------------------
+
+
+SUDO_VERBS = {"set": cmd_set, "get": cmd_get, "policy": cmd_policy, "status": cmd_status}
+USAGE = ("usage: aquarium-app-egress " + "|".join(SUDO_VERBS) + " < request.json"
+         " | enable | disable | refresh | attach <slug>-<mode> | attach-build <slug>-<mode> | proxy")
+
+
+def main(argv=None, stdin=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    out = sys.stderr if argv[:1] in (["attach"], ["attach-build"]) else sys.stdout
+    try:
+        if argv == ["proxy"]:
+            cmd_proxy()
+            return 0
+        os.environ["PATH"] = SAFE_PATH
+        os.umask(0o077)
+        if os.geteuid() != 0:
+            raise HelperError("aquarium-app-egress must run as root (use sudo -n)")
+        if len(argv) == 1 and argv[0] in SUDO_VERBS:
+            doc = SUDO_VERBS[argv[0]](read_spec(stdin or sys.stdin))
+        elif argv == ["enable"]:
+            doc = cmd_enable()
+        elif argv == ["disable"]:
+            doc = cmd_disable()
+        elif argv == ["refresh"]:
+            doc = cmd_refresh()
+        elif len(argv) == 2 and argv[0] == "attach":
+            doc = cmd_attach(argv[1])
+        elif len(argv) == 2 and argv[0] == "attach-build":
+            doc = cmd_attach_build(argv[1])
+        else:
+            raise InputError(USAGE)
+    except InputError as exc:
+        print(json.dumps({"error": str(exc), "bad_input": True}), file=out)
+        return 2
+    except Refused as exc:
+        print(json.dumps({"error": str(exc), "refused": True}), file=out)
+        return 3
+    except (HelperError, OSError, tarfile.TarError, subprocess.SubprocessError) as exc:
+        message = str(exc)
+        if isinstance(exc, OSError):
+            message = f"{exc.strerror or exc}" + (f": {exc.filename}" if exc.filename else "")
+        print(json.dumps({"error": message[:300]}), file=out)
+        return 1
+    print(json.dumps(doc), file=out)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

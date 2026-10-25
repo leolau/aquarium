@@ -163,7 +163,7 @@ off the box — but the *provider's signing key* is in the same config, and
    `username`/`password_hash`/`secret` from `dashboard.basic_auth`. Confirm it
    resolves a principal: `GET 127.0.0.1:9119/api/comms/whoami` →
    `{"configured": true, "principal": {"user_id": "leo_owner", …}}`.
-2. Wrap it in an `agent_home_session` cookie: `base64url(JSON) + "." +
+2. Wrap it in a `__Host-agent_home_session` cookie: `base64url(JSON) + "." +
    base64url(HMAC-SHA256(payload, AGENT_HOME_SESSION_SECRET))`, payload
    `{hermesToken, principal, issuedAt}` (see `agent-home/src/lib/auth/session.ts`).
 

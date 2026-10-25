@@ -240,7 +240,7 @@ them** — the panels are React and the whole question is what the DOM does afte
 click without a reload. You need a browser.
 
 Mint the cookie (payload shape from `agent-home/src/lib/auth/session.ts`: cookie
-name `agent_home_session`, value `b64url(JSON).b64url(HMAC-SHA256(payload,
+name `__Host-agent_home_session` (Secure, Path=/), value `b64url(JSON).b64url(HMAC-SHA256(payload,
 AGENT_HOME_SESSION_SECRET))`, 12 h max age; `principal` must be the **full
 object**, not a string):
 
@@ -267,7 +267,7 @@ chmod 600 /tmp/uat/cookie
 Set `principal.role` to the role the scenario needs (`owner` for §B–§H, the
 others for §I) and keep `user_id` consistent with what TA4 returned. Then, in
 your browser, open `https://<agent-home-host>`, set the cookie
-`agent_home_session` = that value for that host (DevTools → Application →
+`__Host-agent_home_session` = that value for that host (Secure, Path `/`, no Domain) (DevTools → Application →
 Cookies, or a CDP/Playwright `addCookies`), and reload. The public host is the
 same app with the same secret, so the cookie is valid there.
 

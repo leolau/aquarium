@@ -1,0 +1,17 @@
+# FG-33 §10 coder profile definition. Installed by
+# `python -m hermes_cli.app_coder install` (see README.md). Never put a
+# credential (API key, token, password) in this directory.
+name: internal-coder
+version: 1.0.0
+description: >-
+  Builds Aquarium local apps (hosting=local) as a kanban worker: the
+  nextjs-supabase template, apps-cluster migrations and the local definition
+  of done. Holds no hosting provider credentials.
+# Repo skills copied into the profile's skills/ (paths under skills/).
+skills:
+  - software-development/vibe-code-app
+  - software-development/create-in-house-tool
+  - software-development/test-driven-development
+  - software-development/systematic-debugging
+  - software-development/requesting-code-review
+  - software-development/node-inspect-debugger

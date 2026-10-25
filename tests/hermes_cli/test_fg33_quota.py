@@ -333,6 +333,10 @@ def test_every_quota_route_requires_owner_or_admin() -> None:
     assert {f"{sorted(r.methods)[0]} {r.path}" for r in routes} == {
         "GET /api/quotas/box", "PUT /api/quotas/box",
         "GET /api/quotas/{user_id}", "PUT /api/quotas/{user_id}",
+        # P8-2 2.10 Settings panels
+        "GET /api/quotas/defaults", "PUT /api/quotas/defaults",
+        "GET /api/quotas/storage", "PUT /api/quotas/storage",
+        "GET /api/quotas/github", "PUT /api/quotas/github", "DELETE /api/quotas/github",
     }
     for route in routes:
         roles = {getattr(d.dependency, "required_role", None) for d in route.dependencies}

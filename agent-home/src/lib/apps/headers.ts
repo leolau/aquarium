@@ -25,8 +25,10 @@ export const APP_STRIPPED_RESPONSE_HEADERS = ["Service-Worker-Allowed", "Clear-S
 export function appContentSecurityPolicy(origin: string, slug: string, mode: AppMode): string {
   const base = `${origin}${appBasePath(slug, mode)}`;
   const self = `${base} ${base}/`;
-  // `next dev` needs eval for its source maps; prod builds do not.
-  const script = mode === "dev" ? `${self} 'unsafe-inline' 'unsafe-eval'` : `${self} 'unsafe-inline'`;
+  // No 'unsafe-eval' in either mode: the dev preview is a `next build` +
+  // `node server.js` release like prod (aquarium-app-helper build), never
+  // `next dev`, and a production Next.js/React bundle does not eval.
+  const script = `${self} 'unsafe-inline'`;
   return [
     `default-src ${self}`,
     `script-src ${script}`,

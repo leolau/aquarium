@@ -8,7 +8,7 @@ metadata:
   hermes:
     tags: [tools, registry, in-house, mcp, nextjs, dev-prod, approval]
     category: software-development
-    related_skills: [promote-artifact]
+    related_skills: [vibe-code-app, promote-artifact]
 ---
 
 # Create In-House Tool Skill
@@ -20,9 +20,14 @@ and reach `prod` only through an approval-gated promotion.
 
 ## When to Use
 
-- The user wants a new in-house system/tool with a dashboard AND an
-  agent-callable interface.
-- You need to enable/disable, reconfigure, or promote an existing registry tool.
+- **The user wants an app built for them in chat** (web UI + database, local or
+  external hosting): use the **vibe-code-app** skill instead. It asks the one
+  hosting question, opens the FG-32 Project, scaffolds with
+  `hermes tool new <slug> --template nextjs-supabase --hosting local` (or
+  `--hosting external --provider vercel`), hands the build to the coder profile
+  on kanban cards, previews on `/apps-dev/<slug>` and promotes to `/apps/<slug>`.
+- You need a bare FG-07 minimal tool (no template), or to enable/disable,
+  reconfigure, or promote an existing registry tool.
 
 Do not use this skill to add a new *core* model tool, to splice a tool into a
 live conversation, or to copy application/user data between modes.
@@ -55,6 +60,10 @@ and inserts a **disabled** in-house row in the `dev` registry. Add `--shared`
 to register the tool as shared instead of private to the operator.
 
 ## Procedure
+
+This is the bare FG-07 tool path. For a `nextjs-supabase` app, follow
+**vibe-code-app**: its build runs through `hermes tool build <slug>` in the
+app's own unit, never `npm run dev` from a shell.
 
 1. Run `hermes tool new <name>` and read the printed scaffold path, web URL,
    MCP endpoint, and port.

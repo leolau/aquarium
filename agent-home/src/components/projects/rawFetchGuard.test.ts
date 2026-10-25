@@ -110,6 +110,18 @@ describe("project components never write with a raw fetch", () => {
     ).toEqual([]);
   });
 
+  it("covers the FG-33 Tools page components too", () => {
+    const toolsRoot = path.join(ROOT, "..", "tools");
+    const toolFiles = sourceFiles(toolsRoot);
+    expect(toolFiles).toContain("ToolActionsSheet.tsx");
+    const offenders = toolFiles.flatMap((file) =>
+      mutatingFetchLines(readFileSync(path.join(toolsRoot, file), "utf8")).map(
+        (line) => `tools/${file}:${line}`,
+      ),
+    );
+    expect(offenders).toEqual([]);
+  });
+
   it("keeps the allow-list honest — drop an entry once its file is migrated", () => {
     const stale = Object.keys(ALLOW_LIST).filter(
       (file) =>

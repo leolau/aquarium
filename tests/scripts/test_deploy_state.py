@@ -618,3 +618,57 @@ def test_check_exit_code_is_the_signal(deployment, capsys):
     (home / "config.yaml").unlink()
     assert ds.main(["check", "--deployment", "systest-fixture"]) == 1
     assert "unconfigured" in capsys.readouterr().out
+
+
+def test_the_default_globs_cover_the_local_app_runtime_templates_not_its_instances(
+    tmp_path, monkeypatch
+):
+    """FG-33: the app templates, slices and their timers are drift-checked; the
+    per-instance drop-ins the root helper writes on every start are not."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "config.yaml").write_text(yaml.safe_dump(LIVE_CONFIG), encoding="utf-8")
+    (home / ".env").write_text(ENV_TEXT, encoding="utf-8")
+    units = tmp_path / "systemd"
+    units.mkdir()
+    for name in (
+        "aquarium-app@.service",
+        "aquarium-app-build@.service",
+        "aquarium.slice",
+        "aquarium-apps.slice",
+        "aquarium-build.slice",
+        "aquarium-db.slice",
+        "aquarium-apps-reconcile.timer",
+    ):
+        (units / name).write_text("[Unit]\nDescription=x\n", encoding="utf-8")
+    instance = units / "aquarium-app@demo-prod.service.d"
+    instance.mkdir()
+    (instance / "10-release.conf").write_text("[Service]\nUser=t-demo\n", encoding="utf-8")
+    monkeypatch.setattr(ds, "DEPLOY_ROOT", tmp_path / "deploy")
+
+    ds.capture("apps", home, units, list(ds.DEFAULT_UNIT_GLOBS), None, [])
+
+    manifest = yaml.safe_load(
+        (tmp_path / "deploy" / "apps" / ds.MANIFEST_NAME).read_text(encoding="utf-8")
+    )
+    assert set(manifest["units"]) == {
+        "aquarium-app@.service",
+        "aquarium-app-build@.service",
+        "aquarium.slice",
+        "aquarium-apps.slice",
+        "aquarium-build.slice",
+        "aquarium-db.slice",
+        "aquarium-apps-reconcile.timer",
+    }
+    assert ds.check("apps") == []
+
+    # A helper re-writing an instance drop-in is not drift ...
+    (instance / "10-release.conf").write_text("[Service]\nUser=t-other\n", encoding="utf-8")
+    assert ds.check("apps") == []
+    # ... an edited cap, or a slice override nobody captured, is.
+    (units / "aquarium-apps.slice").write_text("[Slice]\nMemoryMax=8G\n", encoding="utf-8")
+    override = units / "aquarium.slice.d"
+    override.mkdir()
+    (override / "50-cap.conf").write_text("[Slice]\nMemoryMax=12G\n", encoding="utf-8")
+    components = sorted(f["component"] for f in ds.check("apps"))
+    assert components == ["unit:aquarium-apps.slice", "unit:aquarium.slice.d/50-cap.conf"]

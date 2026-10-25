@@ -951,7 +951,7 @@ def restore_configs(copies: List[Tuple[Path, Path]]) -> None:
 
 # --------------------------------------------------------------------------- backup
 
-SKIP_DIRS = {"__pycache__", "node_modules", ".venv", "venv", ".npm", ".cache"}
+SKIP_DIRS = {"__pycache__", "node_modules", ".venv", "venv", ".npm", ".cache", ".next"}
 COUNT_SQL = (
     "SELECT table_schema||'.'||table_name, (xpath('/row/c/text()', query_to_xml("
     "format('select count(*) as c from %I.%I', table_schema, table_name), false, true, '')))[1]::text "
@@ -1005,6 +1005,13 @@ def backup_sources(cfg: Dict[str, str]) -> List[str]:
     units = set(service_units()) | set(bridge_units()) | {"agent-home.service", "app-mcp.service"}
     # every hermes-* unit on disk, timers and oneshots too (their env files hold secrets as well)
     units |= {p.name for p in P(SYSTEMD).glob("hermes-*") if p.name.endswith((".service", ".timer"))}
+    # FG-33 local apps: templates, slices and timers; not per-instance units.
+    units |= {
+        p.name
+        for p in P(SYSTEMD).glob("aquarium*")
+        if p.name.endswith((".service", ".timer", ".slice"))
+        and ("@" not in p.name or p.name.endswith("@.service"))
+    }
     for unit in sorted(units):
         for f in unit_env_files(unit):
             add(f.lstrip("-"))
@@ -1018,9 +1025,10 @@ def backup_sources(cfg: Dict[str, str]) -> List[str]:
     add(f"{cfg['SUPABASE_DIR']}/.env")
     add(f"{cfg['SUPABASE_DIR']}/docker-compose.override.yml")
     add(CADDYFILE)
+    add("/etc/caddy/apps.d")
     sudoers = P("/etc/sudoers.d")
     if sudoers.is_dir():
-        for f in sorted(sudoers.glob("hermes*")):
+        for f in sorted([*sudoers.glob("hermes*"), *sudoers.glob("aquarium*")]):
             add(real(f))
     homes = hermes_homes(cfg)
     for home in homes:

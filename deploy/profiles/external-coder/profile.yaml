@@ -1,0 +1,16 @@
+# FG-33 §10 coder profile definition. Installed by
+# `python -m hermes_cli.app_coder install` (see ../internal-coder/README.md).
+# Never put a credential (API key, token, password) in this directory.
+name: external-coder
+version: 1.0.0
+description: >-
+  Builds Aquarium external apps (hosting=external) as a kanban worker: the
+  same coding skills as internal-coder plus the hosting adapters' allowlisted
+  verbs. Never holds raw provider tokens.
+skills:
+  - software-development/vibe-code-app
+  - software-development/create-in-house-tool
+  - software-development/test-driven-development
+  - software-development/systematic-debugging
+  - software-development/requesting-code-review
+  - software-development/node-inspect-debugger

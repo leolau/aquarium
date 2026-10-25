@@ -1,0 +1,24 @@
+; FG-33 local apps: the watch pass every 5 minutes (P8-2 item 2.4).
+; Health, usage, owner/box alerts and the idle → stopped → archived lifecycle;
+; see deploy/aquarium-apps-watch.service and hermes_cli/app_watch.py.
+;
+; Not hermes-*: deploy/hermes-deploy.sh restarts hermes-* units, and a Core
+; deploy must neither restart nor skip this one. Install (Core, root):
+;   install -m 644 deploy/aquarium-apps-watch.service /etc/systemd/system/
+;   install -m 644 deploy/aquarium-apps-watch.timer   /etc/systemd/system/
+;   systemctl daemon-reload && systemctl enable --now aquarium-apps-watch.timer
+
+[Unit]
+Description=FG-33 local app watch (every 5 minutes)
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+AccuracySec=30s
+; Owner alerts need three failed passes in a row (~15 min); a missed pass after
+; downtime is not caught up, the next one simply runs.
+Persistent=false
+Unit=aquarium-apps-watch.service
+
+[Install]
+WantedBy=timers.target

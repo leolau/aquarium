@@ -1,0 +1,168 @@
+{
+  "title": "Tools",
+  "intro": "Apps the agent built for you, and the helpers it uses. You see your own and the ones shared with everyone.",
+  "notConfigured": "This list isn't set up on this installation yet.",
+  "loadFailed": "Couldn't load the list of apps ({error}).",
+  "notFound": "That app doesn't exist, or you can't see it.",
+  "section": {
+    "local": "On this box",
+    "localHint": "Runs here, on this Aquarium box.",
+    "external": "Hosted elsewhere",
+    "externalHint": "Runs on another provider; opens in a new tab.",
+    "helpers": "Helpers & services"
+  },
+  "kind": {
+    "local": "On this box",
+    "external": "Hosted elsewhere"
+  },
+  "health": {
+    "running": "Running",
+    "building": "Building or degraded",
+    "down": "Down or failed",
+    "off": "Off",
+    "dev": "Test copy only",
+    "unknown": "Status unknown"
+  },
+  "provider": {
+    "box": "On this box",
+    "vercel": "Vercel",
+    "railway": "Railway",
+    "aws_amplify": "AWS Amplify",
+    "alibaba_fc": "Alibaba Cloud",
+    "supabase": "Supabase",
+    "globe": "Hosted elsewhere"
+  },
+  "tile": {
+    "openLocal": "{name}, on this box, {status}",
+    "openExternal": "{name}, hosted on {provider}, {status}",
+    "actions": "Actions for {name}",
+    "building": "{name} is being built — see the run"
+  },
+  "sheet": {
+    "title": "{name} actions",
+    "close": "Close",
+    "devCopy": "test copy"
+  },
+  "actions": {
+    "open": "Open",
+    "details": "Details, logs and feedback",
+    "ask": "Ask the agent to change it",
+    "askPrompt": "Change my app {name}: ",
+    "start": "Start",
+    "stop": "Stop",
+    "restart": "Restart",
+    "build": "Rebuild the test copy",
+    "promote": "Make it live",
+    "console": "Provider console",
+    "hide": "Hide from the grid",
+    "show": "Show on the grid",
+    "share": "Share with everyone",
+    "unshare": "Make private",
+    "icon": "Change icon",
+    "archive": "Archive…",
+    "restore": "Restore",
+    "purge": "Delete data for good…",
+    "delete": "Delete app…",
+    "unlink": "Remove from Aquarium…",
+    "saving": "Saving…"
+  },
+  "confirm": {
+    "cancel": "Cancel",
+    "archive": {
+      "title": "Archive {name}?",
+      "body": "It stops and leaves the grid. Its data is kept, and you can restore it later.",
+      "cta": "Archive"
+    },
+    "purge": {
+      "title": "Delete {name}'s data for good?",
+      "body": "This deletes the app's code, releases and database. It cannot be undone.",
+      "cta": "Delete for good"
+    },
+    "delete": {
+      "title": "Delete {name}?",
+      "body": "This stops the app and deletes its code, releases and database. It cannot be undone.",
+      "bodyExternal": "This removes {name} from Aquarium. The hosted app itself is not deleted.",
+      "cta": "Delete"
+    }
+  },
+  "icon": {
+    "glyph": "Letters or emoji (1–2)",
+    "color": "Colour",
+    "save": "Save icon",
+    "useFavicon": "Use the app's own icon"
+  },
+  "color": {
+    "blue": "Blue",
+    "teal": "Teal",
+    "green": "Green",
+    "amber": "Amber",
+    "orange": "Orange",
+    "red": "Red",
+    "pink": "Pink",
+    "violet": "Violet"
+  },
+  "quota": {
+    "apps_registered": {
+      "of": "{used} of {limit} apps",
+      "unlimited": "{used} apps"
+    },
+    "apps_running": {
+      "of": "{used} of {limit} running",
+      "unlimited": "{used} running"
+    },
+    "ram_mb": {
+      "of": "{used} of {limit} MB memory",
+      "unlimited": "{used} MB memory"
+    },
+    "disk_mb": {
+      "of": "{used} of {limit} MB disk",
+      "unlimited": "{used} MB disk"
+    }
+  },
+  "empty": {
+    "body": "No apps yet. Ask the agent to build one.",
+    "local": "Build a local app",
+    "localPrompt": "Build me a local app on this box that ",
+    "external": "Build a hosted app",
+    "externalPrompt": "Build me a hosted app with a public URL that "
+  },
+  "helper": {
+    "on": "On",
+    "off": "Off",
+    "shared": "Shared with everyone",
+    "private": "Private",
+    "none": "No helpers or services yet.",
+    "settingsHint": "Looking for the tools the agent uses in chat (web search, browser, Canva…)? See",
+    "settingsLink": "Settings → Tools & Integrations"
+  },
+  "helperKind": {
+    "in_house": "Built by the agent",
+    "remote": "External service",
+    "builtin": "Comes with Aquarium",
+    "external": "Hosted elsewhere"
+  },
+  "detail": {
+    "back": "All tools",
+    "allActions": "All actions",
+    "status": "Status",
+    "prodUrl": "Live address",
+    "devUrl": "Test address",
+    "release": "Live release",
+    "lastRun": "Last build",
+    "mcp": "Chat tools (MCP)",
+    "mcpOn": "On — chats can use this app",
+    "mcpOff": "Off",
+    "mcpUnknown": "Not available",
+    "deployments": "Deployments",
+    "logs": "Recent logs",
+    "logsShow": "Show recent logs",
+    "logsReload": "Reload logs",
+    "logsLoading": "Loading…",
+    "logsEmpty": "No log lines yet.",
+    "logsFailed": "Couldn't load the logs.",
+    "feedback": "Feedback",
+    "feedbackLabel": "What should change next time the agent works on it?",
+    "feedbackSend": "Send feedback",
+    "feedbackSent": "Thanks — the agent will see this on its next build."
+  }
+}
