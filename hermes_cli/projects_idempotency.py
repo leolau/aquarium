@@ -20,7 +20,8 @@ touched at all.
 
 It is mounted on the app (not per router), so every route under
 ``/api/registry/projects`` — including ones added in new router modules —
-and the project-category routes under ``/api/registry/project-categories``
+the project-category routes under ``/api/registry/project-categories``, and
+the FG-33 tool/app and quota routes under ``/api/tools`` and ``/api/quotas``
 are covered. Keys are scoped per principal; the store is its own small
 SQLite file (WAL) next to ``projects.db`` so it is safe across processes.
 """
@@ -44,6 +45,9 @@ logger = logging.getLogger(__name__)
 
 PROJECTS_PREFIX = "/api/registry/projects"
 CATEGORIES_PREFIX = "/api/registry/project-categories"
+TOOLS_PREFIX = "/api/tools"
+QUOTAS_PREFIX = "/api/quotas"
+COVERED_PREFIXES = (PROJECTS_PREFIX, CATEGORIES_PREFIX, TOOLS_PREFIX, QUOTAS_PREFIX)
 MUTATING_METHODS = frozenset({"POST", "PATCH", "PUT", "DELETE"})
 HEADER = "idempotency-key"
 REPLAYED_HEADER = "Idempotent-Replayed"
@@ -272,7 +276,7 @@ def _header(scope, name: str) -> Optional[str]:
 def _covers(path: str) -> bool:
     return any(
         path == prefix or path.startswith(prefix + "/")
-        for prefix in (PROJECTS_PREFIX, CATEGORIES_PREFIX)
+        for prefix in COVERED_PREFIXES
     )
 
 

@@ -33,9 +33,6 @@ CHANGE_ROUTES = [
     ("put", "/api/tools/toolsets/web/provider", {"provider": "x"}),
     ("put", "/api/tools/toolsets/web/env", {"env": {"K": "V"}}),
     ("post", "/api/tools/toolsets/web/post-setup", {"key": "x"}),
-    ("put", "/api/tools/some_tool/enabled", {"enabled": False}),
-    ("put", "/api/tools/some_tool/config", {"config": {}}),
-    ("post", "/api/tools/some_tool/promote", {}),
     ("post", "/api/tools/computer-use/permissions/grant", None),
 ]
 
@@ -102,10 +99,10 @@ def _call(client, method, path, body):
     return getattr(client, method)(path, **kwargs)
 
 
-_APP_RUNTIME_ROUTES = {
-    "/api/tools/{name}/build", "/api/tools/{name}/start", "/api/tools/{name}/stop",
-    "/api/tools/{name}/restart", "/api/tools/{name}",
-}
+def _member_managed_routes():
+    from hermes_cli.tools_api import MEMBER_MANAGED_ROUTES
+
+    return MEMBER_MANAGED_ROUTES
 
 
 def test_every_change_route_is_gated():
@@ -123,9 +120,9 @@ def test_every_change_route_is_gated():
         # caller (tests/hermes_cli/test_personal_mcp.py, test_route_authorization.py).
         if path.startswith("/api/mcp/personal"):
             continue
-        # FG-33 local apps: a member runs their own app (decision 9); the
-        # per-app owner check is in AppRuntime.resolve (test_fg33_local_e2e.py).
-        if path in _APP_RUNTIME_ROUTES:
+        # FG-33 apps: a member manages their own app (decision 9); the per-app
+        # owner check is in the handler (test_fg33_local_e2e.py, test_fg33_tools_api.py).
+        if path in _member_managed_routes():
             continue
         for method in methods - {"GET", "HEAD", "OPTIONS"}:
             deps = {d.call for d in route.dependant.dependencies}
