@@ -23,6 +23,29 @@
 # (`reverse_proxy` forwards the `Connection: Upgrade` header automatically,
 # same as any other proxied request); everything else on this origin,
 # including agent-home's own /api/*, stays on :3100.
+#
+# FG-33 local apps (P8-1, decision 4): a local app is served on THIS origin
+# under a path, never on its own sub-domain: prod at /apps/<slug>/, dev at
+# /apps-dev/<slug>/ (each mode's Next.js is built with that basePath). The one
+# human-added line is the `import` below; `aquarium-app-helper route|unroute`
+# writes one file per running instance into /etc/caddy/apps.d/ (shape in the
+# example at the bottom), runs `caddy validate`, and reloads. /apps paths with
+# no instance file get a 404 here instead of falling through to agent-home.
+#
+# Because apps share the origin, each instance block MUST:
+#   - delete any client-sent X-Aquarium-Principal, then `forward_auth` to
+#     agent-home's /api/apps/auth with `header_up X-Aquarium-App <slug>/<mode>`
+#     and `copy_headers X-Aquarium-Principal` (the 60 s per-app ticket, see
+#     agent-home/src/lib/apps/ticket.ts) — signed-out visitors get the login
+#     redirect, people the app's C2 visibility excludes get a 404;
+#   - strip the agent-home session cookie before proxying, so app code never
+#     sees it (it is HttpOnly, so app JS cannot read it either);
+#   - set the strict path-scoped CSP and COOP from
+#     agent-home/src/lib/apps/headers.ts, and drop origin-wide headers
+#     (Service-Worker-Allowed, Clear-Site-Data, a Set-Cookie for the session).
+# Agent-home itself (src/middleware.ts) refuses /api/* calls whose Referer is
+# an /apps page. /api/apps/auth is refused from outside: only the forward_auth
+# subrequest (straight to 127.0.0.1:3100) reaches it.
 
 home.example.com {
     encode zstd gzip
@@ -32,7 +55,48 @@ home.example.com {
         reverse_proxy 127.0.0.1:9221
     }
 
+    handle /api/apps/auth* {
+        respond "Not found" 404
+    }
+
+    @aquarium_apps path /apps /apps/* /apps-dev /apps-dev/*
+    handle @aquarium_apps {
+        import /etc/caddy/apps.d/*.caddy
+        respond "Not found" 404
+    }
+
     handle {
         reverse_proxy 127.0.0.1:3100
     }
 }
+
+# --- begin apps.d instance example: /etc/caddy/apps.d/prod-example.caddy ---
+#     @aq_prod_example path /apps/example /apps/example/*
+#     handle @aq_prod_example {
+#         route {
+#             request_header -X-Aquarium-Principal
+#             forward_auth 127.0.0.1:3100 {
+#                 uri /api/apps/auth
+#                 header_up X-Aquarium-App "example/prod"
+#                 copy_headers X-Aquarium-Principal
+#             }
+#             request_header Cookie "(^|;\s*)agent_home_session=[^;]*" ""
+#             header {
+#                 Content-Security-Policy "default-src https://{host}/apps/example https://{host}/apps/example/; script-src https://{host}/apps/example https://{host}/apps/example/ 'unsafe-inline'; style-src https://{host}/apps/example https://{host}/apps/example/ 'unsafe-inline'; img-src https://{host}/apps/example https://{host}/apps/example/ data: blob:; media-src https://{host}/apps/example https://{host}/apps/example/ data: blob:; font-src https://{host}/apps/example https://{host}/apps/example/ data:; connect-src https://{host}/apps/example https://{host}/apps/example/; worker-src https://{host}/apps/example https://{host}/apps/example/; manifest-src https://{host}/apps/example https://{host}/apps/example/; frame-src 'none'; child-src 'none'; object-src 'none'; base-uri 'none'; form-action https://{host}/apps/example https://{host}/apps/example/; frame-ancestors 'none'"
+#                 Cross-Origin-Opener-Policy "noopener-allow-popups"
+#                 X-Frame-Options "DENY"
+#                 X-Content-Type-Options "nosniff"
+#                 Referrer-Policy "strict-origin-when-cross-origin"
+#                 Set-Cookie "(?i)^\s*agent_home_session=.*$" "agent_home_session_refused=; Max-Age=0"
+#                 -Service-Worker-Allowed
+#                 -Clear-Site-Data
+#                 defer
+#             }
+#             reverse_proxy 127.0.0.1:4301
+#         }
+#     }
+# --- end apps.d instance example ---
+#
+# The dev instance of the same app (/etc/caddy/apps.d/dev-example.caddy) is the
+# same block with `/apps-dev/example`, `X-Aquarium-App "example/dev"`, the dev
+# CSP from headers.ts (adds 'unsafe-eval' for `next dev`) and the dev port.

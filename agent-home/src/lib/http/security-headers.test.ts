@@ -51,6 +51,7 @@ describe("next.config headers()", () => {
     const all = await headersFor("/:path*");
     const keys = all.map((h) => h.key);
     for (const { key } of baselineSecurityHeaders()) expect(keys).toContain(key);
+    expect(all.find((h) => h.key === "Cross-Origin-Opener-Policy")?.value).toBe("same-origin");
     expect(keys).toContain("X-Content-Type-Options");
   });
 

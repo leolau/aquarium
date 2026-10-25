@@ -65,5 +65,8 @@ export function baselineSecurityHeaders() {
       value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
     },
     { key: "Strict-Transport-Security", value: "max-age=31536000" },
+    // FG-33 local apps share this origin under /apps/*: never share a
+    // browsing context group (window.opener) with an app page.
+    { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
   ];
 }
