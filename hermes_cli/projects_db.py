@@ -118,6 +118,21 @@ CREATE TABLE IF NOT EXISTS project_meta (
     value  TEXT
 );
 
+-- User-managed project categories (Sales, Marketing, …): the kanban columns
+-- of the /projects board. ``projects.category_id`` points here; NULL is
+-- "Uncategorized". Names are unique case-insensitively.
+CREATE TABLE IF NOT EXISTS project_categories (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    color       TEXT,
+    position    INTEGER NOT NULL DEFAULT 0,
+    created_by  TEXT,
+    created_at  INTEGER NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_project_categories_name
+    ON project_categories(lower(name));
+
 -- Git repos found by scanning the filesystem (desktop "repo-first" discovery).
 -- Cached here so the overview is instant after the first scan instead of
 -- re-walking the disk every time the Projects view opens.
@@ -432,6 +447,7 @@ def connect(db_path: Optional[Path] = None) -> sqlite3.Connection:
         if resolved not in _INITIALIZED_PATHS:
             conn.executescript(SCHEMA_SQL)
             _migrate_add_optional_columns(conn)
+            seed_default_categories(conn)
             if db_path is None:
                 # One-shot-per-process import of the legacy per-profile
                 # stores. Row-keyed idempotent; a corrupt legacy file must
@@ -501,6 +517,7 @@ _PROJECT_COLUMN_MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("last_reviewed_at", "last_reviewed_at INTEGER"),
     ("next_run_at", "next_run_at INTEGER"),
     ("imported_from_profile", "imported_from_profile TEXT"),
+    ("category_id", "category_id TEXT"),
 )
 
 
@@ -524,6 +541,11 @@ def _migrate_add_optional_columns(conn: sqlite3.Connection) -> None:
     for col, ddl in _DIRECTIVE_COLUMN_MIGRATIONS:
         if col not in dcols:
             _add_column_if_missing(conn, "project_directives", col, ddl)
+    # Created here, not in SCHEMA_SQL: a legacy DB only has the column once
+    # the ADD COLUMN above has run.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_projects_category ON projects(category_id)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -705,6 +727,7 @@ class Project:
     last_reviewed_at: Optional[int] = None
     next_run_at: Optional[int] = None
     imported_from_profile: Optional[str] = None
+    category_id: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -742,6 +765,7 @@ class Project:
             "last_reviewed_at": self.last_reviewed_at,
             "next_run_at": self.next_run_at,
             "imported_from_profile": self.imported_from_profile,
+            "category_id": self.category_id,
         }
 
 
@@ -785,6 +809,7 @@ def _project_from_row(row: sqlite3.Row) -> Project:
         last_reviewed_at=_row_get(row, "last_reviewed_at"),
         next_run_at=_row_get(row, "next_run_at"),
         imported_from_profile=_row_get(row, "imported_from_profile"),
+        category_id=_row_get(row, "category_id"),
     )
 
 
@@ -842,6 +867,7 @@ def create_project(
     board_slug: Optional[str] = None,
     goal: Optional[str] = None,
     owner_user_id: Optional[str] = None,
+    category_id: Optional[str] = None,
 ) -> str:
     """Create a project and return its id.
 
@@ -874,12 +900,14 @@ def create_project(
         primary = folder_paths[0]
 
     with write_txn(conn):
+        category = _resolve_category_id(conn, category_id)
         unique = _unique_slug(conn, slug_candidate)
         conn.execute(
             "INSERT INTO projects "
             "(id, slug, name, description, icon, color, board_slug, "
-            " primary_path, created_at, archived, goal, owner_user_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
+            " primary_path, created_at, archived, goal, owner_user_id, "
+            " category_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
             (
                 pid,
                 unique,
@@ -892,6 +920,7 @@ def create_project(
                 now,
                 validated_goal,
                 owner_user_id,
+                category,
             ),
         )
         for path in folder_paths:
@@ -919,6 +948,7 @@ def create_full_project(
     owner_user_id: Optional[str] = None,
     cadence: str = "one_off",
     autonomy: str = "supervised",
+    category_id: Optional[str] = None,
 ) -> str:
     """Create a project under the full §2.2 contract and return its id.
 
@@ -955,6 +985,7 @@ def create_full_project(
         board_slug=board_slug,
         goal=validated_goal,
         owner_user_id=owner_user_id,
+        category_id=category_id,
     )
     with write_txn(conn):
         conn.execute(
@@ -1411,6 +1442,272 @@ def delete_project(conn: sqlite3.Connection, project_id: str) -> bool:
     with write_txn(conn):
         cur = conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
     return cur.rowcount > 0
+
+
+# ---------------------------------------------------------------------------
+# Project categories (the /projects board columns)
+# ---------------------------------------------------------------------------
+
+CATEGORY_NAME_MAX_CHARS = 40
+CATEGORY_COLOR_MAX_CHARS = 64
+DEFAULT_CATEGORY_NAMES = ("Sales", "Marketing", "Research", "Operations")
+_CATEGORIES_SEEDED_META_KEY = "project_categories_seeded"
+_UNSET: Any = object()
+
+
+class CategoryNameTaken(ValueError):
+    """Another category already has this name (case-insensitive)."""
+
+
+def _validate_category_name(name: Any) -> str:
+    if not isinstance(name, str):
+        raise ValueError("category name must be a string")
+    label = name.strip()
+    if not label:
+        raise ValueError("category name must not be empty")
+    if len(label) > CATEGORY_NAME_MAX_CHARS:
+        raise ValueError(
+            f"category name must be at most {CATEGORY_NAME_MAX_CHARS} characters"
+        )
+    return label
+
+
+def _validate_category_color(color: Any) -> Optional[str]:
+    if color is None:
+        return None
+    if not isinstance(color, str):
+        raise ValueError("category color must be a string or null")
+    value = color.strip()
+    if len(value) > CATEGORY_COLOR_MAX_CHARS:
+        raise ValueError(
+            f"category color must be at most {CATEGORY_COLOR_MAX_CHARS} characters"
+        )
+    return value or None
+
+
+def _validate_category_position(position: Any) -> int:
+    if isinstance(position, bool) or not isinstance(position, int):
+        raise ValueError("category position must be an integer")
+    return position
+
+
+def _check_category_name_free(
+    conn: sqlite3.Connection, name: str, *, exclude_id: Optional[str] = None
+) -> None:
+    row = conn.execute(
+        "SELECT id FROM project_categories WHERE lower(name) = lower(?) AND id != ?",
+        (name, exclude_id or ""),
+    ).fetchone()
+    if row is not None:
+        raise CategoryNameTaken(f"a category named {name!r} already exists")
+
+
+def _resolve_category_id(conn: sqlite3.Connection, value: Any) -> Optional[str]:
+    """``None``/``""`` clear; any other value must name an existing category."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("category_id must be a string or null")
+    cid = value.strip()
+    if not cid:
+        return None
+    if conn.execute(
+        "SELECT 1 FROM project_categories WHERE id = ?", (cid,)
+    ).fetchone() is None:
+        raise ValueError(f"unknown project category: {cid!r}")
+    return cid
+
+
+_CATEGORY_SELECT = (
+    "SELECT c.id, c.name, c.color, c.position, c.created_at, c.created_by, "
+    "(SELECT COUNT(*) FROM projects p WHERE p.category_id = c.id) AS project_count "
+    "FROM project_categories c"
+)
+
+
+def _category_from_row(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "color": row["color"],
+        "position": int(row["position"]),
+        "created_at": row["created_at"],
+        "created_by": row["created_by"],
+        "project_count": int(row["project_count"]),
+    }
+
+
+def list_categories(conn: sqlite3.Connection) -> List[dict]:
+    """Every category in column order, each with its project count
+    (archived projects included)."""
+    rows = conn.execute(
+        _CATEGORY_SELECT + " ORDER BY c.position ASC, c.created_at ASC, c.id ASC"
+    ).fetchall()
+    return [_category_from_row(r) for r in rows]
+
+
+def get_category(conn: sqlite3.Connection, category_id: str) -> Optional[dict]:
+    row = conn.execute(
+        _CATEGORY_SELECT + " WHERE c.id = ?", (category_id,)
+    ).fetchone()
+    return _category_from_row(row) if row is not None else None
+
+
+def _insert_category(
+    conn: sqlite3.Connection,
+    *,
+    name: str,
+    color: Optional[str],
+    position: int,
+    created_by: Optional[str],
+) -> str:
+    cid = _new_row_id("pcat")
+    try:
+        conn.execute(
+            "INSERT INTO project_categories "
+            "(id, name, color, position, created_by, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (cid, name, color, position, created_by, _now()),
+        )
+    except sqlite3.IntegrityError as exc:
+        raise CategoryNameTaken(f"a category named {name!r} already exists") from exc
+    return cid
+
+
+def create_category(
+    conn: sqlite3.Connection,
+    *,
+    name: Any,
+    color: Any = None,
+    created_by: Optional[str] = None,
+) -> dict:
+    """Add a category at the end of the column order (``max(position) + 1``).
+
+    Raises :class:`CategoryNameTaken` for a duplicate name and ``ValueError``
+    for an invalid name/color.
+    """
+    label = _validate_category_name(name)
+    tone = _validate_category_color(color)
+    with write_txn(conn):
+        _check_category_name_free(conn, label)
+        row = conn.execute(
+            "SELECT MAX(position) AS m FROM project_categories"
+        ).fetchone()
+        position = 0 if row["m"] is None else int(row["m"]) + 1
+        cid = _insert_category(
+            conn, name=label, color=tone, position=position, created_by=created_by
+        )
+    category = get_category(conn, cid)
+    assert category is not None
+    return category
+
+
+def update_category(
+    conn: sqlite3.Connection,
+    category_id: str,
+    *,
+    name: Any = _UNSET,
+    color: Any = _UNSET,
+    position: Any = _UNSET,
+) -> Optional[dict]:
+    """Rename / recolour / reorder. Only provided fields change; ``color=None``
+    clears. Returns the category, or ``None`` when ``category_id`` is unknown.
+    """
+    sets: List[str] = []
+    params: List[Any] = []
+    label = None
+    if name is not _UNSET:
+        label = _validate_category_name(name)
+        sets.append("name = ?")
+        params.append(label)
+    if color is not _UNSET:
+        sets.append("color = ?")
+        params.append(_validate_category_color(color))
+    if position is not _UNSET:
+        sets.append("position = ?")
+        params.append(_validate_category_position(position))
+    with write_txn(conn):
+        if conn.execute(
+            "SELECT 1 FROM project_categories WHERE id = ?", (category_id,)
+        ).fetchone() is None:
+            return None
+        if sets:
+            if label is not None:
+                _check_category_name_free(conn, label, exclude_id=category_id)
+            try:
+                conn.execute(
+                    f"UPDATE project_categories SET {', '.join(sets)} WHERE id = ?",
+                    (*params, category_id),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise CategoryNameTaken(
+                    f"a category named {label!r} already exists"
+                ) from exc
+    return get_category(conn, category_id)
+
+
+def delete_category(conn: sqlite3.Connection, category_id: str) -> Optional[int]:
+    """Delete a category; its projects become Uncategorized in the same
+    transaction. Returns how many projects were reset, or ``None`` when
+    ``category_id`` is unknown."""
+    with write_txn(conn):
+        if conn.execute(
+            "SELECT 1 FROM project_categories WHERE id = ?", (category_id,)
+        ).fetchone() is None:
+            return None
+        cur = conn.execute(
+            "UPDATE projects SET category_id = NULL WHERE category_id = ?",
+            (category_id,),
+        )
+        reset = cur.rowcount
+        conn.execute("DELETE FROM project_categories WHERE id = ?", (category_id,))
+    return reset
+
+
+def set_project_category(
+    conn: sqlite3.Connection, project_id: str, category_id: Any
+) -> bool:
+    """File a project under a category (``None``/``""`` = Uncategorized).
+    An unknown category id raises ``ValueError``."""
+    with write_txn(conn):
+        cid = _resolve_category_id(conn, category_id)
+        cur = conn.execute(
+            "UPDATE projects SET category_id = ? WHERE id = ?", (cid, project_id)
+        )
+    return cur.rowcount > 0
+
+
+def seed_default_categories(conn: sqlite3.Connection) -> bool:
+    """Seed :data:`DEFAULT_CATEGORY_NAMES` once per projects DB.
+
+    Guarded by a ``project_meta`` flag rather than "table is empty", so a
+    user who deletes every category never gets them back. Names that already
+    exist are skipped. Returns whether this call seeded.
+    """
+    with write_txn(conn):
+        if conn.execute(
+            "SELECT 1 FROM project_meta WHERE key = ?", (_CATEGORIES_SEEDED_META_KEY,)
+        ).fetchone() is not None:
+            return False
+        row = conn.execute(
+            "SELECT MAX(position) AS m FROM project_categories"
+        ).fetchone()
+        position = 0 if row["m"] is None else int(row["m"]) + 1
+        for name in DEFAULT_CATEGORY_NAMES:
+            if conn.execute(
+                "SELECT 1 FROM project_categories WHERE lower(name) = lower(?)",
+                (name,),
+            ).fetchone() is not None:
+                continue
+            _insert_category(
+                conn, name=name, color=None, position=position, created_by=None
+            )
+            position += 1
+        conn.execute(
+            "INSERT INTO project_meta (key, value) VALUES (?, ?)",
+            (_CATEGORIES_SEEDED_META_KEY, str(_now())),
+        )
+    return True
 
 
 # ---------------------------------------------------------------------------

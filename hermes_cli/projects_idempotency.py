@@ -20,7 +20,8 @@ touched at all.
 
 It is mounted on the app (not per router), so every route under
 ``/api/registry/projects`` — including ones added in new router modules —
-is covered. Keys are scoped per principal; the store is its own small
+and the project-category routes under ``/api/registry/project-categories``
+are covered. Keys are scoped per principal; the store is its own small
 SQLite file (WAL) next to ``projects.db`` so it is safe across processes.
 """
 
@@ -42,6 +43,7 @@ from typing import Awaitable, Callable, Optional
 logger = logging.getLogger(__name__)
 
 PROJECTS_PREFIX = "/api/registry/projects"
+CATEGORIES_PREFIX = "/api/registry/project-categories"
 MUTATING_METHODS = frozenset({"POST", "PATCH", "PUT", "DELETE"})
 HEADER = "idempotency-key"
 REPLAYED_HEADER = "Idempotent-Replayed"
@@ -268,7 +270,10 @@ def _header(scope, name: str) -> Optional[str]:
 
 
 def _covers(path: str) -> bool:
-    return path == PROJECTS_PREFIX or path.startswith(PROJECTS_PREFIX + "/")
+    return any(
+        path == prefix or path.startswith(prefix + "/")
+        for prefix in (PROJECTS_PREFIX, CATEGORIES_PREFIX)
+    )
 
 
 async def _json_response(send, status: int, payload: dict, extra=()) -> None:

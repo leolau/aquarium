@@ -562,6 +562,6 @@ describe("NewProjectForm — plan choice", () => {
     fireEvent.click(utils.getByText("Create project"));
     await waitFor(() => expect(router.push).toHaveBeenCalledTimes(1));
     expect(router.push).toHaveBeenCalledWith("/projects/monday-digest#panel-plan");
-    expect(fetchMock.mock.calls.map(([u]) => String(u)).filter((u) => u !== "/api/projects" && !u.startsWith("/api/memory"))).toEqual([]);
+    expect(fetchMock.mock.calls.map(([u]) => String(u)).filter((u) => u !== "/api/projects" && !u.startsWith("/api/memory") && u !== "/api/project-categories")).toEqual([]);
   });
 });

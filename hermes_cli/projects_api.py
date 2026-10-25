@@ -608,6 +608,7 @@ def _list_sync(
     cursor: Optional[tuple],
     enrolled: frozenset = frozenset(),
     health: Optional[str] = None,
+    category: Optional[str] = None,
 ) -> dict:
     with projects_db.connect_closing() as conn:
         rows = projects_db.list_projects(conn, include_archived=include_archived)
@@ -647,6 +648,8 @@ def _list_sync(
             elif status_set and p.status not in status_set:
                 continue
             if cadence and getattr(p, "cadence", None) != cadence:
+                continue
+            if category and p.category_id != (None if category == "none" else category):
                 continue
             if q and q.lower() not in f"{p.name} {p.goal or ''}".lower():
                 continue
@@ -706,6 +709,7 @@ async def list_projects(request: Request) -> dict[str, Any]:
         cursor=cursor,
         enrolled=enrolled,
         health=params.get("health"),
+        category=params.get("category") or None,
     )
 
 
@@ -765,6 +769,7 @@ async def create_project_route(request: Request) -> dict[str, Any]:
                 owner_user_id=principal.user_id,
                 cadence=str(body.get("cadence") or "one_off"),
                 autonomy=str(body.get("autonomy") or "supervised"),
+                category_id=body.get("category_id"),
             )
             # Host profile [4] + the creator as its lead.
             projects_db.add_project_profile(
@@ -1002,6 +1007,9 @@ async def patch_project(request: Request) -> dict[str, Any]:
 
     def _patch_sync() -> dict:
         with projects_db.connect_closing() as conn:
+            # First, so an unknown category refuses before any other write.
+            if "category_id" in body:
+                projects_db.set_project_category(conn, project.id, body["category_id"])
             base = {k: body[k] for k in base_fields if k in body}
             if base:
                 projects_db.update_project(conn, project.id, **base)
