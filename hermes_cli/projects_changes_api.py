@@ -309,6 +309,9 @@ def _start_change_draft(
         if current and current.get("status") == "running":
             return dict(current)
         projects_api._PLAN_DRAFTS[project.id] = state
+        # Snapshot before the job starts: it updates ``state`` in place and
+        # can finish before this function returns.
+        started = dict(state)
     threading.Thread(
         target=_change_draft_job,
         kwargs={
@@ -327,7 +330,7 @@ def _start_change_draft(
         name=f"change-draft-{project.slug}",
         daemon=True,
     ).start()
-    return dict(state)
+    return started
 
 
 def _parse_change_body(body: dict) -> tuple[str, list[str], str]:

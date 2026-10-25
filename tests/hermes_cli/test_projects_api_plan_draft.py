@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import time
+import types
 
 import pytest
 
@@ -86,6 +87,37 @@ def test_draft_saves_an_inactive_revision(env, monkeypatch):
     # Unknown assignee → the host profile; unknown dependency dropped.
     assert by_key["review"]["assignee"] == "default"
     assert by_key["send-it"]["depends_on"] == ["review"]
+
+
+def test_draft_response_reports_the_job_as_started_even_if_it_already_finished(
+    env, monkeypatch
+):
+    """The draft job may finish before the route returns; the response still
+    describes the job it started, and the poll endpoint shows the outcome."""
+
+    class _FinishFirstThread:
+        def __init__(self, *, target, kwargs, **_):
+            self._run = lambda: target(**kwargs)
+
+        def start(self):
+            self._run()
+
+    monkeypatch.setattr(
+        projects_api, "threading", types.SimpleNamespace(Thread=_FinishFirstThread)
+    )
+    monkeypatch.setattr(
+        projects_api,
+        "_call_plan_model",
+        lambda prompt: json.dumps({"body": "x", "steps": [{"title": "Draft it"}]}),
+    )
+    client, _state = env
+    slug = _create(env)["slug"]
+
+    resp = client.post(f"/api/registry/projects/{slug}/playbook/draft")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "running"
+    state = client.get(f"/api/registry/projects/{slug}/playbook/draft").json()
+    assert state["status"] == "done", state
 
 
 def test_draft_reports_model_failure(env, monkeypatch):
