@@ -366,6 +366,12 @@ def _inject_session_context_env(env: dict) -> None:
     tests/tools/test_local_env_session_leak.py.
     """
     try:
+        from hermes_cli.principal_ticket import inject_env as _inject_principal_ticket
+
+        _inject_principal_ticket(env)
+    except Exception:  # noqa: BLE001 — never block a spawn on the requester ticket
+        env.pop("HERMES_PRINCIPAL_TICKET", None)
+    try:
         from gateway.session_context import (
             _UNSET,
             _VAR_MAP,
