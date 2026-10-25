@@ -101,7 +101,7 @@ function Swatches({
     ...CATEGORY_COLORS,
   ];
   return (
-    <div role="group" aria-label="Colour" className="flex flex-wrap gap-1.5">
+    <div role="group" aria-label="Colour" className="flex flex-wrap">
       {options.map((option) => {
         const selected = (value ?? null) === option.value;
         return (
@@ -113,11 +113,15 @@ function Swatches({
             title={option.label}
             disabled={disabled}
             onClick={() => onPick(option.value)}
-            className={`flex h-7 w-7 items-center justify-center rounded-full border-2 disabled:opacity-50 ${
-              selected ? "border-[var(--color-fg)]" : "border-transparent"
-            }`}
+            className="flex h-11 w-11 items-center justify-center rounded-full disabled:opacity-50"
           >
-            <CategoryDot color={option.value} className="h-5 w-5" />
+            <span
+              className={`flex h-7 w-7 items-center justify-center rounded-full border-2 ${
+                selected ? "border-[var(--color-fg)]" : "border-transparent"
+              }`}
+            >
+              <CategoryDot color={option.value} className="h-5 w-5" />
+            </span>
           </button>
         );
       })}
