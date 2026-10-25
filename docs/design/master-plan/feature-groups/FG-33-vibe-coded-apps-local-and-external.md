@@ -1313,7 +1313,7 @@ State when this was written. Re-check each item before acting on it.
 ## Progress checklist
 
 - [x] P8-0.1 Core boundary PR (human) — prepared for Leo's review
-- [ ] P8-0.2 `run_as: hermes-tools` confirmed; `DATABASE_URL` stripped
+- [x] P8-0.2 `run_as: hermes-tools` confirmed; `DATABASE_URL` stripped (prod, 2026-10-25; box details in aquarium-ops)
 - [x] P8-0.3 app-mcp guard deny markers
 - [x] P8-0.4 Requester principal ticket
 - [x] P8-0.5 Registry MCP at chat start + transport fix
@@ -1325,7 +1325,7 @@ State when this was written. Re-check each item before acting on it.
 - [x] P8-1.4 `app_runtime` + CLI verbs + API + local promotion (#645)
 - [x] P8-1.5 Front door (forward_auth, Caddy include) (#643)
 - [x] P8-1.6 Quota policy + admission (#640)
-- [ ] P8-1.7 Ops runbook (DNS, Caddy import, apps cluster)
+- [x] P8-1.7 Ops runbook (DNS, Caddy import, apps cluster) (aquarium-ops FG-33 handoff + PRODUCTION.md §4.2a)
 - [ ] P8-1 system test passed
 - [x] P8-2.1 Tools page v2 (#654)
 - [x] P8-2.2 Tools API (batch health, icons, feedback, idempotency) (#658; cross-review fix #659)
