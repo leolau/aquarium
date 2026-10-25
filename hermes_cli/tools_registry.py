@@ -784,6 +784,8 @@ class ToolPromotionResult:
     approval_ref: str
     change_ref: str
     tool_name: str
+    #: Local apps: what pushing the source to GitHub did (decision 14).
+    source_publish: Optional[dict] = None
 
 
 def _new_ref(prefix: str) -> str:
@@ -981,11 +983,18 @@ async def promote_tool(
     finally:
         await connection.close()
 
+    source_publish = None
+    if plan is not None:
+        from hermes_cli.app_runtime import AppRuntime
+
+        source_publish = await (runtime or AppRuntime()).publish_source(tool)
+
     return ToolPromotionResult(
         promotion_ref=promotion_ref,
         approval_ref=approval_ref,
         change_ref=change_ref,
         tool_name=name,
+        source_publish=source_publish,
     )
 
 

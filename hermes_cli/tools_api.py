@@ -716,6 +716,7 @@ async def promote_tool_route(request: Request, name: str, body: ToolPromoteReque
             "approval_ref": result.approval_ref,
             "change_ref": result.change_ref,
             "promotion_ref": result.promotion_ref,
+            "source_publish": getattr(result, "source_publish", None),
         }
 
     return await _app_tool_call(request, "dev", _run)
