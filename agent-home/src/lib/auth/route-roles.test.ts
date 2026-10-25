@@ -35,6 +35,24 @@ const ROLE_CHECKS: Record<Role, string[]> = {
   owner: ["requireMemberOwner("],
 };
 
+/**
+ * Entries added ahead of the sibling FG-33 P8-2 PRs that build these routes
+ * (2.7 secrets form, 2.10 Settings → apps), so either PR can merge first.
+ * Only "no such route" is tolerated for them; drop a key once its route lands.
+ */
+export const PENDING_SIBLING_ROUTES = new Set([
+  "GET /api/tools/apps/[name]/secrets",
+  "PUT /api/tools/apps/[name]/secrets",
+  "DELETE /api/tools/apps/[name]/secrets",
+  "GET /api/settings/apps/limits",
+  "PUT /api/settings/apps/limits",
+  "GET /api/settings/apps/storage",
+  "PUT /api/settings/apps/storage",
+  "GET /api/settings/apps/github",
+  "PUT /api/settings/apps/github",
+  "DELETE /api/settings/apps/github",
+]);
+
 const API_DIR = join(__dirname, "..", "..", "app", "api");
 const METHOD_RE =
   /export (?:async )?function (GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/g;
@@ -93,7 +111,7 @@ export function routeRoleProblems(
     }
   }
   for (const key of Object.keys(roles)) {
-    if (!handlers.has(key)) problems.push(`${key}: in route-roles.json but no such route`);
+    if (!handlers.has(key) && !PENDING_SIBLING_ROUTES.has(key)) problems.push(`${key}: in route-roles.json but no such route`);
   }
   return problems;
 }
@@ -128,6 +146,21 @@ describe("agent-home BFF route roles", () => {
     ).toEqual([
       "POST /api/models/provider-key: labelled admin but calls none of canAdminister(, canManageTools(, requireMemberAdmin(",
     ]);
+  });
+
+  it("tolerates only the listed sibling routes being absent", () => {
+    expect(
+      routeRoleProblems(new Map(), {
+        "PUT /api/tools/apps/[name]/secrets": "signed-in",
+        "PUT /api/tools/apps/[name]/nope": "signed-in",
+      }),
+    ).toEqual(["PUT /api/tools/apps/[name]/nope: in route-roles.json but no such route"]);
+  });
+
+  it("keeps the FG-33 Settings → apps routes owner/admin only", () => {
+    for (const key of PENDING_SIBLING_ROUTES) {
+      if (key.includes("/api/settings/apps/")) expect(roles[key], key).toBe("admin");
+    }
   });
 
   it("keeps the settings that change the whole profile owner/admin only", () => {
