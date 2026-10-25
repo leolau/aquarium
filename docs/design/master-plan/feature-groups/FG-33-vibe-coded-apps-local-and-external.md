@@ -1249,12 +1249,12 @@ Storage per-app opt-in (decisions 1 and 2) — a departure from the literal
 - [x] P8-0.5 Registry MCP at chat start + transport fix
 - [x] P8-0.6 Registry schema (`external`, columns, reserved names, round-trip)
 - [ ] P8-0.7 Measurements + GoTrue/PostgREST spike recorded
-- [ ] P8-1.1 Template files + scaffold flags
-- [ ] P8-1.2 Runtime units + `aquarium-app-helper`
-- [ ] P8-1.3 Apps cluster + DB provisioner + backups
-- [ ] P8-1.4 `app_runtime` + CLI verbs + API + local promotion
-- [ ] P8-1.5 Front door (forward_auth, Caddy include)
-- [ ] P8-1.6 Quota policy + admission
+- [x] P8-1.1 Template files + scaffold flags (#642)
+- [x] P8-1.2 Runtime units + `aquarium-app-helper` (#644)
+- [x] P8-1.3 Apps cluster + DB provisioner + backups (#641)
+- [x] P8-1.4 `app_runtime` + CLI verbs + API + local promotion (#645)
+- [x] P8-1.5 Front door (forward_auth, Caddy include) (#643)
+- [x] P8-1.6 Quota policy + admission (#640)
 - [ ] P8-1.7 Ops runbook (DNS, Caddy import, apps cluster)
 - [ ] P8-1 system test passed
 - [ ] P8-2.1 Tools page v2
@@ -1296,6 +1296,7 @@ Storage per-app opt-in (decisions 1 and 2) — a departure from the literal
 | 2026-10-25 | 6 | devin (P8-0.6) | FG-33 | Ticked P8-0.6: `tools.kind` accepts `external` (widened in place on existing tables), the seventeen Data-model columns incl. `coder_profile` added additively, reserved names refused case-insensitively, `promote_tool` copies every `_COLUMNS` field except `id`/`mode`/`status` (round-trip test), `Tool`/`ToolKind` mirrored in agent-home types. | P8-0 item 0.6. |
 | 2026-10-25 | 8 | devin (for Yan) | FG-33 | P8-0.4: `hermes_cli/principal_ticket.py` (HMAC ticket, `$HERMES_HOME/auth/principal-ticket.key`), `hermes-tools-cli` verifies it and maps it to `tool --as`, `hermes tool` from the agent fails closed without it, dashboard `/api/tools*` writes act as the caller. Gateway mint in `build_session_agent` is a separate `[needs Leo review]` PR. | Requester, not owner, authors agent-built apps |
 | 2026-10-25 | 7 | devin:workflow | FG-33 | P8-0.5 done: `tools/registry_mcp.apply_registry_endpoints` gives every chat each enabled app endpoint (`la-*`/`xa-*`) its person may see (C2, decision 17), pinned in `sessions.model_config._registry_mcp`; `enabled`/`app_kind`/`secret_ref`/`forward_principal` columns; `transport.auth` is the auth type; app-action approval gate and next-chat-only `list_changed` in `tools/mcp_tool.py`. | Item 0.5. |
+| 2026-10-25 | 10 | devin (for Yan) | FG-33 | P8-1.1–1.6 merged (#640–#645) after a cross-review that fixed the helper/DB/front-door/template contract mismatches. Dev path is `/apps-dev/<slug>`; prod DBs on `supabase-apps-db`, dev DBs on the separate `supabase-apps-dev-db` instance (decision 18). Open: 1.7 ops (box install, Caddy import, `AGENT_HOME_APPS_TICKET_SECRET`, `/etc/aquarium/app-quotas.yaml`), the agent-home Next.js bump the template's `npm audit` gate needs, storage base_path → helper `configure`, `__Host-` session cookie. | Parent ticks the checklist once so parallel PRs don't conflict on this doc. |
 
 ## Cloud-agent prompts (one per phase)
 
