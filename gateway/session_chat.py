@@ -83,6 +83,12 @@ def build_session_agent(
             "internal_user_role": getattr(principal, "role", None),
         }
 
+    # FG-33 0.4: this turn's requester ticket, so `hermes tool` from the
+    # agent's terminal acts as the requester. No principal clears it (fail closed).
+    from hermes_cli import principal_ticket
+
+    principal_ticket.mint(getattr(principal, "user_id", None))
+
     return AIAgent(
         model=model,
         **runtime_kwargs,
