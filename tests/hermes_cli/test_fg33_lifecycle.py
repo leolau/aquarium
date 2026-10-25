@@ -230,13 +230,36 @@ def test_lifecycle_routes_are_handler_checked_members():
 # ── E2E: archive → restore → archive → purge against a throwaway Postgres ────
 
 class LifecycleBox(FakeBox):
-    """FakeBox that also checks the prod approval on suspend/resume."""
+    """FakeBox that checks prod approvals on suspend/resume/archive/restore and plays the
+    archive copy: ``archive`` returns a copy, ``restore`` reloads it when the database is in
+    ``lost`` and only resumes otherwise; ``db_fail`` makes a verb fail."""
+
+    def __init__(self, dsn=None):
+        super().__init__(dsn)
+        self.db_fail: dict[str, str] = {}
+        self.lost: set[tuple[str, str]] = set()
+        self.copies: dict[tuple[str, str], str] = {}
 
     def _db(self, verb, slug, mode, spec):
-        if mode == "prod" and verb in ("suspend", "resume"):
+        if mode == "prod" and verb in ("suspend", "resume", "archive", "restore"):
             ref = spec.get("approval_ref")
             if not ref or not asyncio.run(self._approved(ref)):
                 return 1, json.dumps({"ok": False, "error": "needs an approved approval_ref"}), ""
+        if verb in self.db_fail:
+            self.db_specs.append((verb, mode, spec))
+            return 1, json.dumps({"ok": False, "error": self.db_fail[verb]}), ""
+        if verb == "archive":
+            self.db_specs.append((verb, mode, spec))
+            ref = f"/var/lib/aquarium-apps/db-backups/{rt.app_db_name(slug, mode)}-20261025T120000Z-archive.dump"
+            self.copies[(slug, mode)] = ref
+            return 0, json.dumps({"ok": True, "backup_ref": ref, "size_bytes": 4096}), ""
+        if verb == "restore":
+            self.db_specs.append((verb, mode, spec))
+            if spec.get("backup_ref") != self.copies.get((slug, mode)):
+                return 1, json.dumps({"ok": False, "error": "not the archive copy"}), ""
+            lost = (slug, mode) in self.lost
+            self.lost.discard((slug, mode))
+            return 0, json.dumps({"ok": True, "restored": lost, "existed": not lost}), ""
         return super()._db(verb, slug, mode, spec)
 
 
@@ -277,16 +300,21 @@ async def test_archive_restore_purge_as_a_member(postgres_dsn, tmp_path, monkeyp
     out = await aw.archive_app(runtime, dev, _ALICE, "notes", state=state)
     assert out["lifecycle_state"] == "archived" and out["database_suspended"] is True
     assert box.verbs() == ["stop:dev", "unroute:dev"]
-    assert [v for v, m, s in box.db_specs] == ["suspend"]
+    assert [v for v, m, s in box.db_specs] == ["archive"]
     assert (await dev.get("notes")).status == "disabled"
     assert (await store.get_runtime(tool.id))["lifecycle_state"] == "archived"
-    assert (await store.get_database(tool.id, "dev")).status == "suspended"
+    db = await store.get_database(tool.id, "dev")
+    assert db.status == "suspended" and db.archive_ref == box.copies[("notes", "dev")]
+    assert out["database_archive"] == db.archive_ref and out["database_archive_bytes"] == db.archive_bytes
     with pytest.raises(aw.LifecycleConflict):
         await aw.archive_app(runtime, dev, _ALICE, "notes", state=state)
 
     box.calls.clear()
+    box.db_specs.clear()
     out = await aw.restore_app(runtime, dev, _ALICE, "notes", state=state)
     assert (out["lifecycle_state"], out["from"], out["started"]) == ("active", "archived", True)
+    assert out["database_reloaded"] is False  # the database was still there: just resumed
+    assert box.db_specs == [("restore", "dev", {"backup_ref": db.archive_ref})]
     assert box.verbs() == ["route:dev", "start:dev"]
     assert (await dev.get("notes")).status == "enabled"  # archive switched it off, restore back on
     assert (await store.get_database(tool.id, "dev")).status == "ready"
@@ -355,7 +383,7 @@ async def test_prod_lifecycle_records_the_confirmation_and_keeps_shared_source(
                              "WHERE target_ref = 'tool:shop' ORDER BY created_at")
     assert [(r["action"], r["actor"]) for r in approvals] == [
         ("tool.archive", "root"), ("tool.restore", "alice")]
-    assert [v for v, m, s in box.db_specs] == ["suspend", "resume"]
+    assert [v for v, m, s in box.db_specs] == ["archive", "restore"]
     assert all(s.get("approval_ref", "").startswith("apr_") for _v, _m, s in box.db_specs)
 
     await aw.archive_app(runtime, prod, _ALICE, "shop", state=state)
@@ -364,3 +392,68 @@ async def test_prod_lifecycle_records_the_confirmation_and_keeps_shared_source(
     assert out["source_deleted"] is False and repo.is_dir()  # dev still uses it
     drop = [s for v, m, s in box.db_specs if v == "drop"][0]
     assert drop["confirm"] == "shop" and box.approval_seen[f"drop:{drop['approval_ref']}"]
+
+
+async def _lifecycle_world(postgres_dsn, tmp_path, monkeypatch):
+    await _reset(postgres_dsn)
+    cfg = _config(postgres_dsn)
+    box = LifecycleBox(postgres_dsn)
+    monkeypatch.setattr(rt, "_default_runner", box)
+    dev = ToolRegistry(get_store("supabase-app", "dev", config=cfg))
+    await dev.initialize()
+    runtime = rt.AppRuntime(tools_root=tmp_path / "tools", secrets_dir=tmp_path / "s", config=cfg)
+    tool, store = await _local_app(dev, _ALICE, "notes", tmp_path / "tools" / "notes")
+    return box, dev, runtime, tool, store, aw.WatchState(tmp_path / "watch.json")
+
+
+@pytest.mark.asyncio
+async def test_archive_that_cannot_copy_the_database_changes_nothing(
+    postgres_dsn, tmp_path, monkeypatch, no_quota,
+):
+    box, dev, runtime, tool, store, state = await _lifecycle_world(postgres_dsn, tmp_path, monkeypatch)
+    box.db_fail["archive"] = "dumping lapp_notes_dev failed: disk full"
+    with pytest.raises(rt.HelperError, match="disk full"):
+        await aw.archive_app(runtime, dev, _ALICE, "notes", state=state)
+    assert [v for v, m, s in box.db_specs] == ["archive"]  # never suspend or drop
+    db = await store.get_database(tool.id, "dev")
+    assert db.status == "ready" and db.archive_ref is None
+    row = await store.get_runtime(tool.id)
+    assert row["lifecycle_state"] == "active"
+    assert (await dev.get("notes")).status == "enabled"
+    assert box.verbs() == ["stop:dev", "unroute:dev", "route:dev", "start:dev"]  # put back as it was
+
+    # The watch's own archive reports the failure and leaves the app stopped, not archived.
+    await store.set_runtime(tool.id, runtime="local", lifecycle_state="stopped", runtime_state="stopped")
+    box.calls.clear()
+    owner_notes = []
+
+    async def notify_owner(user, title, body, key):
+        owner_notes.append((user, title))
+
+    with state as st:
+        st.moved("dev", tool.id, "stopped", 0.0)
+    report = await aw.watch_once({"dev": dev}, owner=_OWNER, runtime=runtime, notify_owner=notify_owner,
+                                 notify_box=lambda text: None, state=state, now=10 ** 9,
+                                 health=lambda port, path: 200, visits=lambda port: 0)
+    assert {"tool": "notes", "mode": "dev", "action": "archive", "to": "archived"} in report["actions"]
+    assert any(a.get("kind") == "archive-failed" for a in report["alerts"])
+    assert owner_notes and owner_notes[0][0] == "alice"
+    assert (await store.get_runtime(tool.id))["lifecycle_state"] == "stopped"
+    assert (await store.get_database(tool.id, "dev")).status == "ready"
+
+
+@pytest.mark.asyncio
+async def test_restore_reloads_the_archive_copy_after_the_database_was_lost(
+    postgres_dsn, tmp_path, monkeypatch, no_quota,
+):
+    box, dev, runtime, tool, store, state = await _lifecycle_world(postgres_dsn, tmp_path, monkeypatch)
+    await aw.archive_app(runtime, dev, _ALICE, "notes", state=state)
+    copy = (await store.get_database(tool.id, "dev")).archive_ref
+    assert copy and (await store.get_database(tool.id, "dev")).archived_at is not None
+    box.lost.add(("notes", "dev"))
+    box.db_specs.clear()
+    out = await aw.restore_app(runtime, dev, _ALICE, "notes", state=state)
+    assert out["database_reloaded"] is True and out["lifecycle_state"] == "active"
+    assert box.db_specs == [("restore", "dev", {"backup_ref": copy})]
+    assert (await store.get_database(tool.id, "dev")).status == "ready"
+    assert ("notes", "dev") not in box.lost
