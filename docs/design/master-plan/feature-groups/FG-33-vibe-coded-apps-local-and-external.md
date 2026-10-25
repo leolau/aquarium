@@ -1273,28 +1273,22 @@ State when this was written. Re-check each item before acting on it.
 
 **Where things are**
 
-- `develop` has every merged PR for P8-0, P8-1 and P8-2, and CI is green (`101739410`, after #660).
-- Production runs `develop` @ `3117f72ca`: P8-0 and P8-1 are deployed, P8-2 is **not**. The host, the access method and how the box looks are in the private `leolau/aquarium-ops` (`production/PRODUCTION.md` and `handoffs/FG-33-local-apps-2026-10-25.md`); read those before touching production.
-- The 2.x rows below are merged code only. None of P8-0, P8-1 or P8-2 has passed its system test.
+- `develop` has every merged PR for P8-0, P8-1 and P8-2, plus the follow-ups #664–#670 below (`8cb665344`).
+- Production runs `develop` @ `8cb665344`, so P8-0, P8-1 and P8-2 are all deployed, and the box setup is done (run_as, sudoers, quota policy, runtime units/helpers, Caddy import + ticket secret, both apps clusters, watch timer, egress, coder profiles). The host, the access method, the backups and the rollback for each step are in the private `leolau/aquarium-ops` (`production/PRODUCTION.md` and `handoffs/FG-33-local-apps-2026-10-25.md`); read those before touching production.
+- No app exists on the box yet, so the live cookie strip on an app route (2.12) and the 0.7 idle-RSS / GoTrue-PostgREST measurements are still to do. None of P8-0, P8-1 or P8-2 has passed its system test.
 
-**Box setup still to do (Leo / ops; never through the agent's own tools).** These are the P8-0.2, 0.7, 1.7 and P8-2 install steps. What is actually installed on the box is in the aquarium-ops hand-off:
+**Follow-ups merged and deployed (2026-10-25)**
 
-- `terminal.run_as: hermes-tools`, plus the `hermes-tools` and `aquarium-apps` sudoers files (0.2, decision 19);
-- `/etc/aquarium/app-quotas.yaml` (1.6);
-- the runtime units, slices and helpers (`deploy/aquarium-*`), and the updated `aquarium` admin command and deploy script;
-- the Caddy `import /etc/caddy/apps.d/*.caddy` and `AGENT_HOME_APPS_TICKET_SECRET`;
-- `supabase-apps-db` and the separate dev instance `supabase-apps-dev-db` (1.3, decision 18);
-- the `aquarium-apps-watch` timer (2.4), `aquarium-app-egress enable` (2.6) and the coder profiles (`python -m hermes_cli.app_coder install`, 2.9);
-- after the helper is reinstalled, a check that app routes strip the `__Host-` agent-home cookie (2.12);
-- 0.7: the idle-RSS measurements and the GoTrue/PostgREST spike.
+- #664 D21 row in README §1; #665 `minimal` template pinned to agent-home's next/react; #666 per-app CPU sampling + sustained-high-CPU alerts in `app_watch.py`; #667 `/etc/aquarium` 0711 so non-root code can read (never write) the quota policy; #668 `publish_app_source` called after `tool new`, each successful build and each promote when the Settings GitHub token is set; #669 archive dumps the app database first (`aquarium apps db archive`) and restore reloads it when the database is gone or empty (`apps db restore`); #670 the helper writes each app's MemoryHigh/MemoryMax/CPUQuota from the policy + Settings → App limits into `50-limits.conf` on every start.
+- After any deploy that changes `deploy/aquarium-app*`, `deploy/aquarium.py` or `deploy/sudoers.d/aquarium-apps`, reinstall with `aq_install_app_runtime` and the `aquarium` admin command: `deploy-hermes.sh` only reports them as STALE.
 
-**Code not built yet (good next PRs, one each, off `develop`)**
+**Still open (good next PRs, one each, off `develop`)**
 
-1. Call `publish_app_source` (`hermes_cli/app_source_publish.py`) after app commits and releases, when the Settings GitHub token is set (decision 14). The function exists, but nothing calls it.
-2. Archive with a database dump, and the matching restore (2.4 lifecycle). Archive/purge/restore exist, but they do not dump or restore the app databases.
-3. Per-app CPU sampling in `hermes_cli/app_watch.py` (there is only memory/health monitoring today).
-4. Bump the `minimal` template's `next` pin (`hermes_cli/app_templates/minimal/package.json`, 15.1.6) to match agent-home (15.5.28), or retire the template.
-5. Run real npm/build traffic through the egress proxy once egress is enabled on a test box.
+1. Settings → App limits reach systemd only for the member (base) tier; admin-tier and per-person overrides don't (the helper has no trusted owner record).
+2. Node's heap stays capped by `NODE_OPTIONS=--max-old-space-size=256`, whatever MemoryMax says.
+3. Settings → App limits doesn't say a change applies at an app's next start.
+4. Archive copies and purge/migrate dumps in `<APPS_BASE>/db-backups/` are never deleted (no retention rule; Leo to decide).
+5. Run real npm/build traffic through the egress proxy on a test box.
 
 **Rules for the next agent**
 
@@ -1375,6 +1369,7 @@ State when this was written. Re-check each item before acting on it.
 | 2026-10-25 | 13 | devin (for Yan) | FG-33 | P8-2.2 merged (#658) with cross-review fix #659; `develop` green. Added §Handoff for the next agent: deploy state (prod on P8-1 `3117f72ca`), box setup still missing, unbuilt code follow-ups, working rules. | Yan asked for the remaining work to be handed to another agent. |
 | 2026-10-25 | 14 | devin (for Yan) | FG-33 | Handoff: moved the prod host/path and the observed box state into `leolau/aquarium-ops` `handoffs/FG-33-local-apps-2026-10-25.md`; the public doc now lists only the install steps. | AGENTS.md: this repo is public, and box details belong in aquarium-ops. |
 | 2026-10-25 | 15 | devin (for Leo) | FG-33 | Recorded Leo's answers to decisions 11 (Vercel + supabase.com first) and 12 (two supabase.com projects, the dev one optional per app); no open decisions left. | Leo: "11. Ok; 12. Ok, but make the dev supabase db optional" |
+| 2026-10-25 | 16 | devin (for Leo) | FG-33 | Box setup done and `develop` `8cb665344` deployed to prod (details in aquarium-ops); follow-ups #664–#670 merged (D21 row, template pins, CPU alerts, readable quota policy, source publish, archive DB copy + restore, Settings limits in systemd); handoff lists what is still open. | Leo: "Please go ahead with the internal tools setup", "yes, please go ahead", "yes, add it" |
 
 ## Cloud-agent prompts (one per phase)
 
