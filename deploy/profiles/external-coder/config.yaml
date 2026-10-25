@@ -1,0 +1,20 @@
+# FG-33 §10 config overlay, deep-merged onto the profile's own config.yaml by
+# `python -m hermes_cli.app_coder install` (overlay keys win, other keys are
+# kept). Behaviour only: credentials never go here or in the profile's .env.
+platform_toolsets:
+  # Kanban workers run `hermes -p <profile> chat -q`, i.e. the cli platform.
+  # The kanban_* tools are added by the dispatcher (HERMES_KANBAN_TASK).
+  # No delegation, clarify, messaging or cron: a card is one unattended slice.
+  cli:
+    - terminal
+    - file
+    - skills
+    - browser
+    - web
+    - vision
+    - todo
+    - code_execution
+terminal:
+  # Decision 19: the agent's commands run as hermes-tools, inside the path
+  # C7/C2 already cover.
+  run_as: hermes-tools
