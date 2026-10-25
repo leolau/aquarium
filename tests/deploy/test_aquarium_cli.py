@@ -9,6 +9,7 @@ server that mimics the GitHub Releases API and also answers the health URLs.
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import importlib.util
 import io
@@ -671,7 +672,8 @@ def test_doctor_all_good(box, capsys):
     for text in ("disk /", "layout: release", "service app-mcp.service: active", "database: accepting connections",
                  "agent-home: HTTP 200", "dashboard API: HTTP 302", "embedding service: HTTP 200",
                  "model key: openrouter accepts the API key", "google:", "WhatsApp personal: paired and connected",
-                 "VPN helper: not installed", "WhatsApp bridge helper: not installed", "backups: newest is 0 days old"):
+                 "VPN helper: not installed", "WhatsApp bridge helper: not installed", "backups: newest is 0 days old",
+                 "PHP: not installed"):
         assert text in out, text
     assert "TOPSECRETPW" not in out and "sk-or-SECRET" not in out
 
@@ -722,6 +724,56 @@ def test_doctor_cert_check_reports_unreachable_tls(box, capsys, monkeypatch):
     assert aq.check_certs(aq.load_config())[0][0] == "fail"
     monkeypatch.setattr(aq, "cert_days_left", lambda d: 60.0)
     assert aq.check_certs(aq.load_config())[0][0] == "ok"
+
+
+def _fake_php(box, path, banner):
+    box.write(path, f"#!/bin/sh\necho '{banner}'\n", mode=0o755)
+
+
+@pytest.mark.parametrize("banner,status", [
+    ("PHP 8.3.30 (cli) (built: Oct  1 2026)", "fail"),
+    ("PHP 8.3.36 (cli) (built: Oct 21 2026)", "ok"),
+    ("PHP 8.5.12 (fpm-fcgi)", "ok"),
+    ("PHP 8.6.0 (cli)", "ok"),
+    ("PHP 7.4.33 (cli)", "fail"),
+    ("PHP 8.1.2-1ubuntu2.20 (cli)", "fail"),
+    ("not php", "warn"),
+])
+def test_doctor_php2shell_versions(box, banner, status):
+    released_box(box)
+    _fake_php(box, "/usr/sbin/php-fpm8.3", banner)
+    rows = aq.check_php(aq.load_config())
+    assert [r[0] for r in rows] == [status], rows
+    assert "/usr/sbin/php-fpm8.3" in rows[0][1]
+    assert ("session.upload_progress.enabled = Off" in rows[0][2]) == (status != "ok")
+
+
+def test_doctor_php2shell_accepts_a_distribution_backport(box):
+    released_box(box)
+    _fake_php(box, "/usr/bin/php8.3", "PHP 8.3.6-0ubuntu0.24.04.9 (cli)")
+    log = box.p("/usr/share/doc/php8.3-cli/changelog.Debian.gz")
+    log.parent.mkdir(parents=True)
+    with gzip.open(log, "wt") as fh:
+        fh.write("php8.3 (8.3.6-0ubuntu0.24.04.9) noble-security\n  * CVE-2026-109618\n  * CVE-2026-109619\n")
+    (status, text, _), = aq.check_php(aq.load_config())
+    assert status == "ok" and "backport" in text
+
+
+def test_doctor_php2shell_flags_php_containers_and_dedups_symlinks(box, monkeypatch):
+    released_box(box)
+    _fake_php(box, "/usr/bin/php8.4", "PHP 8.4.27 (cli)")
+    os.symlink(box.p("/usr/bin/php8.4"), box.p("/usr/bin/php"))
+    real_run = aq.run
+
+    def fake_run(argv, **kw):
+        if argv[:2] == ["docker", "ps"]:
+            return subprocess.CompletedProcess(argv, 0, b"blog\twordpress:6.6-apache\nsupabase-db\tsupabase/postgres:17\n", b"")
+        return real_run(argv, **kw)
+
+    monkeypatch.setattr(aq, "run", fake_run)
+    rows = aq.check_php(aq.load_config())
+    assert [r[0] for r in rows] == ["ok", "warn"], rows
+    assert "container blog (wordpress:6.6-apache)" in rows[1][1] and "docker exec blog php -v" in rows[1][2]
 
 
 # --------------------------------------------------------------------------- logs
