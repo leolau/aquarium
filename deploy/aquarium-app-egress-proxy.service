@@ -1,0 +1,54 @@
+# FG-33 P8-2 2.6: allowlisting egress proxy for local apps and app builds.
+# Listens on 127.0.0.1:<app port + 10000> per app instance and 14299 for
+# builds; accepts only CONNECT to the hosts on that listener's allowlist
+# (set with `aquarium-app-egress set`, within /etc/aquarium/app-egress.json)
+# and only to public addresses. The nftables table inet aquarium_egress
+# lets app/build cgroups reach nothing else. Enabled by
+# `/usr/local/sbin/aquarium-app-egress enable`. Core.
+[Unit]
+Description=Aquarium local-app egress proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+# refresh (root) writes /run/aquarium-egress/proxy/allow.json before the bind below.
+ExecStartPre=+/usr/bin/python3 -I /usr/local/sbin/aquarium-app-egress refresh
+ExecStart=/usr/bin/python3 -I /usr/local/sbin/aquarium-app-egress proxy
+BindReadOnlyPaths=/run/aquarium-egress/proxy:/run/aquarium-egress-proxy
+MemoryMax=192M
+TasksMax=64
+LimitNOFILE=4096
+Restart=always
+RestartSec=2
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Upstreams are public hosts only (the proxy also refuses non-global
+# addresses itself); loopback stays open for the listeners and the resolver.
+IPAddressDeny=link-local multicast 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 fc00::/7
+
+[Install]
+WantedBy=multi-user.target

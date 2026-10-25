@@ -22,6 +22,15 @@ hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium-app-helper status
 hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium-app-helper remove
 hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium-app-helper configure
 #
+# aquarium-app-egress (FG-33 P8-2 2.6): an app's egress allowlist, within the
+# admin policy in /etc/aquarium/app-egress.json. Same shape: the verb is fixed
+# per line and the request ({"slug", "mode"?, "hosts"}) is JSON on stdin.
+# enable/disable/refresh/attach* are root-only (operator, systemd).
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium-app-egress set
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium-app-egress get
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium-app-egress policy
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium-app-egress status
+#
 # Database provisioner (FG-33 P8-1 1.3), in the root-owned /usr/local/sbin/aquarium
 # (installed from deploy/aquarium.py). Exact form:
 #   aquarium apps db <create|migrate|status|suspend|resume|drop> <slug> <dev|prod>
