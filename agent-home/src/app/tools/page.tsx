@@ -1,5 +1,6 @@
 import { MobileShell } from "@/components/MobileShell";
 import { ToolsRegistry, type ToolsPageData } from "@/components/tools/ToolsRegistry";
+import { quotaSummary, type ToolQuotaResponse } from "@/components/tools/toolsModel";
 import { getT } from "@/i18n/server";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
 import { datastoreMode } from "@/lib/env";
@@ -20,7 +21,11 @@ export default async function Page() {
   let error: string | null = null;
   try {
     const client = await apiClientForRequest();
-    data = await client.request<ToolsPageData>(`/api/tools?mode=${mode}&include=health`);
+    const [list, quota] = await Promise.all([
+      client.request<ToolsPageData>(`/api/tools?mode=${mode}&include=health`),
+      client.request<ToolQuotaResponse>("/api/tools/quota").catch(() => null),
+    ]);
+    data = { ...list, quota: list.quota ?? quotaSummary(quota) };
   } catch (err) {
     error = err instanceof Error ? err.message : "Failed to load tools";
   }
