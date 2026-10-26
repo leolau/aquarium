@@ -7,9 +7,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * health and next-run move without anyone touching this page. */
 const AUTO_REFRESH_MS = 30_000;
 
-import { ActionButton } from "@/components/projects/ActionButton";
 import { ProjectRow } from "@/components/projects/ProjectRow";
+import { ProjectsBulkBar } from "@/components/projects/ProjectsBulkBar";
 import { ProjectsFilters } from "@/components/projects/ProjectsFilters";
+import {
+  DEFAULT_PAGE_SIZE,
+  ProjectsPagination,
+} from "@/components/projects/ProjectsPagination";
 import { ProjectCategoriesSheet } from "@/components/projects/categories/ProjectCategoriesSheet";
 import { ProjectsCategoryBoard } from "@/components/projects/categories/ProjectsCategoryBoard";
 import { ProjectsCategoryFilter } from "@/components/projects/categories/ProjectsCategoryFilter";
@@ -22,17 +26,14 @@ import {
   type ProjectsFilterState,
   type ProjectsLayout,
 } from "@/components/projects/filters";
-import { useAction } from "@/lib/use-action";
 import type {
   ProjectCategory,
   ProjectListItem,
   ProjectsResponse,
 } from "@/types";
 
-const PAGE_SIZE = 50;
-
-/** The board shows every matching project, read in the API's largest page
- * size and capped so a huge instance can't fetch forever. */
+/** Both layouts read every matching project, in the API's largest page size
+ * and capped so a huge instance can't fetch forever. */
 export const BOARD_PAGE_SIZE = 200;
 export const BOARD_CAP = 500;
 
@@ -45,15 +46,16 @@ const LAYOUTS: { layout: ProjectsLayout; label: string }[] = [
  * The project list: everything the agent is working on, running on a
  * schedule, or standing watch over.
  *
- * Same contract as the to-do list: keyset paging, filters round-trip through
- * the URL (the cursor never does), and the first page is the server's — so
- * the debounce arms on the first interaction instead of refetching the page
- * that just rendered.
+ * Filters round-trip through the URL (the cursor never does), and the first
+ * page is the server's — so the debounce arms on the first interaction
+ * instead of refetching the page that just rendered.
  *
- * The category board is the default layout (`layout=list` swaps it for the
- * paged list). It needs every matching project rather than page 1: it reads
- * all pages (up to `BOARD_CAP`), and the auto-refresh re-reads all of them
- * together with the categories. A board tile's List button opens the list
+ * Both layouts read every matching project (all API pages, up to
+ * `BOARD_CAP`), and the auto-refresh re-reads all of them. The category
+ * board is the default layout; `layout=list` swaps it for the list, which
+ * pages through them on the client (page numbers, per-page choice) and lets
+ * the person tick projects to re-categorise, archive or restore in bulk.
+ * A board tile's List button opens the list
  * narrowed to that category (`layout=list&category=<id|none>`); the list
  * can then tick any set of categories (`category=<id>,<id>,none`).
  */
@@ -82,33 +84,29 @@ export function ProjectsList({
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // True once the user has appended a page beyond the server's first. An
-  // auto-refresh replaces the first page only, so it would silently drop
-  // everything below — polling pauses in that state instead.
-  const [paged, setPaged] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  // Ticked project slugs; kept across pages, dropped when the view changes.
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   // Mirrors `loading` for the interval callback (which must not re-arm on
   // every fetch or the cadence would never settle). Written only inside
   // `fetchPage` — assigning a ref during render is off-limits.
   const loadingRef = useRef(false);
 
   const fetchPage = useCallback(
-    async (value: ProjectsFilterState, after: string | null) => {
+    async (value: ProjectsFilterState) => {
       setLoading(true);
       loadingRef.current = true;
       setError(null);
-      const board = value.layout === "board";
-      // A fresh first page (filters changed, auto-refresh) resets the flag;
-      // appending a deeper page sets it. The board always reads everything.
-      setPaged(!board && after !== null);
       try {
-        // The board walks every page from the top; the list reads one.
-        let next: string | null = board ? null : after;
+        // Walk every page from the top.
+        let next: string | null = null;
         let collected: ProjectListItem[] = [];
         do {
           const params = filtersToParams(value, next);
           // A view preference, not a filter: never sent upstream.
           params.delete("layout");
-          params.set("limit", String(board ? BOARD_PAGE_SIZE : PAGE_SIZE));
+          params.set("limit", String(BOARD_PAGE_SIZE));
           const res = await fetch(`/api/projects?${params.toString()}`, {
             cache: "no-store",
           });
@@ -123,13 +121,9 @@ export function ProjectsList({
           const body = (await res.json()) as ProjectsResponse;
           collected = [...collected, ...body.items];
           next = body.next_cursor;
-        } while (board && next && collected.length < BOARD_CAP);
-        if (board) {
-          setItems(collected.slice(0, BOARD_CAP));
-        } else {
-          setItems((prev) => (after ? [...prev, ...collected] : collected));
-        }
-        // On the board a cursor left over means the cap cut the read short.
+        } while (next && collected.length < BOARD_CAP);
+        setItems(collected.slice(0, BOARD_CAP));
+        // A cursor left over means the cap cut the read short.
         setCursor(next);
       } catch {
         setError("Couldn't reach the AI layer.");
@@ -154,13 +148,13 @@ export function ProjectsList({
   }, []);
 
   const armed = useRef(false);
-  // A board URL opened directly: the server sent page 1 only, so the first
-  // pass reads the rest instead of skipping.
-  const boardNeedsRest = useRef(initial.next_cursor !== null);
+  // The server sent its first page only: when more remain, the first pass
+  // reads the rest instead of skipping.
+  const needsRest = useRef(initial.next_cursor !== null);
   useEffect(() => {
     if (!armed.current) {
       armed.current = true;
-      if (!(filters.layout === "board" && boardNeedsRest.current)) return;
+      if (!needsRest.current) return;
     }
     const timer = setTimeout(() => {
       const params = filtersToParams(filters);
@@ -170,23 +164,21 @@ export function ProjectsList({
         "",
         query ? `/projects?${query}` : "/projects",
       );
-      void fetchPage(filters, null);
+      void fetchPage(filters);
     }, 300);
     return () => clearTimeout(timer);
   }, [filters, fetchPage]);
 
   // Live list: health, status and next-run move without a reload. Re-read
-  // the first page (the board: every page) on a cadence while the tab is visible and the moment
-  // focus returns — the same pattern the chat unread badge uses. Paused
-  // while the user has paged deeper (a refresh would drop appended pages)
-  // and skipped while a fetch is already in flight.
+  // every page on a cadence while the tab is visible and the moment focus
+  // returns — the same pattern the chat unread badge uses — skipped while a
+  // fetch is already in flight.
   useEffect(() => {
-    if (paged) return;
     const tick = () => {
       if (document.visibilityState !== "visible" || loadingRef.current) {
         return;
       }
-      void fetchPage(filters, null);
+      void fetchPage(filters);
       if (filters.layout === "board") void reloadCategories();
     };
     const interval = window.setInterval(tick, AUTO_REFRESH_MS);
@@ -197,29 +189,7 @@ export function ProjectsList({
       window.removeEventListener("focus", tick);
       document.removeEventListener("visibilitychange", tick);
     };
-  }, [filters, paged, fetchPage, reloadCategories]);
-
-  // Infinite scroll, with the button below as the accessible fallback for
-  // keyboard users and for browsers where the sentinel never intersects.
-  const sentinel = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const node = sentinel.current;
-    if (
-      !node ||
-      cursor == null ||
-      filters.layout === "board" ||
-      typeof IntersectionObserver === "undefined"
-    ) {
-      return;
-    }
-    const observer = new IntersectionObserver((entries) => {
-      if (entries.some((e) => e.isIntersecting) && !loading) {
-        void fetchPage(filters, cursor);
-      }
-    });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [cursor, filters, loading, fetchPage]);
+  }, [filters, fetchPage, reloadCategories]);
 
   const narrowed =
     filters !== EMPTY_FILTERS &&
@@ -238,7 +208,7 @@ export function ProjectsList({
     (next: ProjectCategory[]) => {
       categoriesSeq.current++;
       setCategories(next);
-      void fetchPage(filters, null);
+      void fetchPage(filters);
     },
     [filters, fetchPage],
   );
@@ -248,23 +218,65 @@ export function ProjectsList({
   const closeManaging = useCallback(() => {
     setManaging(false);
     void reloadCategories();
-    void fetchPage(filters, null);
+    void fetchPage(filters);
   }, [filters, fetchPage, reloadCategories]);
+
+  // A new view starts on page 1 with nothing ticked: a tick the person can
+  // no longer see must never be archived by accident.
+  const changeFilters = useCallback((next: ProjectsFilterState) => {
+    setFilters(next);
+    setPage(1);
+    setSelected(new Set());
+  }, []);
 
   const openCategoryList = useCallback(
     (categoryId: string | null) => {
-      setFilters({
+      changeFilters({
         ...filters,
         layout: "list",
         categoryIds: [categoryId ?? UNCATEGORIZED_FILTER],
       });
     },
-    [filters],
+    [filters, changeFilters],
   );
 
-  // The button is swapped for "Loading…" only after a render; the lock
-  // stops a fast second click from fetching the same page twice.
-  const { run: loadMore } = useAction(() => fetchPage(filters, cursor));
+  const pageCount = Math.max(1, Math.ceil(items.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const pageItems = board
+    ? items
+    : items.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const selectedItems = items.filter((p) => selected.has(p.slug));
+
+  const toggleSelected = (slug: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(slug)) next.delete(slug);
+      else next.add(slug);
+      return next;
+    });
+
+  const selectPage = (select: boolean) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const p of pageItems) {
+        if (select) next.add(p.slug);
+        else next.delete(p.slug);
+      }
+      return next;
+    });
+
+  // What went through is unticked; what was refused stays ticked to retry.
+  const onBulkDone = useCallback(
+    (succeeded: string[]) => {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        for (const slug of succeeded) next.delete(slug);
+        return next;
+      });
+      void fetchPage(filters);
+    },
+    [filters, fetchPage],
+  );
 
   return (
     <div data-component="ProjectsList" className="flex flex-col gap-3">
@@ -283,7 +295,7 @@ export function ProjectsList({
               type="button"
               aria-pressed={filters.layout === option.layout}
               onClick={() =>
-                setFilters({ ...filters, layout: option.layout, categoryIds: [] })
+                changeFilters({ ...filters, layout: option.layout, categoryIds: [] })
               }
               className={`rounded-lg px-3 py-1.5 ${
                 filters.layout === option.layout
@@ -304,13 +316,13 @@ export function ProjectsList({
         </Link>
       </div>
 
-      <ProjectsFilters value={filters} onChange={setFilters} />
+      <ProjectsFilters value={filters} onChange={changeFilters} />
 
       {board ? null : (
         <ProjectsCategoryFilter
           categories={categories}
           value={filters.categoryIds}
-          onChange={(categoryIds) => setFilters({ ...filters, categoryIds })}
+          onChange={(categoryIds) => changeFilters({ ...filters, categoryIds })}
         />
       )}
 
@@ -380,33 +392,52 @@ export function ProjectsList({
           ) : null}
         </div>
       ) : (
-        <ul className="flex flex-col gap-2">
-          {items.map((project) => (
-            <ProjectRow key={project.id} project={project} categories={categories} />
-          ))}
-        </ul>
+        <>
+          <ProjectsBulkBar
+            selected={selectedItems}
+            pageItems={pageItems}
+            categories={categories}
+            onSelectPage={selectPage}
+            onClear={() => setSelected(new Set())}
+            onDone={onBulkDone}
+          />
+          <ul className="flex flex-col gap-2">
+            {pageItems.map((project) => (
+              <ProjectRow
+                key={project.id}
+                project={project}
+                categories={categories}
+                selection={{
+                  checked: selected.has(project.slug),
+                  onToggle: () => toggleSelected(project.slug),
+                }}
+              />
+            ))}
+          </ul>
+          <ProjectsPagination
+            page={currentPage}
+            pageSize={pageSize}
+            total={items.length}
+            onPage={setPage}
+            onPageSize={(size) => {
+              setPageSize(size);
+              setPage(1);
+            }}
+          />
+        </>
       )}
 
       {board ? null : (
-        <div ref={sentinel} aria-hidden className="h-px" />
-      )}
-
-      {board ? null : (
-      <div className="flex items-center justify-center py-2 text-xs text-[var(--color-muted)]">
-        {loading ? (
-          <span>Loading…</span>
-        ) : cursor ? (
-          <ActionButton
-            busy={false}
-            onClick={() => void loadMore()}
-            className="rounded-lg border border-[var(--color-border)] px-3 py-1.5"
-          >
-            Load more
-          </ActionButton>
-        ) : items.length > 0 ? (
-          <span>That&apos;s everything.</span>
-        ) : null}
-      </div>
+        <div className="flex items-center justify-center py-2 text-xs text-[var(--color-muted)]">
+          {loading ? (
+            <span>Loading…</span>
+          ) : cursor ? (
+            <span>
+              Showing the first {items.length} projects — narrow the view or
+              search to see the rest.
+            </span>
+          ) : null}
+        </div>
       )}
     </div>
   );
