@@ -12,8 +12,10 @@ import { ProjectRow } from "@/components/projects/ProjectRow";
 import { ProjectsFilters } from "@/components/projects/ProjectsFilters";
 import { ProjectCategoriesSheet } from "@/components/projects/categories/ProjectCategoriesSheet";
 import { ProjectsCategoryBoard } from "@/components/projects/categories/ProjectsCategoryBoard";
+import { fetchProjectCategories } from "@/components/projects/categories/useProjectCategories";
 import {
   EMPTY_FILTERS,
+  UNCATEGORIZED_FILTER,
   filtersFromParams,
   filtersToParams,
   type ProjectsFilterState,
@@ -34,8 +36,8 @@ export const BOARD_PAGE_SIZE = 200;
 export const BOARD_CAP = 500;
 
 const LAYOUTS: { layout: ProjectsLayout; label: string }[] = [
-  { layout: "list", label: "List" },
   { layout: "board", label: "Board" },
+  { layout: "list", label: "List" },
 ];
 
 /**
@@ -47,9 +49,11 @@ const LAYOUTS: { layout: ProjectsLayout; label: string }[] = [
  * the debounce arms on the first interaction instead of refetching the page
  * that just rendered.
  *
- * `layout=board` swaps the list for the category board, which needs every
- * matching project rather than page 1: it reads all pages (up to
- * `BOARD_CAP`), and the auto-refresh re-reads all of them.
+ * The category board is the default layout (`layout=list` swaps it for the
+ * paged list). It needs every matching project rather than page 1: it reads
+ * all pages (up to `BOARD_CAP`), and the auto-refresh re-reads all of them
+ * together with the categories. A board tile's List button opens the list
+ * narrowed to that category (`layout=list&category=<id|none>`).
  */
 export function ProjectsList({
   initial,
@@ -135,6 +139,18 @@ export function ProjectsList({
     [],
   );
 
+  // A stale categories answer never overwrites a newer one.
+  const categoriesSeq = useRef(0);
+  const reloadCategories = useCallback(async () => {
+    const mine = ++categoriesSeq.current;
+    try {
+      const fresh = await fetchProjectCategories();
+      if (mine === categoriesSeq.current) setCategories(fresh);
+    } catch {
+      // Keep the last good list; the next refresh tries again.
+    }
+  }, []);
+
   const armed = useRef(false);
   // A board URL opened directly: the server sent page 1 only, so the first
   // pass reads the rest instead of skipping.
@@ -169,6 +185,7 @@ export function ProjectsList({
         return;
       }
       void fetchPage(filters, null);
+      if (filters.layout === "board") void reloadCategories();
     };
     const interval = window.setInterval(tick, AUTO_REFRESH_MS);
     window.addEventListener("focus", tick);
@@ -178,7 +195,7 @@ export function ProjectsList({
       window.removeEventListener("focus", tick);
       document.removeEventListener("visibilitychange", tick);
     };
-  }, [filters, paged, fetchPage]);
+  }, [filters, paged, fetchPage, reloadCategories]);
 
   // Infinite scroll, with the button below as the accessible fallback for
   // keyboard users and for browsers where the sentinel never intersects.
@@ -202,7 +219,9 @@ export function ProjectsList({
     return () => observer.disconnect();
   }, [cursor, filters, loading, fetchPage]);
 
-  const narrowed = filters !== EMPTY_FILTERS && filters.view !== "active";
+  const narrowed =
+    filters !== EMPTY_FILTERS &&
+    (filters.view !== "active" || filters.category !== "");
   const board = filters.layout === "board";
 
   const onMoved = useCallback((slug: string, categoryId: string | null) => {
@@ -211,15 +230,45 @@ export function ProjectsList({
     );
   }, []);
 
-  // A rename/recolour changes the columns; a delete also moves that
+  // A rename/recolour changes the tiles; a delete also moves that
   // category's projects to Uncategorized server-side, so re-read them.
   const onCategoriesChanged = useCallback(
     (next: ProjectCategory[]) => {
+      categoriesSeq.current++;
       setCategories(next);
       void fetchPage(filters, null);
     },
     [filters, fetchPage],
   );
+
+  // Closing the sheet re-reads both, so the board can never keep showing a
+  // list from before the edits (e.g. a re-read inside the sheet failed).
+  const closeManaging = useCallback(() => {
+    setManaging(false);
+    void reloadCategories();
+    void fetchPage(filters, null);
+  }, [filters, fetchPage, reloadCategories]);
+
+  const openCategoryList = useCallback(
+    (categoryId: string | null) => {
+      setFilters({
+        ...filters,
+        layout: "list",
+        category: categoryId ?? UNCATEGORIZED_FILTER,
+      });
+    },
+    [filters],
+  );
+
+  const listCategory =
+    filters.layout === "list" && filters.category
+      ? filters.category === UNCATEGORIZED_FILTER
+        ? { name: "Uncategorized", color: null }
+        : (categories.find((c) => c.id === filters.category) ?? {
+            name: "Unknown category",
+            color: null,
+          })
+      : null;
 
   // The button is swapped for "Loading…" only after a render; the lock
   // stops a fast second click from fetching the same page twice.
@@ -241,7 +290,9 @@ export function ProjectsList({
               key={option.layout}
               type="button"
               aria-pressed={filters.layout === option.layout}
-              onClick={() => setFilters({ ...filters, layout: option.layout })}
+              onClick={() =>
+                setFilters({ ...filters, layout: option.layout, category: "" })
+              }
               className={`rounded-lg px-3 py-1.5 ${
                 filters.layout === option.layout
                   ? "bg-[var(--color-surface-2)] font-medium text-[var(--color-fg)]"
@@ -262,6 +313,32 @@ export function ProjectsList({
       </div>
 
       <ProjectsFilters value={filters} onChange={setFilters} />
+
+      {listCategory ? (
+        <div
+          data-component="ProjectsCategoryFilter"
+          className="flex items-center gap-2 text-xs"
+        >
+          <span className="flex min-w-0 items-center gap-1.5 rounded-full border border-[var(--color-accent)] px-2 py-1 text-[var(--color-accent)]">
+            <span
+              aria-hidden
+              className="h-2 w-2 shrink-0 rounded-full"
+              style={{
+                backgroundColor: listCategory.color ?? "var(--color-muted)",
+              }}
+            />
+            <span className="truncate">Category: {listCategory.name}</span>
+          </span>
+          <button
+            type="button"
+            aria-label="Show every category"
+            onClick={() => setFilters({ ...filters, category: "" })}
+            className="rounded-lg border border-[var(--color-border)] px-2 py-1 text-[var(--color-muted)]"
+          >
+            Clear
+          </button>
+        </div>
+      ) : null}
 
       {error ? (
         <p
@@ -288,6 +365,7 @@ export function ProjectsList({
             items={items}
             categories={categories}
             onMoved={onMoved}
+            onOpenList={openCategoryList}
           />
           <div className="flex items-center justify-center py-2 text-xs text-[var(--color-muted)]">
             {loading ? (
@@ -302,7 +380,7 @@ export function ProjectsList({
           {managing ? (
             <ProjectCategoriesSheet
               categories={categories}
-              onClose={() => setManaging(false)}
+              onClose={closeManaging}
               onChanged={onCategoriesChanged}
             />
           ) : null}

@@ -54,6 +54,7 @@ export default async function Page({
         health: query.get("health") ?? undefined,
         archived: query.get("archived") === "true",
         q: state.q || undefined,
+        category: query.get("category") ?? undefined,
         // The board reads every page; start it with the largest one.
         limit: state.layout === "board" ? 200 : 50,
       }),

@@ -1759,10 +1759,12 @@ export class HermesApiClient {
       archived?: boolean;
       limit?: number;
       cursor?: string;
+      /** A category id, or "none" for Uncategorized. */
+      category?: string;
     } = {},
   ): Promise<ProjectsResponse> {
     const p = new URLSearchParams();
-    for (const key of ["status", "cadence", "health", "q", "cursor"] as const) {
+    for (const key of ["status", "cadence", "health", "q", "category", "cursor"] as const) {
       const value = opts[key];
       if (value) p.set(key, String(value));
     }

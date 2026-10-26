@@ -20,6 +20,7 @@ export async function GET(req: Request): Promise<NextResponse> {
       cadence: params.get("cadence") ?? undefined,
       health: params.get("health") ?? undefined,
       q: params.get("q") ?? undefined,
+      category: params.get("category") ?? undefined,
       archived: params.get("archived") === "true",
       limit: params.get("limit") ? Number(params.get("limit")) : undefined,
       cursor: params.get("cursor") ?? undefined,

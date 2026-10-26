@@ -20,6 +20,7 @@ describe("busy buttons — projects", () => {
         }),
     );
     vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState(null, "", "/projects?layout=list");
     render(
       <ProjectsList initial={{ items: [], next_cursor: "cur_2" }} />,
     );
@@ -34,5 +35,6 @@ describe("busy buttons — projects", () => {
     });
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
     vi.unstubAllGlobals();
+    window.history.replaceState(null, "", "/");
   });
 });
