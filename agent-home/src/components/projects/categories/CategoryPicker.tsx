@@ -2,8 +2,14 @@
 
 import { useId } from "react";
 
+import {
+  CategoryDot,
+  findCategory,
+} from "@/components/projects/categories/ProjectCategoryTag";
 import { sortCategories } from "@/components/projects/categories/useProjectCategories";
 import type { ProjectCategory } from "@/types";
+
+export { CategoryDot, findCategory };
 
 /** The swatches a category can be painted with (null = the default tone). */
 export const CATEGORY_COLORS: { value: string; label: string }[] = [
@@ -16,28 +22,6 @@ export const CATEGORY_COLORS: { value: string; label: string }[] = [
   { value: "#ec4899", label: "Pink" },
   { value: "#64748b", label: "Slate" },
 ];
-
-const DEFAULT_DOT = "var(--color-muted)";
-
-/** A small round colour chip for a category (or Uncategorized). */
-export function CategoryDot({ color, className = "" }: { color: string | null; className?: string }) {
-  return (
-    <span
-      aria-hidden
-      data-component="CategoryDot"
-      className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${className}`}
-      style={{ backgroundColor: color ?? DEFAULT_DOT }}
-    />
-  );
-}
-
-/** Where `value` lives in `categories`, or undefined for null / an unknown id. */
-export function findCategory(
-  categories: readonly ProjectCategory[],
-  value: string | null | undefined,
-): ProjectCategory | undefined {
-  return value ? categories.find((c) => c.id === value) : undefined;
-}
 
 /**
  * A labelled `<select>` of "Uncategorized" (null) plus the categories in

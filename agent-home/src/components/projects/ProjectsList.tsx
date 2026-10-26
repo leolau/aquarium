@@ -408,7 +408,7 @@ export function ProjectsList({
       ) : (
         <ul className="flex flex-col gap-2">
           {items.map((project) => (
-            <ProjectRow key={project.id} project={project} />
+            <ProjectRow key={project.id} project={project} categories={categories} />
           ))}
         </ul>
       )}

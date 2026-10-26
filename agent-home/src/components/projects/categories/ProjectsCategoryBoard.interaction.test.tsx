@@ -166,6 +166,18 @@ describe("ProjectsCategoryBoard", () => {
     expect(dot.style.backgroundColor).toBe("rgb(245, 158, 11)");
     const card = container.querySelector('[data-slug="monday-digest"]')!;
     expect(card.querySelector("a")?.getAttribute("href")).toBe("/projects/monday-digest");
+    const tag = card.querySelector<HTMLElement>('[data-component="ProjectCategoryTag"]')!;
+    expect(tag.textContent).toContain("Sales");
+    expect(tag.style.borderColor).toBe("rgb(245, 158, 11)");
+    // The same card body as the list: the meta line comes along.
+    expect(card.textContent).toContain("repeatable");
+    // An id the board doesn't know files under Uncategorized with no tag.
+    const leads = container.querySelector('[data-slug="lead-list"]')!;
+    expect(leads.querySelector('[data-component="ProjectCategoryTag"]')).toBeNull();
+    const notes = container.querySelector('[data-slug="field-notes"]')!;
+    expect(notes.querySelector('[data-component="ProjectCategoryTag"]')?.textContent).toContain(
+      "Uncategorized",
+    );
   });
 
   it("each tile's List button opens the list for that category", () => {
