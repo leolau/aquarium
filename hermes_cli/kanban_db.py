@@ -4799,15 +4799,18 @@ def _metadata_paths(value: Any, wp: Path, depth: int = 0) -> list[str]:
     return out
 
 
-def _keep_reported_files(conn: sqlite3.Connection, task_id: str, wp: Path) -> None:
+def _keep_reported_files(conn: sqlite3.Connection, task_id: str, wp: Path) -> bool:
     """Copy the files a project card reported (its runs' ``artifacts``, the
     paths its summaries, result and run metadata name) out of its scratch
     workspace before the workspace is removed, so the project page can
-    still open them."""
+    still open them. False when a reported file could not be copied (e.g.
+    it is unreadable to this process): the caller must then keep the
+    workspace rather than delete the only copy."""
+    ok = True
     try:
         task = get_task(conn, task_id)
         if task is None or not task.project_id:
-            return
+            return True
         from hermes_cli.projects_outputs_api import _claimed_files
 
         runs = list_runs(conn, task_id)
@@ -4821,11 +4824,18 @@ def _keep_reported_files(conn: sqlite3.Connection, task_id: str, wp: Path) -> No
             if path in seen:
                 continue
             seen.add(path)
-            kept = keep_file(wp, path, budget)
+            try:
+                kept = keep_file(wp, path, budget)
+            except OSError:
+                _log.warning("Could not keep %s of task %s", path, task_id, exc_info=True)
+                ok = False
+                continue
             if kept is not None:
                 budget -= kept.stat().st_size
     except Exception:
         _log.warning("Could not keep the reported files of task %s", task_id, exc_info=True)
+        return False
+    return ok
 
 
 def _cleanup_workspace(conn: sqlite3.Connection, task_id: str) -> None:
@@ -4877,9 +4887,14 @@ def _cleanup_workspace(conn: sqlite3.Connection, task_id: str) -> None:
             # completion would unconditionally ``shutil.rmtree`` that path
             # and silently delete the user's source data.
             if _is_managed_scratch_path(wp):
-                _keep_reported_files(conn, task_id, wp)
-                shutil.rmtree(wp, ignore_errors=True)
-                _log.debug("Removed scratch workspace: %s", wp)
+                if _keep_reported_files(conn, task_id, wp):
+                    shutil.rmtree(wp, ignore_errors=True)
+                    _log.debug("Removed scratch workspace: %s", wp)
+                else:
+                    _log.warning(
+                        "Keeping scratch workspace of task %s: its reported "
+                        "files could not be copied out (%s)", task_id, wp,
+                    )
             else:
                 _log.warning(
                     "Refusing to remove out-of-scratch workspace for task %s: %s "
@@ -4932,7 +4947,12 @@ def _try_cleanup_parent_workspaces(conn: sqlite3.Connection, task_id: str) -> No
             import shutil
             wp = Path(row["workspace_path"])
             if wp.is_dir() and _is_managed_scratch_path(wp):
-                _keep_reported_files(conn, parent_id, wp)
+                if not _keep_reported_files(conn, parent_id, wp):
+                    _log.warning(
+                        "Keeping scratch workspace of task %s: its reported "
+                        "files could not be copied out (%s)", parent_id, wp,
+                    )
+                    continue
                 shutil.rmtree(wp, ignore_errors=True)
                 _log.debug("Deferred cleanup: removed parent %s scratch workspace: %s", parent_id, wp)
     except Exception:

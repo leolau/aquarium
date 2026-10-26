@@ -231,6 +231,16 @@ class TestAtomicWrite:
         assert res.error is None, res.error
         assert (os.stat(target).st_mode & 0o777) == 0o640
 
+    def test_new_file_gets_umask_mode_not_mktemp_0600(self, ops, tmp_path: Path):
+        # Another user (the gateway reading what the sandboxed terminal user
+        # wrote) must be able to read a new file the umask allows it to.
+        target = tmp_path / "new.txt"
+        res = ops.write_file(str(target), "hello")
+        assert res.error is None, res.error
+        umask = os.umask(0)
+        os.umask(umask)
+        assert (os.stat(target).st_mode & 0o777) == (0o666 & ~umask)
+
     def test_failed_write_leaves_original_intact(self, ops, tmp_path: Path):
         # A read-only parent directory means the temp file can't be created,
         # so the write fails BEFORE any rename. The original must survive
