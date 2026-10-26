@@ -106,7 +106,7 @@ export function IncomingDetailView({ item }: { item: IncomingDetail }) {
                 <a
                   href={`/api/files/${encodeURIComponent(file.id)}/content`}
                   target="_blank"
-                  rel="noreferrer"
+                  rel="noopener"
                   className="truncate text-[var(--color-accent)]"
                 >
                   {file.filename}

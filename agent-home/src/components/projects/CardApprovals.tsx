@@ -4,6 +4,7 @@ import { ActionButton } from "@/components/projects/ActionButton";
 import { ActionError } from "@/components/projects/ActionError";
 import { useProjectAction } from "@/components/projects/useProjectAction";
 import type { ProjectCardApproval } from "@/types";
+import { newTabRel } from "@/lib/http/link-rel";
 
 export interface ApprovalLink {
   label: string;
@@ -127,7 +128,7 @@ export function ApprovalDetail({ approval }: { approval: ProjectCardApproval }) 
               <a
                 href={link.href}
                 target="_blank"
-                rel="noopener noreferrer"
+                rel={newTabRel(link.href)}
                 className="break-all text-[var(--color-accent)] underline-offset-2 hover:underline"
               >
                 {link.label} ↗

@@ -836,3 +836,16 @@ def test_a_file_named_only_in_run_metadata_survives_the_wipe(env):
     kept = kanban_db.kept_files_dir(ws)
     assert (kept / "out" / "book.xlsx").read_bytes() == b"book"
     assert (kept / "out" / "unmatched.csv").read_bytes() == b"csv"
+
+
+def test_a_delivered_files_download_link_is_titled_after_its_output(env):
+    """``/api/files/<id>/content?download=1`` ends in "content", which is no
+    file name: the deliverable carries its output's title instead."""
+    project = _project(env)
+    output = project["outputs"][0]
+    url = "https://home.example.com/api/files/2bda11c2/content?download=1"
+    with projects_db.connect_closing() as conn:
+        did = projects_db.record_output_delivery(conn, output_id=output["id"], link_ref=url)
+    item = {a["id"]: a for a in _artifacts(env, project["slug"])}[f"d:{did}"]
+    assert item["title"] == output["title"]
+    assert item["href"] == url

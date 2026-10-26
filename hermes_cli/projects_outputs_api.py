@@ -149,6 +149,13 @@ def _url_meta(url: str) -> tuple[str, Optional[str], Optional[str]]:
     return tail or url, ext_of(tail), mime_of(tail)
 
 
+def _is_file_content_route(url: str) -> bool:
+    """A link to this app's own ``/api/files/<id>/content`` route, whose last
+    path segment ("content") is no file name."""
+    segs = [s for s in urlparse(url).path.split("/") if s]
+    return len(segs) >= 4 and segs[-1] == "content" and segs[-3] == "files"
+
+
 def is_document_url(url: str) -> bool:
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
@@ -603,7 +610,9 @@ def build_artifacts(project, ctx: dict) -> list[dict]:
             attached_urls.add(ref)
             location = urlparse(ref).hostname
             if not d.get("label"):
-                name = uploaded_names.get(_doc_url_key(ref)) or _url_meta(ref)[0]
+                name = uploaded_names.get(_doc_url_key(ref)) or (
+                    None if _is_file_content_route(ref) else _url_meta(ref)[0]
+                )
         elif kind == "workspace" and ref:
             file_id = path_to_id.get(ref)
             if file_id is None and _servable(ref, _managed_roots(task, board)):

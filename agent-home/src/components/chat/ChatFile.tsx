@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { mediaRef } from "@/lib/chat/media-ref";
 import type { ChatMediaUrlResponse } from "@/types";
+import { newTabRel } from "@/lib/http/link-rel";
 
 /**
  * One inline **non-image** attachment (PDF/DOC/XLS/…) from the private media
@@ -50,7 +51,7 @@ export function ChatFile({ path, name }: { path: string; name: string }) {
         data-component="ChatFile"
         href={url}
         target="_blank"
-        rel="noreferrer noopener"
+        rel={newTabRel(url)}
         download={name}
         className={`${chip} underline underline-offset-2`}
       >
