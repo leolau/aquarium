@@ -1759,7 +1759,7 @@ export class HermesApiClient {
       archived?: boolean;
       limit?: number;
       cursor?: string;
-      /** A category id, or "none" for Uncategorized. */
+      /** Comma-separated category ids, "none" for Uncategorized. */
       category?: string;
     } = {},
   ): Promise<ProjectsResponse> {

@@ -618,6 +618,16 @@ def _list_sync(
     health_set = _HEALTH_ALIASES.get(health) if health else None
     if health and health_set is None:
         health_set = frozenset({health})
+    # ``category=a,b,none``: any of these ids, "none" meaning Uncategorized.
+    category_set = (
+        frozenset(
+            None if c == "none" else c
+            for c in (part.strip() for part in category.split(","))
+            if c
+        )
+        if category
+        else None
+    )
     status_set = _STATUS_ALIASES.get(status) if status else None
     if status and status_set is None:
         status_set = frozenset({status})
@@ -649,7 +659,7 @@ def _list_sync(
                 continue
             if cadence and getattr(p, "cadence", None) != cadence:
                 continue
-            if category and p.category_id != (None if category == "none" else category):
+            if category_set and p.category_id not in category_set:
                 continue
             if q and q.lower() not in f"{p.name} {p.goal or ''}".lower():
                 continue

@@ -383,9 +383,31 @@ describe("ProjectsList layout toggle", () => {
     expect(address.get("layout")).toBe("list");
     expect(address.get("category")).toBe("pcat_sales");
 
-    // Clear lifts the category; Board drops it entirely.
+    // Tick a second category: both go upstream as one parameter.
+    fireEvent.click(getByRole("button", { name: /Category: Sales/ }));
+    fireEvent.click(getByRole("checkbox", { name: "Uncategorized" }));
+    expect(
+      container.querySelector('[data-component="ProjectsCategoryFilter"]')?.textContent,
+    ).toContain("Category: Sales, Uncategorized");
+    await waitFor(() =>
+      expect(
+        new URL(String(fetchMock.mock.calls.at(-1)![0]), "http://x").searchParams.get("category"),
+      ).toBe("pcat_sales,none"),
+    );
+
+    // Clear lifts every category, and the filter stays to pick again.
     fireEvent.click(getByRole("button", { name: "Show every category" }));
-    expect(container.querySelector('[data-component="ProjectsCategoryFilter"]')).toBeNull();
+    expect(
+      container.querySelector('[data-component="ProjectsCategoryFilter"]')?.textContent,
+    ).toContain("Category: All categories");
+    expect(getByRole("checkbox", { name: "Sales" })).toHaveProperty("checked", false);
+    await waitFor(() =>
+      expect(new URLSearchParams(window.location.search).has("category")).toBe(false),
+    );
+    fireEvent.click(getByRole("checkbox", { name: "Sales" }));
+    await waitFor(() =>
+      expect(new URLSearchParams(window.location.search).get("category")).toBe("pcat_sales"),
+    );
     fireEvent.click(getByRole("button", { name: "Board" }));
     fireEvent.click(getByRole("button", { name: "List Sales projects" }));
     fireEvent.click(getByRole("button", { name: "Board" }));
