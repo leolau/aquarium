@@ -9,6 +9,7 @@ import { AllFiles } from "@/components/projects/outputs/AllFiles";
 import { ClosureOffer } from "@/components/projects/outputs/ClosureOffer";
 import { DeliverableCard, type AcceptEnvelope } from "@/components/projects/outputs/DeliverableCard";
 import { UnattachedWarning, type AttachResult } from "@/components/projects/outputs/UnattachedWarning";
+import { outputsAwaitingDelivery } from "@/components/projects/outputs/artifacts";
 import { useProjectArtifacts } from "@/components/projects/outputs/useProjectArtifacts";
 import type { ProjectTabProps } from "@/components/projects/tabs/types";
 import { useServerState } from "@/components/ui/useRefresh";
@@ -46,6 +47,10 @@ export function OutputsTab({
   const [offersClosure, setOffersClosure] = useState(false);
   const archived = project.archived;
   const sorted = [...outputs].sort((a, b) => rank(a) - rank(b) || a.seq - b.seq);
+  // With every output delivered, files no output owns are just working
+  // files: list them after the result instead of above it.
+  const workingFilesOnly =
+    outputsAwaitingDelivery(outputs).length === 0 && outputs.some((o) => o.status !== "dropped");
 
   const onAccepted = (outputId: string, envelope: AcceptEnvelope) => {
     setOutputs((prev) => applyAcceptEnvelope(prev, outputId, envelope).outputs);
@@ -103,25 +108,28 @@ export function OutputsTab({
     files.reload();
   };
 
+  const unattached = (
+    <UnattachedWarning
+      slug={project.slug}
+      artifacts={files.artifacts}
+      outputs={outputs}
+      archived={archived}
+      onAttached={onAttached}
+      onOpenFile={opener.open}
+      onDownloadFile={opener.download}
+      resolving={opener.resolving}
+    />
+  );
+
   return (
     <div data-component="OutputsTab" className="flex flex-col gap-4">
-      {!files.loading ? (
-        <UnattachedWarning
-          slug={project.slug}
-          artifacts={files.artifacts}
-          outputs={outputs}
-          archived={archived}
-          onAttached={onAttached}
-          onOpenFile={opener.open}
-          onDownloadFile={opener.download}
-          resolving={opener.resolving}
-        />
-      ) : null}
+      {!files.loading && !workingFilesOnly ? unattached : null}
 
       <section data-component="Deliverables" className="flex flex-col gap-2">
-        <h2 className="text-xs uppercase tracking-wide text-[var(--color-muted)]">Deliverables</h2>
+        <h2 className="text-xs uppercase tracking-wide text-[var(--color-muted)]">Final outputs</h2>
         <p className="text-xs text-[var(--color-muted)]">
-          Each output with its versions per run, its files, and what you can do with it.
+          The result of this project: each output, the files delivered for it per run, and
+          what you can do with it.
         </p>
         {archived ? (
           <p className="text-xs text-[var(--color-muted)]">
@@ -165,6 +173,18 @@ export function OutputsTab({
           </div>
         ) : null}
       </section>
+
+      {!files.loading && workingFilesOnly ? (
+        <section data-component="WorkingFiles" className="flex flex-col gap-2">
+          <h2 className="text-xs uppercase tracking-wide text-[var(--color-muted)]">
+            Working files (not the result)
+          </h2>
+          <p className="text-xs text-[var(--color-muted)]">
+            Drafts, notes and data the cards produced on the way to the final outputs.
+          </p>
+          {unattached}
+        </section>
+      ) : null}
 
       <AllFiles
         artifacts={files.artifacts}
