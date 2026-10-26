@@ -521,6 +521,29 @@ def test_a_reported_file_survives_its_scratch_workspace(env):
     ).exists()
 
 
+def test_a_workspace_whose_reported_file_cannot_be_kept_is_not_wiped(env, monkeypatch):
+    """A reported file this process cannot read (the sandboxed terminal user
+    wrote it 0600) must not be lost: the workspace stays instead of being
+    wiped with the only copy in it."""
+    project = _project(env)
+
+    def _denied(src, dst, **_kw):
+        raise PermissionError(13, "Permission denied", str(src))
+
+    monkeypatch.setattr("shutil.copy2", _denied)
+    with kanban_db.connect_closing() as bconn:
+        tid = kanban_db.create_task(
+            bconn, title="Finalise", assignee="default", project_id=project["id"],
+        )
+        ws = kanban_db.resolve_workspace(kanban_db.get_task(bconn, tid))
+        kanban_db.set_workspace_path(bconn, tid, ws)
+        final = ws / "summary.md"
+        final.write_text("final")
+        assert kanban_db.claim_task(bconn, tid, claimer="test:1")
+        assert kanban_db.complete_task(bconn, tid, metadata={"artifacts": [str(final)]})
+    assert final.read_text() == "final"
+
+
 def test_a_delivery_of_a_kept_file_opens_after_the_wipe(env):
     client, _state, _tmp = env
     project = _project(env)

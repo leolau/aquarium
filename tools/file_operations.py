@@ -977,7 +977,9 @@ class ShellFileOperations(FileOperations):
         #  - `chmod --reference` is GNU-only, so we read the octal mode with
         #    `stat` (GNU `-c%a` or BSD `-f%Lp`) and `chmod` it explicitly;
         #    silent best-effort — a perms-copy failure must not abort the
-        #    write, the file still lands with default umask perms.
+        #    write. A new file is chmod'ed to 0666 & ~umask, since mktemp
+        #    creates 0600 and another user (e.g. the gateway reading a file
+        #    the sandboxed terminal user wrote) could not read it.
         #  - `trap ... EXIT` guarantees the temp is removed on every error
         #    path (cat failure, mv failure, signal) but NOT after a
         #    successful mv (the temp no longer exists by then).
@@ -994,6 +996,9 @@ class ShellFileOperations(FileOperations):
             'if [ -e "$t" ]; then '
             'm="$(stat -c%a "$t" 2>/dev/null || stat -f%Lp "$t" 2>/dev/null || true)"; '
             '[ -n "$m" ] && chmod "$m" "$tmp" 2>/dev/null || true; '
+            # a new file gets the usual 0666 & ~umask, not mktemp's 0600
+            "else "
+            'chmod "$(printf %o $(( 0666 & ~0$(umask) )))" "$tmp" 2>/dev/null || true; '
             "fi; "
             'cat > "$tmp"; '
             'mv -f "$tmp" "$t"; '
