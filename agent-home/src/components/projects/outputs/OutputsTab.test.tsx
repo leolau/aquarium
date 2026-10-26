@@ -97,6 +97,19 @@ describe("OutputsTab SSR", () => {
     expect(html).not.toContain('data-component="AttachAll"');
   });
 
+  it("lists the final outputs first, badged, and working files after them", () => {
+    const html = render({ outputs: [DELIVERED] });
+    expect(html).toContain("Final outputs");
+    expect(html).toContain('data-testid="final-output-badge"');
+    expect(html).toContain("Working files (not the result)");
+    expect(html.indexOf('data-component="Deliverables"')).toBeLessThan(
+      html.indexOf('data-component="WorkingFiles"'),
+    );
+    expect(html.indexOf('data-component="WorkingFiles"')).toBeLessThan(
+      html.indexOf('data-component="OtherRunFiles"'),
+    );
+  });
+
   it("the warning names the output still waiting for a delivery", () => {
     const html = render();
     expect(html).toContain("“4 MOUs in docx” has nothing delivered yet.");
