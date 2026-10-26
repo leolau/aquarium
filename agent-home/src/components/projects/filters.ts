@@ -54,6 +54,43 @@ export type ProjectsLayout = "list" | "board";
 
 export const DEFAULT_LAYOUT: ProjectsLayout = "board";
 
+/**
+ * What the board's tiles and the list sort on. The server sorts (so paging
+ * stays correct); `created` newest-first is the default and is never written
+ * to the URL.
+ */
+export type ProjectsSort =
+  | "created"
+  | "completed"
+  | "due"
+  | "name"
+  | "status"
+  | "duration"
+  | "tokens";
+
+export type SortOrder = "asc" | "desc";
+
+export const SORT_OPTIONS: {
+  sort: ProjectsSort;
+  label: string;
+  /** The order a field starts in when picked. */
+  order: SortOrder;
+}[] = [
+  { sort: "created", label: "Created date", order: "desc" },
+  { sort: "completed", label: "Completion date", order: "desc" },
+  { sort: "due", label: "Due date", order: "asc" },
+  { sort: "name", label: "Name", order: "asc" },
+  { sort: "status", label: "Status", order: "asc" },
+  { sort: "duration", label: "Duration", order: "desc" },
+  { sort: "tokens", label: "Tokens used", order: "desc" },
+];
+
+export const DEFAULT_SORT: ProjectsSort = "created";
+
+export function defaultSortOrder(sort: ProjectsSort): SortOrder {
+  return SORT_OPTIONS.find((o) => o.sort === sort)?.order ?? "desc";
+}
+
 /** The `category` value that narrows the list to Uncategorized projects. */
 export const UNCATEGORIZED_FILTER = "none";
 
@@ -67,6 +104,8 @@ export interface ProjectsFilterState {
    * (it already groups by category).
    */
   categoryIds: string[];
+  sort: ProjectsSort;
+  order: SortOrder;
 }
 
 export const EMPTY_FILTERS: ProjectsFilterState = {
@@ -74,6 +113,8 @@ export const EMPTY_FILTERS: ProjectsFilterState = {
   q: "",
   layout: DEFAULT_LAYOUT,
   categoryIds: [],
+  sort: DEFAULT_SORT,
+  order: defaultSortOrder(DEFAULT_SORT),
 };
 
 /** `category=a,b,none` in the URL; also what the upstream API accepts. */
@@ -103,13 +144,20 @@ export function filtersFromParams(
     params.get("layout") === "list" ? "list" : DEFAULT_LAYOUT;
   const categoryIds =
     layout === "list" ? parseCategoryIds(params.get("category")) : [];
-  return { view, q: params.get("q") ?? "", layout, categoryIds };
+  const rawSort = params.get("sort");
+  const sort: ProjectsSort =
+    SORT_OPTIONS.find((o) => o.sort === rawSort)?.sort ?? DEFAULT_SORT;
+  const rawOrder = params.get("order");
+  const order: SortOrder =
+    rawOrder === "asc" || rawOrder === "desc" ? rawOrder : defaultSortOrder(sort);
+  return { view, q: params.get("q") ?? "", layout, categoryIds, sort, order };
 }
 
 /**
  * The inverse, for the address bar and for the BFF call. `layout` is only
  * written for the list (absent = board); the BFF call drops it. `category`
- * (comma-separated ids) is only written for the list.
+ * (comma-separated ids) is only written for the list. `sort`/`order` are
+ * only written when they differ from the default (and reach the API).
  */
 export function filtersToParams(
   value: ProjectsFilterState,
@@ -148,6 +196,10 @@ export function filtersToParams(
     if (value.categoryIds.length > 0) {
       params.set("category", value.categoryIds.join(","));
     }
+  }
+  if (value.sort !== DEFAULT_SORT) params.set("sort", value.sort);
+  if (value.order !== defaultSortOrder(value.sort)) {
+    params.set("order", value.order);
   }
   if (cursor) params.set("cursor", cursor);
   return params;

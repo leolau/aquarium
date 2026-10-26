@@ -244,6 +244,109 @@ def test_list_pagination_loses_no_rows_under_a_filter(env):
     assert seen == [newest, oldest]  # both matches, once each, newest first
 
 
+def _sortable_projects(env, names):
+    """Projects named in creation order, oldest first, with distinct
+    timestamps so the tie-break is deterministic."""
+    out = []
+    for i, name in enumerate(names):
+        project = _create(env, body={"goal": f"Sort fixture {name}", "name": name})
+        out.append(project)
+        with projects_db.connect_closing() as conn:
+            with projects_db.write_txn(conn):
+                conn.execute(
+                    "UPDATE projects SET created_at = ? WHERE id = ?",
+                    (1_700_000_000 + i, project["id"]),
+                )
+    return out
+
+
+def _slugs(env, query):
+    client, _state = env
+    resp = client.get(f"/api/registry/projects?archived=true&{query}")
+    assert resp.status_code == 200, resp.text
+    return [item["slug"] for item in resp.json()["items"]]
+
+
+def test_list_sorts_by_name_and_due_with_missing_values_last(env):
+    a, b, c = _sortable_projects(env, ["Charlie", "alpha", "Bravo"])
+    assert _slugs(env, "") == [c["slug"], b["slug"], a["slug"]]
+    assert _slugs(env, "sort=created&order=asc") == [a["slug"], b["slug"], c["slug"]]
+    # Case-insensitive, ascending by default.
+    assert _slugs(env, "sort=name") == [b["slug"], c["slug"], a["slug"]]
+    assert _slugs(env, "sort=name&order=desc") == [a["slug"], c["slug"], b["slug"]]
+    with projects_db.connect_closing() as conn:
+        with projects_db.write_txn(conn):
+            conn.execute("UPDATE projects SET due_at = 2000 WHERE id = ?", (a["id"],))
+            conn.execute("UPDATE projects SET due_at = 1000 WHERE id = ?", (c["id"],))
+    # No due date sorts last in either direction.
+    assert _slugs(env, "sort=due") == [c["slug"], a["slug"], b["slug"]]
+    assert _slugs(env, "sort=due&order=desc") == [a["slug"], c["slug"], b["slug"]]
+
+
+def test_list_sorts_by_duration_and_status(env):
+    a, b, c = _sortable_projects(env, ["One", "Two", "Three"])
+    with projects_db.connect_closing() as conn:
+        for project, seconds in ((a, 50), (b, 500)):
+            run = projects_db.open_project_run(
+                conn, project_id=project["id"], trigger="manual", profile="default"
+            )
+            with projects_db.write_txn(conn):
+                conn.execute(
+                    "UPDATE project_runs SET started_at = 1000, ended_at = ? WHERE id = ?",
+                    (1000 + seconds, run["id"]),
+                )
+    client, _state = env
+    body = client.get("/api/registry/projects?archived=true&sort=duration").json()
+    assert [i["slug"] for i in body["items"]] == [b["slug"], a["slug"], c["slug"]]
+    assert [i["usage"]["run_seconds"] for i in body["items"]] == [500, 50, 0]
+
+    _activate(env, b)
+    # planning (a, c; newest first) before active (b).
+    assert _slugs(env, "sort=status") == [c["slug"], a["slug"], b["slug"]]
+
+
+def test_list_sorts_by_completion_date_stamped_on_done(env):
+    a, b, c = _sortable_projects(env, ["One", "Two", "Three"])
+    for project in (a, b):
+        _activate(env, project)
+    with projects_db.connect_closing() as conn:
+        projects_db.set_project_status(conn, a["id"], "done")
+        projects_db.set_project_status(conn, b["id"], "done")
+        with projects_db.write_txn(conn):
+            conn.execute("UPDATE projects SET completed_at = 100 WHERE id = ?", (a["id"],))
+            conn.execute("UPDATE projects SET completed_at = 200 WHERE id = ?", (b["id"],))
+    assert _slugs(env, "sort=completed") == [b["slug"], a["slug"], c["slug"]]
+    assert _slugs(env, "sort=completed&order=asc") == [a["slug"], b["slug"], c["slug"]]
+    with projects_db.connect_closing() as conn:
+        projects_db.set_project_status(conn, b["id"], "active")
+        assert projects_db.get_project(conn, b["id"]).completed_at is None
+        projects_db.set_project_status(conn, a["id"], "archived")
+        assert projects_db.get_project(conn, a["id"]).completed_at == 100
+
+
+def test_sorted_list_pages_without_repeats_or_gaps(env):
+    projects = _sortable_projects(env, ["d", "b", "e", "a", "c"])
+    client, _state = env
+    seen, cursor = [], None
+    for _ in range(10):
+        url = "/api/registry/projects?archived=true&sort=name&limit=2"
+        if cursor:
+            url += f"&cursor={cursor}"
+        body = client.get(url).json()
+        seen.extend(item["name"] for item in body["items"])
+        cursor = body["next_cursor"]
+        if cursor is None:
+            break
+    assert seen == ["a", "b", "c", "d", "e"]
+    assert len(projects) == 5
+
+
+def test_list_refuses_an_unknown_sort(env):
+    client, _state = env
+    assert client.get("/api/registry/projects?sort=bogus").status_code == 400
+    assert client.get("/api/registry/projects?sort=name&order=up").status_code == 400
+
+
 # ---------------------------------------------------------------------------
 # §11 read gate — 404, never 403
 # ---------------------------------------------------------------------------
@@ -1036,3 +1139,33 @@ def test_detail_usage_tokens_read_not_recorded_without_a_call_log(env):
     client.post(f"/api/registry/projects/{slug}/cards", json={"title": "Draft"})
     usage = client.get(f"/api/registry/projects/{slug}").json()["usage"]
     assert usage == {"runs": 0, "run_seconds": 0, "tokens": None}
+
+
+def test_token_totals_by_task_sums_input_and_output_per_card(tmp_path):
+    import sqlite3
+
+    from hermes_state import kanban_task_token_totals_by_task
+
+    db = tmp_path / "state.db"
+    assert kanban_task_token_totals_by_task(db, ["t1"]) is None
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE api_call_log (kanban_task_id TEXT, input_tokens INTEGER,"
+        " output_tokens INTEGER, cache_read_tokens INTEGER, reasoning_tokens INTEGER)"
+    )
+    conn.executemany(
+        "INSERT INTO api_call_log VALUES (?, ?, ?, 0, 0)",
+        [("t1", 100, 20), ("t1", 5, 5), ("t2", 1, 1), ("t3", 9, 9)],
+    )
+    conn.commit()
+    conn.close()
+    assert kanban_task_token_totals_by_task(db, ["t1", "t2", "t9"]) == {"t1": 130, "t2": 2}
+
+
+def test_list_sorts_by_tokens_and_reports_the_total(env):
+    a, b = _sortable_projects(env, ["One", "Two"])
+    client, _state = env
+    body = client.get("/api/registry/projects?archived=true&sort=tokens").json()
+    # No cards yet: zero recorded, ties newest first.
+    assert [i["slug"] for i in body["items"]] == [b["slug"], a["slug"]]
+    assert [i["usage"]["tokens_total"] for i in body["items"]] == [0, 0]

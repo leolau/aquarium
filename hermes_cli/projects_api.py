@@ -63,7 +63,11 @@ from hermes_cli import (
     run_activity,
 )
 from hermes_cli.profiles import normalize_profile_name, resolve_profile_env
-from hermes_state import kanban_task_call_stats, kanban_tasks_token_totals
+from hermes_state import (
+    kanban_task_call_stats,
+    kanban_task_token_totals_by_task,
+    kanban_tasks_token_totals,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -597,6 +601,190 @@ _HEALTH_ALIASES = {"attention": frozenset({"attention", "stalled"})}
 _STATUS_ALIASES = {"active": frozenset({"active", "planning"})}
 
 
+# ---------------------------------------------------------------------------
+# GET / — sorting
+# ---------------------------------------------------------------------------
+
+#: ``sort=`` values and the order each takes when ``order=`` is absent.
+_SORT_DEFAULT_ORDER = {
+    "created": "desc",
+    "completed": "desc",
+    "due": "asc",
+    "name": "asc",
+    "status": "asc",
+    "duration": "desc",
+    "tokens": "desc",
+}
+
+#: The lifecycle order the ``status`` sort follows.
+_STATUS_SORT_RANK = {
+    "needs_completion": 0,
+    "planning": 1,
+    "active": 2,
+    "paused": 3,
+    "done": 4,
+    "archived": 5,
+}
+
+
+def _sort_spec(sort: Optional[str], order: Optional[str]) -> Optional[tuple[str, bool]]:
+    """``(field, descending)``, or None for the default newest-first order,
+    which keeps its keyset cursor."""
+    field = sort or "created"
+    if field not in _SORT_DEFAULT_ORDER:
+        field = "created"
+    descending = (order or _SORT_DEFAULT_ORDER[field]) == "desc"
+    if field == "created" and descending:
+        return None
+    return field, descending
+
+
+def _encode_offset_cursor(offset: int) -> str:
+    return base64.urlsafe_b64encode(f"@{int(offset)}".encode()).decode()
+
+
+def _decode_offset_cursor(cursor: Optional[str]) -> int:
+    if not cursor:
+        return 0
+    try:
+        raw = base64.urlsafe_b64decode(cursor.encode()).decode()
+        if not raw.startswith("@"):
+            raise ValueError(raw)
+        return max(0, int(raw[1:]))
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid cursor")
+
+
+def _project_run_seconds(project_ids: list[str]) -> dict[str, int]:
+    """Total wall-clock run time per project (a live run counts up to now),
+    the same sum the detail's ``usage.run_seconds`` shows."""
+    now = int(time.time())
+    with projects_db.connect_closing() as conn:
+        rows = conn.execute(
+            "SELECT project_id,"
+            " SUM(MAX(0, COALESCE(ended_at, ?) - started_at)) AS seconds"
+            " FROM project_runs WHERE started_at IS NOT NULL"
+            " GROUP BY project_id",
+            (now,),
+        ).fetchall()
+    wanted = set(project_ids)
+    out = {pid: 0 for pid in project_ids}
+    for row in rows:
+        if row["project_id"] in wanted:
+            out[row["project_id"]] = int(row["seconds"] or 0)
+    return out
+
+
+def _project_last_run_end(project_ids: list[str]) -> dict[str, int]:
+    with projects_db.connect_closing() as conn:
+        rows = conn.execute(
+            "SELECT project_id, MAX(ended_at) AS ended FROM project_runs"
+            " WHERE ended_at IS NOT NULL GROUP BY project_id"
+        ).fetchall()
+    wanted = set(project_ids)
+    return {
+        row["project_id"]: int(row["ended"])
+        for row in rows
+        if row["project_id"] in wanted and row["ended"] is not None
+    }
+
+
+def _project_token_totals(projects: list) -> dict[str, Optional[int]]:
+    """Input + output tokens per project across its cards' worker ledgers
+    (as the detail's ``usage.tokens.total``). None when no ledger the
+    project's cards ran under could be read — "not recorded", not zero."""
+    cards: list[tuple[str, str, Optional[str]]] = []
+    by_board: dict[Optional[str], list[str]] = {}
+    for p in projects:
+        by_board.setdefault(p.board_slug or None, []).append(p.id)
+    for board, ids in by_board.items():
+        with kanban_db.connect_closing(board=board) as bconn:
+            for start in range(0, len(ids), 500):
+                chunk = ids[start:start + 500]
+                marks = ",".join("?" * len(chunk))
+                cards.extend(
+                    (row[0], row[1], row[2])
+                    for row in bconn.execute(
+                        "SELECT project_id, id, assignee FROM tasks"
+                        f" WHERE project_id IN ({marks})",
+                        chunk,
+                    )
+                )
+    out: dict[str, Optional[int]] = {p.id: None for p in projects}
+    with_cards = {pid for pid, _tid, _a in cards}
+    for pid in out:
+        if pid not in with_cards:
+            out[pid] = 0
+    by_home: dict[str, list[tuple[str, str]]] = {}
+    for pid, task_id, assignee in cards:
+        try:
+            home = resolve_profile_env(normalize_profile_name(assignee or "default"))
+        except (FileNotFoundError, ValueError):
+            continue
+        by_home.setdefault(str(home), []).append((pid, task_id))
+    for home, pairs in by_home.items():
+        per_task = kanban_task_token_totals_by_task(
+            Path(home) / "state.db", [tid for _pid, tid in pairs]
+        )
+        if per_task is None:
+            continue
+        for pid, task_id in pairs:
+            out[pid] = (out[pid] or 0) + per_task.get(task_id, 0)
+    return out
+
+
+def _sort_values(rows: list, field: str) -> dict[str, Any]:
+    """The value each project sorts on; None sorts last in either order."""
+    ids = [p.id for p in rows]
+    if field == "created":
+        return {p.id: p.created_at for p in rows}
+    if field == "completed":
+        # Projects closed before ``completed_at`` existed fall back to the
+        # end of their last run.
+        last_end = _project_last_run_end(ids)
+        return {
+            p.id: p.completed_at
+            if p.completed_at is not None
+            else (last_end.get(p.id) if p.status in ("done", "archived") else None)
+            for p in rows
+        }
+    if field == "due":
+        return {p.id: p.due_at for p in rows}
+    if field == "name":
+        return {p.id: (p.name or "").casefold() for p in rows}
+    if field == "status":
+        return {p.id: _STATUS_SORT_RANK.get(p.status, len(_STATUS_SORT_RANK)) for p in rows}
+    if field == "duration":
+        return dict(_project_run_seconds(ids))
+    if field == "tokens":
+        return dict(_project_token_totals(rows))
+    return {}
+
+
+def _sorted_rows(rows: list, values: dict[str, Any], field: str, descending: bool) -> list:
+    """Sort on the field, ties newest first, missing values last."""
+    present = [p for p in rows if values.get(p.id) is not None]
+    missing = [p for p in rows if values.get(p.id) is None]
+    present.sort(key=lambda p: (p.created_at, p.id), reverse=True)
+    present.sort(key=lambda p: values[p.id], reverse=descending)
+    missing.sort(key=lambda p: (p.created_at, p.id), reverse=True)
+    return present + missing
+
+
+def _sort_extra(project, sorted_by: Optional[tuple[str, bool]], values: dict) -> dict:
+    """The sort value a card shows when it isn't already on the card."""
+    if sorted_by is None:
+        return {}
+    field = sorted_by[0]
+    if field == "completed":
+        return {"completed_at": values.get(project.id)}
+    if field == "duration":
+        return {"usage": {"run_seconds": values.get(project.id)}}
+    if field == "tokens":
+        return {"usage": {"tokens_total": values.get(project.id)}}
+    return {}
+
+
 def _list_sync(
     principal,
     *,
@@ -609,11 +797,23 @@ def _list_sync(
     enrolled: frozenset = frozenset(),
     health: Optional[str] = None,
     category: Optional[str] = None,
+    sort: Optional[str] = None,
+    order: Optional[str] = None,
+    offset: int = 0,
 ) -> dict:
     with projects_db.connect_closing() as conn:
         rows = projects_db.list_projects(conn, include_archived=include_archived)
-    # Newest first; the keyset cursor sorts on (created_at, id).
-    rows.sort(key=lambda p: (p.created_at, p.id), reverse=True)
+    sorted_by = _sort_spec(sort, order)
+    sort_values: dict[str, Any] = {}
+    if sorted_by is None:
+        # Newest first; the keyset cursor sorts on (created_at, id).
+        rows.sort(key=lambda p: (p.created_at, p.id), reverse=True)
+    else:
+        field, descending = sorted_by
+        sort_values = _sort_values(rows, field)
+        rows = _sorted_rows(rows, sort_values, field, descending)
+        # Any other order pages by position in the sorted list.
+        cursor = None
 
     health_set = _HEALTH_ALIASES.get(health) if health else None
     if health and health_set is None:
@@ -640,7 +840,9 @@ def _list_sync(
     last_examined = None
     exhausted = True
     with projects_db.connect_closing() as conn:
-        for p in rows:
+        for index, p in enumerate(rows):
+            if sorted_by is not None and index < offset:
+                continue
             if cursor and (p.created_at, p.id) >= cursor:
                 continue
             if len(out) >= limit:
@@ -648,7 +850,9 @@ def _list_sync(
                 # strictly after ``last_examined``.
                 exhausted = False
                 break
-            last_examined = (p.created_at, p.id)
+            last_examined = (
+                (p.created_at, p.id) if sorted_by is None else index + 1
+            )
             if status == "archived":
                 # The Archived chip must find every shelved row (U6) —
                 # including rows archived before Block 4b, when shelving
@@ -688,13 +892,18 @@ def _list_sync(
                         "output_rollup": _output_rollup(outputs),
                         "member_count": len(members),
                         "health": item_health,
+                        **_sort_extra(p, sorted_by, sort_values),
                     },
                 )
             )
 
     next_cursor = None
     if not exhausted and last_examined:
-        next_cursor = _encode_cursor(*last_examined)
+        next_cursor = (
+            _encode_cursor(*last_examined)
+            if sorted_by is None
+            else _encode_offset_cursor(last_examined)
+        )
     return {"items": out, "next_cursor": next_cursor}
 
 
@@ -706,7 +915,18 @@ async def list_projects(request: Request) -> dict[str, Any]:
         limit = min(int(params.get("limit", _DEFAULT_LIMIT)), _MAX_LIMIT)
     except ValueError:
         limit = _DEFAULT_LIMIT
-    cursor = _decode_cursor(params.get("cursor"))
+    sort = params.get("sort") or None
+    order = params.get("order") or None
+    if sort is not None and sort not in _SORT_DEFAULT_ORDER:
+        raise HTTPException(status_code=400, detail="invalid sort")
+    if order is not None and order not in ("asc", "desc"):
+        raise HTTPException(status_code=400, detail="invalid order")
+    offset = 0
+    cursor = None
+    if _sort_spec(sort, order) is None:
+        cursor = _decode_cursor(params.get("cursor"))
+    else:
+        offset = _decode_offset_cursor(params.get("cursor"))
     enrolled = frozenset(await _enrolled_profiles(principal.user_id))
     return await asyncio.to_thread(
         _list_sync,
@@ -720,6 +940,9 @@ async def list_projects(request: Request) -> dict[str, Any]:
         enrolled=enrolled,
         health=params.get("health"),
         category=params.get("category") or None,
+        sort=sort,
+        order=order,
+        offset=offset,
     )
 
 
