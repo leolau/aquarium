@@ -320,6 +320,9 @@ describe("ProjectsList", () => {
     expect(html).toContain('data-component="ProjectsCategoryGrid"');
     expect(html).toContain('data-component="ManageCategoriesAction"');
     expect(html).not.toContain("Load more");
+    // Bulk selection is the list's; the board keeps its own move controls.
+    expect(html).not.toContain('data-component="ProjectsBulkBar"');
+    expect(html).not.toContain('data-component="ProjectsPagination"');
   });
 
   it("renders the server's first page with its filters", () => {
@@ -333,7 +336,11 @@ describe("ProjectsList", () => {
     for (const label of ["Active", "Repeatable", "Standing", "Attention", "Paused", "Done", "All", "Archived"]) {
       expect(html).toContain(label);
     }
-    expect(html).toContain("Load more");
+    // Page numbers and the bulk-selection bar replace "Load more".
+    expect(html).not.toContain("Load more");
+    expect(html).toContain('data-component="ProjectsPagination"');
+    expect(html).toContain('data-component="ProjectsBulkBar"');
+    expect(html).toContain('aria-label="Select Send the Monday digest"');
     // The layout toggle is there in list mode; the board is not.
     expect(html).toContain('data-component="ProjectsLayoutToggle"');
     expect(html).not.toContain('data-component="ProjectsCategoryBoard"');

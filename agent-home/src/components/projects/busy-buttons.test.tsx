@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ProjectsList } from "@/components/projects/ProjectsList";
+import type { ProjectListItem } from "@/types";
 
 afterEach(() => {
   cleanup();
@@ -10,30 +11,63 @@ afterEach(() => {
 });
 
 describe("busy buttons — projects", () => {
-  it("ProjectsList: a fast double click on Load more fetches the next page once", async () => {
+  it("ProjectsList: a fast double click on Apply category sends each PATCH once", async () => {
     let release!: () => void;
     const fetchMock = vi.fn(
-      () =>
+      (_url: string, init?: RequestInit) =>
         new Promise<Response>((res) => {
-          release = () =>
-            res(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
+          const body =
+            init?.method === "PATCH" ? {} : { items: [], next_cursor: null };
+          release = () => res(new Response(JSON.stringify(body), { status: 200 }));
         }),
     );
     vi.stubGlobal("fetch", fetchMock);
     window.history.replaceState(null, "", "/projects?layout=list");
+    const item = {
+      id: "prj_1",
+      slug: "monday-digest",
+      name: "Send the Monday digest",
+      category_id: null,
+      archived: false,
+      status: "active",
+      cadence: "repeatable",
+      progress: {
+        rung: "cards",
+        label: "cards",
+        headline: "0 of 1 cards done",
+        cards: { total: 1, done: 0, running: 0, blocked: 0 },
+      },
+    } as unknown as ProjectListItem;
     render(
-      <ProjectsList initial={{ items: [], next_cursor: "cur_2" }} />,
+      <ProjectsList
+        initial={{ items: [item], next_cursor: null }}
+        categories={[
+          {
+            id: "pcat_sales",
+            name: "Sales",
+            color: null,
+            position: 0,
+            created_at: 0,
+            created_by: null,
+            project_count: 0,
+          },
+        ]}
+      />,
     );
-    const button = screen.getByRole("button", { name: "Load more" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select Send the Monday digest" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "New category" }), {
+      target: { value: "pcat_sales" },
+    });
+    const button = screen.getByRole("button", { name: "Apply category" });
     fireEvent.click(button);
     fireEvent.click(button);
-    const pageCalls = () =>
-      fetchMock.mock.calls.filter((c) => String((c as unknown[])[0]).includes("cur_2")).length;
-    expect(pageCalls()).toBe(1);
+    const patches = () =>
+      fetchMock.mock.calls.filter((c) => (c as unknown[])[1] && ((c as unknown[])[1] as RequestInit).method === "PATCH").length;
+    expect(patches()).toBe(1);
     await act(async () => {
       release();
     });
-    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+    expect(patches()).toBe(1);
     vi.unstubAllGlobals();
     window.history.replaceState(null, "", "/");
   });

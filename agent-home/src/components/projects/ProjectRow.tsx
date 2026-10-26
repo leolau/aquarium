@@ -135,21 +135,51 @@ export function ProjectCardBody({
   );
 }
 
-/** One project card in a list: the shared `ProjectCardBody` in its frame. */
+/** One project card in a list: the shared `ProjectCardBody` in its frame.
+ * With `selection` the card leads with a checkbox (the list's bulk actions);
+ * the body stays the same card as everywhere else. */
 export function ProjectRow({
   project,
   categories = [],
+  selection,
 }: {
   project: ProjectListItem;
   categories?: readonly ProjectCategory[];
+  selection?: { checked: boolean; onToggle: () => void };
 }) {
   return (
     <li
       data-component="ProjectRow"
       data-slug={project.slug}
-      className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3"
+      data-selected={selection?.checked ? "true" : undefined}
+      className={`rounded-2xl border bg-[var(--color-surface)] p-3 ${
+        selection
+          ? `flex items-start gap-2 ${
+              selection.checked
+                ? "border-[var(--color-accent)]"
+                : "border-[var(--color-border)]"
+            }`
+          : "border-[var(--color-border)]"
+      }`}
     >
-      <ProjectCardBody project={project} categories={categories} />
+      {selection ? (
+        <label className="-my-2 -ml-1 flex shrink-0 cursor-pointer items-center px-1">
+          <input
+            type="checkbox"
+            checked={selection.checked}
+            onChange={selection.onToggle}
+            aria-label={`Select ${project.name}`}
+            className="h-4 w-4"
+          />
+        </label>
+      ) : null}
+      {selection ? (
+        <div className="min-w-0 flex-1">
+          <ProjectCardBody project={project} categories={categories} />
+        </div>
+      ) : (
+        <ProjectCardBody project={project} categories={categories} />
+      )}
     </li>
   );
 }

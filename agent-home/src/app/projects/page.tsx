@@ -57,8 +57,8 @@ export default async function Page({
         category: query.get("category") ?? undefined,
         sort: query.get("sort") ?? undefined,
         order: query.get("order") ?? undefined,
-        // The board reads every page; start it with the largest one.
-        limit: state.layout === "board" ? 200 : 50,
+        // Both layouts read every page; start with the largest one.
+        limit: 200,
       }),
       client.projectCategories().catch(() => ({ items: [] })),
     ]);
