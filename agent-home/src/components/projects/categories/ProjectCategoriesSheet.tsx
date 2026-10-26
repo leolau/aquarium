@@ -150,7 +150,11 @@ export function ProjectCategoriesSheet({
   const [newName, setNewName] = useState("");
   const [newColor, setNewColor] = useState<string | null>(CATEGORY_COLORS[0].value);
   const [nameError, setNameError] = useState<string | null>(null);
-  const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
+  const [renaming, setRenaming] = useState<{
+    id: string;
+    name: string;
+    color: string | null;
+  } | null>(null);
   const [renameError, setRenameError] = useState<string | null>(null);
   const [paletteFor, setPaletteFor] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<ProjectCategory | null>(null);
@@ -231,16 +235,20 @@ export function ProjectCategoriesSheet({
     if (ok) setNewName("");
   };
 
-  const rename = async (category: ProjectCategory, name: string) => {
+  /** Save the edit form: only the fields that changed, in one PATCH. */
+  const rename = async (category: ProjectCategory, name: string, color: string | null) => {
     const problem = categoryNameError(name);
     setRenameError(problem);
     if (problem) return;
-    if (name.trim() === category.name) {
+    const body: Record<string, unknown> = {};
+    if (name.trim() !== category.name) body.name = name.trim();
+    if ((category.color ?? null) !== color) body.color = color;
+    if (Object.keys(body).length === 0) {
       setRenaming(null);
       return;
     }
     const ok = await commit(`rename:${category.id}`, [
-      { path: categoryPath(category.id), method: "PATCH", body: { name: name.trim() } },
+      { path: categoryPath(category.id), method: "PATCH", body },
     ]);
     if (ok) setRenaming(null);
   };
@@ -336,7 +344,7 @@ export function ProjectCategoriesSheet({
                             className="flex min-w-0 flex-1 items-center gap-1.5"
                             onSubmit={(e) => {
                               e.preventDefault();
-                              void rename(category, renaming.name);
+                              void rename(category, renaming.name, renaming.color);
                             }}
                           >
                             <input
@@ -344,7 +352,7 @@ export function ProjectCategoriesSheet({
                               aria-label={`New name for ${category.name}`}
                               value={renaming.name}
                               maxLength={CATEGORY_NAME_MAX + 10}
-                              onChange={(e) => setRenaming({ id: category.id, name: e.target.value })}
+                              onChange={(e) => setRenaming({ ...renaming, name: e.target.value })}
                               className={inputClass(Boolean(renameError))}
                             />
                             <ActionButton
@@ -381,7 +389,14 @@ export function ProjectCategoriesSheet({
                       {isRenaming && renameError ? (
                         <span className="text-xs text-red-400">{renameError}</span>
                       ) : null}
-                      {paletteFor === category.id ? (
+                      {isRenaming ? (
+                        <Swatches
+                          allowNone
+                          value={renaming.color}
+                          disabled={busy}
+                          onPick={(color) => setRenaming({ ...renaming, color })}
+                        />
+                      ) : paletteFor === category.id ? (
                         <Swatches
                           allowNone
                           value={category.color}
@@ -413,10 +428,16 @@ export function ProjectCategoriesSheet({
                           <button
                             type="button"
                             aria-label={`Rename ${category.name}`}
+                            title="Rename or change colour"
                             disabled={busy}
                             onClick={() => {
                               setRenameError(null);
-                              setRenaming({ id: category.id, name: category.name });
+                              setPaletteFor(null);
+                              setRenaming({
+                                id: category.id,
+                                name: category.name,
+                                color: category.color ?? null,
+                              });
                             }}
                             className={smallButton}
                           >

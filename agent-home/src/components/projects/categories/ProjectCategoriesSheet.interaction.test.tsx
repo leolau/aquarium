@@ -115,6 +115,43 @@ describe("ProjectCategoriesSheet", () => {
     expect(utils.getByText("Revenue")).toBeTruthy();
   });
 
+  it("changes the name and the colour together from the rename form", async () => {
+    const renamed = { ...SALES, name: "Revenue", color: "#3b82f6" };
+    const fresh = [renamed, MARKETING, RESEARCH];
+    const { utils, writes, onChanged } = setup(() => jsonResponse(200, renamed), fresh);
+    fireEvent.click(utils.getByRole("button", { name: "Rename Sales" }));
+    const row = utils.container.querySelector('[data-category-id="pcat_sales"]') as HTMLElement;
+    // The form starts on the category's current colour.
+    expect(within(row).getByRole("button", { name: "Red" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.change(utils.getByLabelText("New name for Sales"), { target: { value: "Revenue" } });
+    fireEvent.click(within(row).getByRole("button", { name: "Blue" }));
+    await act(async () => {
+      fireEvent.click(utils.getByRole("button", { name: "Save" }));
+    });
+    await waitFor(() => expect(onChanged).toHaveBeenCalledWith(fresh));
+    expect(writes()).toEqual([
+      expect.objectContaining({
+        url: "/api/project-categories/pcat_sales",
+        method: "PATCH",
+        body: { name: "Revenue", color: "#3b82f6" },
+      }),
+    ]);
+  });
+
+  it("the rename form can change only the colour", async () => {
+    const { utils, writes, onChanged } = setup(() => jsonResponse(200, MARKETING));
+    fireEvent.click(utils.getByRole("button", { name: "Rename Marketing" }));
+    const row = utils.container.querySelector('[data-category-id="pcat_mkt"]') as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: "Teal" }));
+    await act(async () => {
+      fireEvent.click(utils.getByRole("button", { name: "Save" }));
+    });
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+    expect(writes()).toEqual([
+      expect.objectContaining({ method: "PATCH", body: { color: "#14b8a6" } }),
+    ]);
+  });
+
   it("recolours from the palette", async () => {
     const { utils, writes, onChanged } = setup(() => jsonResponse(200, MARKETING));
     fireEvent.click(utils.getByRole("button", { name: "Change colour of Marketing" }));

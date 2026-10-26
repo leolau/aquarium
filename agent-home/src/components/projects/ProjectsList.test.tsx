@@ -1,7 +1,11 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+}));
 
 import {
   CADENCE_GLYPH,
@@ -11,8 +15,10 @@ import {
 import { ProjectsHomeCard } from "@/components/projects/ProjectsHomeCard";
 import { ProjectsList } from "@/components/projects/ProjectsList";
 import {
+  DEFAULT_LAYOUT,
   DEFAULT_VIEW,
   EMPTY_FILTERS,
+  UNCATEGORIZED_FILTER,
   filtersFromParams,
   filtersToParams,
 } from "@/components/projects/filters";
@@ -90,12 +96,15 @@ describe("projects filter URL round-trip", () => {
     for (const [qs, view] of cases) {
       expect(filtersFromParams(new URLSearchParams(qs)).view).toBe(view);
       // Round-trips: the same view produces the one narrowing parameter back.
-      expect(filtersToParams({ view, q: "", layout: "list" }).toString()).toBe(qs);
+      expect(filtersToParams({ ...EMPTY_FILTERS, view }).toString()).toBe(qs);
+      expect(filtersToParams({ ...EMPTY_FILTERS, view, layout: "list" }).toString()).toBe(
+        `${qs}&layout=list`,
+      );
     }
   });
 
   it("carries the search and keeps the cursor out of the shareable filter", () => {
-    const state = { view: "standing" as const, q: "digest", layout: "list" as const };
+    const state = { view: "standing" as const, q: "digest", layout: "list" as const, category: "" };
     const params = filtersToParams(state, "cur_2");
     expect(params.get("q")).toBe("digest");
     expect(params.get("cursor")).toBe("cur_2");
@@ -104,24 +113,39 @@ describe("projects filter URL round-trip", () => {
 });
 
 describe("projects layout URL round-trip", () => {
-  it("is the list when absent, and only `layout=board` selects the board", () => {
-    expect(filtersFromParams(new URLSearchParams()).layout).toBe("list");
-    expect(filtersFromParams(new URLSearchParams("layout=grid")).layout).toBe("list");
+  it("is the board when absent, and only `layout=list` selects the list", () => {
+    expect(DEFAULT_LAYOUT).toBe("board");
+    expect(filtersFromParams(new URLSearchParams()).layout).toBe("board");
+    expect(filtersFromParams(new URLSearchParams("status=active")).layout).toBe("board");
+    expect(filtersFromParams(new URLSearchParams("layout=grid")).layout).toBe("board");
     expect(filtersFromParams(new URLSearchParams("layout=board")).layout).toBe("board");
-    // The list never writes the parameter, so existing shared links are unchanged.
+    expect(filtersFromParams(new URLSearchParams("layout=list")).layout).toBe("list");
+    // The board never writes the parameter, so the bare URL is the board.
     expect(filtersToParams(EMPTY_FILTERS).has("layout")).toBe(false);
   });
 
-  it("round-trips the board alongside the view and the search", () => {
-    const state = { view: "standing" as const, q: "digest", layout: "board" as const };
+  it("round-trips the list alongside the view and the search", () => {
+    const state = { view: "standing" as const, q: "digest", layout: "list" as const, category: "" };
     const params = filtersToParams(state, "cur_2");
-    expect(params.get("layout")).toBe("board");
+    expect(params.get("layout")).toBe("list");
     expect(filtersFromParams(filtersToParams(state))).toEqual(state);
-    expect(filtersFromParams(new URLSearchParams("status=paused&layout=board"))).toEqual({
+    expect(filtersFromParams(new URLSearchParams("status=paused&layout=list"))).toEqual({
       view: "paused",
       q: "",
-      layout: "board",
+      layout: "list",
+      category: "",
     });
+  });
+
+  it("round-trips a category-narrowed list, and the board drops the category", () => {
+    const state = { ...EMPTY_FILTERS, layout: "list" as const, category: "pcat_sales" };
+    expect(filtersToParams(state).toString()).toBe("status=active&layout=list&category=pcat_sales");
+    expect(filtersFromParams(filtersToParams(state))).toEqual(state);
+    expect(filtersFromParams(new URLSearchParams("layout=list&category=none")).category).toBe(
+      UNCATEGORIZED_FILTER,
+    );
+    expect(filtersToParams({ ...state, layout: "board" }).has("category")).toBe(false);
+    expect(filtersFromParams(new URLSearchParams("category=pcat_sales")).category).toBe("");
   });
 });
 
@@ -175,10 +199,22 @@ describe("ProjectRow", () => {
   });
 });
 
+const LIST_FILTERS = { ...EMPTY_FILTERS, layout: "list" as const };
+
 describe("ProjectsList", () => {
+  it("defaults to the category board", () => {
+    const html = renderToStaticMarkup(
+      <ProjectsList initial={{ items: [ITEM], next_cursor: null }} />,
+    );
+    expect(html).toContain('data-component="ProjectsCategoryBoard"');
+    expect(html).toContain('data-component="ProjectsCategoryGrid"');
+    expect(html).toContain('data-component="ManageCategoriesAction"');
+    expect(html).not.toContain("Load more");
+  });
+
   it("renders the server's first page with its filters", () => {
     const html = renderToStaticMarkup(
-      <ProjectsList initial={{ items: [ITEM], next_cursor: "cur_2" }} />,
+      <ProjectsList initial={{ items: [ITEM], next_cursor: "cur_2" }} initialFilters={LIST_FILTERS} />,
     );
     expect(html).toContain('data-component="ProjectsList"');
     expect(html).toContain('data-component="ProjectsFilters"');
@@ -195,7 +231,7 @@ describe("ProjectsList", () => {
 
   it("says what the page is for when there is nothing in it", () => {
     const html = renderToStaticMarkup(
-      <ProjectsList initial={{ items: [], next_cursor: null }} />,
+      <ProjectsList initial={{ items: [], next_cursor: null }} initialFilters={LIST_FILTERS} />,
     );
     expect(html).toContain('data-component="ProjectsEmpty"');
     expect(html).toContain("a recurring job, a standing duty");
@@ -205,13 +241,13 @@ describe("ProjectsList", () => {
     // A client method with no caller is the exact shape of the U1 defect:
     // the door must exist on the *rendered* page, in both states.
     const withItems = renderToStaticMarkup(
-      <ProjectsList initial={{ items: [ITEM], next_cursor: null }} />,
+      <ProjectsList initial={{ items: [ITEM], next_cursor: null }} initialFilters={LIST_FILTERS} />,
     );
     expect(withItems).toContain('href="/projects/new"');
     expect(withItems).toContain("New project");
 
     const empty = renderToStaticMarkup(
-      <ProjectsList initial={{ items: [], next_cursor: null }} />,
+      <ProjectsList initial={{ items: [], next_cursor: null }} initialFilters={LIST_FILTERS} />,
     );
     expect(empty).toContain('href="/projects/new"');
     expect(empty).toContain("New project");

@@ -46,20 +46,25 @@ export function groupProjectsByCategory(
 }
 
 /**
- * The `/projects` kanban: horizontally scrolling, snap-aligned columns (one
- * per category, then Uncategorized). A card moves through its "Move to…"
- * select or, on desktop, by dragging it onto another column; both send the
- * same `PATCH /api/projects/{slug}` `{category_id}` through
- * `useProjectAction`, one move at a time, and patch the item locally.
+ * The `/projects` category board: a responsive grid of tiles (one per
+ * category, then Uncategorized). Each tile shows its project count and a
+ * List button that opens the list view narrowed to that category. A card
+ * moves through its "Move to…" select or, on desktop, by dragging it onto
+ * another tile; both send the same `PATCH /api/projects/{slug}`
+ * `{category_id}` through `useProjectAction`, one move at a time, and patch
+ * the item locally.
  */
 export function ProjectsCategoryBoard({
   items,
   categories,
   onMoved,
+  onOpenList,
 }: {
   items: ProjectListItem[];
   categories: ProjectCategory[];
   onMoved: (slug: string, categoryId: string | null) => void;
+  /** Open the list view narrowed to one category (null = Uncategorized). */
+  onOpenList?: (categoryId: string | null) => void;
 }) {
   const action = useProjectAction<Project>();
   // The card the last move was for: busy while in flight, owns the error.
@@ -112,11 +117,14 @@ export function ProjectsCategoryBoard({
           data-component="ProjectsCategoryHint"
           className="text-xs text-[var(--color-muted)]"
         >
-          No categories yet — use Manage categories to add columns like Sales
+          No categories yet — use Manage categories to add groups like Sales
           or Research.
         </p>
       ) : null}
-      <div className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2">
+      <div
+        data-component="ProjectsCategoryGrid"
+        className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3"
+      >
         {columns.map((column) => {
           const columnId = column.category?.id ?? null;
           const name = column.category?.name ?? "Uncategorized";
@@ -133,7 +141,7 @@ export function ProjectsCategoryBoard({
                 }
               }}
               onDrop={(e) => drop(e, columnId)}
-              className={`flex w-64 shrink-0 snap-start flex-col gap-2 rounded-2xl border bg-[var(--color-surface-2)] p-2 ${
+              className={`flex min-w-0 flex-col gap-2 rounded-2xl border bg-[var(--color-surface-2)] p-2 ${
                 dropOver === columnId
                   ? "border-[var(--color-accent)]"
                   : "border-[var(--color-border)]"
@@ -154,17 +162,30 @@ export function ProjectsCategoryBoard({
                 </h2>
                 <span
                   data-component="ProjectsCategoryCount"
-                  className="text-xs text-[var(--color-muted)]"
+                  className="shrink-0 text-xs text-[var(--color-muted)]"
                 >
-                  {column.items.length}
+                  {column.items.length}{" "}
+                  {column.items.length === 1 ? "project" : "projects"}
                 </span>
+                {onOpenList ? (
+                  <button
+                    type="button"
+                    data-component="ProjectsCategoryListAction"
+                    aria-label={`List ${name} projects`}
+                    title={`List ${name} projects`}
+                    onClick={() => onOpenList(columnId)}
+                    className="shrink-0 rounded-lg border border-[var(--color-border)] px-2 py-1 text-xs"
+                  >
+                    List
+                  </button>
+                ) : null}
               </header>
               {column.items.length === 0 ? (
                 <p className="px-1 py-3 text-center text-xs text-[var(--color-muted)]">
                   No projects
                 </p>
               ) : (
-                <ul className="flex flex-col gap-2">
+                <ul className="flex max-h-[28rem] flex-col gap-2 overflow-y-auto">
                   {column.items.map((project) => {
                     const mine = target === project.slug;
                     return (

@@ -45,23 +45,35 @@ export const FILTER_CHIPS: { view: ProjectListView; label: string }[] = [
 export const DEFAULT_VIEW: ProjectListView = "active";
 
 /**
- * How `/projects` lays the matching projects out: the paged list, or the
- * category board (one column per category). A view preference, not a
- * filter — it rides in the URL as `layout=board` but never reaches the
- * upstream projects API.
+ * How `/projects` lays the matching projects out: the category board (one
+ * grid tile per category, the default), or the paged list. A view
+ * preference, not a filter — it rides in the URL as `layout=list` but never
+ * reaches the upstream projects API.
  */
 export type ProjectsLayout = "list" | "board";
+
+export const DEFAULT_LAYOUT: ProjectsLayout = "board";
+
+/** The `category` value that narrows the list to Uncategorized projects. */
+export const UNCATEGORIZED_FILTER = "none";
 
 export interface ProjectsFilterState {
   view: ProjectListView;
   q: string;
   layout: ProjectsLayout;
+  /**
+   * The list view narrowed to one category: a category id,
+   * `UNCATEGORIZED_FILTER`, or "" for every category. The board ignores it
+   * (it already groups by category).
+   */
+  category: string;
 }
 
 export const EMPTY_FILTERS: ProjectsFilterState = {
   view: DEFAULT_VIEW,
   q: "",
-  layout: "list",
+  layout: DEFAULT_LAYOUT,
+  category: "",
 };
 
 /** Read the filter state out of a shared `/projects?…` URL. */
@@ -79,13 +91,15 @@ export function filtersFromParams(
   else if (params.get("status") === "done") view = "done";
   // `status=active` and anything unrecognised both land on the default view.
   const layout: ProjectsLayout =
-    params.get("layout") === "board" ? "board" : "list";
-  return { view, q: params.get("q") ?? "", layout };
+    params.get("layout") === "list" ? "list" : DEFAULT_LAYOUT;
+  const category = layout === "list" ? (params.get("category") ?? "") : "";
+  return { view, q: params.get("q") ?? "", layout, category };
 }
 
 /**
  * The inverse, for the address bar and for the BFF call. `layout` is only
- * written for the board (absent = list); the BFF call drops it.
+ * written for the list (absent = board); the BFF call drops it. `category`
+ * is only written for the list.
  */
 export function filtersToParams(
   value: ProjectsFilterState,
@@ -119,7 +133,10 @@ export function filtersToParams(
       params.set("status", "active");
   }
   if (value.q) params.set("q", value.q);
-  if (value.layout === "board") params.set("layout", "board");
+  if (value.layout === "list") {
+    params.set("layout", "list");
+    if (value.category) params.set("category", value.category);
+  }
   if (cursor) params.set("cursor", cursor);
   return params;
 }
