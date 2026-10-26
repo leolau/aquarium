@@ -49,10 +49,10 @@ export function groupProjectsByCategory(
  * The `/projects` category board: a responsive grid of tiles (one per
  * category, then Uncategorized). Each tile shows its project count and a
  * List button that opens the list view narrowed to that category. A card
- * moves through its "Move to…" select or, on desktop, by dragging it onto
- * another tile; both send the same `PATCH /api/projects/{slug}`
- * `{category_id}` through `useProjectAction`, one move at a time, and patch
- * the item locally.
+ * moves by dragging it onto another tile, which sends
+ * `PATCH /api/projects/{slug}` `{category_id}` through `useProjectAction`,
+ * one move at a time, and patches the item locally. (Several at once: the
+ * list's tick boxes + Set category.)
  */
 export function ProjectsCategoryBoard({
   items,
@@ -193,11 +193,9 @@ export function ProjectsCategoryBoard({
                         key={project.id}
                         project={project}
                         categories={ordered}
-                        columnId={columnId}
                         busy={mine && action.busy}
                         disabled={action.busy && !mine}
                         failure={mine && action.error ? action : null}
-                        onMove={(next) => move(project.slug, next)}
                       />
                     );
                   })}

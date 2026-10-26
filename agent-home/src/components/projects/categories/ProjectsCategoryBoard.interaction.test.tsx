@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * The `/projects` category board: grouping (column order, unknown/null →
- * Uncategorized), the move select and drag-and-drop sending the one
+ * Uncategorized), drag-and-drop sending the one
  * `{category_id}` PATCH, and the List | Board toggle reading every page.
  */
 import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
@@ -108,6 +108,24 @@ function columnNames(container: HTMLElement): string[] {
   ).map((node) => node.getAttribute("aria-label") ?? "");
 }
 
+function dragTo(container: HTMLElement, slug: string, category: string) {
+  const store = new Map<string, string>();
+  const dataTransfer = {
+    get types() {
+      return Array.from(store.keys());
+    },
+    setData: (type: string, value: string) => store.set(type, value),
+    getData: (type: string) => store.get(type) ?? "",
+    effectAllowed: "all",
+    dropEffect: "none",
+  };
+  const card = container.querySelector(`[data-slug="${slug}"]`)!;
+  const column = container.querySelector(`[data-category="${category}"]`)!;
+  fireEvent.dragStart(card, { dataTransfer });
+  fireEvent.dragOver(column, { dataTransfer });
+  fireEvent.drop(column, { dataTransfer });
+}
+
 describe("groupProjectsByCategory", () => {
   it("orders columns by position and ends with Uncategorized", () => {
     const columns = groupProjectsByCategory([], [RESEARCH, SALES, MARKETING]);
@@ -204,18 +222,23 @@ describe("ProjectsCategoryBoard", () => {
     expect(container.querySelector('[data-component="ProjectsCategoryHint"]')).not.toBeNull();
   });
 
-  it("the Move to… select sends one PATCH with the category id and patches locally", async () => {
+  it("has no per-card category select: cards move by drag only", () => {
+    const { container } = render(
+      <ProjectsCategoryBoard items={[DIGEST, NOTES]} categories={[SALES]} onMoved={() => {}} />,
+    );
+    expect(container.querySelector('[data-component="ProjectCategoryCard"] select')).toBeNull();
+  });
+
+  it("a drop sends one PATCH with the category id and patches locally", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValue(jsonResponse(200, { ...NOTES, category_id: "pcat_sales" }));
     vi.stubGlobal("fetch", fetchMock);
     const onMoved = vi.fn();
-    const { getByLabelText } = render(
+    const { container } = render(
       <ProjectsCategoryBoard items={[NOTES]} categories={[SALES]} onMoved={onMoved} />,
     );
-    const select = getByLabelText("Move Field notes to…") as HTMLSelectElement;
-    expect(select.value).toBe("");
-    fireEvent.change(select, { target: { value: "pcat_sales" } });
+    dragTo(container, "field-notes", "pcat_sales");
 
     await waitFor(() => expect(onMoved).toHaveBeenCalledWith("field-notes", "pcat_sales"));
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -228,18 +251,16 @@ describe("ProjectsCategoryBoard", () => {
     expect(router.refresh).not.toHaveBeenCalled();
   });
 
-  it("moving to Uncategorized clears the category with null", async () => {
+  it("dropping on Uncategorized clears the category with null", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValue(jsonResponse(200, { ...DIGEST, category_id: null }));
     vi.stubGlobal("fetch", fetchMock);
     const onMoved = vi.fn();
-    const { getByLabelText } = render(
+    const { container } = render(
       <ProjectsCategoryBoard items={[DIGEST]} categories={[SALES]} onMoved={onMoved} />,
     );
-    fireEvent.change(getByLabelText("Move Send the Monday digest to…"), {
-      target: { value: "" },
-    });
+    dragTo(container, "monday-digest", "none");
     await waitFor(() => expect(onMoved).toHaveBeenCalledWith("monday-digest", null));
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     expect(JSON.parse(String(init.body))).toEqual({ category_id: null });
@@ -251,12 +272,10 @@ describe("ProjectsCategoryBoard", () => {
       vi.fn().mockResolvedValue(jsonResponse(422, { detail: "unknown category" })),
     );
     const onMoved = vi.fn();
-    const { container, getByLabelText } = render(
+    const { container } = render(
       <ProjectsCategoryBoard items={[DIGEST, NOTES]} categories={[SALES]} onMoved={onMoved} />,
     );
-    fireEvent.change(getByLabelText("Move Field notes to…"), {
-      target: { value: "pcat_sales" },
-    });
+    dragTo(container, "field-notes", "pcat_sales");
     const card = container.querySelector<HTMLElement>('[data-slug="field-notes"]')!;
     await waitFor(() =>
       expect(card.querySelector('[data-component="ActionError"]')).not.toBeNull(),

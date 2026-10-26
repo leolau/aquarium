@@ -21,7 +21,21 @@ interface BulkResult {
   label?: string;
   done: number;
   failed: { slug: string; name: string; error: string }[];
+  /** Left unsent because the server stopped answering (e.g. restarting). */
+  notSent: number;
 }
+
+/** Waits before re-sending to a server that did not answer: a deploy
+ * restarts it for ~30s, so ~20s of retries ride most of that out. */
+export const UNREACHABLE_RETRY_MS = [2_000, 6_000, 12_000];
+
+/** No answer from the AI layer (network, or the BFF's 502–504), as opposed
+ * to a refusal: worth re-sending with the same idempotency key. */
+function unreachable(status: number): boolean {
+  return status === 0 || status === 502 || status === 503 || status === 504;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const DONE_VERB: Record<BulkKind, string> = {
   category: "Moved",
@@ -67,7 +81,11 @@ export function ProjectsBulkBar({
 }) {
   const [target, setTarget] = useState("");
   const [confirming, setConfirming] = useState(false);
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [progress, setProgress] = useState<{
+    done: number;
+    total: number;
+    waiting?: boolean;
+  } | null>(null);
   const [result, setResult] = useState<BulkResult | null>(null);
 
   const selectedSlugs = new Set(selected.map((p) => p.slug));
@@ -87,18 +105,34 @@ export function ProjectsBulkBar({
     const succeeded: string[] = [];
     const failed: BulkResult["failed"] = [];
     const categoryId = target === UNCATEGORIZED_FILTER ? null : target;
+    let notSent = 0;
     for (const [i, project] of targets.entries()) {
       const base = `/api/projects/${encodeURIComponent(project.slug)}`;
-      const res =
+      // One key per project, reused on every re-send so a write that did
+      // land is never applied twice.
+      const key = newIdempotencyKey();
+      const send = () =>
         kind === "category"
-          ? await sendProjectAction(base, newIdempotencyKey(), {
+          ? sendProjectAction(base, key, {
               method: "PATCH",
               body: { category_id: categoryId },
             })
-          : await sendProjectAction(`${base}/${kind}`, newIdempotencyKey(), {
+          : sendProjectAction(`${base}/${kind}`, key, {
               method: "POST",
               body: {},
             });
+      let res = await send();
+      for (const ms of UNREACHABLE_RETRY_MS) {
+        if (res.ok || !unreachable(res.status)) break;
+        setProgress({ done: i, total: targets.length, waiting: true });
+        await sleep(ms);
+        res = await send();
+      }
+      if (!res.ok && unreachable(res.status)) {
+        // Still no answer: stop instead of failing every remaining one.
+        notSent = targets.length - i;
+        break;
+      }
       if (res.ok) succeeded.push(project.slug);
       else
         failed.push({
@@ -110,7 +144,7 @@ export function ProjectsBulkBar({
     }
     setProgress(null);
     setConfirming(false);
-    setResult({ kind, label, done: succeeded.length, failed });
+    setResult({ kind, label, done: succeeded.length, failed, notSent });
     onDone(succeeded);
   }
 
@@ -123,9 +157,11 @@ export function ProjectsBulkBar({
     target === UNCATEGORIZED_FILTER
       ? "Uncategorized"
       : ordered.find((c) => c.id === target)?.name;
-  const working = progress
-    ? `Working… ${progress.done} of ${progress.total}`
-    : "Working…";
+  const working = progress?.waiting
+    ? "Waiting for the server…"
+    : progress
+      ? `Working… ${progress.done} of ${progress.total}`
+      : "Working…";
 
   return (
     <div data-component="ProjectsBulkBar" className="flex flex-col gap-2 text-xs">
@@ -224,6 +260,13 @@ export function ProjectsBulkBar({
                 {result.kind === "archive"
                   ? " You can bring them back from the Archived view."
                   : ""}
+              </p>
+            ) : null}
+            {result.notSent > 0 ? (
+              <p data-component="ProjectsBulkNotSent" className="text-red-600">
+                The server didn&apos;t answer (it may be restarting), so{" "}
+                {plural(result.notSent)} {result.notSent === 1 ? "was" : "were"}{" "}
+                not changed. They&apos;re still ticked: try again in a minute.
               </p>
             ) : null}
             {result.failed.length > 0 ? (

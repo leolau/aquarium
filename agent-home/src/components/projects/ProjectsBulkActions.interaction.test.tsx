@@ -241,6 +241,66 @@ describe("ProjectsList bulk actions", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  it("rides out a server restart: re-sends with the same key, then stops if it stays down", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      calls = [];
+      let down = 2; // the first two sends get no answer, then it is back
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string, init?: RequestInit) => {
+          const method = init?.method ?? "GET";
+          const headers = (init?.headers ?? {}) as Record<string, string>;
+          calls.push({ url, method, body: null, key: headers["Idempotency-Key"] ?? null });
+          if (method === "GET") {
+            return new Response(JSON.stringify({ items: MANY, next_cursor: null }), { status: 200 });
+          }
+          if (down-- > 0) {
+            return new Response(JSON.stringify({ error: "api_unreachable" }), { status: 502 });
+          }
+          return new Response("{}", { status: 200 });
+        }),
+      );
+      renderList();
+      tick("Project 1");
+      tick("Project 2");
+      fireEvent.change(screen.getByRole("combobox", { name: "New category" }), {
+        target: { value: "pcat_sales" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Apply category" }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      await waitFor(() => expect(screen.getByText(/Moved 2 projects to Sales/)).toBeTruthy());
+      const patches = writes();
+      expect(patches.map((c) => c.url)).toEqual([
+        "/api/projects/p-1",
+        "/api/projects/p-1",
+        "/api/projects/p-1",
+        "/api/projects/p-2",
+      ]);
+      // Re-sends reuse the project's key, so a write that landed is not doubled.
+      expect(new Set(patches.slice(0, 3).map((c) => c.key)).size).toBe(1);
+
+      // Down for good: one project's retries run out, the rest is not sent.
+      down = 1_000;
+      calls = [];
+      tick("Project 3");
+      tick("Project 4");
+      fireEvent.click(screen.getByRole("button", { name: "Apply category" }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      await waitFor(() =>
+        expect(screen.getByText(/2 projects were\s+not changed/)).toBeTruthy(),
+      );
+      expect(new Set(writes().map((c) => c.url))).toEqual(new Set(["/api/projects/p-3"]));
+      expect(screen.getByText("2 selected")).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("offers Restore, not Archive, for ticked archived projects", () => {
     renderList([
       ITEM({ id: "a", slug: "a", name: "A", archived: true, status: "archived" }),
