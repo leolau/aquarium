@@ -55,6 +55,8 @@ export default async function Page({
         archived: query.get("archived") === "true",
         q: state.q || undefined,
         category: query.get("category") ?? undefined,
+        sort: query.get("sort") ?? undefined,
+        order: query.get("order") ?? undefined,
         // Both layouts read every page; start with the largest one.
         limit: 200,
       }),
