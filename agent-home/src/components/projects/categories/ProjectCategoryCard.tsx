@@ -9,15 +9,10 @@ import type { ProjectCategory, ProjectListItem } from "@/types";
 /** The drag payload type: a project slug, distinct from plain text drops. */
 export const PROJECT_DRAG_TYPE = "application/x-project-slug";
 
-/** The `<select>` value standing for "Uncategorized" (no category). */
-export const UNCATEGORIZED_VALUE = "";
-
 export interface ProjectCategoryCardProps {
   project: ProjectListItem;
-  /** Every category, in column order — the "Move to…" choices. */
+  /** Every category, for the card's category tag. */
   categories: ProjectCategory[];
-  /** The column the card sits in: a category id, or null for Uncategorized. */
-  columnId: string | null;
   /** This card's move is in flight. */
   busy: boolean;
   /** Another move is in flight — moves are one at a time. */
@@ -28,22 +23,19 @@ export interface ProjectCategoryCardProps {
     busy: boolean;
     retry: () => Promise<unknown>;
   } | null;
-  onMove: (categoryId: string | null) => void;
 }
 
 /**
  * One project on the category board: the shared `ProjectCardBody` (the same
- * card as the list and Home), plus the accessible "Move to…" select.
- * Desktop can also drag it to another column.
+ * card as the list and Home). It moves by dragging it onto another tile; the
+ * list's tick boxes + Set category move several at once.
  */
 export function ProjectCategoryCard({
   project,
   categories,
-  columnId,
   busy,
   disabled,
   failure,
-  onMove,
 }: ProjectCategoryCardProps) {
   const locked = busy || disabled;
   const onDragStart = (e: DragEvent<HTMLLIElement>) => {
@@ -65,28 +57,9 @@ export function ProjectCategoryCard({
     >
       <ProjectCardBody project={project} categories={categories} />
 
-      <div className="mt-2 flex items-center gap-2">
-        <select
-          aria-label={`Move ${project.name} to…`}
-          value={columnId ?? UNCATEGORIZED_VALUE}
-          disabled={locked}
-          onChange={(e) => {
-            const next = e.target.value || null;
-            if (next !== columnId) onMove(next);
-          }}
-          className="min-w-0 flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-xs text-[var(--color-muted)] disabled:opacity-50"
-        >
-          {categories.map((category) => (
-            <option key={category.id} value={category.id}>
-              {category.name}
-            </option>
-          ))}
-          <option value={UNCATEGORIZED_VALUE}>Uncategorized</option>
-        </select>
-        {busy ? (
-          <span className="text-xs text-[var(--color-muted)]">Moving…</span>
-        ) : null}
-      </div>
+      {busy ? (
+        <p className="mt-2 text-xs text-[var(--color-muted)]">Moving…</p>
+      ) : null}
 
       {failure ? (
         <ActionError
