@@ -116,7 +116,7 @@ describe("projects filter URL round-trip", () => {
   });
 
   it("carries the search and keeps the cursor out of the shareable filter", () => {
-    const state = { view: "standing" as const, q: "digest", layout: "list" as const, category: "" };
+    const state = { view: "standing" as const, q: "digest", layout: "list" as const, categoryIds: [] as string[] };
     const params = filtersToParams(state, "cur_2");
     expect(params.get("q")).toBe("digest");
     expect(params.get("cursor")).toBe("cur_2");
@@ -137,7 +137,7 @@ describe("projects layout URL round-trip", () => {
   });
 
   it("round-trips the list alongside the view and the search", () => {
-    const state = { view: "standing" as const, q: "digest", layout: "list" as const, category: "" };
+    const state = { view: "standing" as const, q: "digest", layout: "list" as const, categoryIds: [] as string[] };
     const params = filtersToParams(state, "cur_2");
     expect(params.get("layout")).toBe("list");
     expect(filtersFromParams(filtersToParams(state))).toEqual(state);
@@ -145,19 +145,32 @@ describe("projects layout URL round-trip", () => {
       view: "paused",
       q: "",
       layout: "list",
-      category: "",
+      categoryIds: [],
     });
   });
 
   it("round-trips a category-narrowed list, and the board drops the category", () => {
-    const state = { ...EMPTY_FILTERS, layout: "list" as const, category: "pcat_sales" };
+    const state = { ...EMPTY_FILTERS, layout: "list" as const, categoryIds: ["pcat_sales"] };
     expect(filtersToParams(state).toString()).toBe("status=active&layout=list&category=pcat_sales");
     expect(filtersFromParams(filtersToParams(state))).toEqual(state);
-    expect(filtersFromParams(new URLSearchParams("layout=list&category=none")).category).toBe(
+    expect(filtersFromParams(new URLSearchParams("layout=list&category=none")).categoryIds).toEqual([
       UNCATEGORIZED_FILTER,
-    );
+    ]);
     expect(filtersToParams({ ...state, layout: "board" }).has("category")).toBe(false);
-    expect(filtersFromParams(new URLSearchParams("category=pcat_sales")).category).toBe("");
+    expect(filtersFromParams(new URLSearchParams("category=pcat_sales")).categoryIds).toEqual([]);
+  });
+
+  it("round-trips several categories as one comma-separated parameter", () => {
+    const state = {
+      ...EMPTY_FILTERS,
+      layout: "list" as const,
+      categoryIds: ["pcat_sales", UNCATEGORIZED_FILTER],
+    };
+    expect(filtersToParams(state).get("category")).toBe("pcat_sales,none");
+    expect(filtersFromParams(filtersToParams(state))).toEqual(state);
+    expect(
+      filtersFromParams(new URLSearchParams("layout=list&category=a,,b, a")).categoryIds,
+    ).toEqual(["a", "b"]);
   });
 });
 

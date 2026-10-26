@@ -12,6 +12,7 @@ import { ProjectRow } from "@/components/projects/ProjectRow";
 import { ProjectsFilters } from "@/components/projects/ProjectsFilters";
 import { ProjectCategoriesSheet } from "@/components/projects/categories/ProjectCategoriesSheet";
 import { ProjectsCategoryBoard } from "@/components/projects/categories/ProjectsCategoryBoard";
+import { ProjectsCategoryFilter } from "@/components/projects/categories/ProjectsCategoryFilter";
 import { fetchProjectCategories } from "@/components/projects/categories/useProjectCategories";
 import {
   EMPTY_FILTERS,
@@ -53,7 +54,8 @@ const LAYOUTS: { layout: ProjectsLayout; label: string }[] = [
  * paged list). It needs every matching project rather than page 1: it reads
  * all pages (up to `BOARD_CAP`), and the auto-refresh re-reads all of them
  * together with the categories. A board tile's List button opens the list
- * narrowed to that category (`layout=list&category=<id|none>`).
+ * narrowed to that category (`layout=list&category=<id|none>`); the list
+ * can then tick any set of categories (`category=<id>,<id>,none`).
  */
 export function ProjectsList({
   initial,
@@ -221,7 +223,7 @@ export function ProjectsList({
 
   const narrowed =
     filters !== EMPTY_FILTERS &&
-    (filters.view !== "active" || filters.category !== "");
+    (filters.view !== "active" || filters.categoryIds.length > 0);
   const board = filters.layout === "board";
 
   const onMoved = useCallback((slug: string, categoryId: string | null) => {
@@ -254,21 +256,11 @@ export function ProjectsList({
       setFilters({
         ...filters,
         layout: "list",
-        category: categoryId ?? UNCATEGORIZED_FILTER,
+        categoryIds: [categoryId ?? UNCATEGORIZED_FILTER],
       });
     },
     [filters],
   );
-
-  const listCategory =
-    filters.layout === "list" && filters.category
-      ? filters.category === UNCATEGORIZED_FILTER
-        ? { name: "Uncategorized", color: null }
-        : (categories.find((c) => c.id === filters.category) ?? {
-            name: "Unknown category",
-            color: null,
-          })
-      : null;
 
   // The button is swapped for "Loading…" only after a render; the lock
   // stops a fast second click from fetching the same page twice.
@@ -291,7 +283,7 @@ export function ProjectsList({
               type="button"
               aria-pressed={filters.layout === option.layout}
               onClick={() =>
-                setFilters({ ...filters, layout: option.layout, category: "" })
+                setFilters({ ...filters, layout: option.layout, categoryIds: [] })
               }
               className={`rounded-lg px-3 py-1.5 ${
                 filters.layout === option.layout
@@ -314,31 +306,13 @@ export function ProjectsList({
 
       <ProjectsFilters value={filters} onChange={setFilters} />
 
-      {listCategory ? (
-        <div
-          data-component="ProjectsCategoryFilter"
-          className="flex items-center gap-2 text-xs"
-        >
-          <span className="flex min-w-0 items-center gap-1.5 rounded-full border border-[var(--color-accent)] px-2 py-1 text-[var(--color-accent)]">
-            <span
-              aria-hidden
-              className="h-2 w-2 shrink-0 rounded-full"
-              style={{
-                backgroundColor: listCategory.color ?? "var(--color-muted)",
-              }}
-            />
-            <span className="truncate">Category: {listCategory.name}</span>
-          </span>
-          <button
-            type="button"
-            aria-label="Show every category"
-            onClick={() => setFilters({ ...filters, category: "" })}
-            className="rounded-lg border border-[var(--color-border)] px-2 py-1 text-[var(--color-muted)]"
-          >
-            Clear
-          </button>
-        </div>
-      ) : null}
+      {board ? null : (
+        <ProjectsCategoryFilter
+          categories={categories}
+          value={filters.categoryIds}
+          onChange={(categoryIds) => setFilters({ ...filters, categoryIds })}
+        />
+      )}
 
       {error ? (
         <p

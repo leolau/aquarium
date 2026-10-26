@@ -295,6 +295,10 @@ def test_the_list_filters_by_category_before_paging(env):
     assert sorted(_ids(cats["Sales"]["id"])) == sorted(sales)
     assert sorted(_ids("none")) == sorted(loose)
     assert _ids(cats["Research"]["id"]) == [research]
+    assert sorted(_ids(f"{cats['Sales']['id']},none")) == sorted(sales + loose)
+    assert sorted(_ids(f"{cats['Research']['id']}, {cats['Sales']['id']}")) == sorted(
+        sales + [research]
+    )
     every = client.get(PROJECTS, params={"status": "planning"}).json()["items"]
     assert len(every) == 6
     assert all("category_id" in p for p in every)

@@ -62,19 +62,28 @@ export interface ProjectsFilterState {
   q: string;
   layout: ProjectsLayout;
   /**
-   * The list view narrowed to one category: a category id,
-   * `UNCATEGORIZED_FILTER`, or "" for every category. The board ignores it
+   * The list view narrowed to any of these categories: category ids and/or
+   * `UNCATEGORIZED_FILTER`; empty for every category. The board ignores it
    * (it already groups by category).
    */
-  category: string;
+  categoryIds: string[];
 }
 
 export const EMPTY_FILTERS: ProjectsFilterState = {
   view: DEFAULT_VIEW,
   q: "",
   layout: DEFAULT_LAYOUT,
-  category: "",
+  categoryIds: [],
 };
+
+/** `category=a,b,none` in the URL; also what the upstream API accepts. */
+export function parseCategoryIds(raw: string | null): string[] {
+  const ids = (raw ?? "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+  return Array.from(new Set(ids));
+}
 
 /** Read the filter state out of a shared `/projects?…` URL. */
 export function filtersFromParams(
@@ -92,14 +101,15 @@ export function filtersFromParams(
   // `status=active` and anything unrecognised both land on the default view.
   const layout: ProjectsLayout =
     params.get("layout") === "list" ? "list" : DEFAULT_LAYOUT;
-  const category = layout === "list" ? (params.get("category") ?? "") : "";
-  return { view, q: params.get("q") ?? "", layout, category };
+  const categoryIds =
+    layout === "list" ? parseCategoryIds(params.get("category")) : [];
+  return { view, q: params.get("q") ?? "", layout, categoryIds };
 }
 
 /**
  * The inverse, for the address bar and for the BFF call. `layout` is only
  * written for the list (absent = board); the BFF call drops it. `category`
- * is only written for the list.
+ * (comma-separated ids) is only written for the list.
  */
 export function filtersToParams(
   value: ProjectsFilterState,
@@ -135,7 +145,9 @@ export function filtersToParams(
   if (value.q) params.set("q", value.q);
   if (value.layout === "list") {
     params.set("layout", "list");
-    if (value.category) params.set("category", value.category);
+    if (value.categoryIds.length > 0) {
+      params.set("category", value.categoryIds.join(","));
+    }
   }
   if (cursor) params.set("cursor", cursor);
   return params;
