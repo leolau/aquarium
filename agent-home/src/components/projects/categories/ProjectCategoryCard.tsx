@@ -1,27 +1,16 @@
 "use client";
 
-import Link from "next/link";
 import type { DragEvent } from "react";
 
 import { ActionError } from "@/components/projects/ActionError";
-import {
-  CADENCE_GLYPH,
-  HEALTH_LABEL,
-} from "@/components/projects/ProjectRow";
-import { Pill, type Tone } from "@/components/ui/Pill";
-import type { ProjectCategory, ProjectHealth, ProjectListItem } from "@/types";
+import { ProjectCardBody } from "@/components/projects/ProjectRow";
+import type { ProjectCategory, ProjectListItem } from "@/types";
 
 /** The drag payload type: a project slug, distinct from plain text drops. */
 export const PROJECT_DRAG_TYPE = "application/x-project-slug";
 
 /** The `<select>` value standing for "Uncategorized" (no category). */
 export const UNCATEGORIZED_VALUE = "";
-
-const HEALTH_TONE: Record<ProjectHealth, Tone> = {
-  ok: "success",
-  attention: "warning",
-  stalled: "danger",
-};
 
 export interface ProjectCategoryCardProps {
   project: ProjectListItem;
@@ -43,9 +32,9 @@ export interface ProjectCategoryCardProps {
 }
 
 /**
- * One project on the category board: the `ProjectRow` vocabulary (cadence
- * glyph, name link, one-line goal, health pill) in a compact card, plus the
- * accessible "Move to…" select. Desktop can also drag it to another column.
+ * One project on the category board: the shared `ProjectCardBody` (the same
+ * card as the list and Home), plus the accessible "Move to…" select.
+ * Desktop can also drag it to another column.
  */
 export function ProjectCategoryCard({
   project,
@@ -70,31 +59,11 @@ export function ProjectCategoryCard({
       draggable={!locked}
       onDragStart={locked ? undefined : onDragStart}
       aria-busy={busy || undefined}
-      className={`rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-2.5 ${
+      className={`rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 ${
         busy ? "opacity-60" : ""
       } ${locked ? "" : "cursor-grab active:cursor-grabbing"}`}
     >
-      <div className="flex items-center gap-1.5">
-        <span aria-hidden className="text-[var(--color-muted)]">
-          {CADENCE_GLYPH[project.cadence]}
-        </span>
-        <Link
-          href={`/projects/${encodeURIComponent(project.slug)}`}
-          draggable={false}
-          className="min-w-0 flex-1 truncate text-sm font-semibold"
-        >
-          {project.name}
-        </Link>
-        <Pill tone={HEALTH_TONE[project.health]}>
-          {HEALTH_LABEL[project.health]}
-        </Pill>
-      </div>
-
-      {project.goal ? (
-        <p className="mt-1 truncate text-xs text-[var(--color-muted)]">
-          {project.goal}
-        </p>
-      ) : null}
+      <ProjectCardBody project={project} categories={categories} />
 
       <div className="mt-2 flex items-center gap-2">
         <select

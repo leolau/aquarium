@@ -3,7 +3,7 @@ import { MobileShell } from "@/components/MobileShell";
 import { ProjectsHomeCard } from "@/components/projects/ProjectsHomeCard";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
 import { scopedSelect } from "@/lib/supabase/context";
-import type { ProjectListItem } from "@/types";
+import type { ProjectCategory, ProjectListItem } from "@/types";
 
 // The seam proof reads the live principal (cookie) + Supabase, so it must
 // render per-request, never at build time.
@@ -38,11 +38,18 @@ export default async function HomePage() {
   // The first-class Projects card (§13): active projects with their health
   // and next run. Best-effort like the nav badge — a projects fetch failure
   // must not blank Home, so the card simply stays absent.
+  // Categories name and colour each card's tag; failing to read them only
+  // hides the tags.
   let activeProjects: ProjectListItem[] | null = null;
+  let projectCategories: ProjectCategory[] = [];
   try {
     const client = await apiClientForRequest();
-    const response = await client.projects({ status: "active", limit: 5 });
+    const [response, categoriesRes] = await Promise.all([
+      client.projects({ status: "active", limit: 5 }),
+      client.projectCategories().catch(() => ({ items: [] })),
+    ]);
     activeProjects = response.items;
+    projectCategories = categoriesRes.items ?? [];
   } catch {
     activeProjects = null;
   }
@@ -109,7 +116,7 @@ export default async function HomePage() {
         </p>
       </section>
 
-      {activeProjects ? <ProjectsHomeCard items={activeProjects} /> : null}
+      {activeProjects ? <ProjectsHomeCard items={activeProjects} categories={projectCategories} /> : null}
 
       <LogoutButton />
     </MobileShell>

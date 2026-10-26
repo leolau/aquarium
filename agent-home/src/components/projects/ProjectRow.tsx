@@ -2,8 +2,14 @@ import Link from "next/link";
 
 import { dayDistance } from "@/components/projects/format";
 import { outputsLabel } from "@/components/projects/outputsLabel";
+import { ProjectCategoryTag } from "@/components/projects/categories/ProjectCategoryTag";
 import { Pill, type Tone } from "@/components/ui/Pill";
-import type { ProjectCadence, ProjectHealth, ProjectListItem } from "@/types";
+import type {
+  ProjectCadence,
+  ProjectCategory,
+  ProjectHealth,
+  ProjectListItem,
+} from "@/types";
 
 /** §13: the cadence glyph leads the row because it sets what a row promises. */
 export const CADENCE_GLYPH: Record<ProjectCadence, string> = {
@@ -24,7 +30,7 @@ export const HEALTH_LABEL: Record<ProjectHealth, string> = {
   stalled: "stalled",
 };
 
-const HEALTH_TONE: Record<ProjectHealth, Tone> = {
+export const HEALTH_TONE: Record<ProjectHealth, Tone> = {
   ok: "success",
   attention: "warning",
   stalled: "danger",
@@ -39,18 +45,27 @@ const HEALTH_TONE: Record<ProjectHealth, Tone> = {
 export { dayDistance } from "@/components/projects/format";
 
 /**
- * One row of the `/projects` list. Pure and server-safe: the cadence glyph,
- * the bold `name`, the dimmed `goal` truncated to one line, then cadence ·
- * when · progress headline · members — everything the backend computes, so
- * the row never re-derives what `progress.headline` already says.
+ * The shared body of every project card — the `/projects` list row, the
+ * category board card and the Home card: the cadence glyph, the bold `name`,
+ * the coloured category tag, the "to accept" and health pills, the dimmed
+ * `goal` truncated to one line, then cadence · when · progress headline ·
+ * members — everything the backend computes, so the card never re-derives
+ * what `progress.headline` already says. Pure and server-safe.
  */
-export function ProjectRow({ project }: { project: ProjectListItem }) {
+export function ProjectCardBody({
+  project,
+  categories,
+}: {
+  project: ProjectListItem;
+  /** Every category, to name and colour the project's tag. */
+  categories: readonly ProjectCategory[];
+}) {
   const when =
     project.cadence === "one_off" && project.due_at != null
       ? `due ${dayDistance(project.due_at)}`
       : project.next_run_at != null
         ? `next ${dayDistance(project.next_run_at)}`
-        : null;
+        : project.schedule || null;
   // The outputs line repeats the headline when the outputs rung won.
   const outputs =
     project.progress.rung === "outputs" ? null : outputsLabel(project.output_rollup);
@@ -66,16 +81,14 @@ export function ProjectRow({ project }: { project: ProjectListItem }) {
   ].filter(Boolean);
 
   return (
-    <li
-      data-component="ProjectRow"
-      className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3"
-    >
+    <>
       <div className="flex items-center gap-2">
         <span aria-hidden className="text-[var(--color-muted)]">
           {CADENCE_GLYPH[project.cadence]}
         </span>
         <Link
           href={`/projects/${encodeURIComponent(project.slug)}`}
+          draggable={false}
           className="min-w-0 flex-1 truncate text-sm font-semibold"
         >
           {project.name}
@@ -86,6 +99,10 @@ export function ProjectRow({ project }: { project: ProjectListItem }) {
         <Pill tone={HEALTH_TONE[project.health]}>
           {HEALTH_LABEL[project.health]}
         </Pill>
+      </div>
+
+      <div className="mt-1 flex">
+        <ProjectCategoryTag categories={categories} categoryId={project.category_id} />
       </div>
 
       {project.status === "needs_completion" ? (
@@ -102,6 +119,25 @@ export function ProjectRow({ project }: { project: ProjectListItem }) {
       <p className="mt-1 text-xs text-[var(--color-muted)]">
         {meta.join(" · ")}
       </p>
+    </>
+  );
+}
+
+/** One project card in a list: the shared `ProjectCardBody` in its frame. */
+export function ProjectRow({
+  project,
+  categories = [],
+}: {
+  project: ProjectListItem;
+  categories?: readonly ProjectCategory[];
+}) {
+  return (
+    <li
+      data-component="ProjectRow"
+      data-slug={project.slug}
+      className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3"
+    >
+      <ProjectCardBody project={project} categories={categories} />
     </li>
   );
 }

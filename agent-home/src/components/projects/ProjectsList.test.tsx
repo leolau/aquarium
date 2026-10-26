@@ -22,7 +22,7 @@ import {
   filtersFromParams,
   filtersToParams,
 } from "@/components/projects/filters";
-import type { Project, ProjectListItem } from "@/types";
+import type { Project, ProjectCategory, ProjectListItem } from "@/types";
 
 const DAY = 86_400;
 
@@ -74,6 +74,18 @@ const ITEM: ProjectListItem = {
   member_count: 2,
   health: "ok",
 };
+
+const CATEGORIES: ProjectCategory[] = [
+  {
+    id: "pcat_sales",
+    name: "Sales",
+    color: "#f59e0b",
+    position: 0,
+    created_at: 1_755_000_000,
+    created_by: null,
+    project_count: 1,
+  },
+];
 
 describe("projects filter URL round-trip", () => {
   it("defaults to the live work, so closed projects do not fill the list", () => {
@@ -182,6 +194,7 @@ describe("ProjectRow", () => {
       <ProjectRow project={{ ...ITEM, next_run_at: null }} />,
     );
     expect(unscheduled).not.toContain("next ");
+    expect(unscheduled).toContain("every monday 09:00");
   });
 
   it("marks a stalled project visibly", () => {
@@ -189,6 +202,29 @@ describe("ProjectRow", () => {
       <ProjectRow project={{ ...ITEM, health: "stalled" }} />,
     );
     expect(html).toContain("stalled");
+  });
+
+  it("tags the card with its category's name and colour", () => {
+    const html = renderToStaticMarkup(
+      <ProjectRow project={{ ...ITEM, category_id: "pcat_sales" }} categories={CATEGORIES} />,
+    );
+    expect(html).toContain('data-component="ProjectCategoryTag"');
+    expect(html).toContain('data-category-id="pcat_sales"');
+    expect(html).toContain("Sales");
+    expect(html).toContain("border-color:#f59e0b");
+    expect(html).toContain("background-color:#f59e0b");
+  });
+
+  it("tags an uncategorized project, and hides a tag it cannot name", () => {
+    const none = renderToStaticMarkup(
+      <ProjectRow project={{ ...ITEM, category_id: null }} categories={CATEGORIES} />,
+    );
+    expect(none).toContain('data-category-id="none"');
+    expect(none).toContain("Uncategorized");
+    const unknown = renderToStaticMarkup(
+      <ProjectRow project={{ ...ITEM, category_id: "pcat_gone" }} categories={CATEGORIES} />,
+    );
+    expect(unknown).not.toContain('data-component="ProjectCategoryTag"');
   });
 
   it("measures distances at the day grain", () => {
@@ -263,6 +299,15 @@ describe("ProjectsHomeCard", () => {
     expect(html).toContain("ok");
     expect(html).toContain("/projects/monday-digest");
     expect(html).toContain('data-component="ProjectsHomeAll"');
+  });
+
+  it("shows the same project card as the list, category tag included", () => {
+    const item = { ...ITEM, category_id: "pcat_sales" };
+    const home = renderToStaticMarkup(<ProjectsHomeCard items={[item]} categories={CATEGORIES} />);
+    expect(home).toContain(
+      renderToStaticMarkup(<ProjectRow project={item} categories={CATEGORIES} />),
+    );
+    expect(home).toContain("Sales");
   });
 
   it("falls back to the schedule text before the first run is resolved", () => {
