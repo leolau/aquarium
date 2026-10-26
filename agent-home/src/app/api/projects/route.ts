@@ -21,6 +21,8 @@ export async function GET(req: Request): Promise<NextResponse> {
       health: params.get("health") ?? undefined,
       q: params.get("q") ?? undefined,
       category: params.get("category") ?? undefined,
+      sort: params.get("sort") ?? undefined,
+      order: params.get("order") ?? undefined,
       archived: params.get("archived") === "true",
       limit: params.get("limit") ? Number(params.get("limit")) : undefined,
       cursor: params.get("cursor") ?? undefined,

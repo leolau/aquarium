@@ -1,6 +1,10 @@
 import Link from "next/link";
 
-import { dayDistance } from "@/components/projects/format";
+import {
+  dayDistance,
+  durationLabel,
+  tokenCountLabel,
+} from "@/components/projects/format";
 import { outputsLabel } from "@/components/projects/outputsLabel";
 import { ProjectCategoryTag } from "@/components/projects/categories/ProjectCategoryTag";
 import { Pill, type Tone } from "@/components/ui/Pill";
@@ -70,9 +74,17 @@ export function ProjectCardBody({
   const outputs =
     project.progress.rung === "outputs" ? null : outputsLabel(project.output_rollup);
   const awaiting = project.output_rollup?.awaiting_acceptance ?? 0;
+  // The value a duration/tokens sort orders on, so the order is legible.
+  const runSeconds = project.usage?.run_seconds;
+  const tokens = project.usage?.tokens_total;
   const meta = [
     CADENCE_LABEL[project.cadence],
     when,
+    project.completed_at != null
+      ? `completed ${dayDistance(project.completed_at)}`
+      : null,
+    runSeconds != null ? `ran ${durationLabel(runSeconds)}` : null,
+    tokens != null ? `${tokenCountLabel(tokens)} tokens` : null,
     project.progress.headline,
     outputs,
     project.member_count > 0

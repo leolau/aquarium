@@ -18,7 +18,9 @@ import {
   DEFAULT_LAYOUT,
   DEFAULT_VIEW,
   EMPTY_FILTERS,
+  SORT_OPTIONS,
   UNCATEGORIZED_FILTER,
+  defaultSortOrder,
   filtersFromParams,
   filtersToParams,
 } from "@/components/projects/filters";
@@ -116,7 +118,7 @@ describe("projects filter URL round-trip", () => {
   });
 
   it("carries the search and keeps the cursor out of the shareable filter", () => {
-    const state = { view: "standing" as const, q: "digest", layout: "list" as const, categoryIds: [] as string[] };
+    const state = { ...EMPTY_FILTERS, view: "standing" as const, q: "digest", layout: "list" as const };
     const params = filtersToParams(state, "cur_2");
     expect(params.get("q")).toBe("digest");
     expect(params.get("cursor")).toBe("cur_2");
@@ -137,15 +139,14 @@ describe("projects layout URL round-trip", () => {
   });
 
   it("round-trips the list alongside the view and the search", () => {
-    const state = { view: "standing" as const, q: "digest", layout: "list" as const, categoryIds: [] as string[] };
+    const state = { ...EMPTY_FILTERS, view: "standing" as const, q: "digest", layout: "list" as const };
     const params = filtersToParams(state, "cur_2");
     expect(params.get("layout")).toBe("list");
     expect(filtersFromParams(filtersToParams(state))).toEqual(state);
     expect(filtersFromParams(new URLSearchParams("status=paused&layout=list"))).toEqual({
+      ...EMPTY_FILTERS,
       view: "paused",
-      q: "",
       layout: "list",
-      categoryIds: [],
     });
   });
 
@@ -171,6 +172,51 @@ describe("projects layout URL round-trip", () => {
     expect(
       filtersFromParams(new URLSearchParams("layout=list&category=a,,b, a")).categoryIds,
     ).toEqual(["a", "b"]);
+  });
+});
+
+describe("projects sort URL round-trip", () => {
+  it("defaults to newest created first and never writes the default", () => {
+    expect(EMPTY_FILTERS.sort).toBe("created");
+    expect(EMPTY_FILTERS.order).toBe("desc");
+    const params = filtersToParams(EMPTY_FILTERS);
+    expect(params.has("sort")).toBe(false);
+    expect(params.has("order")).toBe(false);
+  });
+
+  it("writes a field only with an order that differs from its own default", () => {
+    const tokens = { ...EMPTY_FILTERS, sort: "tokens" as const, order: defaultSortOrder("tokens") };
+    expect(filtersToParams(tokens).get("sort")).toBe("tokens");
+    expect(filtersToParams(tokens).has("order")).toBe(false);
+    const oldest = { ...EMPTY_FILTERS, order: "asc" as const };
+    expect(filtersToParams(oldest).toString()).toBe("status=active&order=asc");
+    for (const option of SORT_OPTIONS) {
+      for (const order of ["asc", "desc"] as const) {
+        const state = { ...EMPTY_FILTERS, layout: "list" as const, sort: option.sort, order };
+        expect(filtersFromParams(filtersToParams(state))).toEqual(state);
+      }
+    }
+  });
+
+  it("falls back to the default for an unknown sort or order", () => {
+    const state = filtersFromParams(new URLSearchParams("sort=bogus&order=up"));
+    expect(state.sort).toBe("created");
+    expect(state.order).toBe("desc");
+    expect(filtersFromParams(new URLSearchParams("sort=name")).order).toBe("asc");
+  });
+
+  it("renders the sort control on the list and on the board", () => {
+    for (const layout of ["list", "board"] as const) {
+      const html = renderToStaticMarkup(
+        <ProjectsList
+          initial={{ items: [], next_cursor: null }}
+          initialFilters={{ ...EMPTY_FILTERS, layout, sort: "duration", order: "desc" }}
+        />,
+      );
+      expect(html).toContain('data-component="ProjectsSort"');
+      expect(html).toContain("Tokens used");
+      expect(html).toMatch(/<option value="duration" selected="">Duration<\/option>/);
+    }
   });
 });
 
@@ -238,6 +284,21 @@ describe("ProjectRow", () => {
       <ProjectRow project={{ ...ITEM, category_id: "pcat_gone" }} categories={CATEGORIES} />,
     );
     expect(unknown).not.toContain('data-component="ProjectCategoryTag"');
+  });
+
+  it("shows the completion date and the sorted usage value when present", () => {
+    const html = renderToStaticMarkup(
+      <ProjectRow
+        project={{
+          ...ITEM,
+          completed_at: Math.floor(Date.now() / 1000) - 3 * DAY,
+          usage: { run_seconds: 3 * 3600 + 120, tokens_total: 1_450_000 },
+        }}
+      />,
+    );
+    expect(html).toContain("completed 3d ago");
+    expect(html).toContain("ran 3h 2m");
+    expect(html).toContain("1.45M tokens");
   });
 
   it("measures distances at the day grain", () => {

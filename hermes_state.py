@@ -6742,3 +6742,46 @@ def kanban_tasks_token_totals(
     finally:
         conn.close()
     return totals
+
+
+def kanban_task_token_totals_by_task(
+    db_path: Path, kanban_task_ids: List[str]
+) -> Optional[Dict[str, int]]:
+    """Input + output tokens per card from ``api_call_log``, read-only.
+
+    Cards with no recorded call are absent. ``None`` when the store or
+    ledger isn't there, as in :func:`kanban_tasks_token_totals`.
+    """
+    if not Path(db_path).exists():
+        return None
+    try:
+        conn = sqlite3.connect(
+            f"file:{db_path}?mode=ro", uri=True, timeout=2.0
+        )
+    except sqlite3.Error:
+        return None
+    totals: Dict[str, int] = {}
+    try:
+        cols = {
+            r[1] for r in conn.execute("PRAGMA table_info(api_call_log)")
+        }
+        if "kanban_task_id" not in cols:
+            return None
+        ids = list(dict.fromkeys(kanban_task_ids))
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            marks = ",".join("?" * len(chunk))
+            for task_id, total in conn.execute(
+                "SELECT kanban_task_id,"
+                " COALESCE(SUM(input_tokens), 0) + COALESCE(SUM(output_tokens), 0)"
+                f" FROM api_call_log WHERE kanban_task_id IN ({marks})"
+                " GROUP BY kanban_task_id",
+                chunk,
+            ):
+                totals[task_id] = int(total or 0)
+    except sqlite3.Error:
+        logger.debug("kanban_task_token_totals_by_task failed", exc_info=True)
+        return None
+    finally:
+        conn.close()
+    return totals

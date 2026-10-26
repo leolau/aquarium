@@ -1761,10 +1761,13 @@ export class HermesApiClient {
       cursor?: string;
       /** Comma-separated category ids, "none" for Uncategorized. */
       category?: string;
+      /** created | completed | due | name | status | duration | tokens */
+      sort?: string;
+      order?: string;
     } = {},
   ): Promise<ProjectsResponse> {
     const p = new URLSearchParams();
-    for (const key of ["status", "cadence", "health", "q", "category", "cursor"] as const) {
+    for (const key of ["status", "cadence", "health", "q", "category", "sort", "order", "cursor"] as const) {
       const value = opts[key];
       if (value) p.set(key, String(value));
     }

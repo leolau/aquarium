@@ -1598,6 +1598,8 @@ export interface Project {
   next_run_at: number | null;
   /** A `ProjectCategory.id`, or null for "Uncategorized". Optional: older API builds omit it. */
   category_id?: string | null;
+  /** When it moved to done (null otherwise). Optional: older API builds omit it. */
+  completed_at?: number | null;
 }
 
 /** A user-managed project category (Sales, Marketing, …) — a kanban column on `/projects`. */
@@ -1680,6 +1682,12 @@ export type ProjectListItem = Project & {
   output_rollup?: ProjectOutputRollup;
   member_count: number;
   health: ProjectHealth;
+  /** Only when the list is sorted by duration or tokens. */
+  usage?: {
+    run_seconds?: number | null;
+    /** Input + output; null when no ledger could be read. */
+    tokens_total?: number | null;
+  };
 };
 
 export interface ProjectsResponse {

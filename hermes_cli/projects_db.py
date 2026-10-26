@@ -518,6 +518,7 @@ _PROJECT_COLUMN_MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("next_run_at", "next_run_at INTEGER"),
     ("imported_from_profile", "imported_from_profile TEXT"),
     ("category_id", "category_id TEXT"),
+    ("completed_at", "completed_at INTEGER"),
 )
 
 
@@ -728,6 +729,8 @@ class Project:
     next_run_at: Optional[int] = None
     imported_from_profile: Optional[str] = None
     category_id: Optional[str] = None
+    # Stamped when the project moves to ``done``; cleared when it reopens.
+    completed_at: Optional[int] = None
 
     def to_dict(self) -> dict:
         return {
@@ -766,6 +769,7 @@ class Project:
             "next_run_at": self.next_run_at,
             "imported_from_profile": self.imported_from_profile,
             "category_id": self.category_id,
+            "completed_at": self.completed_at,
         }
 
 
@@ -810,6 +814,7 @@ def _project_from_row(row: sqlite3.Row) -> Project:
         next_run_at=_row_get(row, "next_run_at"),
         imported_from_profile=_row_get(row, "imported_from_profile"),
         category_id=_row_get(row, "category_id"),
+        completed_at=_row_get(row, "completed_at"),
     )
 
 
@@ -1200,8 +1205,22 @@ def set_project_status(
                     "and needs completion before it can leave "
                     f"'needs_completion': missing " + ", ".join(missing)
                 )
+        # ``done`` stamps the completion date (kept through archiving);
+        # reopening the project clears it.
+        if status == "done":
+            completed_sql = "completed_at = COALESCE(completed_at, ?)"
+            completed_arg: Optional[int] = _now()
+            if row["status"] != "done":
+                completed_sql = "completed_at = ?"
+        elif status == "archived":
+            completed_sql = "completed_at = COALESCE(completed_at, ?)"
+            completed_arg = None
+        else:
+            completed_sql = "completed_at = ?"
+            completed_arg = None
         cur = conn.execute(
-            "UPDATE projects SET status = ? WHERE id = ?", (status, project_id)
+            f"UPDATE projects SET status = ?, {completed_sql} WHERE id = ?",
+            (status, completed_arg, project_id),
         )
     return cur.rowcount > 0
 
