@@ -12,6 +12,7 @@ import {
 import { friendlyFileName } from "@/components/projects/panels/LinkRow";
 import { useProjectAction } from "@/components/projects/useProjectAction";
 import type { ProjectLink } from "@/types";
+import { newTabRel } from "@/lib/http/link-rel";
 
 /** What a row calls an input: its label, else a readable form of its ref. */
 export function inputTitle(link: Pick<ProjectLink, "kind" | "ref" | "label">): string {
@@ -77,7 +78,7 @@ export function InputRow({
     <a
       href={href}
       target="_blank"
-      rel="noreferrer"
+      rel={newTabRel(href)}
       className="block truncate text-sm font-medium text-[var(--color-accent)]"
     >
       {title}

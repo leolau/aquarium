@@ -812,7 +812,7 @@ function fileLinks(
         <a
           href={serverFileUrl(place.id, entry.path)}
           target="_blank"
-          rel="noopener noreferrer"
+          rel="noopener"
           className={cls}
         >
           {t("file.open")}

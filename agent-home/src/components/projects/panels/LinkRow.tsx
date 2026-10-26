@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import type { ProjectLink } from "@/types";
+import { newTabRel } from "@/lib/http/link-rel";
 
 const UUID_PREFIX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i;
@@ -57,7 +58,7 @@ export function LinkRow({ link }: { link: ProjectLink }) {
       <a
         href={link.ref}
         target="_blank"
-        rel="noreferrer"
+        rel={newTabRel(link.ref)}
         data-component="LinkRow"
         className="block rounded-lg bg-[var(--color-surface-2)] px-3 py-2"
       >

@@ -19,6 +19,7 @@ import type {
   ProjectOutputStatus,
   ProjectOutputWithDeliveries,
 } from "@/types";
+import { newTabRel } from "@/lib/http/link-rel";
 
 const STATUS_TONE: Record<
   ProjectOutputStatus,
@@ -282,7 +283,7 @@ function DeliveryRef({
         <a
           href={ref}
           target="_blank"
-          rel="noreferrer"
+          rel={newTabRel(ref)}
           className="underline decoration-dotted underline-offset-2 hover:text-[var(--color-accent)]"
         >
           {label}

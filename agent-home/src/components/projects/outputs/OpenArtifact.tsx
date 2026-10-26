@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 
 import type { FileRefTarget } from "@/components/files/FileRefOpener";
 import type { ProjectArtifact } from "@/types";
+import { newTabRel } from "@/lib/http/link-rel";
 
 export type OpenFile = (target: FileRefTarget) => Promise<void>;
 
@@ -90,7 +91,7 @@ function OpenOnly({
       <a
         href={file.href}
         target="_blank"
-        rel="noreferrer"
+        rel={newTabRel(file.href)}
         aria-label={label}
         className={className}
       >

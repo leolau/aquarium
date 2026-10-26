@@ -337,7 +337,7 @@ export function FileDetail({
           <a
             href={`/api/files/${encodeURIComponent(file.id)}/content`}
             target="_blank"
-            rel="noreferrer"
+            rel="noopener"
             className="rounded-lg border border-[var(--color-accent)] px-3 py-1.5 text-[var(--color-accent)]"
           >
             View
