@@ -2502,7 +2502,7 @@ def _display_system_platform(
 
 
 @app.get("/api/system/stats")
-async def get_system_stats():
+def get_system_stats():
     """Host + process system stats for the System page.
 
     OS / Python / host identity from stdlib; CPU / memory / disk / uptime from
@@ -12716,7 +12716,7 @@ def _find_cron_job_profile(job_id: str) -> Optional[str]:
 
 
 @app.get("/api/cron/jobs")
-async def list_cron_jobs(profile: str = "all"):
+def list_cron_jobs(profile: str = "all"):
     requested = (profile or "all").strip()
     if requested.lower() != "all":
         return _call_cron_for_profile(requested, "list_jobs", True)
@@ -16534,7 +16534,7 @@ async def update_config_raw(body: RawConfigUpdate, profile: Optional[str] = None
 
 
 @app.get("/api/analytics/usage")
-async def get_usage_analytics(days: int = 30, profile: Optional[str] = None):
+def get_usage_analytics(days: int = 30, profile: Optional[str] = None):
     from agent.insights import InsightsEngine
 
     db = _open_session_db_for_profile(profile)

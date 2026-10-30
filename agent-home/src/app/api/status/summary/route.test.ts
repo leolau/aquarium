@@ -2,8 +2,8 @@
  * BFF route tests for GET /api/status/summary — the shell status strip's
  * aggregate. Contract: every leg is independent (a failing upstream read
  * yields null fields, never a failed response), and the counts compose
- * correctly (running kanban cards summed across active projects, cron jobs
- * split enabled/total).
+ * correctly (running kanban cards from the count endpoint, cron jobs split
+ * enabled/total), and the upstream fan-out is cached per session.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -15,8 +15,16 @@ const systemStats = vi.fn();
 const usageAnalytics = vi.fn();
 const capacity = vi.fn();
 const cronJobs = vi.fn();
-const projects = vi.fn();
+const projectsRunningCards = vi.fn();
 const uploadStorage = vi.fn();
+const unstableCache =
+  vi.fn<
+    (
+      fn: () => Promise<unknown>,
+      keyParts?: string[],
+      opts?: unknown,
+    ) => () => Promise<unknown>
+  >((fn) => fn);
 
 vi.mock("@/lib/auth/principal", () => ({
   getPrincipal: () => getPrincipal(),
@@ -25,9 +33,18 @@ vi.mock("@/lib/auth/principal", () => ({
     usageAnalytics,
     capacity,
     cronJobs,
-    projects,
+    projectsRunningCards,
     uploadStorage,
   }),
+}));
+
+vi.mock("@/lib/auth/session", () => ({
+  readSession: async () => ({ hermesToken: "secret-token" }),
+}));
+
+vi.mock("next/cache", () => ({
+  unstable_cache: (fn: () => Promise<unknown>, keyParts?: string[], opts?: unknown) =>
+    unstableCache(fn, keyParts, opts),
 }));
 
 function get(): Promise<Response> {
@@ -58,14 +75,7 @@ describe("GET /api/status/summary", () => {
       { id: "b", enabled: true },
       { id: "c", enabled: false },
     ]);
-    projects.mockResolvedValue({
-      items: [
-        { progress: { cards: { running: 2 } } },
-        { progress: { cards: { running: 1 } } },
-        { progress: { cards: {} } },
-      ],
-      next_cursor: null,
-    });
+    projectsRunningCards.mockResolvedValue({ running_cards: 3 });
   });
 
   it("returns 401 when unauthenticated", async () => {
@@ -91,6 +101,25 @@ describe("GET /api/status/summary", () => {
     expect(body.cron_total).toBe(3);
     expect(body.cron_enabled).toBe(2);
     expect(body.collected_at).toBeTypeOf("number");
+  });
+
+  it("caches per session under a token hash, never the raw token", async () => {
+    await get();
+    expect(unstableCache).toHaveBeenCalledTimes(1);
+    const [, keyParts, opts] = unstableCache.mock.calls[0];
+    expect(keyParts).toHaveLength(3);
+    expect(keyParts?.[0]).toBe("status-summary");
+    expect(keyParts?.[1]).toMatch(/^[0-9a-f]{64}$/);
+    expect(keyParts?.join(" ")).not.toContain("secret-token");
+    expect(keyParts?.[2]).toBe("admin");
+    expect(opts).toEqual({ revalidate: 15 });
+  });
+
+  it("nulls running_cards when the count read fails", async () => {
+    projectsRunningCards.mockRejectedValue(new Error("down"));
+    const body = await (await get()).json();
+    expect(body.running_cards).toBeNull();
+    expect(body.cpu_pct).toBe(42.4);
   });
 
   it("passes the upload-storage reading to owners/admins", async () => {
@@ -123,7 +152,7 @@ describe("GET /api/status/summary", () => {
   it("degrades to null fields when a leg fails", async () => {
     systemStats.mockRejectedValue(new Error("psutil gone"));
     capacity.mockRejectedValue(new Error("capacity down"));
-    projects.mockRejectedValue(new Error("projects down"));
+    projectsRunningCards.mockRejectedValue(new Error("projects down"));
     cronJobs.mockRejectedValue(new Error("cron down"));
     const res = await get();
     expect(res.status).toBe(200);

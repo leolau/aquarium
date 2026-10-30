@@ -69,7 +69,7 @@ async def test_list_cron_jobs_all_includes_default_and_named_profiles(isolated_p
         name="worker-alpha-heartbeat",
     )
 
-    jobs = await web_server.list_cron_jobs(profile="all")
+    jobs = web_server.list_cron_jobs(profile="all")
     by_id = {job["id"]: job for job in jobs}
 
     assert set(by_id) >= {default_job["id"], worker_job["id"]}
@@ -100,7 +100,7 @@ async def test_list_cron_jobs_specific_profile_filters_results(isolated_profiles
         name="worker-only",
     )
 
-    jobs = await web_server.list_cron_jobs(profile="worker_alpha")
+    jobs = web_server.list_cron_jobs(profile="worker_alpha")
 
     assert [job["id"] for job in jobs] == [worker_job["id"]]
     assert jobs[0]["profile"] == "worker_alpha"
@@ -150,8 +150,8 @@ async def test_cron_mutation_without_profile_finds_named_profile_job(isolated_pr
     assert paused["profile"] == "worker_alpha"
     assert paused["enabled"] is False
 
-    default_jobs = await web_server.list_cron_jobs(profile="default")
-    worker_jobs = await web_server.list_cron_jobs(profile="worker_alpha")
+    default_jobs = web_server.list_cron_jobs(profile="default")
+    worker_jobs = web_server.list_cron_jobs(profile="worker_alpha")
 
     assert default_jobs == []
     assert len(worker_jobs) == 1
@@ -495,7 +495,7 @@ async def test_update_cron_job_rejects_id_mutation(isolated_profiles):
 
     assert exc.value.status_code == 400
     assert "id" in exc.value.detail
-    worker_jobs = await web_server.list_cron_jobs(profile="worker_alpha")
+    worker_jobs = web_server.list_cron_jobs(profile="worker_alpha")
     assert [job["id"] for job in worker_jobs] == [worker_job["id"]]
 
 
@@ -521,8 +521,8 @@ async def test_cron_delete_with_profile_deletes_only_target_profile(isolated_pro
     deleted = await web_server.delete_cron_job(worker_job["id"], profile="worker_alpha")
     assert deleted == {"ok": True}
 
-    remaining_default = await web_server.list_cron_jobs(profile="default")
-    remaining_worker = await web_server.list_cron_jobs(profile="worker_alpha")
+    remaining_default = web_server.list_cron_jobs(profile="default")
+    remaining_worker = web_server.list_cron_jobs(profile="worker_alpha")
     assert [job["id"] for job in remaining_default] == [default_job["id"]]
     assert remaining_worker == []
 
@@ -532,9 +532,9 @@ async def test_cron_profile_validation_errors(isolated_profiles):
     from hermes_cli import web_server
 
     with pytest.raises(HTTPException) as bad_name:
-        await web_server.list_cron_jobs(profile="../bad")
+        web_server.list_cron_jobs(profile="../bad")
     assert bad_name.value.status_code == 400
 
     with pytest.raises(HTTPException) as missing:
-        await web_server.list_cron_jobs(profile="missing_profile")
+        web_server.list_cron_jobs(profile="missing_profile")
     assert missing.value.status_code == 404

@@ -237,6 +237,7 @@ SIGNED_IN = {
     "GET /api/registry/projects",
     "POST /api/registry/projects",
     "GET /api/registry/projects/doctor",
+    "GET /api/registry/projects/running-cards",
     "GET /api/registry/projects/{slug}",
     "PATCH /api/registry/projects/{slug}",
     "POST /api/registry/projects/{slug}/archive",
