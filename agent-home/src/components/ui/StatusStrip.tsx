@@ -47,6 +47,15 @@ function fmtGb(bytes: number | null): string {
   return bytes === null ? "—" : `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 }
 
+// Last good read, shared across mounts: MobileShell renders per page, so
+// every client navigation remounts the strip. A read younger than the poll
+// interval is reused instead of re-firing the summary's upstream fan-out.
+let lastGood: { summary: StatusSummary; at: number } | null = null;
+
+export function resetStatusStripCache(): void {
+  lastGood = null;
+}
+
 /**
  * The ambient status strip under the header: CPU, storage, 30-day token
  * burn, live background work, and scheduled jobs. Polls while the tab is
@@ -57,11 +66,15 @@ function fmtGb(bytes: number | null): string {
  */
 export function StatusStrip() {
   const t = useT("nav");
-  const [summary, setSummary] = useState<StatusSummary | null>(null);
+  const [summary, setSummary] = useState<StatusSummary | null>(
+    () => lastGood?.summary ?? null,
+  );
   const [stale, setStale] = useState(false);
   // When the last *successful* fetch landed (local clock — immune to server/
   // browser clock skew) and a 1s heartbeat so the age label self-ticks.
-  const [fetchedAt, setFetchedAt] = useState<number | null>(null);
+  const [fetchedAt, setFetchedAt] = useState<number | null>(
+    () => lastGood?.at ?? null,
+  );
   const [now, setNow] = useState(() => Date.now());
   const [refreshing, setRefreshing] = useState(false);
   const mounted = useRef(true);
@@ -75,6 +88,7 @@ export function StatusStrip() {
         const res = await fetch("/api/status/summary", { cache: "no-store" });
         if (!res.ok) throw new Error(String(res.status));
         const data = (await res.json()) as StatusSummary;
+        lastGood = { summary: data, at: Date.now() };
         if (mounted.current) {
           setSummary(data);
           setFetchedAt(Date.now());
@@ -103,7 +117,7 @@ export function StatusStrip() {
 
   useEffect(() => {
     mounted.current = true;
-    void tick();
+    if (!lastGood || Date.now() - lastGood.at >= POLL_MS) void tick();
     const interval = setInterval(() => {
       if (document.visibilityState === "visible") void tick();
     }, POLL_MS);

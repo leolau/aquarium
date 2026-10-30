@@ -1777,6 +1777,11 @@ export class HermesApiClient {
     return this.request(`/api/registry/projects${qs ? `?${qs}` : ""}`);
   }
 
+  /** Running kanban cards across the caller's active projects (status strip). */
+  async projectsRunningCards(): Promise<{ running_cards: number }> {
+    return this.request("/api/registry/projects/running-cards");
+  }
+
   /** The instance's project categories, in column order, with project counts. */
   async projectCategories(): Promise<ProjectCategoriesResponse> {
     return this.request("/api/registry/project-categories");

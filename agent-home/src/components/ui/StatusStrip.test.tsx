@@ -2,11 +2,12 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { StatusStrip, fmtBuildTime } from "@/components/ui/StatusStrip";
+import { StatusStrip, fmtBuildTime, resetStatusStripCache } from "@/components/ui/StatusStrip";
 import type { StatusSummary } from "@/types";
 
 afterEach(() => {
   cleanup();
+  resetStatusStripCache();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -118,6 +119,17 @@ describe("StatusStrip", () => {
     expect(await screen.findByText("77%")).toBeTruthy();
     await waitFor(() => expect(btn.disabled).toBe(false));
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("reuses a fresh read on remount instead of refetching", async () => {
+    const fetchMock = mockSummary();
+    const first = render(<StatusStrip />);
+    expect(await screen.findByText("42%")).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    first.unmount();
+    render(<StatusStrip />);
+    expect(screen.getByText("42%")).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("formats the build time and ignores missing or bad values", () => {

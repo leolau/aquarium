@@ -800,6 +800,7 @@ def _list_sync(
     sort: Optional[str] = None,
     order: Optional[str] = None,
     offset: int = 0,
+    rollup_only: bool = False,
 ) -> dict:
     with projects_db.connect_closing() as conn:
         rows = projects_db.list_projects(conn, include_archived=include_archived)
@@ -870,6 +871,12 @@ def _list_sync(
             role = _member_role_sync(conn, p.id, principal.user_id)
             profiles = projects_db.get_project_profiles(conn, p.id)
             if not _can_read(p, role, principal, enrolled, profiles):
+                continue
+            if rollup_only:
+                # Card counts only: skip outputs, links, members and the
+                # health derivation (run history + cron resolution).
+                with _board_conn(p) as bconn:
+                    out.append({"cards": _card_rollup_sync(bconn, p.id, principal)})
                 continue
             outputs = projects_db.get_project_outputs(conn, p.id)
             deliveries = projects_db.get_output_deliveries(conn, project_id=p.id)
@@ -1102,6 +1109,29 @@ def _doctor_sync(principal, enrolled: frozenset, slug: Optional[str]) -> dict:
                     }
                 )
     return {"items": items}
+
+
+@router.get("/running-cards")
+async def running_cards_route(request: Request) -> dict[str, Any]:
+    """Running kanban cards across the caller's readable active projects —
+    the status strip's count, without building the full list payload."""
+    principal = await _principal_read(request)
+    enrolled = frozenset(await _enrolled_profiles(principal.user_id))
+    page = await asyncio.to_thread(
+        _list_sync,
+        principal,
+        status="active",
+        cadence=None,
+        q=None,
+        include_archived=False,
+        limit=_MAX_LIMIT,
+        cursor=None,
+        enrolled=enrolled,
+        rollup_only=True,
+    )
+    return {
+        "running_cards": sum(item["cards"]["running"] for item in page["items"])
+    }
 
 
 @router.get("/doctor")

@@ -730,6 +730,48 @@ def test_board_and_card_reads_hide_other_users_private_cards(env):
     ).status_code == 404
 
 
+def test_running_cards_counts_only_cards_the_caller_can_see(env):
+    """The status strip's count: running cards across readable active
+    projects, with the same visibility rules as the list it replaces."""
+    project = _create(env)
+    _activate(env, project)
+    client, state = env
+    with kanban_db.connect_closing() as bconn:
+        shared = kanban_db.create_task(
+            bconn, title="Shared running", project_id=project["id"]
+        )
+        private = kanban_db.create_task(
+            bconn,
+            title="Someone else's private running",
+            project_id=project["id"],
+            owner_user_id="mallory",
+            visibility="private:mallory",
+            triage=True,
+        )
+        kanban_db.create_task(bconn, title="Idle", project_id=project["id"])
+        bconn.execute(
+            "UPDATE tasks SET status = 'running' WHERE id IN (?, ?)",
+            (shared, private),
+        )
+        bconn.commit()
+
+    _member(project["id"], "ada", "lead")
+    state["actor"] = MEMBER_P
+    body = client.get("/api/registry/projects/running-cards").json()
+    listed = client.get("/api/registry/projects?status=active&limit=200").json()
+    assert body == {
+        "running_cards": sum(
+            i["progress"]["cards"].get("running", 0) for i in listed["items"]
+        )
+    }
+    assert body["running_cards"] == 1
+
+    state["actor"] = STRANGER
+    assert client.get("/api/registry/projects/running-cards").json() == {
+        "running_cards": 0
+    }
+
+
 def test_card_detail_surfaces_the_block_reason(env):
     """Regression: GET /cards/{id} used to call ``task_dict()`` with no
     ``latest_summary``, so ``kanban_block``'s *required* ``reason`` — the
