@@ -40,6 +40,7 @@ import concurrent.futures
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 import time
@@ -381,7 +382,7 @@ def format_table(rows: Sequence[Tuple[str, str, str]]) -> str:
     return "\n".join(lines)
 
 
-def smoke_name(kind: str, stamp: int) -> str:
+def smoke_name(kind: str, stamp: object) -> str:
     return f"{SMOKE_PREFIX} {kind} {stamp}"
 
 
@@ -631,7 +632,7 @@ class Smoke:
         if ADMIN not in self.cookies:
             self.report.add(None, "write: lifecycle", "admin not signed in")
             return
-        stamp = int(time.time())
+        stamp = f"{int(time.time())}-{secrets.token_hex(3)}"
         slug: Optional[str] = None
         session_id: Optional[str] = None
         try:
@@ -643,7 +644,7 @@ class Smoke:
             if session_id:
                 self._cleanup_chat(session_id)
 
-    def _write_project(self, stamp: int) -> Optional[str]:
+    def _write_project(self, stamp: str) -> Optional[str]:
         payload = {
             "name": smoke_name("project", stamp),
             "goal": f"{SMOKE_PREFIX} throwaway project from the agent-home smoke test",
@@ -684,7 +685,7 @@ class Smoke:
             )
         return slug
 
-    def _write_chat(self, stamp: int) -> Optional[str]:
+    def _write_chat(self, stamp: str) -> Optional[str]:
         resp = self.http.request("POST", "/api/chat/new", cookie=self.cookies[ADMIN], body={})
         data = resp.json() if resp.status == 200 else None
         sid = (data.get("session_id") or data.get("sessionId")) if isinstance(data, dict) else None
@@ -713,8 +714,10 @@ class Smoke:
         archive = self.http.request("POST", f"/api/projects/{q}/archive", cookie=cookie, body={"reason": "smoke cleanup"})
         delete = self.http.request("DELETE", f"/api/projects/{q}?confirm={q}", cookie=cookie)
         gone = self.get(ADMIN, f"/api/projects/{q}")
+        # 404 on delete = something else (a parallel smoke run's sweep) already
+        # removed it; what matters is that it is gone.
         self.report.add(
-            delete.status == 200 and gone.status == 404, "cleanup: [smoke] project deleted",
+            delete.status in (200, 404) and gone.status == 404, "cleanup: [smoke] project deleted",
             f"archive {archive.status}, delete {_status_detail(delete)}, then {gone.status}",
         )
 
