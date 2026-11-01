@@ -54,6 +54,11 @@ class TestHermesApiServerToolset:
         tools = resolve_toolset("hermes-api-server")
         assert "send_message" in tools
 
+    def test_toolset_includes_email_mailbox(self):
+        # agent-home chat runs on api_server; the person's own mailboxes must
+        # be reachable there, not only on CLI/messaging platforms.
+        assert "email_mailbox" in resolve_toolset("hermes-api-server")
+
     def test_toolset_excludes_text_to_speech(self):
         tools = resolve_toolset("hermes-api-server")
         assert "text_to_speech" not in tools
@@ -125,4 +130,6 @@ class TestApiServerAdapterToolset:
             mock_agent_cls.assert_called_once()
             call_kwargs = mock_agent_cls.call_args
             toolsets = call_kwargs.kwargs.get("enabled_toolsets")
-            assert sorted(toolsets) == ["terminal", "web"]
+            # email_mailbox is a non-configurable toolset of the platform
+            # default, so it is recovered even with an explicit override.
+            assert sorted(toolsets) == ["email_mailbox", "terminal", "web"]

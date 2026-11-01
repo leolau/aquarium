@@ -426,6 +426,8 @@ TOOLSETS = {
             "browser_vision", "browser_console", "browser_cdp", "browser_dialog",
             # Planning & memory
             "todo", "memory",
+            # The person's own IMAP/SMTP mailboxes (Settings -> Email mailboxes)
+            "email_mailbox",
             # Session history search
             "session_search",
             # Code execution + delegation
