@@ -38,6 +38,7 @@ import {
   sendProjectAction,
   useProjectAction,
 } from "@/components/projects/useProjectAction";
+import { markJourneyHintPending } from "@/components/projects/dashboard/journeyHint";
 import { BusyRegion } from "@/components/ui/BusyRegion";
 import { useAction } from "@/lib/use-action";
 import type { MemoryRow, ProjectAutonomy, ProjectCadence } from "@/types";
@@ -239,6 +240,7 @@ export function NewProjectForm({
         body: "{}",
       }).catch(() => undefined);
     }
+    markJourneyHintPending(slug);
     router.push(planLanding(slug, plan));
   };
 

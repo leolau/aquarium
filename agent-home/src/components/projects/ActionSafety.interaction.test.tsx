@@ -278,6 +278,31 @@ function fakeServer(reads?: (url: string, writes: Write[]) => unknown) {
   return { writes, answer };
 }
 
+/** The journey bar's one primary button — the page's only Run / Activate / Continue. */
+function journeyPrimary(r: RenderResult, name: string | RegExp): HTMLElement {
+  return within(r.container.querySelector<HTMLElement>('[data-component="JourneyPrimary"]')!).getByRole(
+    "button",
+    { name },
+  );
+}
+
+/** A project with an input linked, so "add inputs" doesn't outrank the run. */
+const WITH_INPUT: Pick<ProjectDetail, "links"> = {
+  links: {
+    file: [
+      {
+        project_id: "prj_1",
+        kind: "file",
+        profile: "default",
+        ref: "digest-template.docx",
+        label: null,
+        added_by: "leo",
+        added_at: NOW,
+      },
+    ],
+  },
+};
+
 function buttonOf(el: HTMLElement): HTMLButtonElement | HTMLSelectElement {
   return (el.closest("button") ?? el) as HTMLButtonElement | HTMLSelectElement;
 }
@@ -299,14 +324,17 @@ interface Scenario {
   body?: unknown;
   success: unknown;
   confirmed: (r: RenderResult) => void;
+  /** The error line and retry button text, when not the default "… / Retry". */
+  alertText?: string;
+  retryName?: string;
 }
 
 const SCENARIOS: Scenario[] = [
   {
-    name: "ProjectDetailView · Run now",
+    name: "ProjectDetailView · JourneyBar Start iteration (was header Run now)",
     ui: () => (
       <ProjectDetailView
-        project={{ ...PROJECT, outputs: [OUTPUT] }}
+        project={{ ...PROJECT, ...WITH_INPUT, outputs: [OUTPUT] }}
         board={null}
         playbook={READY_PLAYBOOK}
         directives={null}
@@ -315,19 +343,24 @@ const SCENARIOS: Scenario[] = [
         isInstanceAdmin={false}
       />
     ),
-    control: (r) => r.getByRole("button", { name: "Run now" }),
-    pending: "Starting run…",
+    control: (r) => journeyPrimary(r, "Start iteration 1"),
+    pending: "Starting…",
     method: "POST",
     path: `${BASE}/runs`,
     success: { run: { run_no: 15, status: "running" } },
-    confirmed: () =>
-      expect(router.push).toHaveBeenCalledWith(`/projects/${SLUG}/runs/15`),
+    // The bar confirms in place and the page refreshes into the running state.
+    confirmed: (r) => {
+      expect(r.getByRole("status").textContent).toBe("Run 15 started.");
+      expect(router.refresh).toHaveBeenCalled();
+    },
+    alertText: "The upstream hiccupped Try again",
+    retryName: "Try again",
   },
   {
-    name: "ProjectDetailView · Activate",
+    name: "ProjectDetailView · JourneyBar Activate (was header Activate)",
     ui: () => (
       <ProjectDetailView
-        project={{ ...PROJECT, status: "planning", outputs: [OUTPUT] }}
+        project={{ ...PROJECT, ...WITH_INPUT, status: "planning", outputs: [OUTPUT] }}
         board={null}
         playbook={READY_PLAYBOOK}
         directives={null}
@@ -336,21 +369,21 @@ const SCENARIOS: Scenario[] = [
         isInstanceAdmin={false}
       />
     ),
-    // The Dashboard's next-action hero offers the same action; this is the header's.
-    control: (r) =>
-      within(r.container.querySelector("header")!).getByRole("button", { name: "Activate" }),
+    control: (r) => journeyPrimary(r, "Activate"),
     pending: "Activating…",
     method: "PATCH",
     path: BASE,
     body: { status: "active" },
     success: { ...PROJECT, status: "active" },
     confirmed: () => expect(router.refresh).toHaveBeenCalled(),
+    alertText: "The upstream hiccupped Try again",
+    retryName: "Try again",
   },
   {
-    name: "ProjectDetailView · Continue run N",
+    name: "ProjectDetailView · JourneyBar Continue run N (was header Continue)",
     ui: () => (
       <ProjectDetailView
-        project={{ ...PROJECT, outputs: [OUTPUT], runs: [RUN_BRIEF(14, "waiting")] }}
+        project={{ ...PROJECT, ...WITH_INPUT, outputs: [OUTPUT], runs: [RUN_BRIEF(14, "waiting")] }}
         board={null}
         playbook={READY_PLAYBOOK}
         directives={null}
@@ -359,16 +392,14 @@ const SCENARIOS: Scenario[] = [
         isInstanceAdmin={false}
       />
     ),
-    // The live status bar offers the same action; this is the header's.
-    control: (r) =>
-      within(r.container.querySelector("header")!).getByRole("button", {
-        name: "Continue run 14",
-      }),
+    control: (r) => journeyPrimary(r, "Continue run 14"),
     pending: "Continuing…",
     method: "POST",
     path: `${BASE}/runs/14/continue`,
     success: { run: { run_no: 14, status: "running" } },
     confirmed: () => expect(router.refresh).toHaveBeenCalled(),
+    alertText: "The upstream hiccupped Try again",
+    retryName: "Try again",
   },
   {
     name: "RunsPanel · Cancel",
@@ -831,10 +862,10 @@ describe.each(SCENARIOS)("$name", (scenario) => {
     await server.answer(502, { detail: "The upstream hiccupped" });
 
     const alert = await r.findByRole("alert");
-    expect(alert.textContent).toBe("The upstream hiccupped");
+    expect(alert.textContent).toBe(scenario.alertText ?? "The upstream hiccupped");
     expect(buttonOf(scenario.control(r)).disabled).toBe(false);
 
-    const retry = r.getByRole("button", { name: "Retry" });
+    const retry = r.getByRole("button", { name: scenario.retryName ?? "Retry" });
     fireEvent.click(retry);
     fireEvent.click(retry);
     expect(server.writes).toHaveLength(2);
@@ -894,12 +925,12 @@ describe("per-row locks", () => {
   });
 });
 
-describe("Run now", () => {
-  it("stays disabled while a run is open", () => {
+describe("Starting a run (journey bar)", () => {
+  it("is not offered while a run is open — the bar points at the open run", () => {
     fakeServer();
     const r = render(
       <ProjectDetailView
-        project={{ ...PROJECT, outputs: [OUTPUT], runs: [RUN_BRIEF(9, "running")] }}
+        project={{ ...PROJECT, ...WITH_INPUT, outputs: [OUTPUT], runs: [RUN_BRIEF(9, "running")] }}
         board={null}
         playbook={READY_PLAYBOOK}
         directives={null}
@@ -908,8 +939,9 @@ describe("Run now", () => {
         isInstanceAdmin={false}
       />,
     );
-    expect((r.getByRole("button", { name: "Run now" }) as HTMLButtonElement).disabled).toBe(
-      true,
-    );
+    expect(r.queryByRole("button", { name: /^(Run now|Start iteration)/ })).toBeNull();
+    const primary = r.container.querySelector('[data-component="JourneyPrimary"]')!;
+    expect(primary.textContent).toBe("Watch run 9");
+    expect(primary.querySelector("a")?.getAttribute("href")).toBe(`/projects/${SLUG}/runs/9`);
   });
 });

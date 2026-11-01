@@ -16,6 +16,7 @@ export function ReadinessChecklist({
   onActivate,
   activating = false,
   onNavigate,
+  onItem,
 }: {
   items: ReadinessItem[];
   findings: { code: string; severity: string; text: string }[];
@@ -24,6 +25,8 @@ export function ReadinessChecklist({
   activating?: boolean;
   /** Switch tab in place instead of following the `?tab=` href. */
   onNavigate?: (tab: ProjectTab) => void;
+  /** Open the item's tab and reveal its field (wins over `onNavigate`). */
+  onItem?: (item: ReadinessItem) => void;
 }) {
   const missing = items.filter((item) => !item.ok);
   if (missing.length === 0 && findings.length === 0) return null;
@@ -72,12 +75,17 @@ export function ReadinessChecklist({
                       <a
                         href={item.anchor}
                         onClick={
-                          onNavigate && item.tab
+                          onItem
                             ? (event) => {
                                 event.preventDefault();
-                                onNavigate(item.tab as ProjectTab);
+                                onItem(item);
                               }
-                            : undefined
+                            : onNavigate && item.tab
+                              ? (event) => {
+                                  event.preventDefault();
+                                  onNavigate(item.tab as ProjectTab);
+                                }
+                              : undefined
                         }
                         className="text-[var(--color-accent)] underline-offset-2 hover:underline"
                       >

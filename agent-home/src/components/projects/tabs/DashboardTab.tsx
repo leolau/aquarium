@@ -2,7 +2,6 @@
 
 import { ActivityCard } from "@/components/projects/dashboard/ActivityCard";
 import { NeedsYouCard } from "@/components/projects/dashboard/NeedsYouCard";
-import { NextActionHero } from "@/components/projects/dashboard/NextActionHero";
 import { RequirementsCard } from "@/components/projects/dashboard/RequirementsCard";
 import { WhereItStands } from "@/components/projects/dashboard/WhereItStands";
 import { activityEntries } from "@/components/projects/dashboard/activity";
@@ -12,7 +11,9 @@ import { cardsBar, outputsBar, standSteps } from "@/components/projects/dashboar
 import { LatestOutputsShelf } from "@/components/projects/outputs/LatestOutputsShelf";
 import type { ProjectTabProps } from "@/components/projects/tabs/types";
 
-/** Landing tab: what needs you, where it stands, latest outputs. */
+/** Landing tab: what else needs you, where it stands, latest outputs. The
+ * one next action itself lives in the journey bar above every tab; the
+ * "Needs you" list points up at it instead of repeating it. */
 export function DashboardTab({
   project,
   board,
@@ -32,12 +33,6 @@ export function DashboardTab({
       className="flex flex-col gap-4 md:grid md:grid-cols-2 md:items-start"
     >
       <div data-column="left" className="flex min-w-0 flex-col gap-4">
-        <NextActionHero
-          slug={project.slug}
-          action={hero}
-          onNavigate={onNavigate}
-          onChangeRequest={onChangeRequest}
-        />
         <NeedsYouCard
           slug={project.slug}
           items={items}

@@ -41,7 +41,7 @@ export function AddOutputForm({
   const input =
     "w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-[var(--color-accent)]";
   return (
-    <div data-component="AddOutputForm" className="flex flex-col gap-1.5">
+    <div id="add-output" data-component="AddOutputForm" className="flex flex-col gap-1.5">
       <input
         value={title}
         onChange={(e) => setTitle(e.target.value)}

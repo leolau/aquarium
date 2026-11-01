@@ -448,12 +448,14 @@ function PrimaryAction({
   state,
   slug,
   runnable,
+  ownsNextStep,
   onStopAll,
   stopBusy,
 }: {
   state: LiveState;
   slug: string;
   runnable: boolean;
+  ownsNextStep: boolean;
   onStopAll: () => void;
   stopBusy: boolean;
 }) {
@@ -461,7 +463,7 @@ function PrimaryAction({
   const base = `/api/projects/${encodeURIComponent(slug)}`;
   const p = state.primary;
   let button = null;
-  if (p?.kind === "continue") {
+  if (p?.kind === "continue" && ownsNextStep) {
     button = (
       <ActionButton busy={action.busy} pendingLabel="Continuing…" className={PRIMARY_BTN}
         onClick={() => void action.run(`${base}/runs/${p.runNo}/continue`)}>
@@ -475,7 +477,7 @@ function PrimaryAction({
         ■ Close run {p.runNo}
       </ActionButton>
     );
-  } else if (p?.kind === "start") {
+  } else if (p?.kind === "start" && ownsNextStep) {
     button = (
       <ActionButton busy={action.busy} pendingLabel="Starting…" className={PRIMARY_BTN}
         disabled={!runnable}
@@ -540,6 +542,7 @@ export function LiveStatusBar({
   board,
   run: initialRun = null,
   runnable = true,
+  ownsNextStep = true,
 }: {
   project: ProjectDetail;
   board: ProjectBoardView | null;
@@ -547,6 +550,8 @@ export function LiveStatusBar({
   run?: ProjectRun | null;
   /** Readiness gate for "Start next iteration" (the server re-checks). */
   runnable?: boolean;
+  /** False where the journey bar owns Continue / Start next iteration. */
+  ownsNextStep?: boolean;
 }) {
   const slug = project.slug;
   const now = useNow();
@@ -621,7 +626,12 @@ export function LiveStatusBar({
       data-state={state.kind}
       data-collapsed={collapsed ? "true" : undefined}
       aria-label="Live status"
-      className="sticky top-0 z-30 rounded-2xl border-2 border-[var(--color-accent)] bg-[var(--color-surface)] px-3 py-2.5 shadow-lg"
+      // With the journey bar above it, the bar owns the sticky slot and the accent.
+      className={
+        ownsNextStep
+          ? "sticky top-0 z-30 rounded-2xl border-2 border-[var(--color-accent)] bg-[var(--color-surface)] px-3 py-2.5 shadow-lg"
+          : "rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5"
+      }
     >
       <div className="flex flex-wrap items-center gap-2">
         <button
@@ -641,6 +651,7 @@ export function LiveStatusBar({
           state={state}
           slug={slug}
           runnable={runnable}
+          ownsNextStep={ownsNextStep}
           stopBusy={stopAll.busy}
           onStopAll={() => {
             stopAll.clearError();
@@ -667,9 +678,11 @@ export function LiveStatusBar({
               />
             </div>
           ) : null}
-          <p className="mt-1.5 text-xs text-[var(--color-muted)]">
-            Next for you: <b className="text-[var(--color-fg)]">{state.nextForYou}</b>
-          </p>
+          {ownsNextStep ? (
+            <p className="mt-1.5 text-xs text-[var(--color-muted)]">
+              Next for you: <b className="text-[var(--color-fg)]">{state.nextForYou}</b>
+            </p>
+          ) : null}
           {rows.length > 0 || state.inlineRunning ? (
             <div data-component="LiveTasks" className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
               {state.inlineRunning && state.runNo != null ? (
