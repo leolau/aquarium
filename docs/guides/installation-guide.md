@@ -102,8 +102,8 @@ You can collect these after the installation:
 
 # 2. Installing Aquarium
 
-The whole installation is one command. It takes about 20–35 minutes,
-most of it downloading.
+Installing takes three commands and about 20–35 minutes, most of it spent
+downloading.
 
 ## 2.1 Log in to the server
 
@@ -111,16 +111,82 @@ most of it downloading.
 ssh root@203.0.113.10
 ```
 
-If you log in as a normal user, put `sudo` in front of the install command
-below.
+## 2.2 Get Aquarium and check the server
 
-## 2.2 Run the installer
+```bash
+git clone https://github.com/leolau/aquarium.git && cd aquarium
+./install-aquarium.sh --check
+```
 
-There are two ways to start it. Both run the same script,
-`install-aquarium.sh`.
+`--check` is a read-only **preflight**. It changes nothing and does not need
+`sudo`. It checks the operating system, CPU, memory, free disk, ports 80/443
+and DNS. Fix anything it reports:
 
-**Option A — straight from GitHub (most common).** Replace the two domain
-names with yours:
+- It **fails** when another program already uses port 80 or 443. Caddy needs
+  both ports to get the HTTPS certificates.
+- It **warns** when a domain name does not resolve yet, or points at a
+  different server. Fix the DNS record (section 1.2) and wait before you
+  install with that domain.
+
+## 2.3 Run the installer
+
+```bash
+sudo ./install-aquarium.sh
+```
+
+When you run it from a clone, the installer installs **that clone**: it is
+copied to `/opt/data/hermes-agent` together with its git history. Nothing else
+is downloaded from GitHub Releases. `--from-checkout` does the same thing
+explicitly.
+
+### The questions it asks (once)
+
+The first time you run it in a terminal, the installer asks for the instance
+settings, checks them, and saves them in `/etc/aquarium/aquarium.conf`:
+
+| Setting | Option | Environment variable | Default |
+|---|---|---|---|
+| Organisation name | `--org-name` | `AQUARIUM_ORG_NAME` | `Aquarium` |
+| App host name (agent-home) | `--home-domain` | `AQUARIUM_HOME_DOMAIN` | none: no HTTPS, local only |
+| Dashboard host name | `--dashboard-domain` | `AQUARIUM_DASHBOARD_DOMAIN` | none |
+| Owner login | `--owner-id` | `AQUARIUM_OWNER_ID` | `admin` |
+| Owner email (contact for the HTTPS certificates) | `--owner-email` | `AQUARIUM_OWNER_EMAIL` | none |
+
+If a setting is given in more than one place, this order wins: command-line
+option, then environment variable, then the saved `aquarium.conf`, then your
+answer to the question, then the default.
+
+**Without questions (for scripts):** `--yes` never asks. Defaults fill in
+anything you leave out:
+
+```bash
+sudo ./install-aquarium.sh --yes --org-name "Example Org" \
+  --home-domain home.example.com --dashboard-domain dash.example.com \
+  --owner-email it@example.com
+```
+
+**Running it again is safe.** Re-runs read `/etc/aquarium/aquarium.conf` and
+ask nothing. Existing secrets, data and `config.yaml` are kept. To change a
+setting later (for example to add a domain), edit
+`/etc/aquarium/aquarium.conf` or pass the option, then run
+`sudo ./install-aquarium.sh` again.
+
+### Other ways to install
+
+| Option | What it installs | Use it for |
+|---|---|---|
+| *(none, run from a clone)* or `--from-checkout` | the clone you are in (not signature-checked) | a new instance from a git clone |
+| `--version v1.2.0` | exactly that signed GitHub release | installing a known, verified version |
+| `--channel stable` / `--channel beta` | the newest signed release on that channel (beta includes release candidates) | release-based servers |
+| `--from-branch develop` | a fresh git checkout of a branch (not signature-checked) | development and test servers only |
+
+Releases are verified before they are installed. The installer checks a
+cryptographic signature (cosign) and a checksum, and stops if either does not
+match. Installs from a clone are not signature-checked, so only use a clone you
+trust.
+
+**Without a clone:** the script can also be piped straight from GitHub. It
+then installs the newest stable release:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/leolau/aquarium/develop/install-aquarium.sh \
@@ -129,52 +195,14 @@ curl -fsSL https://raw.githubusercontent.com/leolau/aquarium/develop/install-aqu
          bash -s -- --channel stable
 ```
 
-**Option B — after cloning the repository.**
-
-```bash
-git clone https://github.com/leolau/aquarium.git
-cd aquarium
-sudo AQUARIUM_HOME_DOMAIN=home.example.com \
-     AQUARIUM_DASHBOARD_DOMAIN=dash.example.com \
-     bash install-aquarium.sh --channel stable
-```
-
-> **TODO (new simple install command):** a shorter post-clone install command
-> is being added. When it lands, this section will show it as the first
-> option. Until then use Option A or B above.
-<!-- TODO(installer): replace with the new post-clone install command name once its PR is merged. -->
-
-### Choosing what to install
-
-Pick **one** of these options at the end of the command:
-
-| Option | What it installs | Use it for |
-|---|---|---|
-| `--channel stable` (default) | the newest signed stable release | normal servers |
-| `--channel beta` | the newest release, including release candidates | trying new features early |
-| `--version v1.2.0` | exactly that release | installing a known version |
-| `--from-branch develop` | a git checkout of a branch (not signature-checked) | development and test servers only |
-
-Releases are verified before they are installed: the installer checks a
-cryptographic signature (cosign) and a checksum, and stops if either does not
-match.
-
-> If no signed release has been published yet, `--channel stable` has nothing
-> to install. In that case use `--from-branch develop`.
-
-### Optional settings
-
-Put these in front of `bash` in the same way as the domain names:
+### More settings
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `AQUARIUM_HOME_DOMAIN` | (none) | public name of the app. Without it there is no HTTPS and nothing but SSH is reachable from outside. |
-| `AQUARIUM_DASHBOARD_DOMAIN` | (none) | public name of the operator dashboard |
-| `AQUARIUM_OWNER_ID` | `admin` | the owner's login name on the dashboard |
-| `AQUARIUM_ROOT` | `/opt/data` | where data and settings live |
+| `AQUARIUM_ROOT` | `/opt/data` | where data and settings live. **Keep the default** if you want to update with `aquarium-update.sh` (section 12): git updates only work with `/opt/data`. |
 | `AQUARIUM_SKIP_EMBED_MODEL=1` | off | do not download the 2.3 GB search model now (faster, but memory search needs it later) |
 
-## 2.3 What the installer does
+## 2.4 What the installer does
 
 You do not need to do any of this by hand; it is listed so you know what is on
 the server:
@@ -189,7 +217,7 @@ the server:
    secrets).
 4. Generates all passwords and keys and stores them in
    `/opt/data/aquarium-secrets.env` (readable by root only).
-5. Downloads and verifies the Aquarium release (or clones the branch).
+5. Copies your clone into place (or downloads and verifies the release).
 6. Starts a private, self-hosted Supabase database (Docker), creates the
    database tables and the first owner.
 7. Installs the local embedding service (used to search memory).
@@ -199,7 +227,7 @@ the server:
 Running the installer again is safe: it keeps existing secrets, data and
 settings.
 
-## 2.4 When it finishes
+## 2.5 When it finishes
 
 At the end the installer prints health checks and a summary, for example:
 
@@ -217,15 +245,25 @@ At the end the installer prints health checks and a summary, for example:
   ok    embedding :8791
   ok    https://home.example.com/login
 
-Aquarium installed (home.example.com).
+Aquarium installed for Example Org (home.example.com).
   Owner setup : open this one-time link within 24 hours to set the owner's email and password:
                 https://home.example.com/setup#token=…
+                New link (cancels the old one): sudo -u hermes -H bash -c '…hermes setup-link …'
+  Settings    : /etc/aquarium/aquarium.conf (domains, owner; re-runs reuse it)
+  Secrets     : /opt/data/aquarium-secrets.env (root only); service env files in /etc/aquarium/*.env (root only)
+  Models      : add your model provider API key(s) (e.g. OPENROUTER_API_KEY=...) to
+                /opt/data/hermes-home/.env, then: systemctl restart hermes-gateway hermes-dashboard
+  Health      : sudo aquarium doctor    Logs: sudo aquarium logs [service]
+  Update      : sudo /opt/data/hermes-agent/scripts/aquarium-update.sh develop
 ```
 
 - Every line should say `ok`. If any line says `FAIL`, see
   [Troubleshooting](#troubleshooting).
 - **Copy the Owner setup link now.** It works once and expires after 24
   hours. Treat it like a password: whoever opens it first becomes the owner.
+- **Secrets** (database passwords, keys) are in
+  `/opt/data/aquarium-secrets.env` and `/etc/aquarium/*.env`, readable by root
+  only. `aquarium.conf` and the clone contain nothing secret.
 
 # 3. First owner setup
 
@@ -528,6 +566,27 @@ manager. Without the key a backup cannot be opened.
 
 # 12. Updating Aquarium
 
+## 12.1 Servers installed from a git clone
+
+```bash
+sudo /opt/data/hermes-agent/scripts/aquarium-update.sh            # the branch that was installed
+sudo /opt/data/hermes-agent/scripts/aquarium-update.sh develop    # or name a branch
+```
+
+The script fetches the branch from the clone's `origin`. It refuses to run if
+there are local edits that would be overwritten. It then rebuilds what changed,
+restarts the services and checks them.
+
+> **Limit:** this git update path only works when Aquarium was installed with
+> the default data folder `/opt/data`. If you installed with a different
+> `AQUARIUM_ROOT`, update by running `git pull` in your own clone and then
+> `sudo ./install-aquarium.sh` again.
+
+`git pull` + re-running `sudo ./install-aquarium.sh` also works on default
+installs. It copies the updated clone and rebuilds.
+
+## 12.2 Servers installed from a release
+
 Check what is installed and whether an update is available:
 
 ```bash
@@ -542,13 +601,10 @@ sudo aquarium update --version v1.3.0   # a specific release
 sudo aquarium update --channel beta     # switch to the beta channel
 ```
 
-`aquarium update` makes a backup first, downloads and verifies the signed
-release, switches to it, restarts the services and runs health checks. If the
-checks fail, it rolls back to the previous release automatically.
-
-Servers installed with `--from-branch` run from a git checkout. Update them
-with `/opt/data/deploy-hermes.sh <branch>`, or move them once to the release
-layout with `sudo aquarium migrate-layout --dry-run` and then `--yes`.
+`aquarium update` makes a backup first. It then downloads and verifies the
+signed release, switches to it, restarts the services and runs health checks.
+If the checks fail, it rolls back to the previous release automatically. On a
+release install, `aquarium-update.sh` hands over to `sudo aquarium update`.
 
 # 13. Troubleshooting {#troubleshooting}
 
@@ -598,7 +654,10 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:9119/   # 200, 302 or 
 
 | Symptom | Likely cause | What to do |
 |---|---|---|
+| `--check` fails on port 80 or 443 | another web server (e.g. nginx, apache) is running | stop and disable it, then re-run `--check` |
+| `--check` warns about DNS | the domain does not point at this server yet | fix the A record, wait, re-run `--check` |
 | Installer stops with "need >= 25 GB free disk" | disk too small | use a bigger disk |
+| `aquarium-update.sh` says "git updates support AQUARIUM_ROOT=/opt/data only" | installed with a non-default data folder | `git pull` in your clone and re-run `sudo ./install-aquarium.sh` |
 | `https://home.example.com` does not load; certificate errors | DNS does not point at the server yet, or ports 80/443 closed at the cloud firewall | check `nslookup`, open 80/443, then `sudo systemctl restart caddy` |
 | Health check `FAIL` for one service | the service did not start | `sudo aquarium logs <service>`; fix, then re-run the installer (it is safe) |
 | "This setup link is not valid" | expired (24 h) or already used | create a new link (section 3) |
