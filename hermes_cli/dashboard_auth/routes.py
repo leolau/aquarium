@@ -15,6 +15,8 @@ The routes:
 """
 from __future__ import annotations
 
+import asyncio
+import functools
 import logging
 import threading
 import time
@@ -306,12 +308,14 @@ async def auth_callback(
         )
 
     try:
-        session = p.complete_login(
+        # Provider calls do blocking network I/O; keep them off the event loop.
+        session = await asyncio.to_thread(functools.partial(
+            p.complete_login,
             code=code,
             state=state,
             code_verifier=verifier,
             redirect_uri=_redirect_uri(request),
-        )
+        ))
     except InvalidCodeError as e:
         audit_log(
             AuditEvent.LOGIN_FAILURE,
@@ -466,19 +470,19 @@ async def _two_factor_step(session, code: str, provider: str, ip: str):
     """
     from hermes_cli import two_factor
 
-    if not two_factor.any_enabled():
+    if not await asyncio.to_thread(two_factor.any_enabled):
         return None
     try:
         user_id = await two_factor.principal_id_for_session(session)
     except Exception as exc:  # noqa: BLE001 — fail closed, never skip the code
         _log.warning("two-factor lookup failed: %s", type(exc).__name__)
         raise HTTPException(status_code=503, detail="Sign-in is unavailable. Try again shortly.")
-    if not user_id or not two_factor.is_enabled(user_id):
+    if not user_id or not await asyncio.to_thread(two_factor.is_enabled, user_id):
         return None
     if not (code or "").strip():
         return JSONResponse({"ok": False, "two_factor_required": True})
     try:
-        ok = two_factor.verify(user_id, code)
+        ok = await asyncio.to_thread(two_factor.verify, user_id, code)
     except two_factor.TwoFactorLocked:
         audit_log(AuditEvent.LOGIN_FAILURE, provider=provider, reason="two_factor_locked", ip=ip)
         raise HTTPException(status_code=429, detail="Too many wrong codes. Wait 15 minutes and try again.")
@@ -531,9 +535,11 @@ async def auth_password_login(request: Request, body: _PasswordLoginBody):
         raise HTTPException(status_code=404, detail="Unknown provider")
 
     try:
-        session = p.complete_password_login(
-            username=body.username, password=body.password
-        )
+        session = await asyncio.to_thread(functools.partial(
+            p.complete_password_login,
+            username=body.username,
+            password=body.password,
+        ))
     except InvalidCredentialsError:
         audit_log(
             AuditEvent.LOGIN_FAILURE,
@@ -592,7 +598,9 @@ async def auth_logout(request: Request):
         # logged but never raised.
         for provider in list_providers():
             try:
-                provider.revoke_session(refresh_token=rt)
+                await asyncio.to_thread(
+                    functools.partial(provider.revoke_session, refresh_token=rt)
+                )
             except Exception as e:  # noqa: BLE001 — best-effort
                 _log.warning(
                     "dashboard-auth: revoke on %r failed: %s",

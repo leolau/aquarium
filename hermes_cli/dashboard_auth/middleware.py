@@ -16,6 +16,8 @@ binds.
 """
 from __future__ import annotations
 
+import asyncio
+import functools
 import logging
 from typing import Awaitable, Callable
 
@@ -350,7 +352,11 @@ async def gated_auth_middleware(
         # one). On success we re-set the rotated cookies on the response and
         # serve the request transparently; on RefreshExpiredError (RT dead /
         # revoked / reuse-detected) we fall through to clear-and-relogin.
-        refreshed = _attempt_refresh(request, refresh_token=_rt)
+        # The provider round-trip is blocking network I/O: run it in a worker
+        # so one refresh doesn't stall every other request on the loop.
+        refreshed = await asyncio.to_thread(
+            functools.partial(_attempt_refresh, request, refresh_token=_rt)
+        )
         if refreshed is not None:
             new_session, refreshing_provider = refreshed
             request.state.session = new_session

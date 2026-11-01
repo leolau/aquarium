@@ -338,31 +338,40 @@ def _card_rollup_sync(bconn, project_id: str, principal) -> dict:
     # lead who cannot see a colleague's private card must still see the
     # same number the refusal is based on. A count leaks no title,
     # assignee or column.
-    tasks = kanban_db.list_tasks(
-        bconn,
-        project_id=project_id,
-        principal=principal,
-        include_archived=True,
-        resolve_project=False,
-    )
+    # Counted in SQL rather than by materialising every card: the projects
+    # list runs this once per listed project.
+    if principal is not None and not principal.is_owner:
+        visible_sql = (
+            "CASE WHEN visibility = 'shared' OR visibility = ? THEN 1 ELSE 0 END"
+        )
+        params: tuple = (principal.private_visibility, str(project_id).strip())
+    else:
+        visible_sql = "1"
+        params = (str(project_id).strip(),)
+    rows = bconn.execute(
+        f"SELECT status, {visible_sql} AS visible, COUNT(*) AS n FROM tasks "
+        "WHERE project_id = ? GROUP BY status, visible",
+        params,
+    ).fetchall()
     rollup = {
         "total": 0,
         "done": 0,
         "running": 0,
         "blocked": 0,
-        "total_with_archived": len(tasks),
+        "total_with_archived": 0,
+        "total_all_principals": 0,
     }
-    for t in tasks:
-        status = getattr(t, "status", "")
+    for row in rows:
+        status, visible, n = row["status"], row["visible"], row["n"]
+        rollup["total_all_principals"] += n
+        if not visible:
+            continue
+        rollup["total_with_archived"] += n
         if status == "archived":
             continue
-        rollup["total"] += 1
-        if status in rollup:
-            rollup[status] += 1
-    rollup["total_all_principals"] = bconn.execute(
-        "SELECT COUNT(*) AS n FROM tasks WHERE project_id = ?",
-        (project_id,),
-    ).fetchone()["n"]
+        rollup["total"] += n
+        if status in ("done", "running", "blocked"):
+            rollup[status] += n
     return rollup
 
 

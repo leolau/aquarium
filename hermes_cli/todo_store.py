@@ -363,10 +363,11 @@ def decode_cursor(cursor: str) -> tuple[datetime, str]:
 
 def default_store(mode: Optional[str] = None) -> "TodoStore":
     """A store against the instance's configured schema."""
-    from hermes_cli.config import load_config
+    from hermes_cli.config import load_config_readonly
     from hermes_cli.datastore import get_store
 
-    config = load_config() or {}
+    # Read-only: ``get_store`` only reads it, and this runs per to-do request.
+    config = load_config_readonly() or {}
     resolved: Optional[Literal["dev", "prod"]] = None
     if mode == "dev":
         resolved = "dev"

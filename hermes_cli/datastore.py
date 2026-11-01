@@ -210,7 +210,9 @@ def active_profile_slug() -> str:
     if name == _DEFAULT_PROFILE:
         return _DEFAULT_PROFILE
     if name == "custom":
-        return f"custom_{_short_hash(str(get_hermes_home().resolve()))}"
+        from hermes_constants import resolve_path_cached
+
+        return f"custom_{_short_hash(str(resolve_path_cached(get_hermes_home())))}"
     return _profile_slug(name)
 
 

@@ -160,6 +160,16 @@ _WAL_INCOMPAT_MARKERS = (
 _last_init_error: Optional[str] = None
 _last_init_error_lock = threading.Lock()
 
+# state.db files whose schema this process already set up: resolved path ->
+# (fingerprint, fts_enabled, trigram_available). The fingerprint is the file
+# identity, PRAGMA schema_version, the schema_version row and the connection
+# class. SessionDB() is opened per request; re-running the DDL, column
+# reconcile and FTS probes each time was most of /api/sessions. DDL or a data
+# migration from another process, a replaced file (new inode) or a different
+# SQLite connection class re-runs the full setup.
+_SCHEMA_READY: Dict[str, Tuple[tuple, bool, bool]] = {}
+_SCHEMA_READY_LOCK = threading.Lock()
+
 # Paths for which we've already logged a WAL-fallback WARNING.  Without
 # this, kanban_db.connect() (called on every kanban operation — see
 # hermes_cli/kanban_db.py for ~30 call sites) would re-log the same
@@ -1058,7 +1068,7 @@ class SessionDB:
                 self._conn.row_factory = sqlite3.Row
                 apply_wal_with_fallback(self._conn, db_label="state.db")
                 self._conn.execute("PRAGMA foreign_keys=ON")
-                self._init_schema()
+                self._init_schema_once()
 
             try:
                 _connect_and_init()
@@ -1620,6 +1630,44 @@ class SessionDB:
                         logger.debug(
                             "reconcile %s.%s: %s", table_name, col_name, exc,
                         )
+
+    def _schema_ready_state(self) -> Optional[Tuple[str, tuple]]:
+        """(cache key, schema fingerprint), or None if it can't be read."""
+        try:
+            from hermes_constants import resolve_path_cached
+
+            key = str(resolve_path_cached(self.db_path))
+            st = os.stat(self.db_path)
+            ddl_version = self._conn.execute("PRAGMA schema_version").fetchone()[0]
+            row = self._conn.execute(
+                "SELECT version FROM schema_version LIMIT 1"
+            ).fetchone()
+        except (OSError, sqlite3.Error, TypeError):
+            return None
+        data_version = row[0] if row is not None else None
+        conn_type = f"{type(self._conn).__module__}.{type(self._conn).__qualname__}"
+        return key, (st.st_dev, st.st_ino, ddl_version, data_version, conn_type)
+
+    def _use_ready_schema(self, state: Optional[Tuple[str, tuple]]) -> bool:
+        ready = _SCHEMA_READY.get(state[0]) if state is not None else None
+        if ready is None or ready[0] != state[1]:
+            return False
+        self._fts_enabled, self._trigram_available = ready[1], ready[2]
+        return True
+
+    def _init_schema_once(self) -> None:
+        """Run :meth:`_init_schema` once per state.db file per process."""
+        if self._use_ready_schema(self._schema_ready_state()):
+            return
+        with _SCHEMA_READY_LOCK:
+            if self._use_ready_schema(self._schema_ready_state()):
+                return
+            self._init_schema()
+            state = self._schema_ready_state()
+            if state is not None:
+                _SCHEMA_READY[state[0]] = (
+                    state[1], self._fts_enabled, self._trigram_available
+                )
 
     def _init_schema(self):
         """Create tables and FTS if they don't exist, reconcile columns.

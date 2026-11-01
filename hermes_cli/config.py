@@ -870,6 +870,50 @@ def ensure_hermes_home():
         _ensure_default_soul_md(home)
 
 
+# Homes already set up by ``_ensure_hermes_home_once``: digest of the home and
+# the env that shapes its layout -> (st_dev, st_ino) of the home directory.
+_ENSURED_HOMES: Dict[str, Tuple[int, int]] = {}
+
+
+def _ensure_hermes_home_once() -> None:
+    """``ensure_hermes_home()`` once per home per process, for hot config reads.
+
+    Every ``load_config*`` call needs the home to exist, but redoing the
+    mkdir/chmod/ownership pass and the SOUL.md probe on every authenticated
+    request (once per profile, multiplied by the profile fan-out) kept the
+    event loop busy. The key is per resolved ``HERMES_HOME`` (the context-local
+    profile override included), so each profile is still set up the first time
+    it is read. A home that is removed or replaced (new inode) is set up again.
+    Explicit ``ensure_hermes_home()`` callers (setup, saves) still always run
+    the full pass.
+    """
+    import hashlib
+
+    home = get_hermes_home()
+    key = hashlib.sha256(
+        "\x00".join((
+            str(home),
+            str(is_managed()),
+            os.environ.get("HERMES_HOME_MODE", ""),
+            os.environ.get("HERMES_UID", ""),
+            os.environ.get("HERMES_GID", ""),
+        )).encode("utf-8")
+    ).hexdigest()
+    try:
+        st = os.stat(home)
+        if _ENSURED_HOMES.get(key) == (st.st_dev, st.st_ino):
+            return
+    except OSError:
+        pass
+    ensure_hermes_home()
+    try:
+        st = os.stat(home)
+    except OSError:
+        return
+    with _CONFIG_LOCK:
+        _ENSURED_HOMES[key] = (st.st_dev, st.st_ino)
+
+
 def _ensure_hermes_home_managed(home: Path):
     """Managed-mode variant: verify dirs exist (activation creates them), seed SOUL.md."""
     if not home.is_dir():
@@ -6622,7 +6666,7 @@ def apply_terminal_config_to_env(
 
 def _load_config_impl(*, want_deepcopy: bool) -> Dict[str, Any]:
     with _CONFIG_LOCK:
-        ensure_hermes_home()
+        _ensure_hermes_home_once()
         config_path = get_config_path()
         path_key = str(config_path)
         # The cached value is ${VAR}-expanded, so it belongs to the secrets it

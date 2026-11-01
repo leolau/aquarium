@@ -110,6 +110,31 @@ def get_hermes_home() -> Path:
     return _get_platform_default_hermes_home()
 
 
+_RESOLVED_PATHS: dict[str, str] = {}
+_RESOLVED_PATHS_MAX = 512
+
+
+def resolve_path_cached(path: Path | str) -> Path:
+    """``Path(path).resolve()``, memoised per process for paths that exist.
+
+    Request paths resolve the same few homes (default, profiles root, each
+    profile) many times per request; ``resolve()`` is an ``lstat`` per path
+    component each time. A missing path is never cached, so one created later
+    resolves afresh; retargeting a symlink inside an existing home is not
+    picked up until restart.
+    """
+    raw = os.fspath(path)
+    hit = _RESOLVED_PATHS.get(raw)
+    if hit is not None:
+        return Path(hit)
+    resolved = Path(raw).resolve()
+    if os.path.exists(raw):
+        if len(_RESOLVED_PATHS) >= _RESOLVED_PATHS_MAX:
+            _RESOLVED_PATHS.clear()
+        _RESOLVED_PATHS[raw] = str(resolved)
+    return resolved
+
+
 def get_default_hermes_root() -> Path:
     """Return the root Hermes directory for profile-level operations.
 
@@ -133,7 +158,7 @@ def get_default_hermes_root() -> Path:
         return native_home
     env_path = Path(env_home)
     try:
-        env_path.resolve().relative_to(native_home.resolve())
+        resolve_path_cached(env_path).relative_to(resolve_path_cached(native_home))
         # HERMES_HOME is under ~/.hermes (normal or profile mode)
         return native_home
     except ValueError:
