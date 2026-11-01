@@ -4,6 +4,9 @@
  * DELETE /api/projects/:slug — hard delete (decision 17): human-only
  * upstream, `?confirm=<slug>` must name the slug; upstream statuses pass
  * through so the dialog can say *why* a delete was refused.
+ * `&purge=smoke` is forwarded for the e2e/smoke cleanup: upstream lets the
+ * creator purge an archived `[smoke]` project together with its history
+ * (runs, cards, run sessions) and refuses everything else.
  */
 import { NextResponse } from "next/server";
 
@@ -37,6 +40,12 @@ export async function DELETE(
   { params }: { params: Promise<{ slug: string }> },
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const confirm = new URL(req.url).searchParams.get("confirm") ?? "";
-  return withPrincipal((client) => client.deleteProject(slug, confirm));
+  const search = new URL(req.url).searchParams;
+  const confirm = search.get("confirm") ?? "";
+  const purge = search.get("purge");
+  return withPrincipal((client) =>
+    purge === null
+      ? client.deleteProject(slug, confirm)
+      : client.deleteProject(slug, confirm, { purge }),
+  );
 }

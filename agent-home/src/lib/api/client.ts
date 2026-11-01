@@ -1898,13 +1898,17 @@ export class HermesApiClient {
 
   /** Hard delete — the narrow exception (decision 17): human-only upstream,
    * `confirm` must equal the slug, and a 409 names what history the record
-   * still carries. */
+   * still carries. `purge: "smoke"` asks for the test-data purge instead:
+   * an archived `[smoke]` project the caller created goes with its runs,
+   * cards and run sessions; upstream refuses any other project. */
   async deleteProject(
     slug: string,
     confirm: string,
-  ): Promise<{ deleted: string }> {
+    opts: { purge?: string } = {},
+  ): Promise<{ deleted: string; purged?: { runs: number; cards: number; sessions: number } }> {
+    const purge = opts.purge === undefined ? "" : `&purge=${encodeURIComponent(opts.purge)}`;
     return this.request(
-      `/api/registry/projects/${encodeURIComponent(slug)}?confirm=${encodeURIComponent(confirm)}`,
+      `/api/registry/projects/${encodeURIComponent(slug)}?confirm=${encodeURIComponent(confirm)}${purge}`,
       { method: "DELETE" },
     );
   }

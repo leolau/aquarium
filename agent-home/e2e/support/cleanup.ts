@@ -52,11 +52,6 @@ export async function sweepTodos(req: APIRequestContext): Promise<number> {
   return n;
 }
 
-/**
- * Archive every `[smoke]` project, then delete the ones the server lets go
- * (never run, no cards). A project that ran stays archived: deletion of
- * history is refused by design.
- */
 /** Archive, stopping an open run first (the server refuses to archive with one). */
 async function archiveProject(req: APIRequestContext, slug: string): Promise<void> {
   const context = await json<{ open_run: { run_no: number } | null }>(req, `/api/projects/${slug}/board/context`);
@@ -70,6 +65,26 @@ async function archiveProject(req: APIRequestContext, slug: string): Promise<voi
   }
 }
 
+/**
+ * Permanently remove an archived `[smoke]` project together with its runs,
+ * cards and run sessions (`?purge=smoke`). The server only allows this for
+ * an archived `[smoke]` project the caller created with no open run; a run
+ * that was just stopped can take a few seconds to close, so a 409 is
+ * retried. Falls back to the plain delete (a never-run project someone else
+ * created). Answers whether the project is gone.
+ */
+export async function purgeSmokeProject(req: APIRequestContext, slug: string): Promise<boolean> {
+  const path = `/api/projects/${encodeURIComponent(slug)}?confirm=${encodeURIComponent(slug)}`;
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const res = await req.delete(`${path}&purge=smoke`);
+    if (res.ok() || res.status() === 404) return true;
+    if (res.status() !== 409) break;
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
+  }
+  return (await req.delete(path)).ok();
+}
+
+/** Archive every `[smoke]` project, then purge it (see `purgeSmokeProject`). */
 export async function sweepProjects(req: APIRequestContext): Promise<number> {
   let n = 0;
   for (const archived of [false, true]) {
@@ -79,10 +94,8 @@ export async function sweepProjects(req: APIRequestContext): Promise<number> {
     );
     for (const p of data?.items ?? []) {
       if (!isSmoke(p.name) && !isSmoke(p.goal)) continue;
-      const slug = encodeURIComponent(p.slug);
-      if (!archived) await archiveProject(req, slug);
-      const del = await req.delete(`/api/projects/${slug}?confirm=${slug}`);
-      if (del.ok()) n += 1;
+      if (!archived) await archiveProject(req, encodeURIComponent(p.slug));
+      if (await purgeSmokeProject(req, p.slug)) n += 1;
     }
   }
   return n;

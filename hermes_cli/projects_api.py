@@ -1539,6 +1539,10 @@ async def delete_project_route(request: Request) -> dict[str, Any]:
     back to ``projects``, so a permissive delete would orphan somebody's
     board. Clears the active pointer and detaches the schedule before the
     row goes.
+
+    ``?purge=smoke`` is the disposable-test-data variant (see
+    :func:`_purge_smoke_project`): it removes a ``[smoke]`` project *with*
+    its history, and nothing else may take that path.
     """
     project, _role, _profiles, principal = await _require_write(request)
     await _require_human(request, "hard delete")
@@ -1548,6 +1552,11 @@ async def delete_project_route(request: Request) -> dict[str, Any]:
             status_code=422,
             detail="confirm must equal the project slug",
         )
+    purge = request.query_params.get("purge")
+    if purge is not None:
+        if purge != "smoke":
+            raise HTTPException(status_code=422, detail="purge must be 'smoke'")
+        return await _purge_smoke_project(project, principal)
 
     def _delete_sync() -> dict:
         with projects_db.connect_closing() as conn:
@@ -1610,6 +1619,154 @@ async def delete_project_route(request: Request) -> dict[str, Any]:
             return {"deleted": fresh.slug}
 
     return await asyncio.to_thread(_delete_sync)
+
+
+SMOKE_NAME_PREFIX = "[smoke]"
+SMOKE_SLUG_PREFIX = "smoke-"
+_OPEN_RUN_STATUSES = ("queued", "running", "waiting")
+
+
+def _is_smoke_project(project) -> bool:
+    name = (getattr(project, "name", "") or "").lstrip()
+    return name.startswith(SMOKE_NAME_PREFIX) or (project.slug or "").startswith(
+        SMOKE_SLUG_PREFIX
+    )
+
+
+def _delete_run_session(profile: Optional[str], session_id: str) -> None:
+    """Delete one run's chat session through the store ``DELETE
+    /api/sessions/{id}`` uses (the host profile's ``state.db``). An
+    already-absent session is fine — the contract is "ensure it's gone"."""
+    from hermes_cli.web_server import _open_session_db_for_profile
+
+    db = _open_session_db_for_profile(profile)
+    try:
+        sid = db.resolve_session_id(session_id)
+        if sid:
+            db.delete_session(sid)
+    finally:
+        db.close()
+
+
+def _audit_purge(**fields: Any) -> None:
+    logger.info("projects: smoke purge %s", fields)
+    try:
+        from hermes_cli.dashboard_auth.audit import AuditEvent, audit_log
+
+        audit_log(AuditEvent.PROJECT_PURGED, **fields)
+    except Exception:  # noqa: BLE001 - the audit line never blocks the purge
+        logger.warning("projects: smoke purge audit line failed", exc_info=True)
+
+
+async def _purge_smoke_project(project, principal) -> dict[str, Any]:
+    """``DELETE /{slug}?confirm=<slug>&purge=smoke`` — disposable test data only.
+
+    The e2e/smoke suites start runs, so their projects carry history the
+    normal delete (rightly) refuses. This path removes that history, and is
+    refused ``409``/``403`` unless every guard holds:
+
+    - the project is archived;
+    - it is test data by name: ``[smoke]…`` name or ``smoke-…`` slug;
+    - the caller (already a verified human) is its creator —
+      ``owner_user_id == caller``; an instance owner/admin or a project lead
+      who did not create it is refused, so a role never widens this path;
+    - no run is still open (queued/running/waiting).
+
+    Deletes the project's cards from its board, each run's chat session
+    (``project_runs.session_id``) from the host profile's session store,
+    clears the active pointer, detaches the schedule, then deletes the row
+    (the ``project_*`` tables cascade). Audit-logged.
+    """
+    if not _is_smoke_project(project):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "purge is only for [smoke] test projects — name must start "
+                f"with {SMOKE_NAME_PREFIX!r} or slug with {SMOKE_SLUG_PREFIX!r}"
+            ),
+        )
+    if not project.owner_user_id or project.owner_user_id != principal.user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="purge is only for the project's creator",
+        )
+
+    def _purge_sync() -> dict:
+        with projects_db.connect_closing() as conn:
+            fresh = projects_db.get_project(conn, project.id)
+            if fresh is None:
+                raise HTTPException(status_code=404, detail="project not found")
+            if not fresh.archived:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"refused: {fresh.slug} is not archived — archive it first",
+                )
+            marks = ",".join("?" for _ in _OPEN_RUN_STATUSES)
+            open_runs = conn.execute(
+                "SELECT run_no FROM project_runs WHERE project_id = ? "
+                f"AND status IN ({marks}) ORDER BY run_no",
+                (fresh.id, *_OPEN_RUN_STATUSES),
+            ).fetchall()
+            if open_runs:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"refused: {fresh.slug} has an open run "
+                        f"(run {open_runs[0]['run_no']}) — stop it first"
+                    ),
+                )
+            runs = conn.execute(
+                "SELECT run_no, profile, session_id FROM project_runs "
+                "WHERE project_id = ?",
+                (fresh.id,),
+            ).fetchall()
+
+            # Sessions and cards first: if either store fails, the project
+            # row is still there and the purge can simply be retried.
+            sessions: list[str] = []
+            for run in runs:
+                sid = run["session_id"]
+                if not sid:
+                    continue
+                _delete_run_session(run["profile"], sid)
+                sessions.append(sid)
+            with _board_conn(fresh) as bconn:
+                cards = kanban_db.list_tasks(
+                    bconn, project_id=fresh.id, include_archived=True
+                )
+                for card in cards:
+                    kanban_db.delete_task(bconn, card.id)
+
+            if projects_db.get_active_id(conn) == fresh.id:
+                projects_db.set_active(conn, None)
+            if getattr(fresh, "cron_job_id", None):
+                projects_schedule.detach_project_schedule(
+                    conn,
+                    project=fresh,
+                    reason="project purged",
+                    changed_by=principal.user_id,
+                )
+            projects_db.delete_project(conn, fresh.id)
+            result = {
+                "deleted": fresh.slug,
+                "purged": {
+                    "runs": len(runs),
+                    "cards": len(cards),
+                    "sessions": len(sessions),
+                },
+            }
+        _audit_purge(
+            actor_user_id=principal.user_id,
+            project_id=fresh.id,
+            slug=fresh.slug,
+            name=fresh.name,
+            runs=len(runs),
+            cards=len(cards),
+            sessions=sessions,
+        )
+        return result
+
+    return await asyncio.to_thread(_purge_sync)
 
 
 # ---------------------------------------------------------------------------

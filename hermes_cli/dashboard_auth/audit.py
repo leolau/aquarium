@@ -49,6 +49,9 @@ class AuditEvent(enum.Enum):
     WS_TICKET_REJECTED = "ws_ticket_rejected"
     TOKEN_AUTH_SUCCESS = "token_auth_success"
     TOKEN_AUTH_FAILURE = "token_auth_failure"
+    # Not an auth event, but the dashboard's one append-only audit file is
+    # where an irreversible operator act belongs (projects ``purge=smoke``).
+    PROJECT_PURGED = "project_purged"
 
 
 def _resolve_log_path() -> Path:

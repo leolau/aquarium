@@ -1,15 +1,16 @@
 /**
  * A throwaway `[smoke]` project through its whole life: the wizard, the
- * readiness checklist, activate, a run, the run page, archive — and, on a
- * second never-run project, permanent delete (the server refuses to delete a
- * project with run history, so the run-through project stays archived).
- * afterAll sweeps every `[smoke]` project whatever happened.
+ * readiness checklist, activate, a run, the run page, archive, then a
+ * `purge=smoke` that removes it with its run history — and, on a second
+ * never-run project, permanent delete through the UI. (The plain delete
+ * refuses a project with run history; the purge exists only for `[smoke]`
+ * test data.) afterAll sweeps every `[smoke]` project whatever happened.
  *
  * Activate / start-run selectors live in support/ui.ts (header buttons on
  * builds before the journey bar, #688; the bar's primary action after).
  */
 import { smokeName, storageStatePath } from "../support/env";
-import { sweepProjects } from "../support/cleanup";
+import { purgeSmokeProject, sweepProjects } from "../support/cleanup";
 import { asRole, desktopOnly, expect, test } from "../support/fixtures";
 import { component, projects } from "../support/ui";
 
@@ -26,7 +27,7 @@ test.describe("project lifecycle", { tag: "@regression" }, () => {
     await sweepProjects(ctx.request).finally(() => ctx.close());
   });
 
-  test("wizard → readiness → activate → run → run page → archive", async ({ page }) => {
+  test("wizard → readiness → activate → run → run page → archive → purge", async ({ page }) => {
     test.setTimeout(360_000);
     const name = smokeName("lifecycle");
 
@@ -141,6 +142,16 @@ test.describe("project lifecycle", { tag: "@regression" }, () => {
         await dialog.getByRole("button", { name: "Archive", exact: true }).click();
         await expect(archivedNote).toBeVisible({ timeout: 15_000 });
       }).toPass({ timeout: 120_000, intervals: [5_000] });
+    });
+
+    await test.step("purge: the run history goes with it", async () => {
+      const plain = await page.request.delete(
+        `/api/projects/${encodeURIComponent(slug)}?confirm=${encodeURIComponent(slug)}`,
+      );
+      expect(plain.status(), "plain delete refuses a project with runs").toBe(409);
+      expect(await purgeSmokeProject(page.request, slug), "purge=smoke").toBe(true);
+      const gone = await page.request.get(`/api/projects/${encodeURIComponent(slug)}`);
+      expect(gone.status()).toBe(404);
     });
   });
 
