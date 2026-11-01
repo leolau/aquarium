@@ -2761,15 +2761,17 @@ export class HermesApiClient {
     return this.request("/api/email-accounts");
   }
 
-  /** Enable/disable polling for an address; creates a Gmail entry when
+  /** Enable/disable polling for an address; creates a Gmail entry (or, with
+   *  auth "password", an entry for the owner's saved IMAP/SMTP mailbox) when
    *  enabling an address the poller doesn't know yet. */
   async setEmailPolling(
     address: string,
     enabled: boolean,
+    auth?: "xoauth2" | "password",
   ): Promise<{ account: EmailPollerAccount }> {
     return this.request("/api/email-accounts", {
       method: "PATCH",
-      json: { address, enabled },
+      json: auth ? { address, enabled, auth } : { address, enabled },
     });
   }
 

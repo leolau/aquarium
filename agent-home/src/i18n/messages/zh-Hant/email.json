@@ -43,5 +43,8 @@
   "errLoad": "未能載入你的郵箱。",
   "errSave": "未能儲存：{reason}",
   "errTest": "未能執行測試。",
-  "errRemove": "未能移除郵箱。"
+  "errRemove": "未能移除郵箱。",
+  "polling": "郵件輪詢",
+  "pollingHint": "（為此郵箱新增輪詢項目）",
+  "errPolling": "未能更新郵件輪詢；請重新載入。"
 }

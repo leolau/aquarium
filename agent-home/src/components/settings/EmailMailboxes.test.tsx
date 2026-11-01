@@ -124,4 +124,32 @@ describe("EmailMailboxes", () => {
     release(json({ mailbox: mailbox({ state: "working" }) }));
     await waitFor(() => expect(screen.getByText("Working")).toBeTruthy());
   });
+  it("gives the owner an Email polling toggle that adds a password poller entry", async () => {
+    const patches: unknown[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      if (String(url) === "/api/email-accounts") {
+        if (init?.method === "PATCH") {
+          patches.push(JSON.parse(String(init.body)));
+          return json({ account: { id: "email1", address: "alice@example.com", label: null, enabled: true, auth: "password" } });
+        }
+        return json({ config_present: true, accounts: [] });
+      }
+      return json({ mailboxes: [mailbox()] });
+    });
+    render(<EmailMailboxes />);
+    const toggle = await screen.findByRole("checkbox", { name: /Email polling/ });
+    expect(toggle).toHaveProperty("checked", false);
+    fireEvent.click(toggle);
+    await waitFor(() => expect(patches).toEqual([{ address: "alice@example.com", enabled: true, auth: "password" }]));
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: /Email polling/ })).toHaveProperty("checked", true));
+  });
+
+  it("hides the polling toggle for non-owners", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) =>
+      String(url) === "/api/email-accounts" ? json({ error: "forbidden" }, 403) : json({ mailboxes: [mailbox()] }),
+    );
+    render(<EmailMailboxes />);
+    await screen.findByText("alice@example.com");
+    expect(screen.queryByRole("checkbox", { name: /Email polling/ })).toBeNull();
+  });
 });

@@ -225,6 +225,19 @@ def _register_email_attachments(payloads, *, account_id, conversation,
     if registered:
         print(f"[poller] Registered {registered} attachment file(s) from email {message_id}")
 
+def _mailbox_payload(account):
+    """Stored IMAP/SMTP login for a password-auth poller entry, or None."""
+    wanted = str(account.get('address') or '').strip().lower()
+    owner = account.get('owner_user_id')
+    for cred in load_personal_mailboxes():
+        if cred.name.lower() != wanted:
+            continue
+        if owner and cred.owner_user_id != owner:
+            continue
+        return cred.payload
+    return None
+
+
 def poll_account(account, db):
     """Poll a single IMAP account for new emails."""
     account_id = account['id']
@@ -233,18 +246,30 @@ def poll_account(account, db):
     imap_port = account['imap']['port']
     folders = account.get('folders', ['INBOX'])
 
-    cred = google_oauth.credentials_for_email(
-        'email', account.get('google_account') or address,
-        required_scope=google_oauth.MAIL_SCOPE,
-    )
-    if cred is None:
-        print(
-            f"[poller] WARNING: no credential-store entry with the email "
-            f"service for {address} (connect it in Settings and grant the "
-            f"Mail scope)"
+    use_password = account.get('auth') == 'password'
+    cred = payload = None
+    if use_password:
+        payload = _mailbox_payload(account)
+        if payload is None:
+            print(
+                f"[poller] WARNING: no Email mailbox saved for {address} "
+                f"(add it in Settings -> Email mailboxes)"
+            )
+            poll_status.setdefault('accounts', {}).setdefault(account_id, {})['auth'] = 'no_credential'
+            return 0
+    else:
+        cred = google_oauth.credentials_for_email(
+            'email', account.get('google_account') or address,
+            required_scope=google_oauth.MAIL_SCOPE,
         )
-        poll_status.setdefault('accounts', {}).setdefault(account_id, {})['auth'] = 'no_credential'
-        return 0
+        if cred is None:
+            print(
+                f"[poller] WARNING: no credential-store entry with the email "
+                f"service for {address} (connect it in Settings and grant the "
+                f"Mail scope)"
+            )
+            poll_status.setdefault('accounts', {}).setdefault(account_id, {})['auth'] = 'no_credential'
+            return 0
 
     # Ensure account exists in DB
     existing = db.execute("SELECT last_uid FROM email_accounts WHERE id = ?", (account_id,)).fetchone()
@@ -259,6 +284,9 @@ def poll_account(account, db):
         last_uid = existing['last_uid'] or 0
 
     def _connect_and_auth():
+        if use_password:
+            from hermes_cli import email_mailboxes
+            return email_mailboxes.open_imap(payload)
         if account['imap'].get('tls', True):
             conn = imaplib.IMAP4_SSL(imap_host, imap_port)
         else:
@@ -275,11 +303,13 @@ def poll_account(account, db):
         try:
             mail = _connect_and_auth()
         except imaplib.IMAP4.error as first_error:
+            if use_password:
+                raise
             # Stale access token or rotated refresh: invalidate and retry once.
             google_oauth.invalidate(cred)
             print(f"[poller] {address}: XOAUTH2 failed ({first_error}); retrying once")
             mail = _connect_and_auth()
-        poll_status.setdefault('accounts', {}).setdefault(account_id, {})['auth'] = 'xoauth2'
+        poll_status.setdefault('accounts', {}).setdefault(account_id, {})['auth'] = 'password' if use_password else 'xoauth2'
 
         for folder in folders:
             try:
