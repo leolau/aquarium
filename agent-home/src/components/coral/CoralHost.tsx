@@ -30,8 +30,11 @@ const STAGGER_MS = 18;
  */
 export function CoralHost({
   badgeCounts = {},
+  hiddenApps = [],
 }: {
   badgeCounts?: Record<string, number>;
+  /** App ids hidden from the caller's role (Settings → Menu). */
+  hiddenApps?: readonly string[];
 }) {
   const t = useT("nav");
   const pathname = usePathname();
@@ -39,7 +42,7 @@ export function CoralHost({
   const fabRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  const petals = buildCoralLayout();
+  const petals = buildCoralLayout({ hidden: hiddenApps });
 
   // Server-supplied badges (e.g. todos-open) plus the client-side unread
   // count — last-read state lives in this browser, so the shell can't see it.

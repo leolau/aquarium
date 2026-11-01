@@ -2696,6 +2696,20 @@ export interface RoleLimitsResponse {
   roles: RoleLimit[];
 }
 
+/** `GET /api/agent-home/nav` — which menu items the caller may see (Settings → Menu). */
+export interface AgentHomeNav {
+  role: string;
+  is_owner: boolean;
+  /** The caller's effective hidden app ids (always empty for the owner). */
+  hidden: string[];
+  /** Always visible for every role (home, settings). */
+  locked: string[];
+  /** Every app id the server accepts. */
+  apps: string[];
+  /** Stored hidden list per editable role — owner/admin callers only. */
+  roles?: Record<string, string[]>;
+}
+
 /** `GET /api/tools/toolsets?platform=…` row — one configurable tool group. */
 export interface Toolset {
   name: string;
