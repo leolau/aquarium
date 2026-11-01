@@ -19,13 +19,17 @@ aq_warn() { printf '\033[1;33mwarning: %s\033[0m\n' "$*" >&2; }
 aq_fail() { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; return 1; }
 
 # ------------------------------------------------------------------ command line
-# Sets SOURCE_MODE (release|branch|help), REQ_VERSION, CHANNEL and, for --from-branch, BRANCH.
-# No option = newest stable release; AQUARIUM_BRANCH set = branch install (older usage).
+# Sets SOURCE_MODE (release|branch|checkout|help), REQ_VERSION, CHANNEL and, for --from-branch,
+# BRANCH; CHECK_ONLY, ASSUME_YES; ARG_<NAME> + ARG_SET for instance settings given as options.
+# No source option: AQUARIUM_BRANCH set = branch install (older usage); else, when the installer
+# runs from a git clone (AQ_CHECKOUT), that clone; else the newest stable release.
 aq_parse_args() {
-  SOURCE_MODE=release CHANNEL=stable REQ_VERSION=
+  SOURCE_MODE=release CHANNEL=stable REQ_VERSION='' CHECK_ONLY=0 ASSUME_YES=0 ARG_SET=" "
+  ARG_HOME_DOMAIN='' ARG_DASHBOARD_DOMAIN='' ARG_ORG_NAME='' ARG_OWNER_EMAIL='' ARG_OWNER_ID=''
   [ -n "${AQUARIUM_BRANCH:-}" ] && SOURCE_MODE=branch
-  local picked=0
+  local picked=0 help=0 name
   while [ $# -gt 0 ]; do
+    case $1 in --*=*) set -- "${1%%=*}" "${1#*=}" "${@:2}" ;; esac
     case $1 in
       --version|--channel|--from-branch)
         [ $# -ge 2 ] && [ -n "$2" ] || { aq_fail "$1 needs a value"; return 1; }
@@ -36,15 +40,281 @@ aq_parse_args() {
           --from-branch) BRANCH=$2 SOURCE_MODE=branch ;;
         esac
         shift 2 ;;
-      -h|--help) SOURCE_MODE=help; shift ;;
-      *) aq_fail "unknown option: $1 (use --version vX.Y.Z, --channel stable|beta or --from-branch BRANCH)"; return 1 ;;
+      --from-checkout) picked=$((picked + 1)) SOURCE_MODE=checkout; shift ;;
+      --home-domain|--dashboard-domain|--org-name|--owner-email|--owner-id)
+        # An empty value is allowed (e.g. --home-domain '' = no public domain).
+        [ $# -ge 2 ] || { aq_fail "$1 needs a value"; return 1; }
+        name=$(printf '%s' "${1#--}" | tr 'a-z-' 'A-Z_')
+        printf -v "ARG_$name" '%s' "$2"
+        ARG_SET="$ARG_SET$name "
+        shift 2 ;;
+      --check) CHECK_ONLY=1; shift ;;
+      -y|--yes) ASSUME_YES=1; shift ;;
+      -h|--help) help=1; shift ;;
+      *) aq_fail "unknown option: $1 (see --help)"; return 1 ;;
     esac
   done
-  [ "$picked" -le 1 ] || { aq_fail "use only one of --version, --channel, --from-branch"; return 1; }
+  [ "$picked" -le 1 ] || { aq_fail "use only one of --version, --channel, --from-branch, --from-checkout"; return 1; }
+  if [ "$picked" -eq 0 ] && [ -z "${AQUARIUM_BRANCH:-}" ] && [ -n "${AQ_CHECKOUT:-}" ]; then
+    SOURCE_MODE=checkout
+  fi
   case $CHANNEL in stable|beta) ;; *) aq_fail "--channel must be stable or beta (got '$CHANNEL')"; return 1 ;; esac
   if [ -n "$REQ_VERSION" ] && ! [[ $REQ_VERSION =~ $AQ_VERSION_RE ]]; then
     aq_fail "--version must look like v1.2.3 (got '$REQ_VERSION')"; return 1
   fi
+  if [ "$SOURCE_MODE" = checkout ] && [ -z "${AQ_CHECKOUT:-}" ]; then
+    aq_fail "--from-checkout needs install-aquarium.sh to run from a git clone (git clone ... && cd aquarium && sudo ./install-aquarium.sh)"
+    return 1
+  fi
+  if [ "$help" = 1 ]; then SOURCE_MODE=help; fi
+}
+
+# ------------------------------------------------------------------ instance settings
+# One KEY=VALUE file per server (also read by `aquarium`, deploy/aquarium.py read_kv): the
+# answers given at install time, so a re-run asks nothing and changes nothing. No secrets here.
+AQ_INSTANCE_CONF=${AQ_INSTANCE_CONF:-$AQ_ROOTFS/etc/aquarium/aquarium.conf}
+AQ_INSTANCE_KEYS="ORG_NAME HOME_DOMAIN DASHBOARD_DOMAIN OWNER_ID OWNER_EMAIL"
+
+aq_conf_get() {  # FILE KEY: prints the value; returns 1 if KEY is not in FILE
+  [ -f "$1" ] || return 1
+  python3 - "$1" "$2" <<'PY'
+import sys
+path, key = sys.argv[1:]
+found = None
+try:
+    text = open(path, encoding="utf-8").read()
+except OSError:
+    sys.exit(1)
+for line in text.splitlines():
+    line = line.strip()
+    if not line or line.startswith("#") or "=" not in line:
+        continue
+    if line.startswith("export "):
+        line = line[7:]
+    k, v = line.split("=", 1)
+    v = v.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+        v = v[1:-1]
+    if k.strip() == key:
+        found = v
+if found is None:
+    sys.exit(1)
+print(found)
+PY
+}
+
+aq_conf_set() {  # FILE KEY=VALUE...: replace or append each key, keep every other line (0644)
+  python3 - "$@" <<'PY'
+import os, re, sys, tempfile
+path, pairs = sys.argv[1], [a.split("=", 1) for a in sys.argv[2:]]
+try:
+    lines = open(path, encoding="utf-8").read().splitlines()
+except FileNotFoundError:
+    lines = ["# Aquarium instance settings, written by install-aquarium.sh (re-runs reuse them).",
+             "# Also read by the `aquarium` admin command. No secrets in this file."]
+def render(k, v):
+    if any(c in v for c in "\"\\\n\r$`"):
+        sys.exit(f"refusing to write {k}: value has a quote, backslash, $, backtick or newline")
+    return f"{k}={v}" if re.fullmatch(r"[A-Za-z0-9._@:/+-]*", v) else f'{k}="{v}"'
+for k, v in pairs:
+    pat = re.compile(rf"^\s*(export\s+)?{re.escape(k)}\s*=")
+    hits = [i for i, l in enumerate(lines) if pat.match(l)]
+    if hits:
+        lines[hits[0]] = render(k, v)
+        lines = [l for i, l in enumerate(lines) if i not in hits[1:]]
+    else:
+        lines.append(render(k, v))
+d = os.path.dirname(path) or "."
+os.makedirs(d, exist_ok=True)
+fd, tmp = tempfile.mkstemp(dir=d, prefix=".aquarium.conf.")
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    f.write("\n".join(lines) + "\n")
+os.chmod(tmp, 0o644)
+os.replace(tmp, path)
+PY
+}
+
+AQ_DOMAIN_RE='^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$'
+AQ_EMAIL_RE='^[^[:space:]@"\\$`]+@[^[:space:]@"\\$`]+\.[^[:space:]@"\\$`]+$'
+AQ_ORG_RE='^[^"\\$`[:cntrl:]]{1,80}$'
+AQ_OWNER_RE='^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$'
+
+aq_check_setting() {  # NAME VALUE: prints why VALUE is not acceptable for NAME (empty = fine)
+  case $1 in
+    HOME_DOMAIN|DASHBOARD_DOMAIN)
+      [ -z "$2" ] || { [ ${#2} -le 253 ] && [[ $2 =~ $AQ_DOMAIN_RE ]]; } \
+        || echo "'$2' is not a host name like app.example.org (lowercase, no http://, no port)" ;;
+    OWNER_EMAIL) [ -z "$2" ] || [[ $2 =~ $AQ_EMAIL_RE ]] || echo "'$2' is not an email address" ;;
+    ORG_NAME) [[ $2 =~ $AQ_ORG_RE ]] || echo "the organization name must be 1-80 characters without quotes, \\, \$ or backticks" ;;
+    OWNER_ID) [[ $2 =~ $AQ_OWNER_RE ]] || echo "'$2' is not a login name (letters, digits, . _ @ -; up to 64)" ;;
+  esac
+}
+
+aq_normalize_setting() {  # NAME VALUE: trimmed; host names and emails lowercased, trailing dot dropped
+  local v=$2
+  v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"
+  case $1 in
+    HOME_DOMAIN|DASHBOARD_DOMAIN) v=$(printf '%s' "$v" | tr 'A-Z' 'a-z'); v=${v%.} ;;
+    OWNER_EMAIL) v=$(printf '%s' "$v" | tr 'A-Z' 'a-z') ;;
+  esac
+  printf '%s' "$v"
+}
+
+aq_setting_default() {
+  case $1 in ORG_NAME) echo Aquarium ;; OWNER_ID) echo admin ;; *) echo ;; esac
+}
+
+aq_setting_question() {
+  case $1 in
+    ORG_NAME) echo "Organization name for this instance" ;;
+    HOME_DOMAIN) echo "Public host name for the app, e.g. aquarium.example.org (empty = none, local test only)" ;;
+    DASHBOARD_DOMAIN) echo "Public host name for the operator dashboard, e.g. admin.example.org (empty = none)" ;;
+    OWNER_ID) echo "Owner login name" ;;
+    OWNER_EMAIL) echo "Owner email (Let's Encrypt certificate notices; empty = none)" ;;
+  esac
+}
+
+aq_interactive() {  # prompts only with a terminal to ask on, and never with --yes
+  [ "${ASSUME_YES:-0}" != 1 ] && { : < "${AQ_TTY:-/dev/tty}"; } 2>/dev/null
+}
+
+# aq_resolve_instance: sets each of AQ_INSTANCE_KEYS from the first of: --option, AQUARIUM_<KEY>
+# (non-empty), the saved instance config, an answer at the prompt (interactive runs only), the
+# default. Every value is checked; asks to confirm when it prompted. Writes nothing.
+aq_resolve_instance() {
+  local key val src why env asked=0 tries ans interactive=0
+  aq_interactive && interactive=1 && exec 3< "${AQ_TTY:-/dev/tty}"
+  for key in $AQ_INSTANCE_KEYS; do
+    env="AQUARIUM_$key"
+    if [[ $ARG_SET == *" $key "* ]]; then val=ARG_$key; val=${!val}; src="--$(printf '%s' "$key" | tr 'A-Z_' 'a-z-')"
+    elif [ -n "${!env:-}" ]; then val=${!env}; src=$env
+    elif val=$(aq_conf_get "$AQ_INSTANCE_CONF" "$key"); then src=$AQ_INSTANCE_CONF
+    elif [ "$interactive" = 1 ]; then
+      asked=1 tries=0
+      while :; do
+        printf '%s [%s]: ' "$(aq_setting_question "$key")" "$(aq_setting_default "$key")" >&2
+        IFS= read -r ans <&3 || { echo >&2; aq_fail "no answer for $key"; return 1; }
+        val=$(aq_normalize_setting "$key" "${ans:-$(aq_setting_default "$key")}")
+        why=$(aq_check_setting "$key" "$val")
+        [ -n "$why" ] || break
+        printf '  %s\n' "$why" >&2
+        tries=$((tries + 1))
+        [ "$tries" -lt 5 ] || { aq_fail "no valid answer for $key"; return 1; }
+      done
+      src=prompt
+    else val=$(aq_setting_default "$key"); src=default
+    fi
+    val=$(aq_normalize_setting "$key" "$val")
+    why=$(aq_check_setting "$key" "$val")
+    [ -z "$why" ] || { aq_fail "$key from $src: $why"; return 1; }
+    printf -v "$key" '%s' "$val"
+  done
+  if [ -n "$HOME_DOMAIN" ] && [ "$HOME_DOMAIN" = "$DASHBOARD_DOMAIN" ]; then
+    aq_fail "the app and the dashboard need two different host names (both are $HOME_DOMAIN)"; return 1
+  fi
+  if [ "$asked" = 1 ]; then
+    aq_instance_summary >&2
+    printf 'Install with these settings? [Y/n]: ' >&2
+    IFS= read -r ans <&3 || ans=n
+    case $ans in ""|y|Y|yes|YES) ;; *) aq_fail "stopped; nothing was changed"; return 1 ;; esac
+  fi
+  [ "$interactive" = 0 ] || exec 3<&-
+}
+
+aq_instance_summary() {
+  printf '\nInstance settings:\n'
+  printf '  %-17s %s\n' "Organization" "$ORG_NAME" "App domain" "${HOME_DOMAIN:-(none: no HTTPS, local only)}" \
+    "Dashboard domain" "${DASHBOARD_DOMAIN:-(none)}" "Owner login" "$OWNER_ID" "Owner email" "${OWNER_EMAIL:-(none)}"
+}
+
+aq_save_instance() {  # [KEY=VALUE...]: the resolved settings plus any extra keys
+  local key pairs=()
+  for key in $AQ_INSTANCE_KEYS; do pairs+=("$key=${!key}"); done
+  [ -d "$(dirname "$AQ_INSTANCE_CONF")" ] || install -d -m 711 "$(dirname "$AQ_INSTANCE_CONF")"
+  aq_conf_set "$AQ_INSTANCE_CONF" "${pairs[@]}" "$@"
+}
+
+# ------------------------------------------------------------------ preflight (read-only)
+# aq_preflight [DOMAIN...]: what the install needs, one line per check (ok / warn / FAIL).
+# Returns 1 on any FAIL. Changes nothing and needs no root, so `--check` can run it anywhere.
+aq_preflight() {
+  local fails=0 id ver arch mem_gb cpus disk_gb listeners port who d ips mine domains=0
+  for d in "$@"; do [ -z "$d" ] || domains=1; done
+  aq__row() { printf '  %-5s %s\n' "$1" "$2"; [ "$1" != FAIL ] || fails=1; }
+  id=$( (. "$AQ_ROOTFS/etc/os-release" 2>/dev/null; echo "${ID:-unknown}") )
+  ver=$( (. "$AQ_ROOTFS/etc/os-release" 2>/dev/null; echo "${VERSION_ID:-?}") )
+  if [ "$id" != ubuntu ]; then aq__row FAIL "OS: $id $ver (Ubuntu 24.04 required)"
+  elif [ "$ver" != 24.04 ]; then aq__row warn "OS: Ubuntu $ver (tested on 24.04 only)"
+  else aq__row ok "OS: Ubuntu $ver"; fi
+  arch=$(uname -m)
+  if [ "$arch" = x86_64 ]; then aq__row ok "CPU: $arch"
+  else aq__row FAIL "CPU: $arch (x86_64 required: the pinned uv/cosign downloads are x86_64)"; fi
+  cpus=$(nproc 2>/dev/null || echo 1)
+  if [ "$cpus" -ge 2 ]; then aq__row ok "CPU cores: $cpus"; else aq__row warn "CPU cores: $cpus (2+ recommended)"; fi
+  mem_gb=$(awk '/^MemTotal:/ {printf "%d", ($2 / 1048576) + 0.5}' "$AQ_ROOTFS/proc/meminfo" 2>/dev/null)
+  mem_gb=${mem_gb:-0}
+  if [ "$mem_gb" -ge 8 ]; then aq__row ok "memory: ${mem_gb} GB"
+  elif [ "$mem_gb" -ge 4 ]; then aq__row warn "memory: ${mem_gb} GB (8 GB+ recommended; Supabase + the embedding model are tight below that)"
+  else aq__row FAIL "memory: ${mem_gb} GB (4 GB minimum, 8 GB+ recommended)"; fi
+  disk_gb=$(df -BG --output=avail "${AQ_DISK_PATH:-/}" 2>/dev/null | tail -1 | tr -dc 0-9 || true)
+  disk_gb=${disk_gb:-0}
+  if [ "$disk_gb" -ge 25 ]; then aq__row ok "free disk: ${disk_gb} GB"
+  else aq__row FAIL "free disk: ${disk_gb} GB (25 GB minimum)"; fi
+  if [ "$(id -u)" -eq 0 ]; then aq__row ok "running as root"
+  else aq__row warn "not running as root (the install itself needs sudo)"; fi
+  if listeners=$(ss -Htlnp 2>/dev/null); then
+    for port in 80 443; do
+      who=$(printf '%s\n' "$listeners" | awk -v p=":$port" 'substr($4, length($4) - length(p) + 1) == p { print $0 }')
+      if [ -z "$who" ]; then aq__row ok "port $port is free"
+      elif printf '%s' "$who" | grep -q '"caddy"'; then aq__row ok "port $port: Caddy (an earlier install)"
+      elif [ "$domains" = 1 ]; then aq__row FAIL "port $port is in use by another program (Caddy needs 80/443 for HTTPS): $(printf '%s' "$who" | awk '{print $4, $6}' | head -1)"
+      else aq__row warn "port $port is in use by another program (only matters with a domain)"; fi
+    done
+  else
+    aq__row warn "could not list listening ports (ss missing)"
+  fi
+  mine=$(hostname -I 2>/dev/null | xargs || true)
+  for d in "$@"; do
+    [ -n "$d" ] || continue
+    ips=$(getent ahostsv4 "$d" 2>/dev/null | awk '{print $1}' | sort -u | xargs || true)
+    if [ -z "$ips" ]; then
+      aq__row warn "DNS: $d does not resolve yet. Add an A record for it pointing at this server${mine:+ ($mine)}; HTTPS certificates are issued once it does."
+    elif [ -n "$mine" ] && [ -n "$(comm -12 <(tr ' ' '\n' <<<"$ips" | sort) <(tr ' ' '\n' <<<"$mine" | sort))" ]; then
+      aq__row ok "DNS: $d -> $ips (this server)"
+    else
+      aq__row warn "DNS: $d -> $ips, but this server's addresses are ${mine:-unknown}. Fine only if that address forwards ports 80/443 here."
+    fi
+  done
+  if [ "$fails" = 0 ]; then echo "Preflight: ready to install."; else echo "Preflight: fix the FAIL lines above first."; fi
+  [ "$fails" = 0 ]
+}
+
+# ------------------------------------------------------------------ install from a git clone
+aq_git() {  # git on a checkout root does not own: no hooks, no fsmonitor, no ownership refusal
+  local dir=$1; shift
+  git -c safe.directory="$dir" -c core.hooksPath=/dev/null -c core.fsmonitor=false -C "$dir" "$@"
+}
+
+# aq_sync_checkout SRC DEST: DEST becomes a copy of the clone SRC, .git included (later updates
+# fetch from the same origin). Dependencies, build output and local env files are not copied, and
+# DEST's own are kept. SRC = DEST (cloned straight into place): nothing to copy.
+aq_sync_checkout() {
+  local src dest
+  src=$(realpath "$1") dest=$(realpath -m "$2")
+  [ -d "$src/.git" ] || { aq_fail "$src is not a plain git clone (a .git folder is needed; worktrees are not supported)"; return 1; }
+  aq_git "$src" rev-parse --verify -q HEAD >/dev/null || { aq_fail "$src has no commit checked out"; return 1; }
+  [ "$src" != "$dest" ] || return 0
+  case "$dest/" in "$src"/*) aq_fail "cannot install into $dest: it is inside the clone $src"; return 1 ;; esac
+  case "$src/" in "$dest"/*) aq_fail "cannot install from $src: it is inside the install folder $dest"; return 1 ;; esac
+  if [ -n "$(aq_git "$src" status --porcelain --untracked-files=no)" ]; then
+    aq_warn "$src has uncommitted changes; they are installed too, but updates refuse to run until they are committed upstream"
+  fi
+  mkdir -p "$(dirname "$dest")"
+  rsync -a --delete \
+    --exclude=node_modules/ --exclude=/.venv/ --exclude=/venv/ --exclude=__pycache__/ \
+    --exclude=/agent-home/.next/ --exclude=/web/dist/ \
+    --exclude=/.env --exclude=/.env.local --exclude=/agent-home/agent-home.env --exclude=/app-mcp/app-mcp.env \
+    "$src/" "$dest/"
 }
 
 # ------------------------------------------------------------------ release pick + download

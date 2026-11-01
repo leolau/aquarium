@@ -16,6 +16,21 @@
   <a href="README.es.md"><img src="https://img.shields.io/badge/Lang-Español-orange?style=for-the-badge" alt="Español"></a>
 </p>
 
+> ### Install an Aquarium server (new organization instance)
+>
+> On a fresh Ubuntu 24.04 server:
+>
+> ```bash
+> git clone https://github.com/leolau/aquarium.git && cd aquarium
+> ./install-aquarium.sh --check   # read-only preflight: OS, RAM, disk, ports, DNS
+> sudo ./install-aquarium.sh      # installs this clone; asks for org name, domains, owner once
+> ```
+>
+> Settings are saved in `/etc/aquarium/aquarium.conf` (re-runs are safe); `--yes` plus
+> `--org-name`/`--home-domain`/`--dashboard-domain`/`--owner-email` for automation.
+> Update later with `sudo /opt/data/hermes-agent/scripts/aquarium-update.sh`.
+> Details: [docs/deployment/new-instance.md](docs/deployment/new-instance.md).
+
 > ### ★ Aquarium: the main UI is `agent-home`, not the dashboard ★
 >
 > This fork's **key, main, user-facing UI is [`agent-home/`](agent-home/README.md)** — the mobile-first
