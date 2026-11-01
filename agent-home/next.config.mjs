@@ -23,7 +23,12 @@ function resolveBuildSha() {
 /** When this bundle was built (ISO-8601) — shown next to the build SHA so a
  *  stale tab or a slow deploy is obvious. HERMES_BUILD_TIME overrides it. */
 function resolveBuildTime() {
-  return process.env.HERMES_BUILD_TIME || new Date().toISOString();
+  // Pinned into the env on first evaluation: `next build` re-reads this
+  // config in its server and client compiler workers (which inherit the env),
+  // and two clocks a minute apart inlined two different stamps — a hydration
+  // mismatch (React #418) in the status strip on every page.
+  process.env.HERMES_BUILD_TIME ||= new Date().toISOString();
+  return process.env.HERMES_BUILD_TIME;
 }
 
 /** @type {import('next').NextConfig} */
