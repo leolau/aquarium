@@ -193,6 +193,13 @@ describe("nextAction priority", () => {
     expect(h.primary.intent).toEqual({ kind: "navigate", tab: "inputs" });
   });
 
+  it("(e) no inputs on a runnable project still offers starting a run", () => {
+    const p = project({ status: "active", runs: [], links: {} });
+    const h = hero(p);
+    expect(h.key).toBe("inputs");
+    expect(h.secondary?.intent).toEqual({ kind: "start_run" });
+  });
+
   it("(e) memory, reference and sample links all count as inputs", () => {
     for (const kind of ["memory", "reference", "sample"] as const) {
       const p = project({ runs: [run()], links: { [kind]: [link({ kind })] } });

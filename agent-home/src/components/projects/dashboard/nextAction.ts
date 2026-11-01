@@ -426,6 +426,10 @@ export function needsYouItems({
           effect: "Opens the Inputs tab.",
           intent: { kind: "navigate", tab: "inputs" },
         },
+        // Inputs are optional: when nothing else blocks a run, keep starting one a click away.
+        ...(!open && project.status === "active" && readiness.every((item) => item.ok)
+          ? { secondary: startRunAction(project, playbook) }
+          : {}),
       });
     }
 
