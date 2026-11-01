@@ -46,18 +46,23 @@ const getCachedFacets = unstable_cache(
  * page) drops the launcher and its reserved space. `wide` lifts the desktop
  * max width for panels that lay out side-by-side columns (the memory map next
  * to its list) — at `max-w-5xl` both columns are too narrow to be readable.
+ * `fill` pins the shell to the viewport height and makes `children` a flex
+ * column that fills it, for panels with their own scroller (the chat thread).
  */
 export async function MobileShell({
   title,
   children,
   showCoral = true,
   wide = false,
+  fill = false,
   actions,
 }: {
   title: string;
   children: ReactNode;
   showCoral?: boolean;
   wide?: boolean;
+  /** Fill the viewport height: `children` get a `flex-1 min-h-0` column. */
+  fill?: boolean;
   /** Optional action elements rendered in the header bar, right-aligned next to the title. */
   actions?: ReactNode;
 }) {
@@ -87,8 +92,8 @@ export async function MobileShell({
   }
   const contentWidth = wide ? "lg:max-w-7xl" : "lg:max-w-5xl";
   return (
-    <div data-component="MobileShell" className="min-h-dvh bg-[var(--color-bg)]">
-      <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col md:max-w-2xl lg:max-w-none">
+    <div data-component="MobileShell" className={`${fill ? "h-dvh" : "min-h-dvh"} bg-[var(--color-bg)]`}>
+      <div className={`mx-auto flex ${fill ? "h-dvh" : "min-h-dvh"} w-full max-w-md flex-col md:max-w-2xl lg:max-w-none`}>
         <header
           className="sticky top-0 z-20 border-b border-[var(--color-border)] bg-[var(--color-bg)]/90 px-4 py-3 backdrop-blur lg:px-8"
           style={{ paddingTop: "calc(var(--safe-top) + 0.75rem)" }}
@@ -105,12 +110,18 @@ export async function MobileShell({
         {showCoral ? <StatusStrip /> : null}
         <main
           className={`flex-1 px-4 py-4 lg:px-8 ${
+            fill ? "flex min-h-0 flex-col overflow-y-auto" : ""
+          } ${
             showCoral
               ? "pb-[calc(var(--coral-clearance)+var(--safe-bottom)+1rem)] lg:pb-8"
               : "pb-[calc(var(--safe-bottom)+1rem)]"
           }`}
         >
-          <div className={`mx-auto w-full max-w-2xl ${contentWidth}`}>
+          <div
+            className={`mx-auto w-full max-w-2xl ${contentWidth} ${
+              fill ? "flex min-h-0 flex-1 flex-col" : ""
+            }`}
+          >
             {children}
           </div>
         </main>

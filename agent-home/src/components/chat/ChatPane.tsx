@@ -7,6 +7,12 @@ import { useRouter } from "next/navigation";
 
 import { ApprovalModal } from "@/components/chat/ApprovalModal";
 import { ArchivedModal } from "@/components/chat/ArchivedModal";
+import {
+  CHAT_FILTERS_OPEN_STORAGE_KEY,
+  ChatFiltersPanel,
+  parseFiltersOpen,
+  serializeFiltersOpen,
+} from "@/components/chat/ChatFiltersPanel";
 import { InSessionSearch } from "@/components/chat/InSessionSearch";
 import { LiveActivity } from "@/components/chat/LiveActivity";
 import { DEFAULT_PROFILE, ProfilePicker } from "@/components/chat/ProfilePicker";
@@ -41,6 +47,7 @@ import {
   SESSION_ORDER_STORAGE_KEY,
 } from "@/lib/chat/session-order";
 import { withProfileBody, withProfileQuery } from "@/lib/chat/profile";
+import { useSearchShortcut } from "@/lib/chat/search-shortcut";
 import { fetchSessionList } from "@/lib/chat/session-list-fetch";
 import {
   attachChatStream,
@@ -182,6 +189,28 @@ export function ChatPane({
   const [inSearchOpen, setInSearchOpen] = useState(false);
   const [highlightTerm, setHighlightTerm] = useState<string | undefined>();
   const highlightCallbackRef = useRef<((msgIndex: number, term: string) => void) | null>(null);
+
+  // Profile, tag filters and searches live behind one toggle, collapsed by
+  // default so the transcript gets the screen; remembered per browser.
+  const [filtersOpen, setFiltersOpen] = usePersistentState<boolean>(
+    CHAT_FILTERS_OPEN_STORAGE_KEY,
+    false,
+    parseFiltersOpen,
+    serializeFiltersOpen,
+  );
+  const filtersPanelRef = useRef<HTMLDivElement | null>(null);
+
+  // `/` or Ctrl/Cmd+K: open the panel and the all-sessions search, focused.
+  useSearchShortcut(() => {
+    setFiltersOpen(true);
+    setCrossSearchOpen(true);
+    setInSearchOpen(false);
+    requestAnimationFrame(() => {
+      filtersPanelRef.current
+        ?.querySelector<HTMLInputElement>('[data-component="SessionSearchBar"] input')
+        ?.focus();
+    });
+  });
 
   // Wire the InSessionSearch callback so it sets the highlight term.
   useEffect(() => {
@@ -937,6 +966,14 @@ export function ChatPane({
 
   return (
     <div data-component="ChatPane" className="flex min-h-0 flex-1 flex-col">
+      <ChatFiltersPanel
+        open={filtersOpen}
+        onToggle={() => setFiltersOpen(!filtersOpen)}
+        profile={profile}
+        filterCount={includeTags.length + excludeTags.length}
+        searchActive={crossSearchOpen || inSearchOpen || highlightTerm !== undefined}
+      >
+      <div ref={filtersPanelRef}>
       {/* Which profile answers — switching reloads that profile's chats. */}
       <ProfilePicker
         profiles={profiles}
@@ -1011,6 +1048,8 @@ export function ChatPane({
           highlightRef={highlightCallbackRef}
         />
       )}
+      </div>
+      </ChatFiltersPanel>
 
       <SessionTabs
         sessions={orderedSessions}
@@ -1024,7 +1063,7 @@ export function ChatPane({
 
       <div
         ref={threadRef}
-        className="min-h-[42dvh] max-h-[calc(100dvh-19rem)] flex-1 space-y-3 overflow-y-auto rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3"
+        className="min-h-0 flex-1 space-y-3 overflow-y-auto rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3"
       >
         {loadingThread ? (
           <p className="py-8 text-center text-sm text-[var(--color-muted)]">

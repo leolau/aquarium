@@ -73,7 +73,7 @@ export default async function Page({
   }
 
   return (
-    <MobileShell title="Chat" actions={error ? null : <ChatHeaderActions />}>
+    <MobileShell title="Chat" fill actions={error ? null : <ChatHeaderActions />}>
       {error ? (
         <div
           data-component="ChatError"
