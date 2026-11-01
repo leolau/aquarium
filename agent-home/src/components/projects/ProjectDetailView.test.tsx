@@ -690,10 +690,45 @@ describe("ProjectDetailView", () => {
       const head = header(html);
       expect(head).not.toMatch(/<button[^>]*>(Run now|Activate|Continue run \d+|Start iteration \d+)<\/button>/);
       expect(head).not.toContain('data-action="run-now"');
-      // Add / Edit / Summarise ride in the compact toolbar; goal etc. under About.
-      expect(head).toContain('data-component="ProjectToolbar"');
-      expect(head).toContain('data-component="ProjectAbout"');
+      // Title, then the journey bar, then the toolbar (Add / Edit /
+      // Summarise) and the collapsible About.
+      const at = (marker: string) => html.indexOf(marker);
+      expect(at("<h1")).toBeGreaterThan(-1);
+      expect(at("<h1")).toBeLessThan(at('data-component="JourneyBar"'));
+      expect(at('data-component="JourneyBar"')).toBeLessThan(at('data-component="ProjectToolbar"'));
+      expect(at('data-component="ProjectToolbar"')).toBeLessThan(at('data-component="ProjectAbout"'));
+      expect(head).not.toContain('data-component="ProjectToolbar"');
       expect(bar(html)).toContain('id="journey-primary"');
+    }
+  });
+
+  it("speaks with one voice: one next step, one primary button, whatever the stage", () => {
+    const stages: ProjectDetail[] = [
+      { ...PROJECT, status: "planning", runs: [], outputs: [] },
+      { ...PROJECT, status: "planning", outputs: [OUTPUT({ id: "out_1" })] },
+      PROJECT,
+      { ...PROJECT, outputs: [OUTPUT({ id: "out_1" })], runs: [{ ...PROJECT.runs[0], run_no: 1, status: "running" as const }] },
+      { ...PROJECT, runs: [], outputs: [OUTPUT({ id: "out_1", status: "delivered" })] },
+    ];
+    for (const project of stages) {
+      for (const board of [BOARD, null]) {
+        const html = renderToStaticMarkup(
+          <ProjectDetailView
+            project={project}
+            board={board}
+            playbook={READY_PLAYBOOK}
+            directives={null}
+            callerUserId="leo"
+            isInstanceAdmin={false}
+          />,
+        );
+        // The live bar's own "Next for you" line and the old hero are gone…
+        expect(html).not.toContain("Next for you");
+        expect(html).not.toContain('data-component="NextActionHero"');
+        // …so the journey bar is the only place that names the next step.
+        expect(html.split('id="journey-primary"')).toHaveLength(2);
+        expect(html.split('data-component="JourneyHeadline"')).toHaveLength(2);
+      }
     }
   });
 

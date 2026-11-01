@@ -39,18 +39,22 @@ desktop). "Scroll" is screen-heights at 390px from the top of the page.
 
 ## Layout
 
-1. **Slim header** — name, health, `⋯` lifecycle menu, meta line, compact
-   toolbar (Add · Edit · Summarise), collapsible **About** (goal, usage,
-   summary) and a collapsed "Before it can run · N of M ready" checklist. No
-   Run now / Activate / Continue.
-2. **Journey bar** (sticky, phone + desktop): `Set up → Ready → Running →
-   Review → Done`, current step highlighted; headline; **one** primary button =
-   `nextAction().primary` through `DashActionButton` → `useProjectAction` (no
-   new mutation path); inline disabled reason (`primaryBlockedReason`, mirrors
-   `_can_write` / `_can_member_act`); the existing `confirmedText()` line after
-   each action, kept while the bar advances; guided readiness line.
-3. `LiveStatusBar` (no longer sticky, no Start / Continue — stop controls stay).
-4. Ask / change box, tabs. The Dashboard tab drops `NextActionHero`; its
+1. **Title card** — name, health, `⋯` lifecycle menu, category, meta line.
+   No Run now / Activate / Continue.
+2. **Journey bar** (sticky, phone + desktop), directly under the title:
+   `Set up → Ready → Running → Review → Done`, current step highlighted;
+   headline; **one** primary button = `nextAction().primary` through
+   `DashActionButton` → `useProjectAction` (no new mutation path); inline
+   disabled reason (`primaryBlockedReason`, mirrors `_can_write` /
+   `_can_member_act`); the existing `confirmedText()` line after each action,
+   kept while the bar advances; guided readiness line.
+3. **Details card** — compact toolbar (Add · Edit · Summarise), collapsible
+   **About** (goal, usage, summary) and a collapsed "Before it can run · N of
+   M ready" checklist.
+4. `LiveStatusBar` with `ownsNextStep={false}`: not sticky, no Start /
+   Continue and no "Next for you" line (stop controls stay) — the page has one
+   voice for the next step.
+5. Ask / change box, tabs. The Dashboard tab drops `NextActionHero`; its
    Needs-you list marks the bar's item "↑ above".
 
 ## Derivation

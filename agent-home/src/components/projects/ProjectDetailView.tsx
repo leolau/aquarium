@@ -245,67 +245,14 @@ export function ProjectDetailView({
               <p className="mt-2 text-sm text-[var(--color-muted)]">
                 This project is archived — restore it (⋯) to run it again.
               </p>
-            ) : (
-              <div
-                data-component="ProjectToolbar"
-                role="toolbar"
-                aria-label="Project tools"
-                className="mt-2 flex flex-wrap gap-1.5"
-              >
-                <button type="button" onClick={() => setAddOpen(true)} className={TOOL_BTN}>
-                  Add
-                </button>
-                {canLead ? (
-                  <button type="button" onClick={() => setEditOpen(true)} className={TOOL_BTN}>
-                    Edit
-                  </button>
-                ) : null}
-                <button type="button" onClick={() => setSummariseOpen(true)} className={TOOL_BTN}>
-                  {project.summary ? "Update summary" : "Summarise"}
-                </button>
-              </div>
-            )}
-
-            {project.goal || project.usage || project.summary ? (
-              <details data-component="ProjectAbout" className="group mt-2">
-                <summary className="cursor-pointer select-none text-xs font-medium text-[var(--color-muted)]">
-                  About
-                </summary>
-                {project.goal ? (
-                  <p className="mt-1 text-sm text-[var(--color-muted)]">{project.goal}</p>
-                ) : null}
-                {project.usage ? <ProjectUsageLine usage={project.usage} /> : null}
-                {project.summary ? (
-                  <div
-                    data-component="ProjectSummary"
-                    className="mt-2 rounded-xl bg-[var(--color-surface-2)] px-3 py-2 text-sm"
-                  >
-                    <p className="italic">{project.summary}</p>
-                    {project.summary_at != null ? (
-                      <p className="mt-1 text-xs text-[var(--color-muted)]">
-                        Summarised {agoLabel(project.summary_at)}
-                      </p>
-                    ) : null}
-                  </div>
-                ) : null}
-              </details>
-            ) : null}
-
-            {!project.archived && !runnable ? (
-              <details data-component="ProjectReadinessDetails" className="mt-2">
-                <summary className="cursor-pointer select-none text-xs font-medium text-[var(--color-muted)]">
-                  Before it can run · {readiness.filter((item) => item.ok).length} of {readiness.length} ready
-                </summary>
-                <ReadinessChecklist items={readiness} findings={findings} onItem={reveal} />
-              </details>
             ) : null}
           </header>
         </div>
       </BusyRegion>
 
-      {/* ── Journey + live status: sticky, above every tab ─────────── */}
+      {/* ── Journey bar: sticky, right under the title, above every tab ── */}
       <div data-component="ProjectStickyBars" className="sticky top-0 z-30 -mx-1 bg-[var(--color-bg)] px-1 pb-1 pt-1">
-<JourneyBar
+        <JourneyBar
           project={project}
           action={action}
           readiness={readiness}
@@ -316,8 +263,73 @@ export function ProjectDetailView({
           onChangeRequest={openChange}
         />
       </div>
-      <LiveStatusBar project={project} board={board} runnable={runnable} showPrimary={false} />
-      {/* ── Live status: sticky, above every tab ───────────────── */}
+
+      {/* ── Tools, About, readiness: below the journey bar ─────────── */}
+      {!project.archived || project.goal || project.usage || project.summary ? (
+        <section
+          data-component="ProjectDetails"
+          aria-label="Project details"
+          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 [&>*:first-child]:mt-0"
+        >
+          {!project.archived ? (
+            <div
+              data-component="ProjectToolbar"
+              role="toolbar"
+              aria-label="Project tools"
+              className="mt-2 flex flex-wrap gap-1.5"
+            >
+              <button type="button" onClick={() => setAddOpen(true)} className={TOOL_BTN}>
+                Add
+              </button>
+              {canLead ? (
+                <button type="button" onClick={() => setEditOpen(true)} className={TOOL_BTN}>
+                  Edit
+                </button>
+              ) : null}
+              <button type="button" onClick={() => setSummariseOpen(true)} className={TOOL_BTN}>
+                {project.summary ? "Update summary" : "Summarise"}
+              </button>
+            </div>
+          ) : null}
+
+          {project.goal || project.usage || project.summary ? (
+            <details data-component="ProjectAbout" className="group mt-2">
+              <summary className="cursor-pointer select-none text-xs font-medium text-[var(--color-muted)]">
+                About
+              </summary>
+              {project.goal ? (
+                <p className="mt-1 text-sm text-[var(--color-muted)]">{project.goal}</p>
+              ) : null}
+              {project.usage ? <ProjectUsageLine usage={project.usage} /> : null}
+              {project.summary ? (
+                <div
+                  data-component="ProjectSummary"
+                  className="mt-2 rounded-xl bg-[var(--color-surface-2)] px-3 py-2 text-sm"
+                >
+                  <p className="italic">{project.summary}</p>
+                  {project.summary_at != null ? (
+                    <p className="mt-1 text-xs text-[var(--color-muted)]">
+                      Summarised {agoLabel(project.summary_at)}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+            </details>
+          ) : null}
+
+          {!project.archived && !runnable ? (
+            <details data-component="ProjectReadinessDetails" className="mt-2">
+              <summary className="cursor-pointer select-none text-xs font-medium text-[var(--color-muted)]">
+                Before it can run · {readiness.filter((item) => item.ok).length} of {readiness.length} ready
+              </summary>
+              <ReadinessChecklist items={readiness} findings={findings} onItem={reveal} />
+            </details>
+          ) : null}
+        </section>
+      ) : null}
+
+      <LiveStatusBar project={project} board={board} runnable={runnable} ownsNextStep={false} />
+
 
       {!project.archived ? (
         <AskOrChangeBox project={project} onChangeRequest={openChange} />
