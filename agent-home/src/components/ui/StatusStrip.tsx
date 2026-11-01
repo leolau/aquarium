@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { StatusSummary } from "@/types";
 import { useT } from "@/i18n";
 import { useAction } from "@/lib/use-action";
+import { useHydrated } from "@/lib/use-hydrated";
 
 const POLL_MS = 30_000;
 const AGE_TICK_MS = 1_000;
@@ -148,7 +149,10 @@ export function StatusStrip() {
   // quietly showing old metrics forever.
   const clientBuild = process.env.NEXT_PUBLIC_HERMES_BUILD ?? "dev";
   const buildTimeIso = process.env.NEXT_PUBLIC_HERMES_BUILD_TIME;
-  const buildTime = fmtBuildTime(buildTimeIso);
+  // Local time in the browser's locale and zone: the server's differ, so the
+  // stamp only renders once hydrated (else a React #418 text mismatch).
+  const hydrated = useHydrated();
+  const buildTime = hydrated ? fmtBuildTime(buildTimeIso) : null;
   const serverBuild = summary?.build ?? null;
   const buildMismatch = serverBuild !== null && serverBuild !== clientBuild;
 

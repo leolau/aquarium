@@ -99,7 +99,7 @@ table mirrors it for every read-only GET that needs no path parameter:
 | admin | 401 | 403 | 403 | 200 | 200 | `/api/comms/members`, `/api/get-ready/people`, `/api/security-basics`, `/api/settings/apps/{github,limits,storage}`, `/api/tools/personal-mcp/people` |
 | owner | 401 | 403 | 403 | 403 | 200 | `/api/google-client`, `/api/backups/offsite` |
 | internal | 401 | 401 | 401 | 401 | 401 | `/api/notifications/config` (server-to-server only) |
-| missing resource | 401 | 404 | 404 | 404 | 404 | `/api/projects/<missing>`, `/api/todos/<missing>` |
+| missing resource | 401 | 404 | 404 | 404 | 404 | `/api/projects/<missing>`, `/api/todos/<missing>`, `/api/incomings/<missing>` |
 
 Q runs the signed-in core + every admin/owner denial; F runs all of them.
 Unit coverage: route handlers' co-located `route.test.ts`, the route-role

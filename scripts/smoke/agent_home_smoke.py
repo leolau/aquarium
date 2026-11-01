@@ -195,6 +195,7 @@ APIS: Tuple[ApiSpec, ...] = (
     ApiSpec("/api/backups/offsite", OWNER_ONLY),
     ApiSpec("/api/incomings", OK, quick=True),
     ApiSpec("/api/incomings/facets", OK),
+    ApiSpec("/api/incomings/zz-smoke-missing", _same(404)),
     ApiSpec("/api/memory/projection", OK),
     ApiSpec("/api/memory/rows", OK, quick=True),
     ApiSpec("/api/models/fallback", OK),

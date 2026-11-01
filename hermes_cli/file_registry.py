@@ -33,6 +33,7 @@ from hermes_cli.access import (
     bind_elevated_reads,
     bind_principal,
     initialize_access,
+    is_uuid,
     normalize_visibility,
     scope_filter,
     ITEM_GRANTS_SCHEMA_SQL,
@@ -451,6 +452,8 @@ class FileRegistry:
         connection: Optional["asyncpg.Connection"] = None,
     ) -> Optional[FileAsset]:
         """One file, or ``None`` when it does not exist or is not visible."""
+        if not is_uuid(asset_id):
+            return None
         predicate = scope_filter(
             principal,
             start_index=2,
@@ -603,6 +606,8 @@ class FileRegistry:
         important, so the audit line answers "why is this in my memory" without
         guessing.
         """
+        if not is_uuid(asset_id):
+            return None
         own = connection is None
         conn = connection or await self._connect()
         try:

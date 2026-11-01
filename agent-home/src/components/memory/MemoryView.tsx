@@ -14,6 +14,7 @@ import type {
   MemorySummary,
 } from "@/types";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { useHydrated } from "@/lib/use-hydrated";
 
 /**
  * FG-23 A2/A4 — the phone memory view. Server-rendered with the first page of
@@ -451,7 +452,7 @@ function MemoryCard({ row }: { row: MemoryRow }) {
           </span>
         )}
         <span>uses: {row.uses}</span>
-        {row.last_used && <span>· {relativeTime(row.last_used)}</span>}
+        {row.last_used && <LastUsed iso={row.last_used} />}
         {row.score != null && (
           <span>· score: {row.score.toFixed(3)}</span>
         )}
@@ -541,9 +542,27 @@ function NearestList({
   );
 }
 
-function relativeTime(iso: string): string {
+/**
+ * When a memory was last recalled. The relative age depends on the clock (and,
+ * past 30 days, the locale and time zone), so the server and the first client
+ * render show the UTC date and the age replaces it once hydrated — otherwise a
+ * minute boundary between the two renders is a hydration mismatch (#418).
+ */
+function LastUsed({ iso }: { iso: string }) {
+  const hydrated = useHydrated();
+  return (
+    <span>
+      ·{" "}
+      <time dateTime={iso} title={iso}>
+        {hydrated ? relativeTime(iso) : iso.slice(0, 10)}
+      </time>
+    </span>
+  );
+}
+
+export function relativeTime(iso: string, now: number = Date.now()): string {
   const d = new Date(iso);
-  const diff = Date.now() - d.getTime();
+  const diff = now - d.getTime();
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return "just now";
   if (mins < 60) return `${mins}m ago`;
