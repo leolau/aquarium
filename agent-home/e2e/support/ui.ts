@@ -148,10 +148,18 @@ export const projects = {
   detail: (page: Page) => component(page, "ProjectDetailView"),
   wizard: (page: Page) => component(page, "NewProjectForm"),
   readiness: (page: Page) => component(page, "ReadinessChecklist"),
-  // Header actions today; the journey bar PR moves the primary action there.
-  // Both keep the `data-action` hook, so only these two lines should change.
-  activate: (page: Page) => page.locator('[data-action="activate"]').first(),
-  runNow: (page: Page) => page.locator('[data-action="run-now"]').first(),
+  // The journey bar (#688) replaced the header's `data-action` buttons with
+  // its primary action; both forms are matched until every box runs #688.
+  activate: (page: Page) =>
+    page
+      .locator('[data-action="activate"]')
+      .or(component(page, "JourneyBar").getByRole("button", { name: /^Activate\b/ }))
+      .first(),
+  runNow: (page: Page) =>
+    page
+      .locator('[data-action="run-now"]')
+      .or(component(page, "JourneyBar").getByRole("button", { name: /^Start iteration \d+/ }))
+      .first(),
   lifecycleMenu: (page: Page) => page.getByRole("button", { name: "Project actions" }),
   runView: (page: Page) => component(page, "RunView"),
 };

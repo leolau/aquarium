@@ -5,7 +5,8 @@
  * project with run history, so the run-through project stays archived).
  * afterAll sweeps every `[smoke]` project whatever happened.
  *
- * Journey-bar PR: the activate / run-now hooks live in support/ui.ts.
+ * Activate / start-run selectors live in support/ui.ts (header buttons on
+ * builds before the journey bar, #688; the bar's primary action after).
  */
 import { smokeName, storageStatePath } from "../support/env";
 import { sweepProjects } from "../support/cleanup";
@@ -76,7 +77,8 @@ test.describe("project lifecycle", { tag: "@regression" }, () => {
       expect(activated.ok(), `activate plan: ${activated.status()}`).toBe(true);
       await page.reload();
       await expect(projects.detail(page)).toBeVisible();
-      await expect(projects.readiness(page).first()).not.toContainText("Write a plan");
+      // The plan line loses its "— fix it" link once satisfied.
+      await expect(projects.readiness(page).first()).not.toContainText(/An active plan with steps\s*—/);
     });
 
     await test.step("activate", async () => {
@@ -96,10 +98,15 @@ test.describe("project lifecycle", { tag: "@regression" }, () => {
       await projects.runNow(page).click();
       const res = await started;
       expect(res.ok(), `start run: ${res.status()}`).toBe(true);
-      await page.waitForURL(new RegExp(`/projects/${encodeURIComponent(slug)}/runs/\\d+`), {
-        timeout: 30_000,
-        waitUntil: "commit",
-      });
+      const data = (await res.json()) as { run?: { run_no?: number }; run_no?: number };
+      const runNo = data.run?.run_no ?? data.run_no;
+      expect(typeof runNo, "run_no in the start-run answer").toBe("number");
+      // The header's Run now lands on the run page; the journey bar stays put
+      // and links the run instead — open it either way.
+      const runPath = `/projects/${encodeURIComponent(slug)}/runs/${runNo}`;
+      await page
+        .waitForURL((url) => url.pathname === runPath, { timeout: 15_000, waitUntil: "commit" })
+        .catch(() => page.goto(runPath));
       await expect(projects.runView(page)).toBeVisible();
     });
 
