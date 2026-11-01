@@ -527,9 +527,15 @@ async def _rows_chunks(
     from hermes_cli.access import (
         bind_elevated_reads,
         bind_principal,
+        is_uuid,
         reads_by_elevation,
         scope_filter,
     )
+
+    # A malformed ``?document=`` (citation link) names no document: an empty
+    # page, not a failed ``::uuid`` cast.
+    if topic and not is_uuid(topic):
+        return {"rows": [], "total": 0, "limit": limit_val, "offset": offset_val}
 
     clauses: List[str] = []
     params: List[object] = []

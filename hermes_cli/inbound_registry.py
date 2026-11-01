@@ -45,6 +45,7 @@ from hermes_cli.access import (
     bind_elevated_reads,
     bind_principal,
     initialize_access,
+    is_uuid,
     normalize_visibility,
     scope_filter,
     ITEM_GRANTS_SCHEMA_SQL,
@@ -585,6 +586,8 @@ class InboundRegistry:
         connection: Optional["asyncpg.Connection"] = None,
     ) -> Optional[InboundItem]:
         """One item, or ``None`` when it does not exist or is not visible."""
+        if not is_uuid(item_id):
+            return None
         predicate = scope_filter(
             principal,
             start_index=2,
@@ -805,6 +808,8 @@ class InboundRegistry:
         connection: Optional["asyncpg.Connection"] = None,
     ) -> Optional[InboundItem]:
         """Link an arrival to the document ingested from it, and say who decided."""
+        if not is_uuid(item_id):
+            return None
         own = connection is None
         conn = connection or await self._connect()
         try:
@@ -909,6 +914,8 @@ class InboundRegistry:
         connection: Optional["asyncpg.Connection"] = None,
     ) -> bool:
         """Attribute a registered file to the arrival that carried it."""
+        if not (is_uuid(item_id) and is_uuid(asset_id)):
+            return False
         own = connection is None
         conn = connection or await self._connect()
         try:
@@ -943,6 +950,8 @@ class InboundRegistry:
         connection: Optional["asyncpg.Connection"] = None,
     ) -> List[dict[str, Any]]:
         """The files that arrived with this item, scoped to the reader."""
+        if not is_uuid(item_id):
+            return []
         predicate = scope_filter(
             principal,
             start_index=2,
@@ -1001,6 +1010,8 @@ class InboundRegistry:
         polymorphic and cannot carry a foreign key; without it a recycled id
         would inherit a stranger's tags.
         """
+        if not is_uuid(item_id):
+            return False
         own = connection is None
         conn = connection or await self._connect()
         try:

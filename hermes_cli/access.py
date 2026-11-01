@@ -58,6 +58,20 @@ if TYPE_CHECKING:
     from hermes_cli.datastore import SupabaseAppStore
 
 
+def is_uuid(value: object) -> bool:
+    """Whether *value* can name a ``UUID`` primary key.
+
+    Handing Postgres anything else fails the ``::uuid`` cast (a 500) instead
+    of matching nothing, so stores check this first and treat a malformed id
+    exactly like an absent one.
+    """
+    try:
+        uuid.UUID(str(value))
+    except ValueError:
+        return False
+    return True
+
+
 # ---------------------------------------------------------------------------
 # C1 — principal / identity model
 # ---------------------------------------------------------------------------

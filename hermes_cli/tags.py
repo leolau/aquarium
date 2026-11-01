@@ -39,6 +39,7 @@ from hermes_cli.access import (
     Principal,
     apply_scope_rls,
     bind_principal,
+    is_uuid,
     normalize_visibility,
     scope_filter,
 )
@@ -406,6 +407,8 @@ class TagRegistry:
     ) -> bool:
         """Detach one tag from one row. ``True`` when something was removed."""
         validate_entity_kind(entity_kind)
+        if not is_uuid(tag_id):
+            return False
         own = connection is None
         conn = connection or await self._connect()
         try:
@@ -442,6 +445,8 @@ class TagRegistry:
         connection: Optional["asyncpg.Connection"] = None,
     ) -> bool:
         """Remove a tag from the vocabulary; assignments cascade."""
+        if not is_uuid(tag_id):
+            return False
         own = connection is None
         conn = connection or await self._connect()
         try:
