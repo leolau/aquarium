@@ -11910,6 +11910,8 @@ async def session_chat_stream(session_id: str, request: Request):
         "agent": None,
         "cancel_requested": False,
         "profile": profile,
+        # Wall clock, for the activity bar's "running for" timer.
+        "started_at": time.time(),
     }
     _CHAT_RUNS[run_id] = run_entry
     trace, ledger = _agent_home_trace(principal, sid)
@@ -12135,6 +12137,59 @@ async def active_chat_run(
         if not entry["done"] and entry["session_id"] in (session_id, resolved):
             return {"run_id": run_id}
     return {"run_id": None}
+
+
+@app.get("/api/activity/running")
+async def activity_running(request: Request):
+    """What is running right now, for agent-home's activity bar.
+
+    ``[{kind, id, name, started_at, href, profile, status}]``, newest first
+    and bounded. Every row is scoped like the page it links to (see
+    ``hermes_cli.activity_running``).
+    """
+    from hermes_cli import activity_running as act
+    from hermes_cli.projects_api import _enrolled_profiles, _instance_admin
+
+    try:
+        principal = await _comms_resolve_principal(request)
+    except _CommsNotConfigured:
+        # Single-user install with no multi-user datastore: the operator
+        # sees everything, as on every other route.
+        principal = SimpleNamespace(
+            user_id="owner", role="owner", is_owner=True,
+            private_visibility="private:owner",
+        )
+    scope = _chat_scope_for(principal)
+    # Snapshot on the loop that mutates the registry, then read off it.
+    runs = [
+        {
+            "run_id": run_id,
+            "session_id": entry["session_id"],
+            "profile": entry.get("profile"),
+            "started_at": entry.get("started_at"),
+        }
+        for run_id, entry in list(_CHAT_RUNS.items())
+        if not entry["done"]
+    ]
+    enrolled = (
+        set() if _instance_admin(principal)
+        else await _enrolled_profiles(principal.user_id)
+    )
+
+    def _collect() -> list:
+        items: list = []
+        for label, read in (
+            ("chats", lambda: act.chat_items(runs, scope, _open_session_db_for_profile)),
+            ("projects", lambda: act.project_items(principal, enrolled)),
+            ("cron", lambda: act.cron_items(principal, enrolled, act.cron_dirs())),
+        ):
+            try:
+                items.extend(read())
+            except Exception:
+                _log.exception("activity: %s source failed", label)
+        return act.finalize(items)
+
+    return await asyncio.to_thread(_collect)
 
 
 @app.post("/api/sessions/{session_id}/chat/stream/attach")

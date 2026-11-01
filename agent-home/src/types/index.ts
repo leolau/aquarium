@@ -2750,6 +2750,25 @@ export interface StatusSummary {
   collected_at: number;
 }
 
+/** One row of `GET /api/activity/running` — something running right now. */
+export interface ActivityItem {
+  kind: "chat" | "project_run" | "card" | "cron";
+  id: string;
+  name: string;
+  /** Unix seconds; the bar ticks the elapsed time locally from this. */
+  started_at: number | null;
+  /** In-app page for the item, or null when there is none to open. */
+  href: string | null;
+  profile: string | null;
+  /** `running`, or `waiting` for a project run paused on a human. */
+  status: string;
+}
+
+/** `GET /api/activity/running` (BFF) — the activity bar's payload. */
+export interface ActivityRunning {
+  items: ActivityItem[];
+}
+
 /** `GET /api/capacity/upload-storage` — free space on the disk holding uploads. */
 export interface UploadStorageStatus {
   path: string | null;

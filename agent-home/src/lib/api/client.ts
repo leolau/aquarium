@@ -17,6 +17,7 @@ import "server-only";
 import { hermesApiBaseUrl } from "@/lib/env";
 import type { SecurityBasicsResult } from "@/lib/api/security-basics";
 import type {
+  ActivityItem,
   GoogleClientCheck,
   GoogleClientSaveResult,
   GoogleClientStatus,
@@ -1780,6 +1781,11 @@ export class HermesApiClient {
   /** Running kanban cards across the caller's active projects (status strip). */
   async projectsRunningCards(): Promise<{ running_cards: number }> {
     return this.request("/api/registry/projects/running-cards");
+  }
+
+  /** Chats, project runs, cards and cron jobs running now (activity bar). */
+  async activityRunning(): Promise<ActivityItem[]> {
+    return this.request("/api/activity/running");
   }
 
   /** The instance's project categories, in column order, with project counts. */

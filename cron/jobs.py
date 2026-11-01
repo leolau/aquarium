@@ -1755,6 +1755,137 @@ def _prune_job_output(job_output_dir: Path, keep: int) -> int:
     return deleted
 
 
+# =============================================================================
+# "Running since" markers
+# =============================================================================
+#
+# Which jobs are executing right now lives only in the gateway process memory
+# (``cron.scheduler._running_job_ids``). Other processes — the dashboard's
+# activity bar — read these small per-job marker files instead. ``fire_claim``
+# can't serve: the built-in ticker never sets it (only the external-provider
+# fire path does). A marker left behind by a crash is ignored once its pid is
+# gone (or reused by a younger process) or it outlives ``max_age_seconds``.
+
+RUNNING_MARKER_MAX_AGE_SECONDS = 24 * 3600
+_MARKER_NAME_RE = re.compile(r"[^A-Za-z0-9_.-]")
+
+
+def _running_dir(cron_dir: Optional[Path] = None) -> Path:
+    return (cron_dir if cron_dir is not None else CRON_DIR) / "running"
+
+
+def _running_marker_path(job_id: str, cron_dir: Optional[Path] = None) -> Path:
+    return _running_dir(cron_dir) / f"{_MARKER_NAME_RE.sub('_', str(job_id))}.json"
+
+
+def mark_job_running(job: Dict[str, Any]) -> Optional[Path]:
+    """Write the job's "running since" marker; return its path (best-effort)."""
+    try:
+        import socket
+
+        path = _running_marker_path(job["id"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _secure_dir(path.parent)
+        payload = {
+            "job_id": str(job["id"]),
+            "name": str(job.get("name") or job["id"]),
+            "started_at": time.time(),
+            "pid": os.getpid(),
+            "host": socket.gethostname(),
+        }
+        fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp", prefix=".run_")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        atomic_replace(tmp_path, path)
+        return path
+    except Exception as exc:
+        logger.debug("cron: could not write running marker for %s: %s", job.get("id"), exc)
+        return None
+
+
+def clear_job_running(marker: Optional[Path]) -> None:
+    """Remove a marker written by :func:`mark_job_running` (best-effort)."""
+    if marker is None:
+        return
+    try:
+        marker.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logger.debug("cron: could not remove running marker %s: %s", marker, exc)
+
+
+def _marker_process_alive(pid: Any, started_at: float) -> bool:
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        import psutil  # type: ignore
+
+        try:
+            # A pid reused by a process born after the marker is not our run.
+            return psutil.Process(pid).create_time() <= started_at + 1.0
+        except psutil.NoSuchProcess:
+            return False
+        except psutil.Error:
+            return True
+    except ImportError:
+        pass
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def list_running_jobs(
+    cron_dir: Optional[Path] = None,
+    *,
+    max_age_seconds: float = RUNNING_MARKER_MAX_AGE_SECONDS,
+    now: Optional[float] = None,
+) -> List[Dict[str, Any]]:
+    """Live "running since" markers under *cron_dir* (default: this profile's)."""
+    import socket
+
+    directory = _running_dir(cron_dir)
+    try:
+        entries = sorted(directory.glob("*.json"))
+    except OSError:
+        return []
+    now = time.time() if now is None else now
+    try:
+        host = socket.gethostname()
+    except Exception:
+        host = ""
+    out: List[Dict[str, Any]] = []
+    for path in entries:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            started_at = float(data["started_at"])
+            job_id = str(data["job_id"])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if now - started_at > max_age_seconds:
+            continue
+        if data.get("host") == host and not _marker_process_alive(data.get("pid"), started_at):
+            continue
+        out.append(
+            {
+                "job_id": job_id,
+                "name": str(data.get("name") or job_id),
+                "started_at": started_at,
+            }
+        )
+    return out
+
+
 def save_job_output(job_id: str, output: str):
     """Save job output to file."""
     ensure_dirs()
