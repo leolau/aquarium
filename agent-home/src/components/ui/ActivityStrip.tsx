@@ -148,6 +148,8 @@ export function ActivityStrip() {
 
   const chip =
     "inline-flex shrink-0 snap-start items-center gap-1 whitespace-nowrap rounded-full bg-[var(--color-surface-2)] px-2 py-0.5";
+  // Arrows sit in the gutter (negative margin) so the chips line up with
+  // the status strip's.
   const arrow =
     "hidden h-5 w-5 shrink-0 items-center justify-center rounded-full hover:bg-[var(--color-surface-2)] hover:text-[var(--color-fg)] disabled:invisible lg:inline-flex";
 
@@ -166,7 +168,7 @@ export function ActivityStrip() {
           data-action="activity-scroll-left"
           disabled={!edges.left}
           onClick={() => page(-1)}
-          className={arrow}
+          className={`${arrow} lg:-ml-6`}
         >
           <span aria-hidden>‹</span>
         </button>
@@ -225,7 +227,7 @@ export function ActivityStrip() {
           data-action="activity-scroll-right"
           disabled={!edges.right}
           onClick={() => page(1)}
-          className={arrow}
+          className={`${arrow} lg:-mr-6`}
         >
           <span aria-hidden>›</span>
         </button>
