@@ -30,6 +30,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, List, Literal, Optional, Sequence
@@ -176,6 +177,16 @@ _SELECT_COLUMNS = (
 
 _WHITESPACE = re.compile(r"\s+")
 
+
+
+def _is_todo_id(todo_id: object) -> bool:
+    """Whether *todo_id* can name a row: ``tasks.id`` is a UUID, and handing
+    Postgres anything else fails the cast (a 500) instead of matching nothing."""
+    try:
+        uuid.UUID(str(todo_id))
+    except ValueError:
+        return False
+    return True
 
 class TodoError(Exception):
     """A to-do operation the caller asked for that cannot be honoured."""
@@ -958,6 +969,8 @@ class TodoStore:
         *,
         connection: Optional["asyncpg.Connection"] = None,
     ) -> Optional[Todo]:
+        if not _is_todo_id(todo_id):
+            return None
         predicate = scope_filter(
             principal,
             start_index=2,
@@ -1128,6 +1141,8 @@ class TodoStore:
         connection: Optional["asyncpg.Connection"] = None,
     ) -> List[dict[str, Any]]:
         """The append-only transition history for one to-do."""
+        if not _is_todo_id(todo_id):
+            return []
         predicate = scope_filter(
             principal,
             column="t.visibility",

@@ -102,7 +102,11 @@ class SupabaseAppStore:
     dsn: str
 
     async def connect(self) -> asyncpg.Connection:
-        """Open a connection whose search path is pinned to this store."""
+        """Open a connection whose search path is pinned to this store.
+
+        In a server process that enabled :mod:`hermes_cli.db_pool` this is a
+        pooled connection; ``close()`` returns it to the pool.
+        """
         if _dsn_missing(self.dsn):
             raise RuntimeError(
                 "Supabase app datastore is not configured; set "
@@ -118,13 +122,15 @@ class SupabaseAppStore:
 
         import asyncpg
 
-        from hermes_cli import db_setup
+        from hermes_cli import db_pool, db_setup
 
-        connection = await asyncpg.connect(
-            self.dsn,
-            server_settings={"search_path": self.schema},
-            connection_class=db_setup.connection_class(),
-        )
+        connection = await db_pool.acquire(self.dsn, self.schema)
+        if connection is None:
+            connection = await asyncpg.connect(
+                self.dsn,
+                server_settings={"search_path": self.schema},
+                connection_class=db_setup.connection_class(),
+            )
         try:
             await db_setup.bind(connection, self.schema)
             await verify_schema_owner(connection, schema=self.schema, dsn=self.dsn)

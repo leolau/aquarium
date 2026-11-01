@@ -146,6 +146,7 @@ import type {
   FallbackModel,
   FallbackModelsResponse,
   RefreshKeysResponse,
+  PinnedModelCard,
 } from "@/types";
 
 /** Per-person Telegram bot actions forwarded to Hermes `/api/telegram-bot/*`. */
@@ -1796,6 +1797,10 @@ export class HermesApiClient {
   }
 
   /** Running kanban cards across the caller's active projects (status strip). */
+  async projectsPinnedModels(): Promise<{ pinned: PinnedModelCard[] }> {
+    return this.request("/api/registry/projects/pinned-models");
+  }
+
   async projectsRunningCards(): Promise<{ running_cards: number }> {
     return this.request("/api/registry/projects/running-cards");
   }
