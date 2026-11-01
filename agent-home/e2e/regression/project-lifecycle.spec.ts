@@ -58,6 +58,9 @@ test.describe("project lifecycle", { tag: "@regression" }, () => {
     await expect(component(page, "ProjectHeader")).toContainText(name);
 
     await test.step("readiness: missing plan, then ready once a plan is active", async () => {
+      // The checklist sits in a collapsed "Before it can run" disclosure.
+      const details = component(page, "ProjectReadinessDetails").first();
+      if ((await details.getAttribute("open")) === null) await details.locator("summary").click();
       const checklist = projects.readiness(page).first();
       await expect(checklist).toBeVisible();
       await expect(checklist).toContainText("An active plan with steps");

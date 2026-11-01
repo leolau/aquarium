@@ -232,7 +232,8 @@ describe("other Dashboard buttons", () => {
   });
 
   it("navigation items switch tab; the change button opens the change box", () => {
-    const p = props({ project: project({ runs: [run()], links: {} }), board: board() });
+    // Not active, so "Add inputs" pairs with the change button rather than a run.
+    const p = props({ project: project({ status: "paused", runs: [run()], links: {} }), board: board() });
     render(<DashboardTab {...p} />);
     fireEvent.click(screen.getByRole("button", { name: "Add inputs" }));
     expect(p.onNavigate).toHaveBeenCalledWith("inputs");
