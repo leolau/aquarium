@@ -1263,3 +1263,58 @@ def test_list_sorts_by_tokens_and_reports_the_total(env):
     # No cards yet: zero recorded, ties newest first.
     assert [i["slug"] for i in body["items"]] == [b["slug"], a["slug"]]
     assert [i["usage"]["tokens_total"] for i in body["items"]] == [0, 0]
+
+
+def test_pinned_models_builds_only_boards_holding_a_live_pin(env, monkeypatch):
+    """Projects with no live pinned card never pay for a board build; the
+    ones that do still go through the principal-filtered board read."""
+    pinned_project = _create(env, body={"name": "Pinned", "goal": "Pinned goal"})
+    quiet_project = _create(env, body={"name": "Quiet", "goal": "Quiet goal"})
+    for project in (pinned_project, quiet_project):
+        _activate(env, project)
+    client, state = env
+    with kanban_db.connect_closing() as bconn:
+        pinned = kanban_db.create_task(
+            bconn, title="Pinned", project_id=pinned_project["id"]
+        )
+        done = kanban_db.create_task(
+            bconn, title="Done pin", project_id=quiet_project["id"]
+        )
+        kanban_db.create_task(bconn, title="Plain", project_id=quiet_project["id"])
+        bconn.execute(
+            "UPDATE tasks SET model_override = 'glm-5' WHERE id IN (?, ?)",
+            (pinned, done),
+        )
+        bconn.execute("UPDATE tasks SET status = 'done' WHERE id = ?", (done,))
+        bconn.commit()
+
+    built: list[str] = []
+    real = projects_api.kanban_view.build_board_view
+
+    def spy(conn, **kwargs):
+        built.append(kwargs["project_id"])
+        return real(conn, **kwargs)
+
+    monkeypatch.setattr(projects_api.kanban_view, "build_board_view", spy)
+    body = client.get("/api/registry/projects/pinned-models").json()
+    assert [row["task_id"] for row in body["pinned"]] == [pinned]
+    assert built == [pinned_project["id"]]
+
+
+def test_project_list_opens_one_board_connection_per_page(env, monkeypatch):
+    """The list reuses one kanban connection per board instead of opening
+    (and re-running pragma setup) once per project."""
+    for name in ("Alpha", "Beta", "Gamma"):
+        _activate(env, _create(env, body={"name": name, "goal": f"{name} goal"}))
+    client, _state = env
+    opened: list = []
+    real = projects_api._board_conn
+
+    def spy(project):
+        opened.append(project.id)
+        return real(project)
+
+    monkeypatch.setattr(projects_api, "_board_conn", spy)
+    items = client.get("/api/registry/projects?limit=100").json()["items"]
+    assert len(items) == 3
+    assert len(opened) == 1

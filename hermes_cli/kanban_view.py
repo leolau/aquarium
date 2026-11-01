@@ -184,7 +184,8 @@ def build_board_view(
     ``project_id`` (id or slug) narrows the task list to one project's
     cards — used by the Projects router's ``GET /{slug}/board``; the
     dashboard leaves it ``None``. Rollups (link counts, child progress)
-    stay whole-table: they are per-task facts, identical either way.
+    stay whole-table: they are per-task facts, identical either way;
+    diagnostics are computed for the listed cards only.
     """
     tasks = kanban_db.list_tasks(
         conn,
@@ -232,7 +233,16 @@ def build_board_view(
     # We get the full structured list per task AND a compact
     # summary for the card badge (so cards don't carry the detail
     # text; the drawer fetches that via the task detail endpoint).
-    diagnostics_per_task = compute_task_diagnostics(conn, task_ids=None)
+    # A project board only renders its own cards, so run the rule engine
+    # over those alone — the whole-table pass costs every other project's
+    # tasks, events and runs on every project read (the Models page reads
+    # every project). Each task's diagnostics depend only on its own rows.
+    if project_id is None:
+        diagnostics_per_task = compute_task_diagnostics(conn, task_ids=None)
+    else:
+        diagnostics_per_task = compute_task_diagnostics(
+            conn, task_ids=[t.id for t in tasks if t.status != "archived"]
+        )
 
     latest_event_id = conn.execute(
         "SELECT COALESCE(MAX(id), 0) AS m FROM task_events"

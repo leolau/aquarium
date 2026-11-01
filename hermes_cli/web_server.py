@@ -73,6 +73,7 @@ from hermes_cli.config import (
     get_env_path,
     get_hermes_home,
     load_config,
+    load_config_readonly,
     load_env,
     read_raw_config,
     save_config,
@@ -3159,7 +3160,9 @@ def _comms_app_store():
     """Return the prod supabase-app store (C3). Channels + web share prod."""
     from hermes_cli.datastore import get_store
 
-    return get_store("supabase-app", "prod", config=load_config() or {})
+    # Read-only: ``get_store`` only reads the config, and this runs on the
+    # event loop for every profile on every authenticated read.
+    return get_store("supabase-app", "prod", config=load_config_readonly() or {})
 
 
 def _comms_session_subject(request: "Request") -> str:

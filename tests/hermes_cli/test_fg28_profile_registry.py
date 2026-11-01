@@ -137,3 +137,18 @@ def test_probe_health_missing_home_is_unreachable() -> None:
     probed = probe_registry_health(entry)
     assert probed.health == "unreachable"
     assert probed.health_detail == "profile home missing"
+
+
+def test_projects_enrolment_fan_out_walks_the_registry_profile_set(
+    hermes_root: Path,
+) -> None:
+    """Projects' shared-read fan-out iterates the same (name, home) set as the
+    full registry — it just skips the per-profile config/skill/gateway reads."""
+    from hermes_cli.projects_api import _profile_homes
+
+    for name in ("engineers", "hr"):
+        _make_profile_home(hermes_root, name)
+    (hermes_root / "profiles" / "Not A Profile").mkdir()
+    assert [(p.name, p.hermes_home) for p in _profile_homes()] == [
+        (e.name, e.hermes_home) for e in get_profile_registry()
+    ]

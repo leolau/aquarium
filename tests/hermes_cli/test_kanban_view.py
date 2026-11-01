@@ -185,3 +185,43 @@ def test_plugin_api_aliases_point_at_the_shared_helper():
         plugin_api._warnings_summary_from_diagnostics
         is kv.warnings_summary_from_diagnostics
     )
+
+
+def test_project_board_runs_diagnostics_only_for_its_own_cards(conn, monkeypatch):
+    """A project board diagnoses the cards it lists — not every task in the
+    shared kanban.db — and each card's diagnostics match the whole-board pass."""
+    with pdb.connect_closing() as pc:
+        mine = pdb.get_project(pc, pdb.create_project(pc, name="Mine", folders=[]))
+        other = pdb.get_project(pc, pdb.create_project(pc, name="Other", folders=[]))
+    listed = kb.create_task(conn, title="listed", project_id=mine.id)
+    shelved = kb.create_task(conn, title="shelved", project_id=mine.id)
+    _set_status(conn, shelved, "archived")
+    foreign = kb.create_task(conn, title="foreign", project_id=other.id)
+    for task_id in (listed, foreign):
+        for _ in range(4):
+            with kb.write_txn(conn):
+                kb._append_event(conn, task_id, "blocked", {"reason": "x"})
+                kb._append_event(conn, task_id, "unblocked", {})
+
+    real = kv.compute_task_diagnostics
+    seen: list = []
+
+    def spy(c, task_ids=None):
+        seen.append(None if task_ids is None else sorted(task_ids))
+        return real(c, task_ids=task_ids)
+
+    monkeypatch.setattr(kv, "compute_task_diagnostics", spy)
+
+    whole = kv.build_board_view(conn)
+    narrowed = kv.build_board_view(conn, project_id=mine.id, include_archived=True)
+    assert seen == [None, [listed]]
+
+    def diags(view):
+        return {
+            t["id"]: (t.get("diagnostics"), t.get("warnings"))
+            for c in view["columns"]
+            for t in c["tasks"]
+        }
+
+    assert set(diags(narrowed)) == {listed, shelved}
+    assert diags(narrowed)[listed] == diags(whole)[listed]
