@@ -113,7 +113,7 @@ registry test, and `tests/hermes_cli/test_route_authorization.py` for the Python
 | Coral menu | menu opens from every page (`CoralHost`), entries follow the registry; mgmt-only entries hidden for viewer/member | viewer/member: no Users-admin/Settings-apps entries; mgmt: all | hidden entries' routes still enforce server-side (API 403) | unit (menu registry), browser | F |
 | Status strip | `StatusStrip` on every signed-in page; `/api/status/summary`: cpu/mem/disk 0–100, tokens ≥0, counts ≥0, `cron_enabled ≤ cron_total`, `collected_at` fresh, `build` set; served build == checkout `HEAD` (or no agent-home change since) | all signed-in; `upload_storage` only for mgmt | member payload carries no admin-only storage data | HTTP (Q), unit (`api/status/summary`) | Q |
 | Chat | create (`/api/chat/new`), send, stream, rename, archive/unarchive (`?archived=only`), search (`/sessions/search`), tags (`/sessions/tags`), filters, profile switch (`ProfilePicker`, `/api/chat/profiles`) | all can chat; viewer per tool limits | list = own chats only; another user's session id → 404 on messages (`--write` checks member + viewer); profile switch stays within allowed profiles | HTTP (`--write`: create/rename/archive/read/delete), [live_access_check](../../scripts/live_access_check.py) (c, d), browser for streaming | Q (`--write`) / F |
-| Projects create → done | create (`[smoke]` private project), detail/board/runs/changes/directives/playbook/events/doctor reads, list, page renders, archive + delete; full flow in [projects-uat](projects-uat.md) | member/admin create; viewer refused | private project: member/viewer → 404 and not listed; admin-visible but unlisted slugs → 404 for member/viewer (read-only probe) | HTTP (`--write`), browser ([projects-uat](projects-uat.md)) | Q (`--write`) / F |
+| Projects create → done | create (`[smoke]` private project), detail/board/runs/changes/directives/playbook/events/doctor reads, list, page renders, archive + `purge=smoke` delete; full flow in [projects-uat](projects-uat.md) | member/admin create; viewer refused | private project: member/viewer → 404 and not listed; admin-visible but unlisted slugs → 404 for member/viewer (read-only probe) | HTTP (`--write`), browser ([projects-uat](projects-uat.md)) | Q (`--write`) / F |
 | Todos | list, facets, detail, stage changes | own/granted | invisible == absent (404) | HTTP, unit | Q (list) / F |
 | Inbox | list, facets, open an arrival, convert to to-do | own | others' incomings absent | HTTP, browser | Q (list) / F |
 | Files | list, surfaces, browse places, by-path, upload, remember | own | live_access_check (b): no read of another user's folder or system files | HTTP, live_access_check | Q (list) / F |
@@ -136,3 +136,18 @@ registry test, and `tests/hermes_cli/test_route_authorization.py` for the Python
   and the browser rows above.
 - Unit: `npm run --prefix agent-home test`; pytest for `tests/hermes_cli/` and
   `tests/scripts/test_agent_home_smoke.py`.
+
+### Test-data cleanup (`purge=smoke`)
+
+`--write` and the browser suites remove the `[smoke]` projects they create
+with `DELETE /api/projects/<slug>?confirm=<slug>&purge=smoke` (BFF →
+`DELETE /api/registry/projects/<slug>`), so a run leaves nothing behind. The
+purge is refused unless the project is archived, is test data by name
+(`[smoke]…` name or `smoke-…` slug), the caller is a verified human who
+created it (instance owner/admin or project lead is not enough), no run is
+queued/running/waiting, and `confirm` names the slug. It deletes the project
+and its `project_*` rows, its board's cards and each run's chat session, clears
+the active pointer, detaches the schedule, and writes a `project_purged` line
+to `$HERMES_HOME/logs/dashboard-auth.log`. Every other project keeps the plain
+delete, which refuses anything with history. Tests:
+`tests/hermes_cli/test_projects_api_smoke_purge.py`.

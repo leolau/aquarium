@@ -9,7 +9,7 @@ includes `src/**`) and CI does not run them.
 | Suite | Command | What it covers | Time |
 | --- | --- | --- | --- |
 | `@smoke` | `npm run --prefix agent-home e2e:smoke` | login/logout; every Coral menu destination renders its marker with no console errors / failed BFF requests; status strip renders + refreshes; one `[smoke]` chat turn (reply starts streaming, then archived); settings; projects list + a project page | ~3–5 min |
-| `@regression` | `npm run --prefix agent-home e2e:regression` | `[smoke]` project lifecycle (wizard → readiness → activate → run → run page → archive; delete on a never-run project); to-dos complete/dismiss; inbox, files, memory, capacity; member/viewer refused on admin/owner routes and member management; phone layout (no sideways scroll, menu fits) | ~5–8 min |
+| `@regression` | `npm run --prefix agent-home e2e:regression` | `[smoke]` project lifecycle (wizard → readiness → activate → run → run page → archive → purge; UI delete on a never-run project); to-dos complete/dismiss; inbox, files, memory, capacity; member/viewer refused on admin/owner routes and member management; phone layout (no sideways scroll, menu fits) | ~5–8 min |
 
 Both run on two Chromium projects: `desktop` (1440×900) and `phone`
 (390×844, touch). Specs that create data run on `desktop` only.
@@ -71,8 +71,13 @@ spec sweeps `[smoke]` rows in `afterAll` whether it passed or not
 
 - chat conversations → archived;
 - to-dos → dismissed (the UI has no delete; dismiss is its delete);
-- projects → archived, then deleted where the server allows (a project with
-  run history can only be archived, by design).
+- projects → archived (an open run is stopped first), then purged with
+  `DELETE /api/projects/<slug>?confirm=<slug>&purge=smoke`, which removes the
+  project with its runs, cards and run chat sessions. The plain delete still
+  refuses any project with history; the purge is only allowed for an
+  archived `[smoke]` project (name `[smoke]…` or slug `smoke-…`) that the
+  signed-in account created, with no open run. Projects the purge refuses
+  (another account's) fall back to the plain delete.
 
 The smoke chat turn is a real agent turn, so the agent may also write a
 memory about it; those are not swept.

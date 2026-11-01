@@ -26,7 +26,10 @@ Checks (see docs/testing/agent-home-test-plan.md for the full plan):
 
 ``--write`` also creates a ``[smoke]`` private project and a ``[smoke]`` chat
 as the admin test account, checks the basic reads and that member/viewer
-can't see them, and ALWAYS deletes both in ``finally``. The chat is deleted
+can't see them, and ALWAYS deletes both in ``finally``. The project is
+archived, then removed with ``DELETE /api/projects/<slug>?confirm=<slug>&purge=smoke``
+(the test-data purge: an archived ``[smoke]`` project the caller created goes
+with any runs, cards and run sessions), falling back to the plain delete. The chat is deleted
 through the Python dashboard API (``--api-url``, default 127.0.0.1:9119):
 agent-home has no delete route for chats.
 
@@ -737,7 +740,9 @@ class Smoke:
         q = urllib.parse.quote(slug)
         cookie = self.cookies[ADMIN]
         archive = self.http.request("POST", f"/api/projects/{q}/archive", cookie=cookie, body={"reason": "smoke cleanup"})
-        delete = self.http.request("DELETE", f"/api/projects/{q}?confirm={q}", cookie=cookie)
+        delete = self.http.request("DELETE", f"/api/projects/{q}?confirm={q}&purge=smoke", cookie=cookie)
+        if delete.status not in (200, 404):
+            delete = self.http.request("DELETE", f"/api/projects/{q}?confirm={q}", cookie=cookie)
         gone = self.get(ADMIN, f"/api/projects/{q}")
         # 404 on delete = something else (a parallel smoke run's sweep) already
         # removed it; what matters is that it is gone.

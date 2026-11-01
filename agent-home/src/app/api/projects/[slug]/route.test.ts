@@ -21,9 +21,9 @@ function params(slug: string) {
   return { params: Promise.resolve({ slug }) };
 }
 
-function req(confirm: string): Request {
+function req(confirm: string, extra = ""): Request {
   return new Request(
-    `http://x/api/projects/digest?confirm=${encodeURIComponent(confirm)}`,
+    `http://x/api/projects/digest?confirm=${encodeURIComponent(confirm)}${extra}`,
     { method: "DELETE" },
   );
 }
@@ -61,5 +61,34 @@ describe("DELETE /api/projects/:slug", () => {
     const res = await DELETE(req("digest"), params("digest"));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ deleted: "digest" });
+  });
+
+  it("forwards purge=smoke and passes the purge summary through", async () => {
+    principalState.principal = { user_id: "leo" };
+    const calls: unknown[][] = [];
+    const purged = { deleted: "digest", purged: { runs: 1, cards: 2, sessions: 1 } };
+    clientState.client = {
+      deleteProject: async (...args: unknown[]) => {
+        calls.push(args);
+        return purged;
+      },
+    };
+    const res = await DELETE(req("digest", "&purge=smoke"), params("digest"));
+    expect(res.status).toBe(200);
+    expect(calls).toEqual([["digest", "digest", { purge: "smoke" }]]);
+    expect(await res.json()).toEqual(purged);
+  });
+
+  it("passes an upstream purge refusal through", async () => {
+    principalState.principal = { user_id: "leo" };
+    clientState.client = {
+      deleteProject: async () => {
+        throw new HermesApiError(403, "DELETE", {
+          detail: "purge is only for [smoke] test projects",
+        });
+      },
+    };
+    const res = await DELETE(req("digest", "&purge=smoke"), params("digest"));
+    expect(res.status).toBe(403);
   });
 });
