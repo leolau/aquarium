@@ -49,10 +49,6 @@ def test_pid_reused_by_a_younger_process_is_not_the_run(tmp_path):
     # Our own pid, but the marker predates this process's birth.
     _write(tmp_path, "reused", job_id="reused", name="R", started_at=time.time() - 3600 * 23,
            pid=os.getpid(), host=socket.gethostname())
-    try:
-        import psutil  # noqa: F401
-    except ImportError:
-        return
     assert jobs.list_running_jobs(tmp_path) == []
 
 

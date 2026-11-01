@@ -1816,6 +1816,13 @@ def clear_job_running(marker: Optional[Path]) -> None:
 
 
 def _marker_process_alive(pid: Any, started_at: float) -> bool:
+    """Is the process that wrote a marker still the one running it?
+
+    psutil (a core dependency) rather than ``os.kill(pid, 0)``, which on
+    Windows sends Ctrl+C to the target's console group.
+    """
+    import psutil
+
     try:
         pid = int(pid)
     except (TypeError, ValueError):
@@ -1823,26 +1830,13 @@ def _marker_process_alive(pid: Any, started_at: float) -> bool:
     if pid <= 0:
         return False
     try:
-        import psutil  # type: ignore
-
-        try:
-            # A pid reused by a process born after the marker is not our run.
-            return psutil.Process(pid).create_time() <= started_at + 1.0
-        except psutil.NoSuchProcess:
-            return False
-        except psutil.Error:
-            return True
-    except ImportError:
-        pass
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
+        # A pid reused by a process born after the marker is not our run.
+        return psutil.Process(pid).create_time() <= started_at + 1.0
+    except psutil.NoSuchProcess:
         return False
-    except PermissionError:
+    except psutil.Error:
+        # Exists but unreadable (e.g. access denied): assume still running.
         return True
-    except OSError:
-        return False
-    return True
 
 
 def list_running_jobs(

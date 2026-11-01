@@ -12153,12 +12153,9 @@ async def activity_running(request: Request):
     try:
         principal = await _comms_resolve_principal(request)
     except _CommsNotConfigured:
-        # Single-user install with no multi-user datastore: the operator
-        # sees everything, as on every other route.
-        principal = SimpleNamespace(
-            user_id="owner", role="owner", is_owner=True,
-            private_visibility="private:owner",
-        )
+        # No multi-user datastore → no principal to scope rows to; show
+        # nothing rather than everything.
+        return []
     scope = _chat_scope_for(principal)
     # Snapshot on the loop that mutates the registry, then read off it.
     runs = [

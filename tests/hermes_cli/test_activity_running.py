@@ -243,3 +243,19 @@ def test_route_requires_the_session_token(route):
     from hermes_cli.web_server import app
 
     assert TestClient(app).get("/api/activity/running").status_code == 401
+
+
+def test_route_lists_nothing_without_the_multi_user_datastore(route, monkeypatch):
+    """No datastore → no principal to scope by: fail closed (empty), never
+    fall back to an all-seeing view."""
+    from hermes_cli import web_server
+
+    client, _state = route
+
+    async def _unconfigured(request, *, allow_as=False):
+        raise web_server._CommsNotConfigured("multi user datastore not configured")
+
+    monkeypatch.setattr(web_server, "_comms_resolve_principal", _unconfigured)
+    res = client.get("/api/activity/running")
+    assert res.status_code == 200
+    assert res.json() == []
