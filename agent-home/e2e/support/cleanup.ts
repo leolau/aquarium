@@ -57,6 +57,19 @@ export async function sweepTodos(req: APIRequestContext): Promise<number> {
  * (never run, no cards). A project that ran stays archived: deletion of
  * history is refused by design.
  */
+/** Archive, stopping an open run first (the server refuses to archive with one). */
+async function archiveProject(req: APIRequestContext, slug: string): Promise<void> {
+  const context = await json<{ open_run: { run_no: number } | null }>(req, `/api/projects/${slug}/board/context`);
+  if (context?.open_run) {
+    await req.post(`/api/projects/${slug}/runs/${context.open_run.run_no}/stop`, { data: {} });
+  }
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const res = await req.post(`/api/projects/${slug}/archive`, { data: { reason: "e2e cleanup" } });
+    if (res.ok() || res.status() !== 409) return;
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
+  }
+}
+
 export async function sweepProjects(req: APIRequestContext): Promise<number> {
   let n = 0;
   for (const archived of [false, true]) {
@@ -67,9 +80,7 @@ export async function sweepProjects(req: APIRequestContext): Promise<number> {
     for (const p of data?.items ?? []) {
       if (!isSmoke(p.name) && !isSmoke(p.goal)) continue;
       const slug = encodeURIComponent(p.slug);
-      if (!archived) {
-        await req.post(`/api/projects/${slug}/archive`, { data: { reason: "e2e cleanup" } });
-      }
+      if (!archived) await archiveProject(req, slug);
       const del = await req.delete(`/api/projects/${slug}?confirm=${slug}`);
       if (del.ok()) n += 1;
     }
