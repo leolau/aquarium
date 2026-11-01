@@ -21,3 +21,9 @@ next-env.d.ts
 # test / os
 /coverage
 .DS_Store
+
+# Playwright browser E2E (e2e/): run artefacts + per-role signed-in state.
+/test-results/
+/playwright-report/
+/blob-report/
+/e2e/.auth/

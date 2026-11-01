@@ -194,6 +194,7 @@ export const MessageBubble = memo(function MessageBubble({
       <div
         data-component="MessageBubble"
         data-msg-index={msgIndex}
+        data-role={message.role}
         style={ROW_STYLE}
         className={`group flex gap-1 ${isUser ? "justify-end" : "justify-start"}`}
       >
