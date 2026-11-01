@@ -110,3 +110,22 @@ Notes:
 - The service worker never caches `/api/*` or `/auth/*` (per-principal data).
 - TLS/HTTP-to-HTTPS is Caddy's automatic cert; the session cookie is `Secure`
   in production (`NODE_ENV=production`).
+
+## Post-deploy smoke test
+
+After `/opt/data/deploy-hermes.sh develop` on the box, run the stdlib-only HTTP
+smoke test against the local agent-home (no browser, ~1–2 min, exit 0/1, prints a
+PASS/FAIL table without secrets):
+
+```bash
+python3 /opt/data/hermes-agent/scripts/smoke/agent_home_smoke.py                    # read-only
+python3 /opt/data/hermes-agent/scripts/smoke/agent_home_smoke.py --write            # + [smoke] project/chat lifecycle (always cleaned up)
+python3 /opt/data/hermes-agent/scripts/smoke/agent_home_smoke.py --quick --failures-only
+```
+
+It logs in as the admin/member/viewer test accounts from `/root/.aquarium-smoke.env`
+(root-only, `SMOKE_{ADMIN,MEMBER,VIEWER}_{EMAIL,PASSWORD}`; env vars override),
+checks every page and read-only `/api/*` GET per role plus logged out, cross-role
+privacy, `/api/status/summary`, and that the served build is the checkout's `HEAD`.
+For a local run: `--base-url http://localhost:3000 --repo .`. What it covers and
+what it leaves to the full regression: [`docs/testing/agent-home-test-plan.md`](../docs/testing/agent-home-test-plan.md).
