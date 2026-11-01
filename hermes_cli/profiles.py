@@ -1737,15 +1737,15 @@ def get_active_profile_name() -> str:
     Returns the profile name if HERMES_HOME points into ``~/.hermes/profiles/<name>``.
     Returns ``"custom"`` if HERMES_HOME is set to an unrecognized path.
     """
-    from hermes_constants import get_hermes_home
+    from hermes_constants import get_hermes_home, resolve_path_cached
     hermes_home = get_hermes_home()
-    resolved = hermes_home.resolve()
+    resolved = resolve_path_cached(hermes_home)
 
-    default_resolved = _get_default_hermes_home().resolve()
+    default_resolved = resolve_path_cached(_get_default_hermes_home())
     if resolved == default_resolved:
         return "default"
 
-    profiles_root = _get_profiles_root().resolve()
+    profiles_root = resolve_path_cached(_get_profiles_root())
     try:
         rel = resolved.relative_to(profiles_root)
         parts = rel.parts

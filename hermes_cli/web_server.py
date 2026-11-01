@@ -2360,20 +2360,24 @@ async def get_status(profile: Optional[str] = None):
         if gateway_running and gateway_state is None and remote_health_body is not None:
             gateway_state = "running"
 
-        active_sessions = 0
-        try:
+        def _count_active_sessions() -> int:
             from hermes_state import SessionDB
             db = SessionDB()
             try:
                 sessions = db.list_sessions_rich(limit=50)
                 now = time.time()
-                active_sessions = sum(
+                return sum(
                     1 for s in sessions
                     if s.get("ended_at") is None
                     and (now - s.get("last_active", s.get("started_at", 0))) < 300
                 )
             finally:
                 db.close()
+
+        active_sessions = 0
+        try:
+            # SQLite open + a 50-row read: keep it off the event loop.
+            active_sessions = await asyncio.to_thread(_count_active_sessions)
         except Exception:
             pass
 
