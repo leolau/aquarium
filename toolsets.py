@@ -52,6 +52,8 @@ _HERMES_CORE_TOOLS = [
     "text_to_speech",
     # Planning & memory
     "todo", "memory",
+    # The person's own IMAP/SMTP mailboxes (Settings -> Email mailboxes)
+    "email_mailbox",
     # NOTE: the desktop Project tools (project_list/create/switch) are
     # deliberately NOT here. They only make sense where a GUI can follow the
     # move, so they live in the `project` toolset and are enabled solely by the
@@ -209,6 +211,12 @@ TOOLSETS = {
     "memory": {
         "description": "Persistent memory across sessions (personal notes + user profile)",
         "tools": ["memory"],
+        "includes": []
+    },
+
+    "email_mailbox": {
+        "description": "Read and send mail from the person's own IMAP/SMTP mailboxes",
+        "tools": ["email_mailbox"],
         "includes": []
     },
 

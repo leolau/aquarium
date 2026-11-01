@@ -1,5 +1,9 @@
 """HTTP routes for the email poller's per-account enable flag.
 
+Gmail accounts log in with XOAUTH2 (``auth: "xoauth2"``, the default);
+IMAP/SMTP mailboxes added under Settings -> Email mailboxes log in with their
+stored password (``auth: "password"``) and get the same pipeline.
+
 The deployment email poller (``custom/email/email_poller.py``) polls the
 accounts listed in its JSON config where ``enabled`` is true, re-reading the
 file every cycle — so writes here take effect on the next poll with no
@@ -90,6 +94,38 @@ def _public_entry(account: dict) -> dict:
         "address": account.get("address"),
         "label": account.get("label"),
         "enabled": bool(account.get("enabled", True)),
+        "auth": account.get("auth") or "xoauth2",
+    }
+
+
+async def _mailbox_entry(principal: Any, address: str) -> dict:
+    """Poller entry for the owner's own IMAP/SMTP mailbox (password login).
+
+    Server settings are copied from the mailbox; the password stays in the
+    credential store and the poller reads it from there each cycle.
+    """
+    from hermes_cli import email_mailboxes as mb
+
+    try:
+        cred = await mb._own_entry(principal, mb.normalize_address(address))
+    except mb.MailboxError as exc:
+        raise HTTPException(404, "add this mailbox under Email mailboxes first") from exc
+    payload = cred.payload
+    return {
+        "auth": "password",
+        "owner_user_id": cred.owner_user_id,
+        "imap": {
+            "host": payload.get("imap_host"),
+            "port": int(payload.get("imap_port") or 993),
+            "tls": payload.get("imap_security", "ssl") != "starttls",
+        },
+        "smtp": {
+            "host": payload.get("smtp_host"),
+            "port": int(payload.get("smtp_port") or 465),
+            "tls": True,
+        },
+        "folders": ["INBOX"],
+        "poll_interval_seconds": 60,
     }
 
 
@@ -118,10 +154,13 @@ async def list_email_accounts(request: Request):
 
 @router.patch("")
 async def set_email_account_polling(request: Request):
-    await _owner_principal(request)
+    principal = await _owner_principal(request)
     body = await request.json()
     address = str(body.get("address") or "").strip()
     enabled = bool(body.get("enabled"))
+    auth = str(body.get("auth") or "xoauth2")
+    if auth not in ("xoauth2", "password"):
+        raise HTTPException(400, "auth must be 'xoauth2' or 'password'")
     if "@" not in address:
         raise HTTPException(400, "address must be an email address")
     doc = _load_config() or {"accounts": []}
@@ -132,11 +171,15 @@ async def set_email_account_polling(request: Request):
     if account is None:
         if not enabled:
             raise HTTPException(404, "no poller entry for that address")
+        defaults = (
+            await _mailbox_entry(principal, address)
+            if auth == "password" else _GMAIL_DEFAULTS
+        )
         account = {
             "id": _next_account_id(accounts),
             "address": address,
             "label": address.split("@", 1)[-1],
-            **_GMAIL_DEFAULTS,
+            **defaults,
             "enabled": True,
         }
         accounts.append(account)

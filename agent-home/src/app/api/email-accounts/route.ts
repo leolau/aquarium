@@ -42,8 +42,15 @@ export async function PATCH(req: Request): Promise<NextResponse> {
   const body = (await req.json().catch(() => ({}))) as {
     address?: string;
     enabled?: boolean;
+    auth?: unknown;
   };
-  if (typeof body.address !== "string" || typeof body.enabled !== "boolean") {
+  const auth =
+    body.auth === "password" || body.auth === "xoauth2" ? body.auth : undefined;
+  if (
+    typeof body.address !== "string" ||
+    typeof body.enabled !== "boolean" ||
+    (body.auth !== undefined && auth === undefined)
+  ) {
     return NextResponse.json(
       { error: "invalid_request", detail: "Expected {address, enabled}." },
       { status: 400 },
@@ -52,7 +59,7 @@ export async function PATCH(req: Request): Promise<NextResponse> {
   try {
     const client = await apiClientForRequest();
     return NextResponse.json(
-      await client.setEmailPolling(body.address, body.enabled),
+      await client.setEmailPolling(body.address, body.enabled, auth),
     );
   } catch (err) {
     if (err instanceof HermesApiError) {

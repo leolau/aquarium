@@ -147,5 +147,54 @@ class TestDuplicateMessageNotReRegistered(unittest.TestCase):
         self.assertEqual([r['external_id'] for r in registered], ['rfc-1@mail'])
 
 
+class TestPasswordMailboxAccount(unittest.TestCase):
+    """auth=password poller entries log in with the stored mailbox password."""
+
+    PW_ACCOUNT = {
+        'id': 'email2',
+        'address': 'ops@corp.example',
+        'auth': 'password',
+        'owner_user_id': 'owner-1',
+        'imap': {'host': 'mail.corp.example', 'port': 993, 'tls': True},
+        'folders': ['INBOX'],
+    }
+
+    def setUp(self):
+        email_poller.poll_status['accounts'] = {}
+
+    def _cred(self, owner='owner-1', name='ops@corp.example'):
+        cred = MagicMock()
+        cred.owner_user_id, cred.name = owner, name
+        cred.payload = {'imap_host': 'mail.corp.example', 'imap_port': 993,
+                        'username': 'ops', 'password': 'pw'}
+        return cred
+
+    @patch.object(email_poller.google_oauth, 'credentials_for_email')
+    def test_uses_stored_password_login(self, oauth):
+        conn = MagicMock()
+        conn.select.return_value = ('OK', [b'0'])
+        conn.uid.return_value = ('OK', [b''])
+        from hermes_cli import email_mailboxes
+        with patch.object(email_poller, 'load_personal_mailboxes',
+                          return_value=[self._cred()]), \
+                patch.object(email_mailboxes, 'open_imap', return_value=conn) as opener:
+            self.assertEqual(email_poller.poll_account(self.PW_ACCOUNT, _db()), 0)
+        opener.assert_called_once()
+        self.assertEqual(opener.call_args[0][0]['password'], 'pw')
+        oauth.assert_not_called()
+        conn.authenticate.assert_not_called()
+        self.assertEqual(
+            email_poller.poll_status['accounts']['email2']['auth'], 'password'
+        )
+
+    def test_other_owners_mailbox_is_not_used(self):
+        with patch.object(email_poller, 'load_personal_mailboxes',
+                          return_value=[self._cred(owner='someone-else')]):
+            self.assertEqual(email_poller.poll_account(self.PW_ACCOUNT, _db()), 0)
+        self.assertEqual(
+            email_poller.poll_status['accounts']['email2']['auth'], 'no_credential'
+        )
+
+
 if __name__ == '__main__':
     unittest.main()

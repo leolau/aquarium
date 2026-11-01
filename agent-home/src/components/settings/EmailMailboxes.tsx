@@ -5,7 +5,9 @@
  * person's own mailboxes. Saved in the credential store as `email-imap`
  * entries private to that person; Hermes `/api/email/mailboxes` never
  * returns the password. "Save and test" saves, then logs into IMAP and SMTP
- * (no mail is sent). The install-wide poller toggle stays in Google accounts.
+ * (no mail is sent). For the owner, each mailbox also gets the same
+ * install-wide "Email polling" toggle as a Google account: the poller then
+ * reads it with the saved password into the full email pipeline.
  */
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 
@@ -15,6 +17,7 @@ import zhHant from "@/i18n/messages/zh-Hant/email.json";
 import type {
   EmailMailbox,
   EmailMailboxInput,
+  EmailPollerAccount,
   EmailPreset,
   EmailSecurity,
   EmailServerSettings,
@@ -142,6 +145,8 @@ export function EmailMailboxes() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
+  // Owner-only: the install-wide poller config. Absent or 403 hides the toggle.
+  const [poller, setPoller] = useState<Record<string, EmailPollerAccount> | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -160,10 +165,52 @@ export function EmailMailboxes() {
     }
   }, [t]);
 
+  const loadPoller = useCallback(async () => {
+    try {
+      const res = await fetch("/api/email-accounts");
+      if (!res.ok) return;
+      const doc = (await res.json()) as { config_present?: boolean; accounts?: EmailPollerAccount[] };
+      if (doc.config_present !== true || !Array.isArray(doc.accounts)) return;
+      setPoller(Object.fromEntries(doc.accounts.map((a) => [a.address.toLowerCase(), a])));
+    } catch {
+      /* toggle stays hidden */
+    }
+  }, []);
+
   useEffect(() => {
-    const timer = setTimeout(() => void load(), 0);
+    const timer = setTimeout(() => {
+      void load();
+      void loadPoller();
+    }, 0);
     return () => clearTimeout(timer);
-  }, [load]);
+  }, [load, loadPoller]);
+
+  async function togglePolling(address: string, on: boolean) {
+    const key = address.toLowerCase();
+    const previous = poller?.[key];
+    setPoller((p) => ({
+      ...(p ?? {}),
+      [key]: { id: previous?.id ?? "", address, label: previous?.label ?? null, ...previous, enabled: on },
+    }));
+    try {
+      const res = await fetch("/api/email-accounts", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ address, enabled: on, auth: "password" }),
+      });
+      if (!res.ok) throw new Error(await readError(res));
+      const doc = (await res.json()) as { account: EmailPollerAccount };
+      setPoller((p) => ({ ...(p ?? {}), [key]: doc.account }));
+    } catch {
+      setPoller((p) => {
+        const next = { ...(p ?? {}) };
+        if (previous) next[key] = previous;
+        else delete next[key];
+        return next;
+      });
+      setError(t("errPolling"));
+    }
+  }
 
   // With no mailbox yet the form is simply open (Get ready item 7).
   const blank = { values: EMPTY, editing: false };
@@ -274,6 +321,15 @@ export function EmailMailboxes() {
               onTest={() => runTest(m.address)}
               onEdit={() => setForm({ values: fromMailbox(m), editing: true })}
               onRemove={() => setRemoving(m.address)}
+              polling={
+                poller
+                  ? {
+                      enabled: poller[m.address.toLowerCase()]?.enabled ?? false,
+                      isNew: !poller[m.address.toLowerCase()],
+                      onToggle: (on) => void togglePolling(m.address, on),
+                    }
+                  : null
+              }
             />
           ))}
         </ul>
@@ -423,7 +479,7 @@ function ServerField({
 }
 
 function MailboxRow({
-  mailbox: m, t, busy, onTest, onEdit, onRemove,
+  mailbox: m, t, busy, onTest, onEdit, onRemove, polling = null,
 }: {
   mailbox: EmailMailbox;
   t: T;
@@ -431,6 +487,7 @@ function MailboxRow({
   onTest: () => unknown;
   onEdit: () => unknown;
   onRemove: () => void;
+  polling?: { enabled: boolean; isNew: boolean; onToggle: (on: boolean) => void } | null;
 }) {
   const test = m.last_test;
   const testing = busy === m.address;
@@ -455,6 +512,18 @@ function MailboxRow({
       )}
       {m.last_poll?.ok === false && m.last_poll.error && (
         <p className="mt-1 text-red-400">{t("readProblem", { reason: m.last_poll.error })}</p>
+      )}
+      {polling && (
+        <label className="mt-2 flex items-center gap-1">
+          <input
+            type="checkbox"
+            checked={polling.enabled}
+            disabled={!!busy}
+            onChange={(e) => polling.onToggle(e.target.checked)}
+          />
+          {t("polling")}
+          {polling.isNew && <span className="text-[var(--color-muted)]">{t("pollingHint")}</span>}
+        </label>
       )}
       <div className="mt-2 flex flex-wrap gap-2">
         <ActionButton busyLabel={t("testing")} className={btnCls} disabled={!!busy} aria-busy={testing} onAction={onTest}>

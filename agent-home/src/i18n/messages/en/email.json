@@ -43,5 +43,8 @@
   "errLoad": "Could not load your mailboxes.",
   "errSave": "Could not save: {reason}",
   "errTest": "Could not run the test.",
-  "errRemove": "Could not remove the mailbox."
+  "errRemove": "Could not remove the mailbox.",
+  "polling": "Email polling",
+  "pollingHint": "(adds a poller entry for this mailbox)",
+  "errPolling": "Could not update email polling; reload to resync."
 }

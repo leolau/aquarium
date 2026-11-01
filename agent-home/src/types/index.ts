@@ -1361,6 +1361,8 @@ export interface EmailPollerAccount {
   address: string;
   label: string | null;
   enabled: boolean;
+  /** How the poller logs in: Gmail OAuth or a saved mailbox password. */
+  auth?: "xoauth2" | "password";
 }
 
 /**
