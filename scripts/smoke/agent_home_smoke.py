@@ -135,6 +135,7 @@ PAGES: Tuple[PageSpec, ...] = (
         quick=True,
     ),
     PageSpec("/members", anon="redirect:/users", redirect="/users"),
+    PageSpec("/not-available", ("NotAvailableForRole",)),
 )
 
 
@@ -159,6 +160,8 @@ class ApiSpec:
 APIS: Tuple[ApiSpec, ...] = (
     ApiSpec("/api/status/summary", OK, quick=True),
     ApiSpec("/api/access/roles", OK),
+    ApiSpec("/api/activity/running", OK),
+    ApiSpec("/api/settings/menu", OK),
     ApiSpec("/api/account/security", OK),
     ApiSpec("/api/browse/places", OK),
     ApiSpec("/api/browse/list", NEEDS_PARAMS),
