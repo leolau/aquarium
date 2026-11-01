@@ -333,11 +333,43 @@ to start skills manually.
 - Operators can install and manage skills on the server with
   `hermes skills`.
 
-> **TODO (authenticated web crawler skill):** a new skill that lets the
-> assistant crawl websites that need a login is being added. How to use it and
-> how to give it the website login will be described here when it is
-> released.
-<!-- TODO(crawler-skill): fill in the skill name, setup and usage once its PR is merged. -->
+## 9.1 Reading websites that need a login (auth-web-crawler)
+
+The built-in **auth-web-crawler** skill lets the assistant sign in to a website
+you are allowed to use, look through it and pull out the content to study or
+summarise. Good examples are an intranet wiki, a supplier portal or a course
+site.
+
+**How to use it:** in Chat, give the address, your login name and what you
+want. For example:
+
+- *"Log in to https://portal.example.com with my login alice and summarise the
+  pages under /docs."*
+- *"Read the supplier price lists on our intranet wiki and make a table."*
+
+**Your password:**
+
+- If you send the password in chat, the assistant saves it right away in
+  Aquarium's credential store (as `web-login/<site>`). After that it refers to
+  it only by name, for example "the saved password for portal.example.com".
+  Next time you only need to name the site.
+- It never repeats your password, and never puts it in files, memory or
+  output.
+
+**What it does and doesn't do:**
+
+- It stays on the same website, under the starting page. It visits a limited
+  number of pages and follows the site's robots.txt rules. It skips "log out"
+  and "delete" links.
+- It saves the pages it read (title, text and links) so it can work with them.
+- It refuses to send a password over plain `http://` unless you allow it.
+- It **stops and asks you** at CAPTCHAs, two-factor codes or "verify it's you"
+  pages. It does not get around them, or around paywalls.
+- Only use it on sites you are authorised to access. If that is unclear, the
+  assistant asks first.
+- Addresses inside the office network (for example `10.x`, `192.168.x`) are
+  blocked by default. Only your operator can allow them (see the Installation
+  Guide, section 10).
 
 # 10. Roles and permissions
 
@@ -422,6 +454,9 @@ provider requires an app password. Create one and edit the mailbox.
 **Can the assistant read or send mail from my mailbox?** Yes, but only from
 the mailboxes you saved yourself, and it checks with you before sending. See
 section 6.3.
+
+**Can the assistant read a website that needs a login?** Yes, if you are
+allowed to use the site. Give it the address and your login; see section 9.1.
 
 **The assistant does not answer.** The AI model key may be missing or out of
 credit. Ask your owner or admin to check **Get ready → AI model**.
