@@ -484,6 +484,14 @@ documentation in `website/docs/user-guide/messaging/` of the repository.
 - **What each role can use** (Settings → Tools & Integrations): which tool
   groups and files each role's assistant may use.
 - **Menu** (Settings): which launcher items each role sees.
+- **Websites behind a login:** the built-in `auth-web-crawler` skill lets
+  people have the assistant sign in to a website and read it (see the User
+  Guide). No setup is needed. Logins are kept in the credential store
+  (`web-login/<site>`). Like every web tool, it refuses private and intranet
+  addresses (`10.x`, `192.168.x`, `localhost`). If people need it for intranet
+  sites, set `security.allow_private_urls: true` in the profile's
+  `config.yaml` (`/opt/data/hermes-home/config.yaml`) and restart
+  `hermes-gateway` and `hermes-dashboard`.
 
 # 11. Backups
 
