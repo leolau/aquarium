@@ -8,6 +8,7 @@ import { getPrincipal } from "@/lib/auth/principal";
 import { readSession } from "@/lib/auth/session";
 import { HermesApiClient } from "@/lib/api/client";
 import { storageConfigured } from "@/lib/env";
+import { getHiddenApps } from "@/lib/nav/hidden-apps";
 import type { TodosFacets } from "@/types";
 
 // Cache the facets call for 30s so every page render doesn't hit the backend
@@ -65,11 +66,13 @@ export async function MobileShell({
   // resolved outside the cache so cookies() isn't called inside it, and
   // the token makes each principal's cache entry distinct.
   let badgeCounts: Record<string, number> = {};
+  let hiddenApps: string[] = [];
   if (showCoral) {
     try {
       const principal = await getPrincipal();
       if (principal) {
         const session = await readSession();
+        hiddenApps = await getHiddenApps(principal, session?.hermesToken);
         if (session?.hermesToken) {
           const facets: TodosFacets = await getCachedFacets(
             session.hermesToken,
@@ -114,7 +117,7 @@ export async function MobileShell({
             {children}
           </div>
         </main>
-        {showCoral ? <CoralHost badgeCounts={badgeCounts} /> : null}
+        {showCoral ? <CoralHost badgeCounts={badgeCounts} hiddenApps={hiddenApps} /> : null}
         {showCoral ? <LeadChatHost storageEnabled={storageConfigured()} /> : null}
         {showCoral ? <AppMcpBridge /> : null}
       </div>

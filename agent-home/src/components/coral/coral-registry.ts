@@ -7,6 +7,7 @@
  * unit tests and by `next build`), never at user runtime.
  */
 import type { AppKind, AppManifest } from "@/components/coral/coral-types";
+import { LOCKED_APP_IDS } from "@/lib/nav/menu-access";
 import {
   CLUSTER_CATEGORIES,
   MAX_CLUSTER_MEMBERS,
@@ -76,10 +77,19 @@ export type CoralPetal =
  * so grouping decisions are made deliberately, never by silent clipping.
  * Top-level order: an app petal sorts by its own `order`; a cluster sorts by
  * the minimum `order` of its members.
+ *
+ * `hidden` (Settings → Menu, per role) drops those apps first; a cluster left
+ * with no members disappears. Locked apps (home, settings) are never dropped.
  */
-export function buildCoralLayout(): CoralPetal[] {
+export function buildCoralLayout(
+  options: { hidden?: readonly string[] } = {},
+): CoralPetal[] {
+  const hidden = new Set(
+    (options.hidden ?? []).filter((id) => !LOCKED_APP_IDS.includes(id)),
+  );
   const byCategory = new Map<string, AppManifest[]>();
   for (const app of apps) {
+    if (hidden.has(app.id)) continue;
     const bucket = byCategory.get(app.category) ?? [];
     bucket.push(app);
     byCategory.set(app.category, bucket);

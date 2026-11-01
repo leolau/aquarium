@@ -68,6 +68,15 @@ describe("CoralHost grid panel", () => {
     expect(screen.getByRole("button", { name: /close coral menu/i })).toBeTruthy();
   });
 
+  it("leaves out apps hidden from the caller's role", () => {
+    render(<CoralHost hiddenApps={["graph", "todos"]} />);
+    openCoral();
+    const menu = screen.getByRole("menu", { name: /coral launcher/i });
+    expect(menu.querySelector('a[href="/graph"]')).toBeNull();
+    expect(menu.querySelector('a[href="/todos"]')).toBeNull();
+    expect(menu.querySelector('a[href="/settings"]')).toBeTruthy();
+  });
+
   it("tints the Main, Workspace and System sections distinctly", () => {
     render(<CoralHost />);
     openCoral();

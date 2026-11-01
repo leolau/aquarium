@@ -94,6 +94,7 @@ import type {
   ProposedAction,
   Role,
   RoleLimitsResponse,
+  AgentHomeNav,
   SessionCreateResponse,
   CredentialEntry,
   EmailMailbox,
@@ -459,6 +460,22 @@ export class HermesApiClient {
     return this.request(`/api/access/roles/${encodeURIComponent(role)}`, {
       method: "PUT",
       json: change,
+    });
+  }
+
+  /** Which agent-home menu items the caller may see (Settings → Menu). */
+  async agentHomeNav(): Promise<AgentHomeNav> {
+    return this.request("/api/agent-home/nav");
+  }
+
+  /** Replace a role's hidden menu items. Owner/admin only. */
+  async setAgentHomeNav(
+    role: string,
+    hidden: string[],
+  ): Promise<{ ok: boolean } & AgentHomeNav> {
+    return this.request(`/api/agent-home/nav/${encodeURIComponent(role)}`, {
+      method: "PUT",
+      json: { hidden },
     });
   }
 

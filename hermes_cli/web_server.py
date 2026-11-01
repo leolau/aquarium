@@ -16154,7 +16154,10 @@ class RoleToolsUpdate(BaseModel):
     profile: Optional[str] = None
 
 
-async def _require_role_limits_editor(request: "Request") -> None:
+async def _require_role_limits_editor(
+    request: "Request",
+    detail: str = "Only the owner or an admin can change what each role can use.",
+) -> None:
     """403 unless the caller is the owner or an admin.
 
     A caller with no login (operator token, desktop app) acts as the owner,
@@ -16167,10 +16170,7 @@ async def _require_role_limits_editor(request: "Request") -> None:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         return
     if getattr(actor, "role", None) not in ("owner", "admin"):
-        raise HTTPException(
-            status_code=403,
-            detail="Only the owner or an admin can change what each role can use.",
-        )
+        raise HTTPException(status_code=403, detail=detail)
 
 
 @app.get("/api/access/roles")
@@ -16216,6 +16216,74 @@ async def update_role_limits(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         save_config(config)
     return {"ok": True, "roles": role_limits(config)}
+
+
+class AgentHomeNavUpdate(BaseModel):
+    hidden: List[str]
+
+
+async def _agent_home_nav_caller(request: "Request") -> tuple:
+    """``(role, is_owner)`` of the caller; no login (operator, single-user) is the owner."""
+    try:
+        actor = await _comms_resolve_principal(request)
+    except _CommsNotConfigured as exc:
+        if _comms_session_subject(request):
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return "owner", True
+    role = getattr(actor, "role", None) or "viewer"
+    return role, bool(getattr(actor, "is_owner", False)) or role == "owner"
+
+
+def _agent_home_nav_body(config: dict, role: str, is_owner: bool) -> dict:
+    from hermes_cli import agent_home_nav as nav
+
+    body = {
+        "role": role,
+        "is_owner": is_owner,
+        "hidden": nav.effective_hidden(config, role, is_owner),
+        "locked": list(nav.LOCKED_APP_IDS),
+        "apps": list(nav.KNOWN_APP_IDS),
+    }
+    if is_owner or role == "admin":
+        body["roles"] = nav.all_role_hidden(config)
+    return body
+
+
+@app.get("/api/agent-home/nav")
+async def get_agent_home_nav(request: Request):
+    """Which agent-home menu items the caller may see.
+
+    ``hidden`` is the caller's effective list (always empty for the owner);
+    owner/admin also get every role's stored list under ``roles``. Read from
+    ``agent_home.nav`` in the default profile's config.yaml.
+    """
+    role, is_owner = await _agent_home_nav_caller(request)
+    with _profile_scope("default"):
+        config = load_config()
+    return _agent_home_nav_body(config, role, is_owner)
+
+
+@app.put("/api/agent-home/nav/{role}")
+async def update_agent_home_nav(role: str, body: AgentHomeNavUpdate, request: Request):
+    """Replace *role*'s hidden menu items (``agent_home.nav.roles.<role>.hidden``).
+
+    Owner and admin only. 400 for an unknown role (the owner is not editable)
+    or an unknown, duplicate or locked (home/settings) app id.
+    """
+    from hermes_cli import agent_home_nav as nav
+
+    await _require_role_limits_editor(
+        request, detail="Only the owner or an admin can change the menu."
+    )
+    caller_role, is_owner = await _agent_home_nav_caller(request)
+    with _profile_scope("default"):
+        config = load_config()
+        try:
+            nav.set_role_hidden(config, role, body.hidden)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        save_config(config)
+    return {"ok": True, **_agent_home_nav_body(config, caller_role, is_owner)}
 
 
 @app.get("/api/tools/toolsets/{name}/config")

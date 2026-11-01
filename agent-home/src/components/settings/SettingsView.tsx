@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { AccountSecurity } from "@/components/account/AccountSecurity";
 import { AppsSettings } from "@/components/settings/AppsSettings";
 import { EntityGoalSection } from "@/components/settings/EntityGoalSection";
+import { MenuSection } from "@/components/settings/MenuSection";
 import { LanguageSwitch } from "@/components/LanguageSwitch";
 import { PushEnroll } from "@/components/push/PushEnroll";
 import { ConnectedAccounts } from "@/components/settings/ConnectedAccounts";
@@ -145,6 +146,8 @@ export function SettingsView({
       <InOutSection canManageMembers={canManageMembers} isOwner={isOwner} />
 
       {canManageMembers ? <AppsSettings /> : null}
+
+      {canManageTools ? <MenuSection /> : null}
 
       <section data-section="tools" className="mt-6">
         <h2 className="text-sm font-semibold">{t("tools")}</h2>

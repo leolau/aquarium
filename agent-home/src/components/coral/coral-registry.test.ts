@@ -91,6 +91,38 @@ describe("coral Phase 1 registrations", () => {
   });
 });
 
+describe("coral per-role filtering (Settings → Menu)", () => {
+  const ids = (petals: ReturnType<typeof buildCoralLayout>) =>
+    petals.flatMap((p) => (p.type === "app" ? [p.app.id] : p.members.map((a) => a.id)));
+
+  it("drops hidden apps from the top level and from clusters", () => {
+    const petals = buildCoralLayout({ hidden: ["todos", "graph"] });
+    expect(ids(petals)).not.toContain("todos");
+    expect(ids(petals)).not.toContain("graph");
+    expect(ids(petals)).toHaveLength(getApps().length - 2);
+  });
+
+  it("removes a cluster whose members are all hidden", () => {
+    const system = getApps()
+      .filter((a) => a.category === "system" && a.id !== "settings")
+      .map((a) => a.id);
+    const workspace = getApps()
+      .filter((a) => a.category === "workspace")
+      .map((a) => a.id);
+    const petals = buildCoralLayout({ hidden: workspace });
+    expect(petals.some((p) => p.type === "cluster" && p.id === "workspace")).toBe(false);
+    // Settings is locked, so System survives even with every other member hidden.
+    const sys = buildCoralLayout({ hidden: system }).find((p) => p.type === "cluster" && p.id === "system");
+    expect(sys && sys.type === "cluster" ? sys.members.map((a) => a.id) : []).toEqual(["settings"]);
+  });
+
+  it("never hides the locked Home and Settings", () => {
+    expect(ids(buildCoralLayout({ hidden: ["home", "settings"] })).sort()).toEqual(
+      ids(buildCoralLayout()).sort(),
+    );
+  });
+});
+
 describe("coral caps and registration errors", () => {
   it("rejects a 9th top-level petal, naming the fix", () => {
     __resetCoralRegistryForTests();
