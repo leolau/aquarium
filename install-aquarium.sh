@@ -1,13 +1,23 @@
 #!/usr/bin/env bash
 # install-aquarium.sh — install the whole Aquarium stack on a fresh Ubuntu 24.04 VM.
 #
+# From a git clone (installs exactly that clone; asks for the instance settings):
+#   git clone https://github.com/leolau/aquarium.git && cd aquarium && sudo ./install-aquarium.sh
+#   ./install-aquarium.sh --check      read-only preflight: OS, CPU, memory, disk, ports, DNS
+#
+# Without a clone:
 #   curl -fsSL https://raw.githubusercontent.com/leolau/aquarium/develop/install-aquarium.sh \
 #     | sudo AQUARIUM_HOME_DOMAIN=home.example.com AQUARIUM_DASHBOARD_DOMAIN=example.com bash -s -- [OPTION]
 #
-# What to install (one option; default --channel stable):
+# What to install (one option; default: the clone the script runs from, else --channel stable):
+#   --from-checkout       the git clone this script is in, copied to $AQUARIUM_ROOT/hermes-agent
+#                         (no download; not signature-verified; updates: scripts/aquarium-update.sh)
 #   --version vX.Y.Z      that GitHub release of leolau/aquarium
 #   --channel stable|beta newest release on the channel (beta includes pre-releases)
 #   --from-branch BRANCH  a git checkout of BRANCH (development boxes only; not verified)
+# Instance settings (asked once when run in a terminal; saved in /etc/aquarium/aquarium.conf
+# and reused by every re-run): --org-name NAME, --home-domain HOST, --dashboard-domain HOST,
+# --owner-id LOGIN, --owner-email EMAIL. --yes never asks (defaults fill the gaps).
 # A release is installed only after its SHA256SUMS passes a cosign signature check (signed by
 # this repo's release workflow for that tag) and the tarball matches it. Releases are unpacked
 # root-owned into /opt/aquarium/releases/<version>; /opt/aquarium/current points at the active
@@ -27,6 +37,9 @@
 #                              only SSH is reachable from outside (useful for a test VM).
 #   AQUARIUM_DASHBOARD_DOMAIN  public hostname for the operator dashboard.
 #   AQUARIUM_OWNER_ID          login name of the first owner            (default: admin)
+#   AQUARIUM_ORG_NAME          organization this instance is for        (default: Aquarium)
+#   AQUARIUM_OWNER_EMAIL       owner's email, the Let's Encrypt contact (default: none)
+#   (each of these five: --option > environment > saved instance settings > prompt > default)
 #   AQUARIUM_REPO / AQUARIUM_BRANCH   source for --from-branch (default: leolau/aquarium, develop);
 #                              setting AQUARIUM_BRANCH alone also selects a branch install
 #   AQUARIUM_ROOT              install root                              (default: /opt/data)
@@ -43,6 +56,8 @@ BRANCH=${AQUARIUM_BRANCH:-develop}
 HOME_DOMAIN=${AQUARIUM_HOME_DOMAIN:-}
 DASH_DOMAIN=${AQUARIUM_DASHBOARD_DOMAIN:-}
 OWNER_ID=${AQUARIUM_OWNER_ID:-admin}
+ORG_NAME=${AQUARIUM_ORG_NAME:-}        # these five are final after aq_resolve_instance
+OWNER_EMAIL=${AQUARIUM_OWNER_EMAIL:-}
 SUPABASE_REF=${AQUARIUM_SUPABASE_REF:-}
 APP=$ROOT/hermes-agent
 HERMES_HOME_DIR=$ROOT/hermes-home
@@ -59,7 +74,11 @@ trap 'die "failed at line $LINENO: $BASH_COMMAND"' ERR
 
 # Release/pin/component helpers live in deploy/install/ next to this script; when the script
 # is piped from curl there is no "next to", so fetch them from the same ref.
-HELPERS=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)/deploy/install
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)
+HELPERS=$SCRIPT_DIR/deploy/install
+# Run from a git clone (not piped): that clone is the default thing to install.
+AQ_CHECKOUT=
+if [ -n "$SCRIPT_DIR" ] && [ -e "$SCRIPT_DIR/.git" ] && [ -f "$HELPERS/lib.sh" ]; then AQ_CHECKOUT=$SCRIPT_DIR; fi
 if [ ! -f "$HELPERS/lib.sh" ]; then
   HELPERS=$(mktemp -d)
   for f in lib.sh pins.env supabase-images.lock; do
@@ -74,8 +93,25 @@ fi
 SUPABASE_REF=${SUPABASE_REF:-$SUPABASE_COMMIT}
 aq_parse_args "$@"
 if [ "$SOURCE_MODE" = help ]; then
-  echo "usage: install-aquarium.sh [--version vX.Y.Z | --channel stable|beta | --from-branch BRANCH]"
+  cat <<'USAGE'
+usage: install-aquarium.sh [SOURCE] [SETTINGS] [--yes] [--check]
+  SOURCE    --from-checkout (default when run from a git clone) | --version vX.Y.Z
+            | --channel stable|beta | --from-branch BRANCH
+  SETTINGS  --org-name NAME --home-domain HOST --dashboard-domain HOST
+            --owner-id LOGIN --owner-email EMAIL   (asked for when missing, saved for re-runs)
+  --yes     never ask; missing settings take their defaults
+  --check   only report whether this server is ready (OS, CPU, memory, disk, ports, DNS)
+USAGE
   exit 0
+fi
+# Instance settings live in /etc/aquarium/aquarium.conf; GIT_INSTALL = code comes from git.
+GIT_INSTALL=0
+if [ "$SOURCE_MODE" = branch ] || [ "$SOURCE_MODE" = checkout ]; then GIT_INSTALL=1; fi
+if [ "$CHECK_ONLY" = 1 ]; then
+  ASSUME_YES=1
+  aq_resolve_instance || exit 1
+  echo "Preflight (read-only; nothing is changed):"
+  if aq_preflight "$HOME_DOMAIN" "$DASHBOARD_DOMAIN"; then exit 0; else exit 1; fi
 fi
 as_hermes() { sudo -u hermes -H env HERMES_HOME="$HERMES_HOME_DIR" "$@"; }
 rand() { openssl rand -hex "${1:-24}"; }
@@ -91,10 +127,18 @@ mkvenv() {  # mkvenv DIR: (re)create a 3.11 venv the hermes account can execute
 [ "$(id -u)" -eq 0 ] || die "run as root (sudo)"
 . /etc/os-release
 [ "${ID:-}" = ubuntu ] || die "Ubuntu required (found ${ID:-unknown})"
-[ "$(uname -m)" = x86_64 ] || echo "warning: tested on x86_64 only"
-free_gb=$(df -BG --output=avail / | tail -1 | tr -dc 0-9)
-[ "$free_gb" -ge 25 ] || die "need >= 25 GB free disk, have ${free_gb} GB"
+aq_resolve_instance || die "instance settings are not valid (see above)"
+DASH_DOMAIN=$DASHBOARD_DOMAIN
+log "Preflight"
+aq_preflight "$HOME_DOMAIN" "$DASH_DOMAIN" || die "this server is not ready (FAIL lines above)"
 mkdir -p "$ROOT"
+if [ "$SOURCE_MODE" = checkout ]; then
+  BRANCH=$(aq_git "$AQ_CHECKOUT" rev-parse --abbrev-ref HEAD)
+  REPO_URL=$(aq_git "$AQ_CHECKOUT" remote get-url origin 2>/dev/null || echo "$REPO_URL")
+fi
+# Saved before anything else, so a re-run after a failure asks nothing again.
+aq_save_instance DATA_ROOT="$ROOT" INSTALL_SOURCE="$SOURCE_MODE" \
+  BRANCH="$([ "$GIT_INSTALL" = 1 ] && echo "$BRANCH")"
 
 # ---------------------------------------------------------------- 1. system packages
 log "System packages"
@@ -172,6 +216,12 @@ if [ "$SOURCE_MODE" = branch ]; then
     git -C "$APP" fetch -q origin "$BRANCH" && git -C "$APP" merge -q --ff-only "origin/$BRANCH"
   fi
   git config --system --add safe.directory "$APP" 2>/dev/null || true
+elif [ "$SOURCE_MODE" = checkout ]; then
+  log "Aquarium source (this clone: $AQ_CHECKOUT @ $BRANCH $(aq_git "$AQ_CHECKOUT" rev-parse --short HEAD), unverified development install)"
+  [ ! -L "$APP" ] || die "$APP points at a release install; install a release with --version instead"
+  aq_sync_checkout "$AQ_CHECKOUT" "$APP"
+  git config --system --get-all safe.directory 2>/dev/null | grep -qxF "$APP" \
+    || git config --system --add safe.directory "$APP" 2>/dev/null || true
 else
   aq_check_compat_path "$APP"
   VERSION=$(aq_resolve_version)
@@ -199,9 +249,9 @@ uv pip install -q --python .venv/bin/python \
 
 log "Node dependencies and builds (agent-home, dashboard)"
 # A release ships agent-home and the dashboard prebuilt; build only what is missing.
-if [ "$SOURCE_MODE" = branch ] || [ ! -d node_modules ]; then npm ci --no-audit --no-fund --silent; fi
-if [ "$SOURCE_MODE" = branch ] || [ ! -f hermes_cli/web_dist/index.html ]; then (cd web && npm run build); fi
-if [ "$SOURCE_MODE" = branch ] || [ ! -f agent-home/.next/BUILD_ID ]; then npm run build --workspace agent-home; fi
+if [ "$GIT_INSTALL" = 1 ] || [ ! -d node_modules ]; then npm ci --no-audit --no-fund --silent; fi
+if [ "$GIT_INSTALL" = 1 ] || [ ! -f hermes_cli/web_dist/index.html ]; then (cd web && npm run build); fi
+if [ "$GIT_INSTALL" = 1 ] || [ ! -f agent-home/.next/BUILD_ID ]; then npm run build --workspace agent-home; fi
 chmod +x agent-home/deploy/start.sh
 # WhatsApp bridge dependencies (the service account cannot write into a release).
 (cd scripts/whatsapp-bridge && npm ci --no-audit --no-fund --silent --omit=dev)
@@ -394,7 +444,7 @@ umask 022
 chmod 600 /etc/aquarium/agent-home.env /etc/aquarium/app-mcp.env
 # Code is root's (deploy-hermes.sh runs as root and refuses a checkout hermes
 # can edit, F13); hermes gets only the agent-home cache.
-if [ "$SOURCE_MODE" = branch ]; then
+if [ "$GIT_INSTALL" = 1 ]; then
   chown -R root:root "$APP" && chmod -R go-w "$APP"
   install -d -o hermes -g hermes "$APP/agent-home/.next/cache"
 else
@@ -475,12 +525,10 @@ if [ -n "$HOME_DOMAIN$DASH_DOMAIN" ]; then
     # Admin API only on a unix socket that only caddy/root can open: on 127.0.0.1:2019
     # any local user (the agent's shell is one) could rewrite every route (review F24).
     # `systemctl reload caddy` still works: `caddy reload` reads this address from the file.
-    cat <<'CADDY'
-{
-	admin unix//var/lib/caddy/admin.sock|0600
-}
-
-CADDY
+    printf '{\n\tadmin unix//var/lib/caddy/admin.sock|0600\n'
+    # Let's Encrypt sends certificate problems to this address.
+    if [ -n "$OWNER_EMAIL" ]; then printf '\temail %s\n' "$OWNER_EMAIL"; fi
+    printf '}\n\n'
     [ -n "$HOME_DOMAIN" ] && cat <<CADDY
 $HOME_DOMAIN {
     $sse
@@ -550,17 +598,19 @@ ORIGIN=${ORIGIN:-http://127.0.0.1:3100}
 SETUP_LINK=$(hermes_db setup-link --origin "$ORIGIN" 2>/dev/null) || SETUP_LINK="(could not create one; run the command below)"
 cat <<DONE
 
-Aquarium installed (${HOME_DOMAIN:-http://127.0.0.1:3100}).
+Aquarium installed for $ORG_NAME (${HOME_DOMAIN:-http://127.0.0.1:3100}).
   Owner setup : open this one-time link within 24 hours to set the owner's email and password:
                 $SETUP_LINK
                 New link (cancels the old one): sudo -u hermes -H bash -c 'set -a; . $APP_ENV; set +a; $APP/.venv/bin/hermes setup-link --origin $ORIGIN'
-  Secrets     : $SECRETS (root only)
-  Next        : add your model API key(s) to $HERMES_HOME_DIR/.env, then
-                systemctl restart hermes-gateway hermes-dashboard
+  Settings    : $AQ_INSTANCE_CONF (domains, owner; re-runs reuse it)
+  Secrets     : $SECRETS (root only); service env files in /etc/aquarium/*.env (root only)
+  Models      : add your model provider API key(s) (e.g. OPENROUTER_API_KEY=...) to
+                $HERMES_HOME_DIR/.env, then: systemctl restart hermes-gateway hermes-dashboard
+  Health      : sudo aquarium doctor    Logs: sudo aquarium logs [service]
 DONE
-if [ "$SOURCE_MODE" = branch ]; then
-  echo "  Deploy later: $ROOT/deploy-hermes.sh $BRANCH"
+if [ "$GIT_INSTALL" = 1 ]; then
+  echo "  Update      : sudo $APP/scripts/aquarium-update.sh $BRANCH   (fetches $BRANCH, rebuilds, restarts)"
 else
-  echo "  Version     : $VERSION  (upgrade: re-run this installer with --version <newer tag>)"
+  echo "  Version     : $VERSION  (update: sudo aquarium update)"
 fi
 exit $fail
