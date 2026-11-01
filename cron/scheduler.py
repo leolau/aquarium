@@ -237,7 +237,15 @@ _LEGACY_HOME_TARGET_ENV_VARS = {
     "QQBOT_HOME_CHANNEL": "QQ_HOME_CHANNEL",
 }
 
-from cron.jobs import get_due_jobs, mark_job_run, save_job_output, advance_next_run, claim_dispatch
+from cron.jobs import (
+    get_due_jobs,
+    mark_job_run,
+    save_job_output,
+    advance_next_run,
+    claim_dispatch,
+    mark_job_running,
+    clear_job_running,
+)
 
 # Sentinel: when a cron agent has nothing new to report, it can start its
 # response with this marker to suppress delivery.  Output is still saved
@@ -3139,7 +3147,13 @@ def run_one_job(job: dict, *, adapters=None, loop=None, verbose: bool = False) -
             )
             return True  # not an error — already handled/removed
 
-        success, output, final_response, error = run_job(job)
+        # "Running since" marker for other processes (the activity bar);
+        # the in-memory running set is only visible inside this one.
+        marker = mark_job_running(job)
+        try:
+            success, output, final_response, error = run_job(job)
+        finally:
+            clear_job_running(marker)
 
         output_file = save_job_output(job["id"], output)
         if verbose:
