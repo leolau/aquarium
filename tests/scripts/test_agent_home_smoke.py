@@ -165,3 +165,26 @@ def test_specs_cover_every_page_route_and_expect_every_role():
     for spec in smoke.APIS:
         assert set(spec.expect) == {VIEWER, MEMBER, ADMIN}, spec.path
         assert spec.path.startswith("/api/")
+
+
+def test_row_status_retry_only_pass_is_warn():
+    assert smoke.row_status(True) == "PASS"
+    assert smoke.row_status(True, retried=True) == "WARN"
+    assert smoke.row_status(False, retried=True) == "FAIL"
+    assert smoke.row_status(None) == "SKIP"
+
+
+def test_report_counts_warn_separately_and_warn_does_not_fail():
+    report = smoke.Report()
+    report.add(True, "a")
+    report.add(True, "b", "HTTP 200 (1st try: HTTP 500)", retried=True)
+    report.add(None, "c")
+    assert [r[0] for r in report.rows] == ["PASS", "WARN", "SKIP"]
+    assert report.failed == 0
+    line = smoke.summary_line(report.rows, 1.0, "http://x", write=False)
+    assert line.startswith("1 PASS, 1 WARN (passed only on retry), 0 FAIL, 1 SKIP")
+
+
+def test_concurrency_defaults_to_two():
+    assert smoke.parse_args([]).concurrency == 2
+    assert smoke.parse_args(["--concurrency", "5"]).concurrency == 5

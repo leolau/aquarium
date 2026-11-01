@@ -30,7 +30,9 @@ can't see them, and ALWAYS deletes both in ``finally``. The chat is deleted
 through the Python dashboard API (``--api-url``, default 127.0.0.1:9119):
 agent-home has no delete route for chats.
 
-Exit code 0 when nothing FAILed, 1 otherwise, 2 on bad usage.
+Rows are PASS, WARN (passed only on the one retry after a 5xx/timeout or an
+error-state page — the dashboard was struggling), FAIL or SKIP. Exit code 0 when
+nothing FAILed (WARN does not fail the run), 1 otherwise, 2 on bad usage.
 """
 
 from __future__ import annotations
@@ -374,6 +376,23 @@ def build_verdict(served: Optional[str], head: str, changed_since: Callable[[str
     return True, f"build {served}, HEAD {head[:9]}: no agent-home changes since the build"
 
 
+def row_status(ok: Optional[bool], retried: bool = False) -> str:
+    if ok is None:
+        return "SKIP"
+    if not ok:
+        return "FAIL"
+    return "WARN" if retried else "PASS"
+
+
+def summary_line(rows: Sequence[Tuple[str, str, str]], elapsed: float, base_url: str, write: bool) -> str:
+    counts = {s: sum(1 for r in rows if r[0] == s) for s in ("PASS", "WARN", "FAIL", "SKIP")}
+    return (
+        f"{counts['PASS']} PASS, {counts['WARN']} WARN (passed only on retry), "
+        f"{counts['FAIL']} FAIL, {counts['SKIP']} SKIP in {elapsed:.1f}s against {base_url}"
+        + (" (--write)" if write else "")
+    )
+
+
 def format_table(rows: Sequence[Tuple[str, str, str]]) -> str:
     """Rows of (status, check, detail) as an aligned text table."""
     width = max([len(r[1]) for r in rows] + [5])
@@ -457,9 +476,9 @@ class Report:
     def __init__(self) -> None:
         self.rows: List[Tuple[str, str, str]] = []
 
-    def add(self, ok: Optional[bool], name: str, detail: str = "") -> bool:
-        status = "SKIP" if ok is None else ("PASS" if ok else "FAIL")
-        self.rows.append((status, name, detail))
+    def add(self, ok: Optional[bool], name: str, detail: str = "", *, retried: bool = False) -> bool:
+        """``ok=None`` is SKIP; a pass that needed the retry is WARN, not PASS."""
+        self.rows.append((row_status(ok, retried), name, detail))
         return bool(ok)
 
     @property
@@ -491,7 +510,7 @@ class Smoke:
         return self.http.request("GET", path, cookie=self.cookies.get(role, ""))
 
     def parallel(self, jobs: Sequence[Tuple[Any, ...]], fn: Callable[..., Any]) -> List[Any]:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=self.args.workers) as pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, self.args.concurrency)) as pool:
             return list(pool.map(lambda job: fn(*job), jobs))
 
     def roles(self) -> List[str]:
@@ -529,26 +548,28 @@ class Smoke:
         specs = [p for p in PAGES if p.quick or not self.args.quick]
         jobs = [(role, spec) for role in [ANON] + self.roles() for spec in specs]
 
-        def run(role: str, spec: PageSpec) -> Tuple[str, PageSpec, bool, str]:
+        def run(role: str, spec: PageSpec) -> Tuple[str, PageSpec, bool, str, bool]:
             resp = self.get(role, spec.path)
             ok, detail = page_verdict(spec, role, resp.status, resp.text)
+            retried = False
             if not ok:
                 # One retry: a page whose server fetch timed out under the
                 # parallel load renders its error state. Still reported.
                 time.sleep(RETRY_DELAY_S)
                 retry = self.get(role, spec.path)
                 ok, again = page_verdict(spec, role, retry.status, retry.text)
+                retried = ok
                 detail = f"{again} (1st try: {detail})" if ok else detail
-            return role, spec, ok, detail
+            return role, spec, ok, detail, retried
 
-        for role, spec, ok, detail in self.parallel(jobs, run):
-            self.report.add(ok, f"page {role:<6} {spec.path}", detail)
+        for role, spec, ok, detail, retried in self.parallel(jobs, run):
+            self.report.add(ok, f"page {role:<6} {spec.path}", detail, retried=retried)
 
     def apis(self) -> None:
         specs = [a for a in APIS if a.quick or not self.args.quick]
         jobs = [(role, spec) for role in [ANON] + self.roles() for spec in specs]
 
-        def run(role: str, spec: ApiSpec) -> Tuple[str, ApiSpec, bool, str]:
+        def run(role: str, spec: ApiSpec) -> Tuple[str, ApiSpec, bool, str, bool]:
             want = spec.anon if role == ANON else spec.expect[role]
             resp = self.get(role, spec.path)
             detail = f"{_status_detail(resp)} (want {want})"
@@ -557,11 +578,11 @@ class Smoke:
                 time.sleep(RETRY_DELAY_S)
                 retry = self.get(role, spec.path)
                 if retry.status == want:
-                    return role, spec, True, f"HTTP {retry.status} (1st try: {detail})"
-            return role, spec, resp.status == want, detail
+                    return role, spec, True, f"HTTP {retry.status} (1st try: {detail})", True
+            return role, spec, resp.status == want, detail, False
 
-        for role, spec, ok, detail in self.parallel(jobs, run):
-            self.report.add(ok, f"api  {role:<6} {spec.path}", detail)
+        for role, spec, ok, detail, retried in self.parallel(jobs, run):
+            self.report.add(ok, f"api  {role:<6} {spec.path}", detail, retried=retried)
 
     def privacy(self) -> None:
         for role in (MEMBER, VIEWER):
@@ -754,16 +775,9 @@ class Smoke:
             self.logout()
         rows = self.report.rows
         if self.args.failures_only:
-            rows = [r for r in rows if r[0] != "PASS"]
+            rows = [r for r in rows if r[0] != "PASS"]  # keeps WARN
         print(format_table(rows) if rows else "(no failures)")
-        counts = {s: sum(1 for r in self.report.rows if r[0] == s) for s in ("PASS", "FAIL", "SKIP")}
-        retried = sum(1 for r in self.report.rows if "1st try" in r[2])
-        print(
-            f"\n{counts['PASS']} PASS, {counts['FAIL']} FAIL, {counts['SKIP']} SKIP "
-            f"in {time.monotonic() - started:.1f}s against {self.args.base_url}"
-            + (" (--write)" if self.args.write else "")
-            + (f"; {retried} passed only on retry" if retried else "")
-        )
+        print("\n" + summary_line(self.report.rows, time.monotonic() - started, self.args.base_url, self.args.write))
         return 1 if self.report.failed else 0
 
 
@@ -785,7 +799,10 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--write", action="store_true", help="also create + delete a [smoke] project and chat")
     parser.add_argument("--quick", action="store_true", help="only the quick smoke subset of pages/APIs")
     parser.add_argument("--failures-only", action="store_true", help="print only FAIL/SKIP rows")
-    parser.add_argument("--workers", type=int, default=4, help="parallel requests (default %(default)s)")
+    parser.add_argument(
+        "--concurrency", type=int, default=2,
+        help="parallel requests (default %(default)s; higher overloads the prod dashboard)",
+    )
     return parser.parse_args(argv)
 
 

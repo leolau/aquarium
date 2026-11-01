@@ -127,5 +127,7 @@ It logs in as the admin/member/viewer test accounts from `/root/.aquarium-smoke.
 (root-only, `SMOKE_{ADMIN,MEMBER,VIEWER}_{EMAIL,PASSWORD}`; env vars override),
 checks every page and read-only `/api/*` GET per role plus logged out, cross-role
 privacy, `/api/status/summary`, and that the served build is the checkout's `HEAD`.
+Rows are PASS / WARN (passed only on retry — the dashboard was struggling) / FAIL / SKIP;
+only FAIL exits 1. `--concurrency` (default 2) caps parallel requests; higher overloads the dashboard.
 For a local run: `--base-url http://localhost:3000 --repo .`. What it covers and
 what it leaves to the full regression: [`docs/testing/agent-home-test-plan.md`](../docs/testing/agent-home-test-plan.md).
