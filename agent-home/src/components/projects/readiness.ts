@@ -14,8 +14,10 @@ export interface ReadinessItem {
   /** Where the fix lives: a `?tab=` link (or the header for "status"). */
   anchor: string;
   /** The tab that fixes it — set for every item except "status", whose fix
-   * is the Activate button. */
+   * is the journey bar's Activate button. */
   tab?: ProjectTab;
+  /** Element id of the field that fixes it, for the journey bar to reveal. */
+  target?: string;
 }
 
 /**
@@ -38,6 +40,7 @@ export function readinessItems(
       hint: "Declare what the project delivers.",
       anchor: "?tab=outputs",
       tab: "outputs",
+      target: "add-output",
     },
     {
       key: "profile",
@@ -46,6 +49,7 @@ export function readinessItems(
       hint: "Add the host profile under Settings → People.",
       anchor: "?tab=settings",
       tab: "settings",
+      target: "panel-people",
     },
     {
       key: "plan",
@@ -61,6 +65,7 @@ export function readinessItems(
           : "The active plan has no steps.",
       anchor: "?tab=plan",
       tab: "plan",
+      target: "panel-plan",
     },
     // The activation gate itself (`PATCH status=active`) refuses on the
     // same outputs/profile prerequisites, so it belongs right after them —
@@ -70,8 +75,9 @@ export function readinessItems(
       key: "status",
       label: "Project activated",
       ok: project.status === "active",
-      hint: "Activate it — the button is at the top of this page.",
-      anchor: "#project-header",
+      hint: "Activate it — the button is in the journey bar at the top.",
+      anchor: "#journey-bar",
+      target: "journey-primary",
     },
   ];
   if (project.cadence === "repeatable") {
@@ -82,6 +88,7 @@ export function readinessItems(
       hint: "Repeatable projects need a schedule to fire.",
       anchor: "?tab=settings",
       tab: "settings",
+      target: "panel-settings",
     });
   }
   return items;

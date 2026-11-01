@@ -16,7 +16,9 @@ import {
   project,
   run,
 } from "@/components/projects/dashboard/__fixtures__/dashboard";
-import { DashboardTab } from "@/components/projects/tabs/DashboardTab";
+import { JourneyBar } from "@/components/projects/dashboard/JourneyBar";
+import { nextAction } from "@/components/projects/dashboard/nextAction";
+import { DashboardTab as Tab } from "@/components/projects/tabs/DashboardTab";
 import type { ProjectTabProps } from "@/components/projects/tabs/types";
 import { IDEMPOTENCY_HEADER } from "@/components/projects/useProjectAction";
 
@@ -55,6 +57,26 @@ function props(over: Partial<ProjectTabProps> = {}): ProjectTabProps {
     onChangeRequest: vi.fn(),
     ...over,
   };
+}
+
+/** The page's pairing: the journey bar (the one next action) over the tab. */
+function DashboardTab(p: ProjectTabProps) {
+  const action = nextAction(p.project, p.board, p.readiness, p.playbook, undefined, p.canLead);
+  return (
+    <>
+      <JourneyBar
+        project={p.project}
+        action={action}
+        readiness={p.readiness}
+        canLead={p.canLead}
+        canAct={p.canLead}
+        onNavigate={p.onNavigate}
+        onReveal={() => {}}
+        onChangeRequest={p.onChangeRequest}
+      />
+      <Tab {...p} />
+    </>
+  );
 }
 
 const APPROVE = "Approve 2 cards & resume work";
@@ -198,7 +220,7 @@ describe("other Dashboard buttons", () => {
         })}
       />,
     );
-    // b1 is the hero; b2's row has its own Retry.
+    // b1 is the journey bar's button; b2's row has its own Retry.
     const [heroRetry, rowRetry] = screen.getAllByRole("button", { name: "Retry" });
     fireEvent.click(heroRetry);
     expect(await screen.findByRole("button", { name: "Retrying…" }, { timeout: 5000 })).toBeTruthy();

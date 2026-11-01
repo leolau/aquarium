@@ -6,6 +6,7 @@ import {
   tokenCountLabel,
 } from "@/components/projects/format";
 import { outputsLabel } from "@/components/projects/outputsLabel";
+import { projectNextStep } from "@/components/projects/projectNextStep";
 import { ProjectCategoryTag } from "@/components/projects/categories/ProjectCategoryTag";
 import { Pill, type Tone } from "@/components/ui/Pill";
 import type {
@@ -74,6 +75,7 @@ export function ProjectCardBody({
   const outputs =
     project.progress.rung === "outputs" ? null : outputsLabel(project.output_rollup);
   const awaiting = project.output_rollup?.awaiting_acceptance ?? 0;
+  const nextStep = projectNextStep(project);
   // The value a duration/tokens sort orders on, so the order is legible.
   const runSeconds = project.usage?.run_seconds;
   const tokens = project.usage?.tokens_total;
@@ -105,7 +107,7 @@ export function ProjectCardBody({
         >
           {project.name}
         </Link>
-        {awaiting > 0 ? (
+        {awaiting > 0 && !nextStep ? (
           <Pill tone="warning">{awaiting} to accept</Pill>
         ) : null}
         <Pill tone={HEALTH_TONE[project.health]}>
@@ -113,8 +115,13 @@ export function ProjectCardBody({
         </Pill>
       </div>
 
-      <div className="mt-1 flex">
+      <div className="mt-1 flex flex-wrap items-center gap-1.5">
         <ProjectCategoryTag categories={categories} categoryId={project.category_id} />
+        {nextStep ? (
+          <span data-component="ProjectNextStep" data-tone={nextStep.tone}>
+            <Pill tone={nextStep.tone}>{nextStep.text}</Pill>
+          </span>
+        ) : null}
       </div>
 
       {project.status === "needs_completion" ? (

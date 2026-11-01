@@ -14,6 +14,8 @@ import {
   project,
   run,
 } from "@/components/projects/dashboard/__fixtures__/dashboard";
+import { JourneyBar } from "@/components/projects/dashboard/JourneyBar";
+import { nextAction } from "@/components/projects/dashboard/nextAction";
 import { DashboardTab } from "@/components/projects/tabs/DashboardTab";
 import type { ProjectTabProps } from "@/components/projects/tabs/types";
 
@@ -35,7 +37,23 @@ function render(over: Partial<ProjectTabProps>): string {
     onChangeRequest: () => {},
     ...over,
   };
-  return renderToStaticMarkup(<DashboardTab {...props} />);
+  // The page puts the one next action in the journey bar above the tab.
+  const action = nextAction(props.project, props.board, props.readiness, props.playbook, NOW, props.canLead);
+  return renderToStaticMarkup(
+    <>
+      <JourneyBar
+        project={props.project}
+        action={action}
+        readiness={props.readiness}
+        canLead={props.canLead}
+        canAct={props.canLead}
+        onNavigate={props.onNavigate}
+        onReveal={() => {}}
+        onChangeRequest={props.onChangeRequest}
+      />
+      <DashboardTab {...props} />
+    </>,
+  );
 }
 
 function stateOf(html: string, step: string): string | undefined {
@@ -54,7 +72,7 @@ describe("DashboardTab", () => {
     });
     expect(html).toContain('data-state="working"');
     expect(html).toContain("Nothing needed from you right now");
-    expect(html).not.toContain("Next action · for you");
+    expect(html).not.toContain('data-needs-person="true"');
     expect(html).toContain("Watch run 3");
     expect(html).toContain("/projects/mou-set/runs/3");
     expect(html).toContain("Review drafts");
@@ -75,7 +93,7 @@ describe("DashboardTab", () => {
     });
     expect(html).toContain('data-state="stalled"');
     expect(html).toContain('data-tone="danger"');
-    expect(html).toContain("Next action · for you");
+    expect(html).toContain('data-needs-person="true"');
     expect(html).toContain("Approve 3 cards &amp; resume work");
     expect(html).toContain("Run 2 stalled");
     expect(html).not.toContain("Nothing needed");
@@ -118,7 +136,7 @@ describe("DashboardTab", () => {
         { key: "status", label: "Project activated", ok: false, hint: "Activate it", anchor: "#project-header" },
       ],
     });
-    expect(html).toContain("Next action · for you");
+    expect(html).toContain('data-needs-person="true"');
     expect(html).toContain("No inputs attached");
     expect(html.indexOf('data-needs-you="inputs"')).toBeLessThan(html.indexOf('data-needs-you="readiness:outputs"'));
     expect(html).toMatch(/data-component="NeedsYouCount"[^>]*>2</);
@@ -128,12 +146,13 @@ describe("DashboardTab", () => {
     expect(html).toContain("Nothing has happened yet.");
   });
 
-  it("lays out two columns from md: hero/needs-you left, where-it-stands right", () => {
+  it("lays out two columns from md: needs-you left, where-it-stands right", () => {
     const html = render({});
     expect(html).toContain("md:grid-cols-2");
     const left = html.indexOf('data-column="left"');
     const right = html.indexOf('data-column="right"');
-    expect(left).toBeLessThan(html.indexOf('data-component="NextActionHero"'));
+    expect(html.indexOf('data-component="JourneyBar"')).toBeLessThan(left);
+    expect(html).not.toContain('data-component="NextActionHero"');
     expect(html.indexOf('data-component="NeedsYou"')).toBeLessThan(right);
     expect(right).toBeLessThan(html.indexOf('data-component="WhereItStands"'));
     expect(html.indexOf('data-component="WhereItStands"')).toBeLessThan(html.indexOf('data-component="CurrentRequirements"'));

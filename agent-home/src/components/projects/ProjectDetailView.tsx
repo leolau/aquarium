@@ -1,17 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import {
-  useCallback,
-  useState,
-  useTransition,
-  type ComponentType,
-} from "react";
-
-import { ActionButton } from "@/components/projects/ActionButton";
-import { ActionError } from "@/components/projects/ActionError";
-import { useProjectAction } from "@/components/projects/useProjectAction";
+import { useCallback, useState, type ComponentType } from "react";
 
 import { AddToProjectSheet } from "@/components/projects/AddToProjectSheet";
 import { EditBriefSheet } from "@/components/projects/EditBriefSheet";
@@ -19,11 +8,15 @@ import { ProjectCategoryTag } from "@/components/projects/categories/ProjectCate
 import { useProjectCategories } from "@/components/projects/categories/useProjectCategories";
 import { ProjectLifecycleMenu } from "@/components/projects/ProjectLifecycleMenu";
 import { ReadinessChecklist } from "@/components/projects/ReadinessChecklist";
+import { JourneyBar } from "@/components/projects/dashboard/JourneyBar";
+import { nextAction } from "@/components/projects/dashboard/nextAction";
 import {
   extraFindings,
   isRunnable,
   readinessItems,
+  type ReadinessItem,
 } from "@/components/projects/readiness";
+import { revealTarget } from "@/components/projects/revealTarget";
 import {
   agoLabel,
   dayDistance,
@@ -58,7 +51,6 @@ import {
   type ProjectTabProps,
 } from "@/components/projects/tabs/types";
 import type {
-  ProjectBoardTask,
   ProjectBoardView,
   ProjectDetail,
   ProjectDirectivesResponse,
@@ -74,6 +66,9 @@ const HEALTH_TONE: Record<ProjectHealth, Tone> = {
   stalled: "danger",
 };
 
+const TOOL_BTN =
+  "rounded-lg border border-[var(--color-border)] px-3 py-1 text-xs disabled:opacity-50";
+
 const TAB_COMPONENT: Record<ProjectTab, ComponentType<ProjectTabProps>> = {
   dashboard: DashboardTab,
   scope: ScopeTab,
@@ -86,7 +81,8 @@ const TAB_COMPONENT: Record<ProjectTab, ComponentType<ProjectTabProps>> = {
 };
 
 /**
- * `/projects/[slug]` — the one place (§13): a sticky live status bar, an
+ * `/projects/[slug]` — the one place (§13): a slim header, then a sticky
+ * journey bar (the one next button) over the live status bar, an
  * ask-or-change box, then Dashboard + tabs. The Dashboard answers "what do I
  * do now"; everything else is one tab away (`?tab=`). Fan-out safe by construction — each separately-fetched resource
  * arrives as `| null` and its panel says "unavailable" instead of failing
@@ -115,23 +111,7 @@ export function ProjectDetailView({
   /** From `?tab=`; anything unknown lands on the Dashboard. */
   initialTab?: string;
 }) {
-  const router = useRouter();
   const { refresh, refreshing } = useRefresh();
-  // Header writes: one lock each, held from the click until the refreshed
-  // page (or the new run page) has landed.
-  const runNowAction = useProjectAction<{
-    run?: { run_no?: number };
-    run_no?: number;
-  }>();
-  const activateAction = useProjectAction();
-  const continueAction = useProjectAction();
-  const [navigating, startNavigation] = useTransition();
-  const headerBusy =
-    runNowAction.busy ||
-    activateAction.busy ||
-    continueAction.busy ||
-    navigating;
-  const busy = headerBusy || refreshing;
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const { categories } = useProjectCategories();
@@ -144,6 +124,7 @@ export function ProjectDetailView({
     isInstanceAdmin ||
     project.owner_user_id === callerUserId ||
     callerRole === "lead";
+  const canAct = canLead || callerRole === "member";
 
   const readiness = readinessItems(project, playbook);
   const runnable = isRunnable(readiness);
@@ -154,14 +135,10 @@ export function ProjectDetailView({
   // moves (E3).
   useProjectEvents(project.slug);
 
-  const waitingRun = project.runs.find((run) => run.status === "waiting");
-  const openRun = project.runs.find(
-    (run) => run.status === "running" || run.status === "waiting",
-  );
-  const blockedCards: ProjectBoardTask[] =
+  const blockedCount =
     board?.columns
       .flatMap((column) => column.tasks)
-      .filter((task) => task.status === "blocked") ?? [];
+      .filter((task) => task.status === "blocked").length ?? 0;
 
   const [tab, setTab] = useState<ProjectTab>(() => parseProjectTab(initialTab));
   const selectTab = useCallback((next: ProjectTab) => {
@@ -173,19 +150,27 @@ export function ProjectDetailView({
       window.history.replaceState(window.history.state, "", url.toString());
     }
   }, []);
+  // Open the tab that fixes a readiness gap, then scroll to and ring its field.
+  const reveal = useCallback(
+    (item: ReadinessItem) => {
+      if (item.tab) selectTab(item.tab);
+      if (item.target) revealTarget(item.target);
+    },
+    [selectTab],
+  );
   const [changeOpen, setChangeOpen] = useState(false);
   const [changeText, setChangeText] = useState<string | undefined>(undefined);
-  const openChange = useCallback((initialText?: string) => {
+  const openChange = (initialText?: string) => {
     setChangeText(initialText);
     setChangeOpen(true);
-  }, []);
+  };
 
   const triageCount =
     board?.columns
       .flatMap((column) => column.tasks)
       .filter((task) => task.status === "triage").length ?? 0;
   const tabBadges: Partial<Record<ProjectTab, number>> = {
-    board: blockedCards.length + triageCount,
+    board: blockedCount + triageCount,
     scope: project.clarify?.open_count ?? 0,
   };
   const tabProps: ProjectTabProps = {
@@ -202,35 +187,7 @@ export function ProjectDetailView({
     onChangeRequest: openChange,
   };
   const ActiveTab = TAB_COMPONENT[tab];
-
-  const slugPath = `/api/projects/${encodeURIComponent(project.slug)}`;
-
-  // Run now lands on the run page so the live activity stream is the first
-  // thing the user sees; the backend answers `{run: {run_no, …}, …}`.
-  const runNow = () =>
-    runNowAction.run(`${slugPath}/runs`, {
-      skipRefresh: true,
-      onSuccess: (data) => {
-        const runNo = data.run?.run_no ?? data.run_no;
-        if (typeof runNo === "number") {
-          startNavigation(() =>
-            router.push(
-              `/projects/${encodeURIComponent(project.slug)}/runs/${runNo}`,
-            ),
-          );
-        } else {
-          refresh();
-        }
-      },
-    });
-
-  // Runs require status=active; the backend gate names whatever is missing
-  // (outputs / members / profiles) in its 409 detail, shown under the header.
-  const activate = () =>
-    activateAction.run(slugPath, {
-      method: "PATCH",
-      body: { status: "active" },
-    });
+  const action = nextAction(project, board, readiness, playbook, undefined, canLead);
 
   const meta = [
     project.status,
@@ -247,8 +204,8 @@ export function ProjectDetailView({
   return (
     <div data-component="ProjectDetailView" className="flex flex-col gap-4">
       <BusyRegion
-        busy={busy}
-        label={busy ? "Talking to the agent…" : undefined}
+        busy={refreshing}
+        label={refreshing ? "Talking to the agent…" : undefined}
       >
         <div className="flex flex-col gap-4">
           {/* ── Header ─────────────────────────────────────────────── */}
@@ -282,132 +239,85 @@ export function ProjectDetailView({
                 categoryId={project.category_id}
               />
             </div>
-            {project.goal ? (
-              <p className="mt-1 text-sm text-[var(--color-muted)]">
-                {project.goal}
-              </p>
-            ) : null}
             <p className="mt-1 text-xs text-[var(--color-muted)]">{meta}</p>
-            {project.usage ? <ProjectUsageLine usage={project.usage} /> : null}
-            {project.summary ? (
+
+            {project.archived ? (
+              <p className="mt-2 text-sm text-[var(--color-muted)]">
+                This project is archived — restore it (⋯) to run it again.
+              </p>
+            ) : (
               <div
-                data-component="ProjectSummary"
-                className="mt-2 rounded-xl bg-[var(--color-surface-2)] px-3 py-2 text-sm"
+                data-component="ProjectToolbar"
+                role="toolbar"
+                aria-label="Project tools"
+                className="mt-2 flex flex-wrap gap-1.5"
               >
-                <p className="italic">{project.summary}</p>
-                {project.summary_at != null ? (
-                  <p className="mt-1 text-xs text-[var(--color-muted)]">
-                    Summarised {agoLabel(project.summary_at)}
-                  </p>
+                <button type="button" onClick={() => setAddOpen(true)} className={TOOL_BTN}>
+                  Add
+                </button>
+                {canLead ? (
+                  <button type="button" onClick={() => setEditOpen(true)} className={TOOL_BTN}>
+                    Edit
+                  </button>
                 ) : null}
+                <button type="button" onClick={() => setSummariseOpen(true)} className={TOOL_BTN}>
+                  {project.summary ? "Update summary" : "Summarise"}
+                </button>
               </div>
+            )}
+
+            {project.goal || project.usage || project.summary ? (
+              <details data-component="ProjectAbout" className="group mt-2">
+                <summary className="cursor-pointer select-none text-xs font-medium text-[var(--color-muted)]">
+                  About
+                </summary>
+                {project.goal ? (
+                  <p className="mt-1 text-sm text-[var(--color-muted)]">{project.goal}</p>
+                ) : null}
+                {project.usage ? <ProjectUsageLine usage={project.usage} /> : null}
+                {project.summary ? (
+                  <div
+                    data-component="ProjectSummary"
+                    className="mt-2 rounded-xl bg-[var(--color-surface-2)] px-3 py-2 text-sm"
+                  >
+                    <p className="italic">{project.summary}</p>
+                    {project.summary_at != null ? (
+                      <p className="mt-1 text-xs text-[var(--color-muted)]">
+                        Summarised {agoLabel(project.summary_at)}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+              </details>
             ) : null}
 
-            <div className="mt-3 flex flex-wrap gap-2">
-              {project.archived ? (
-                <p className="text-sm text-[var(--color-muted)]">
-                  This project is archived — restore it (⋯) to run it again.
-                </p>
-              ) : (
-                <>
-                  {project.status === "active" ? (
-                    <ActionButton
-                      data-action="run-now"
-                      busy={runNowAction.busy || navigating}
-                      pendingLabel="Starting run…"
-                      onClick={() => void runNow()}
-                      disabled={busy || !runnable || openRun !== undefined}
-                      title={
-                        openRun
-                          ? `Run ${openRun.run_no} is still open — one run at a time.`
-                          : runnable
-                            ? undefined
-                            : "See the checklist below."
-                      }
-                      className="rounded-xl bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent-fg)] disabled:opacity-50"
-                    >
-                      Run now
-                    </ActionButton>
-                  ) : (
-                    <ActionButton
-                      data-action="activate"
-                      busy={activateAction.busy}
-                      pendingLabel="Activating…"
-                      onClick={() => void activate()}
-                      disabled={busy}
-                      className="rounded-xl bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent-fg)] disabled:opacity-50"
-                    >
-                      Activate
-                    </ActionButton>
-                  )}
-                  {waitingRun ? (
-                    <ActionButton
-                      data-action="continue-run"
-                      busy={continueAction.busy}
-                      pendingLabel="Continuing…"
-                      onClick={() =>
-                        void continueAction.run(
-                          `${slugPath}/runs/${waitingRun.run_no}/continue`,
-                        )
-                      }
-                      disabled={busy}
-                      className="rounded-xl border border-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent)] disabled:opacity-50"
-                    >
-                      Continue run {waitingRun.run_no}
-                    </ActionButton>
-                  ) : openRun ? (
-                    <Link
-                      href={`/projects/${encodeURIComponent(project.slug)}/runs/${openRun.run_no}`}
-                      className="rounded-xl border border-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent)]"
-                    >
-                      Run {openRun.run_no} in progress
-                    </Link>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => setAddOpen(true)}
-                    className="rounded-xl border border-[var(--color-border)] px-4 py-2 text-sm disabled:opacity-50"
-                  >
-                    Add
-                  </button>
-                  {canLead ? (
-                    <button
-                      type="button"
-                      onClick={() => setEditOpen(true)}
-                      className="rounded-xl border border-[var(--color-border)] px-4 py-2 text-sm disabled:opacity-50"
-                    >
-                      Edit
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => setSummariseOpen(true)}
-                    className="rounded-xl border border-[var(--color-border)] px-4 py-2 text-sm disabled:opacity-50"
-                  >
-                    {project.summary ? "Update summary" : "Summarise"}
-                  </button>
-                </>
-              )}
-            </div>
-
-            {!project.archived ? (
-              <ReadinessChecklist
-                items={readiness}
-                findings={findings}
-                onActivate={() => void activate()}
-                activating={activateAction.busy}
-              />
+            {!project.archived && !runnable ? (
+              <details data-component="ProjectReadinessDetails" className="mt-2">
+                <summary className="cursor-pointer select-none text-xs font-medium text-[var(--color-muted)]">
+                  Before it can run · {readiness.filter((item) => item.ok).length} of {readiness.length} ready
+                </summary>
+                <ReadinessChecklist items={readiness} findings={findings} onItem={reveal} />
+              </details>
             ) : null}
-
-            <ActionError action={runNowAction} />
-            <ActionError action={activateAction} />
-            <ActionError action={continueAction} />
           </header>
         </div>
       </BusyRegion>
 
+      {/* ── Journey + live status: sticky, above every tab ─────────── */}
+      <div data-component="ProjectStickyBars" className="sticky top-0 z-30 -mx-1 bg-[var(--color-bg)] px-1 pb-1 pt-1">
+<JourneyBar
+          project={project}
+          action={action}
+          readiness={readiness}
+          canLead={canLead}
+          canAct={canAct}
+          onNavigate={selectTab}
+          onReveal={reveal}
+          onChangeRequest={openChange}
+        />
+      </div>
+      <LiveStatusBar project={project} board={board} runnable={runnable} showPrimary={false} />
       {/* ── Live status: sticky, above every tab ───────────────── */}
-      <LiveStatusBar project={project} board={board} />
 
       {!project.archived ? (
         <AskOrChangeBox project={project} onChangeRequest={openChange} />

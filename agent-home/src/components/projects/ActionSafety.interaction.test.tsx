@@ -28,7 +28,6 @@ vi.mock("next/navigation", () => ({
 import { CardActions } from "@/components/projects/CardActions";
 import { CardEditor } from "@/components/projects/CardEditor";
 import { EditBriefSheet } from "@/components/projects/EditBriefSheet";
-import { ProjectDetailView } from "@/components/projects/ProjectDetailView";
 import { ProjectLifecycleMenu } from "@/components/projects/ProjectLifecycleMenu";
 import { RunView } from "@/components/projects/RunView";
 import { SummariseSheet } from "@/components/projects/SummariseSheet";
@@ -44,7 +43,6 @@ import type {
   ProjectCardDetail,
   ProjectDetail,
   ProjectDirective,
-  ProjectOutputWithDeliveries,
   ProjectPlaybookResponse,
   ProjectRun,
   ProjectToolsResolution,
@@ -110,23 +108,6 @@ const PROJECT: ProjectDetail = {
   runs: [],
   card_rollup: { total: 0, done: 0, running: 0, blocked: 0 },
   recent_events: [],
-};
-
-const OUTPUT: ProjectOutputWithDeliveries = {
-  id: "out_1",
-  project_id: "prj_1",
-  seq: 1,
-  title: "The digest itself",
-  spec: null,
-  kind: "artifact",
-  required: 1,
-  recurring: 1,
-  status: "pending",
-  delivered_at: null,
-  accepted_at: null,
-  accepted_by: null,
-  created_at: NOW,
-  deliveries: [],
 };
 
 const RUN_BRIEF = (run_no: number, status: "waiting" | "running") => ({
@@ -302,74 +283,6 @@ interface Scenario {
 }
 
 const SCENARIOS: Scenario[] = [
-  {
-    name: "ProjectDetailView · Run now",
-    ui: () => (
-      <ProjectDetailView
-        project={{ ...PROJECT, outputs: [OUTPUT] }}
-        board={null}
-        playbook={READY_PLAYBOOK}
-        directives={null}
-        doctor={{ slug: SLUG, health: "ok", findings: [], clean: true }}
-        callerUserId="leo"
-        isInstanceAdmin={false}
-      />
-    ),
-    control: (r) => r.getByRole("button", { name: "Run now" }),
-    pending: "Starting run…",
-    method: "POST",
-    path: `${BASE}/runs`,
-    success: { run: { run_no: 15, status: "running" } },
-    confirmed: () =>
-      expect(router.push).toHaveBeenCalledWith(`/projects/${SLUG}/runs/15`),
-  },
-  {
-    name: "ProjectDetailView · Activate",
-    ui: () => (
-      <ProjectDetailView
-        project={{ ...PROJECT, status: "planning", outputs: [OUTPUT] }}
-        board={null}
-        playbook={READY_PLAYBOOK}
-        directives={null}
-        doctor={{ slug: SLUG, health: "ok", findings: [], clean: true }}
-        callerUserId="leo"
-        isInstanceAdmin={false}
-      />
-    ),
-    // The Dashboard's next-action hero offers the same action; this is the header's.
-    control: (r) =>
-      within(r.container.querySelector("header")!).getByRole("button", { name: "Activate" }),
-    pending: "Activating…",
-    method: "PATCH",
-    path: BASE,
-    body: { status: "active" },
-    success: { ...PROJECT, status: "active" },
-    confirmed: () => expect(router.refresh).toHaveBeenCalled(),
-  },
-  {
-    name: "ProjectDetailView · Continue run N",
-    ui: () => (
-      <ProjectDetailView
-        project={{ ...PROJECT, outputs: [OUTPUT], runs: [RUN_BRIEF(14, "waiting")] }}
-        board={null}
-        playbook={READY_PLAYBOOK}
-        directives={null}
-        doctor={{ slug: SLUG, health: "ok", findings: [], clean: true }}
-        callerUserId="leo"
-        isInstanceAdmin={false}
-      />
-    ),
-    // The live status bar offers the same action; this is the header's.
-    control: (r) =>
-      within(r.container.querySelector("header")!).getByRole("button", {
-        name: "Continue run 14",
-      }),
-    pending: "Continuing…",
-    method: "POST",
-    path: `${BASE}/runs/14/continue`,
-    success: { run: { run_no: 14, status: "running" } },
-    confirmed: () => expect(router.refresh).toHaveBeenCalled(),
-  },
   {
     name: "RunsPanel · Cancel",
     ui: () => <RunsPanel slug={SLUG} runs={[RUN_BRIEF(14, "waiting")]} />,
@@ -894,22 +807,3 @@ describe("per-row locks", () => {
   });
 });
 
-describe("Run now", () => {
-  it("stays disabled while a run is open", () => {
-    fakeServer();
-    const r = render(
-      <ProjectDetailView
-        project={{ ...PROJECT, outputs: [OUTPUT], runs: [RUN_BRIEF(9, "running")] }}
-        board={null}
-        playbook={READY_PLAYBOOK}
-        directives={null}
-        doctor={{ slug: SLUG, health: "ok", findings: [], clean: true }}
-        callerUserId="leo"
-        isInstanceAdmin={false}
-      />,
-    );
-    expect((r.getByRole("button", { name: "Run now" }) as HTMLButtonElement).disabled).toBe(
-      true,
-    );
-  });
-});

@@ -566,6 +566,18 @@ describe("LinkRow", () => {
   });
 });
 
+/** The slice of the page that is the slim header. */
+function header(html: string): string {
+  return html.slice(html.indexOf('data-component="ProjectHeader"'), html.indexOf("</header>"));
+}
+
+/** The slice of the page that is the journey bar. */
+function bar(html: string): string {
+  const at = html.indexOf('data-component="JourneyBar"');
+  const out = html.slice(at, html.indexOf("</section>", at));
+  return out;
+}
+
 describe("ProjectDetailView", () => {
   it("renders the header, actions and the §13 panel order", () => {
     const html = renderToStaticMarkup(
@@ -580,9 +592,9 @@ describe("ProjectDetailView", () => {
     );
     expect(html).toContain('data-component="ProjectDetailView"');
     expect(html).toContain("Send the Monday digest");
-    expect(html).toContain("Run now");
-    // A waiting run earns the Continue button.
-    expect(html).toContain("Continue run 14");
+    // A waiting run: the journey bar's one button is Continue.
+    expect(bar(html)).toContain("Continue run 14");
+    expect(bar(html)).toContain('data-phase="running"');
     // The agent's standing line rides under the header, with its freshness
     // and the door to rewrite it.
     expect(html).toContain("Where this stands");
@@ -618,13 +630,14 @@ describe("ProjectDetailView", () => {
         isInstanceAdmin={false}
       />,
     );
-    // The next-action hero leads the Dashboard, ahead of Where it stands.
-    const heroAt = html.indexOf('data-component="NextActionHero"');
-    expect(heroAt).toBeGreaterThan(-1);
-    expect(heroAt).toBeLessThan(html.indexOf('data-component="WhereItStands"'));
-    // Run 14 is waiting: the hero's one click is Continue.
-    expect(html).toContain('data-state="waiting"');
-    expect(html).toContain("Continue run 14");
+    // The journey bar sits above the tabs, ahead of Where it stands.
+    const barAt = html.indexOf('data-component="JourneyBar"');
+    expect(barAt).toBeGreaterThan(-1);
+    expect(barAt).toBeLessThan(html.indexOf('data-component="ProjectTabsNav"'));
+    expect(html).not.toContain('data-component="NextActionHero"');
+    // Run 14 is waiting: the bar's one click is Continue.
+    expect(bar(html)).toContain('data-state="waiting"');
+    expect(bar(html)).toContain("Continue run 14");
     // Settings-tab panels stay out of the Dashboard.
     expect(html).not.toContain('data-component="ToolsPanel"');
   });
@@ -658,18 +671,47 @@ describe("ProjectDetailView", () => {
     expect(unknown).toContain('data-active-tab="dashboard"');
   });
 
-  it("offers Activate instead of Run now until the project is active", () => {
+  it("never puts Run now / Activate / Continue in the header — the journey bar owns them", () => {
+    for (const project of [
+      { ...PROJECT, status: "planning" as const },
+      { ...PROJECT, outputs: [OUTPUT({ id: "out_1" })] },
+      { ...PROJECT, outputs: [OUTPUT({ id: "out_1" })], runs: [{ ...PROJECT.runs[0], run_no: 1, status: "running" as const }] },
+    ]) {
+      const html = renderToStaticMarkup(
+        <ProjectDetailView
+          project={project}
+          board={BOARD}
+          playbook={READY_PLAYBOOK}
+          directives={null}
+          callerUserId="leo"
+          isInstanceAdmin={false}
+        />,
+      );
+      const head = header(html);
+      expect(head).not.toMatch(/<button[^>]*>(Run now|Activate|Continue run \d+|Start iteration \d+)<\/button>/);
+      expect(head).not.toContain('data-action="run-now"');
+      // Add / Edit / Summarise ride in the compact toolbar; goal etc. under About.
+      expect(head).toContain('data-component="ProjectToolbar"');
+      expect(head).toContain('data-component="ProjectAbout"');
+      expect(bar(html)).toContain('id="journey-primary"');
+    }
+  });
+
+  it("offers Activate in the journey bar until the project is active", () => {
     const html = renderToStaticMarkup(
       <ProjectDetailView
-        project={{ ...PROJECT, status: "planning" }}
-        board={BOARD}
-        playbook={null}
+        project={{ ...PROJECT, status: "planning", runs: [], outputs: [OUTPUT({ id: "out_1" })], card_rollup: { total: 0, done: 0, running: 0, blocked: 0 } }}
+        board={null}
+        playbook={READY_PLAYBOOK}
         directives={null}
         callerUserId="leo"
         isInstanceAdmin={false}
       />,
     );
-    expect(html).toContain("Activate");
+    expect(bar(html)).toContain('data-phase="setup"');
+    expect(bar(html)).toContain("4 of 5 ready — next: activate the project");
+    // Inputs outrank activation in nextAction; the guide line still activates.
+    expect(bar(html)).toMatch(/<button[^>]*>Activate<\/button>/);
     expect(html).not.toContain("Run now");
   });
 
@@ -701,7 +743,8 @@ describe("ProjectDetailView", () => {
     expect(html).toContain('href="?tab=plan"');
     expect(html).toContain("The cron job is gone.");
     expect(html).not.toContain("no plan");
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Run now<\/button>/);
+    // The bar guides through the gaps, first one first.
+    expect(bar(html)).toContain("3 of 5 ready — next: declare an output");
     // Lead-only edit + settings panel are present.
     expect(html).toContain(">Edit<");
     expect(html).toContain('data-component="SettingsPanel"');
@@ -716,8 +759,9 @@ describe("ProjectDetailView", () => {
           ...PROJECT,
           outputs: [OUTPUT({ id: "out_1" })],
           runs: [],
+          card_rollup: { total: 0, done: 0, running: 0, blocked: 0 },
         }}
-        board={BOARD}
+        board={null}
         playbook={{
           active: {
             project_id: "prj_1",
@@ -739,7 +783,8 @@ describe("ProjectDetailView", () => {
       />,
     );
     expect(html).not.toContain('data-component="ReadinessChecklist"');
-    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Run now<\/button>/);
+    expect(bar(html)).toContain('data-phase="ready"');
+    expect(bar(html)).not.toContain('data-component="JourneyReadiness"');
   });
 
   it("disables Run now and links the open run while one is in progress", () => {
@@ -750,7 +795,7 @@ describe("ProjectDetailView", () => {
           outputs: [OUTPUT({ id: "out_1" })],
           runs: [{ ...PROJECT.runs[0], run_no: 1, status: "running" }],
         }}
-        board={BOARD}
+        board={null}
         playbook={READY_PLAYBOOK}
         directives={null}
         doctor={{ slug: PROJECT.slug, health: "ok", findings: [], clean: true }}
@@ -758,10 +803,9 @@ describe("ProjectDetailView", () => {
         isInstanceAdmin={false}
       />,
     );
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Run now<\/button>/);
-    expect(html).toContain("Run 1 is still open");
-    expect(html).toContain(`href="/projects/${PROJECT.slug}/runs/1"`);
-    expect(html).toContain("Run 1 in progress");
+    expect(bar(html)).toContain('data-phase="running"');
+    // No inputs yet outranks watching the run; the run is still the step.
+    expect(bar(html)).not.toContain("Start iteration");
     expect(html).not.toContain("Continue run");
   });
 
@@ -777,8 +821,8 @@ describe("ProjectDetailView", () => {
         isInstanceAdmin={false}
       />,
     );
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Run now<\/button>/);
-    expect(html).toContain("Continue run 14");
+    expect(html).not.toContain("Run now");
+    expect(bar(html)).toContain("Continue run 14");
     expect(html).not.toContain("Run 14 in progress");
   });
 

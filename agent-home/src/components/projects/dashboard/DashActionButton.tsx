@@ -32,6 +32,7 @@ export function DashActionButton({
   onNavigate,
   onChangeRequest,
   disabled = false,
+  onConfirmed,
 }: {
   slug: string;
   action: DashAction;
@@ -39,6 +40,9 @@ export function DashActionButton({
   onNavigate: (tab: ProjectTab) => void;
   onChangeRequest: (initialText?: string) => void;
   disabled?: boolean;
+  /** Takes over the confirmation line, for a host that outlives the button
+   * (the journey bar re-keys its button as soon as the step advances). */
+  onConfirmed?: (text: string) => void;
 }) {
   const { intent } = action;
   const className = CLASS[variant];
@@ -80,6 +84,7 @@ export function DashActionButton({
       action={action}
       className={className}
       disabled={disabled}
+      onConfirmed={onConfirmed}
     />
   );
 }
@@ -89,11 +94,13 @@ function MutationButton({
   action,
   className,
   disabled,
+  onConfirmed,
 }: {
   slug: string;
   action: DashAction;
   className: string;
   disabled: boolean;
+  onConfirmed?: (text: string) => void;
 }) {
   const mutation = useProjectAction<Record<string, unknown>>();
   // A flow of several requests: the hook's own lock is released between
@@ -127,13 +134,15 @@ function MutationButton({
           last = result.data;
           nextStep.current = i + 1;
         }
-        setConfirmed(confirmedText(action.intent, last));
+        const text = confirmedText(action.intent, last);
+        setConfirmed(text);
+        onConfirmed?.(text);
       } finally {
         flowLock.current = false;
         setFlowBusy(false);
       }
     },
-    [action.intent, mutation, slug],
+    [action.intent, mutation, onConfirmed, slug],
   );
 
   const busy = flowBusy || mutation.busy;
@@ -148,7 +157,7 @@ function MutationButton({
       >
         {confirmed !== null ? "Done ✓" : action.label}
       </ActionButton>
-      {confirmed !== null ? (
+      {confirmed !== null && !onConfirmed ? (
         <span role="status" className="text-xs text-emerald-400">
           {confirmed}
         </span>

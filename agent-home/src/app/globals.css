@@ -108,3 +108,11 @@ input,
 select {
   min-height: 44px;
 }
+
+/* The field the journey bar just pointed at (revealTarget). */
+[data-journey-highlight="true"] {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 4px;
+  border-radius: 1rem;
+  transition: outline-color 0.3s;
+}
