@@ -407,11 +407,31 @@ Each mailbox is private to the person who added it. The password is stored on
 the server and never shown again (leave the field empty when editing to keep
 it).
 
-> **TODO (IMAP/SMTP email polling):** an **Email polling** switch is being
-> added to each mailbox in Settings → Email mailboxes, so the owner can turn on
-> install-wide polling for IMAP/SMTP mailboxes the same way as for Gmail. The
-> exact label and steps will be confirmed here when that change is released.
-<!-- TODO(email-parity): confirm toggle label/location once the IMAP/SMTP Gmail-parity PR is merged. -->
+## Email polling for IMAP / SMTP mailboxes
+
+IMAP/SMTP mailboxes get the same install-wide polling as Gmail. The **owner**
+sees an **Email polling** checkbox under each of their own mailboxes in
+**Settings → In&Out → Email (IMAP / SMTP)**. It is hidden from everyone else.
+
+- Tick it to add the mailbox to the server's email poller. The first time, the
+  hint "(adds a poller entry for this mailbox)" appears next to it.
+- The poller logs in with the mailbox's saved password and sends new mail
+  through the full email pipeline (triage, to-dos and escalations), the same
+  way as Gmail polling.
+- The password stays in the credential store. It is never copied into the
+  poller's settings file.
+- Untick it to stop polling.
+
+The checkbox only appears when the server has an email poller configuration.
+
+## The assistant's mailbox tool
+
+The assistant has a built-in `email_mailbox` tool. With it, each person can ask
+the assistant to list, search, read, send, reply to, file and flag mail in the
+mailboxes **they** saved. It only ever uses the mailboxes of the person it is
+working for, and it logs in without showing the password to the model or the
+terminal. It asks the person to confirm recipients and content before it sends
+anything.
 
 # 9. Messaging channels
 

@@ -232,13 +232,32 @@ to-dos).
 
 - **Gmail:** for a Google account connected with the Email service, the owner
   can switch **Email polling** on in **Connected accounts**.
-- **IMAP / SMTP mailboxes:**
+- **IMAP / SMTP mailboxes:** the owner sees an **Email polling** checkbox
+  under each of their own mailboxes in **Settings → In&Out → Email (IMAP /
+  SMTP)**. Ticking it gives that mailbox the same polling and triage as Gmail.
+  Aquarium logs in with the saved password. The checkbox is hidden from
+  everyone else.
 
-> **TODO (IMAP/SMTP email polling):** an **Email polling** switch is being
-> added to each mailbox in Settings → Email mailboxes, so the owner can turn on
-> polling for IMAP/SMTP mailboxes the same way as for Gmail. This section will
-> be finalised when that change is released.
-<!-- TODO(email-parity): confirm toggle label/behaviour once the IMAP/SMTP Gmail-parity PR is merged. -->
+## 6.3 Asking the assistant about your mail
+
+Once you have saved a mailbox (section 6.1), you can just ask in **Chat**. The
+assistant can list your mailboxes, search, read, send, reply, show your
+folders, mark mail as read or unread, flag it, and move it to another folder.
+For example:
+
+- *"Search my unread mail."*
+- *"Find emails from ada@example.com since last Monday."*
+- *"Read the newest one and summarise it."*
+- *"Reply to that email: thanks, Thursday works for me."*
+- *"Mark it as read and move it to the Archive folder."*
+- *"Send an email to team@example.com about tomorrow's meeting."*
+
+If you have more than one mailbox, say which one (for example *"in my
+ops@example.com inbox"*). Before it sends or replies, the assistant checks the
+recipients and the text with you.
+
+The assistant can only use **your own** mailboxes. It never uses anyone else's,
+and it never shows your password.
 
 # 7. To-dos, Inbox and Activity
 
@@ -399,6 +418,10 @@ expected. Copy the address from the address bar and paste it into Aquarium.
 
 **My mailbox says "Needs attention".** The password is probably wrong or your
 provider requires an app password. Create one and edit the mailbox.
+
+**Can the assistant read or send mail from my mailbox?** Yes, but only from
+the mailboxes you saved yourself, and it checks with you before sending. See
+section 6.3.
 
 **The assistant does not answer.** The AI model key may be missing or out of
 credit. Ask your owner or admin to check **Get ready → AI model**.
