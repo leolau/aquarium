@@ -632,6 +632,89 @@ _access_initialized: Dict[Tuple[str, ...], Tuple[int, ...]] = {}
 def reset_access_cache() -> None:
     """Forget which schemas :func:`initialize_access` has set up (tests, resets)."""
     _access_initialized.clear()
+    invalidate_principal_cache()
+
+
+#: Seconds a principal lookup (``get`` / ``resolve_alias`` / ``get_owner``) is
+#: served from memory. Every web request resolves its principal — often once
+#: per profile — so without this each request pays several round trips. Writes
+#: through :class:`PrincipalStore` invalidate at once; the TTL bounds how long a
+#: change made by *another* process (the CLI, the gateway) can take to show.
+PRINCIPAL_CACHE_TTL = 10.0
+_PRINCIPAL_CACHE_MAX = 4096
+_principal_cache: Dict[Tuple[str, ...], Tuple[float, int, Any]] = {}
+_principal_generation = 0
+
+
+def invalidate_principal_cache() -> None:
+    """Drop every cached principal lookup (any membership/role/alias change)."""
+    global _principal_generation
+    _principal_generation += 1
+    _principal_cache.clear()
+
+
+def _principal_cache_key(store: Any, kind: str, value: str) -> Tuple[str, ...]:
+    """Hashed key: never a raw subject, alias or DSN (which holds a password).
+
+    The active profile is part of the key: a lookup is what *this* profile may
+    see, and a cache hit skips the connect that verifies schema ownership.
+    """
+    import hashlib
+
+    from hermes_cli.datastore import active_profile_slug
+    from hermes_constants import get_hermes_home
+
+    def _digest(text: str) -> str:
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    return (
+        _digest(str(getattr(store, "dsn", ""))),
+        str(getattr(store, "schema", "")),
+        active_profile_slug(),
+        _digest(str(get_hermes_home())),
+        kind,
+        _digest(value),
+    )
+
+
+def _principal_cache_get(key: Tuple[str, ...]) -> Tuple[bool, Any]:
+    import time
+
+    hit = _principal_cache.get(key)
+    if hit is None:
+        return False, None
+    expires, generation, value = hit
+    if generation != _principal_generation or expires < time.monotonic():
+        _principal_cache.pop(key, None)
+        return False, None
+    return True, value
+
+
+def _principal_cache_put(key: Tuple[str, ...], generation: int, value: Any) -> None:
+    import time
+
+    # A write that landed while the lookup was in flight bumped the
+    # generation: storing the pre-write value would serve it for a full TTL.
+    if generation != _principal_generation or PRINCIPAL_CACHE_TTL <= 0:
+        return
+    if len(_principal_cache) >= _PRINCIPAL_CACHE_MAX:
+        _principal_cache.clear()
+    _principal_cache[key] = (time.monotonic() + PRINCIPAL_CACHE_TTL, generation, value)
+
+
+def _invalidates_principals(method: Any) -> Any:
+    """Decorate a :class:`PrincipalStore` write: invalidate on any outcome."""
+    import functools
+
+    @functools.wraps(method)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        invalidate_principal_cache()
+        try:
+            return await method(*args, **kwargs)
+        finally:
+            invalidate_principal_cache()
+
+    return wrapper
 
 
 def _connection_server(connection: asyncpg.Connection) -> Tuple[str, str, str]:
@@ -1307,6 +1390,7 @@ class PrincipalStore:
             for row in rows
         }
 
+    @_invalidates_principals
     async def enroll(
         self,
         user_id: str,
@@ -1352,6 +1436,19 @@ class PrincipalStore:
         connection: asyncpg.Connection | None = None,
     ) -> Principal | None:
         """Return the principal for ``user_id`` (with channels), else ``None``."""
+        if connection is None:
+            cache_key = _principal_cache_key(self._store, "get", user_id)
+            hit, cached = _principal_cache_get(cache_key)
+            if hit:
+                return cached
+            generation = _principal_generation
+            conn = await self._store.connect()
+            try:
+                value = await self.get(user_id, connection=conn)
+            finally:
+                await conn.close()
+            _principal_cache_put(cache_key, generation, value)
+            return value
         own_connection = connection is None
         conn = connection or await self._store.connect()
         try:
@@ -1465,6 +1562,7 @@ class PrincipalStore:
             if own_connection:
                 await conn.close()
 
+    @_invalidates_principals
     async def set_active(
         self,
         user_id: str,
@@ -1509,6 +1607,7 @@ class PrincipalStore:
             if own_connection:
                 await conn.close()
 
+    @_invalidates_principals
     async def set_display(
         self,
         user_id: str,
@@ -1538,6 +1637,7 @@ class PrincipalStore:
             if own_connection:
                 await conn.close()
 
+    @_invalidates_principals
     async def unenroll(
         self,
         user_id: str,
@@ -1575,6 +1675,7 @@ class PrincipalStore:
             if own_connection:
                 await conn.close()
 
+    @_invalidates_principals
     async def set_role(
         self,
         user_id: str,
@@ -1625,6 +1726,7 @@ class PrincipalStore:
             if own_connection:
                 await conn.close()
 
+    @_invalidates_principals
     async def link_channel(
         self,
         user_id: str,
@@ -1654,6 +1756,7 @@ class PrincipalStore:
             if own_connection:
                 await conn.close()
 
+    @_invalidates_principals
     async def unlink_channel(
         self,
         user_id: str,
@@ -1687,6 +1790,7 @@ class PrincipalStore:
                 await conn.close()
         return status.endswith(" 1")
 
+    @_invalidates_principals
     async def link_alias(
         self,
         alias_subject: str,
@@ -1739,6 +1843,19 @@ class PrincipalStore:
         alias_subject = (alias_subject or "").strip()
         if not alias_subject:
             return None
+        if connection is None:
+            cache_key = _principal_cache_key(self._store, "alias", alias_subject)
+            hit, cached = _principal_cache_get(cache_key)
+            if hit:
+                return cached
+            generation = _principal_generation
+            conn = await self._store.connect()
+            try:
+                value = await self.resolve_alias(alias_subject, connection=conn)
+            finally:
+                await conn.close()
+            _principal_cache_put(cache_key, generation, value)
+            return value
         own_connection = connection is None
         conn = connection or await self._store.connect()
         try:
@@ -1788,6 +1905,19 @@ class PrincipalStore:
         connection: asyncpg.Connection | None = None,
     ) -> Principal | None:
         """Return the current single owner principal, if one exists."""
+        if connection is None:
+            cache_key = _principal_cache_key(self._store, "owner", "")
+            hit, cached = _principal_cache_get(cache_key)
+            if hit:
+                return cached
+            generation = _principal_generation
+            conn = await self._store.connect()
+            try:
+                value = await self.get_owner(connection=conn)
+            finally:
+                await conn.close()
+            _principal_cache_put(cache_key, generation, value)
+            return value
         own_connection = connection is None
         conn = connection or await self._store.connect()
         try:
@@ -1806,6 +1936,7 @@ class PrincipalStore:
             if own_connection:
                 await conn.close()
 
+    @_invalidates_principals
     async def transfer_owner(
         self,
         new_owner_user_id: str,

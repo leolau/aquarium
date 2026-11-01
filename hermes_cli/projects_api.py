@@ -1134,6 +1134,57 @@ async def running_cards_route(request: Request) -> dict[str, Any]:
     }
 
 
+#: Card statuses an override can still bite — a finished card's pin is moot.
+_PINNED_LIVE_STATUSES = frozenset(
+    {"triage", "todo", "scheduled", "ready", "running", "blocked", "review"}
+)
+
+
+def _pinned_models_sync(principal, enrolled: frozenset) -> list[dict]:
+    """Live cards with a ``model_override`` across the caller's readable,
+    non-archived projects — one in-process pass with the same read gate and
+    principal-filtered board read as ``GET /{slug}/board``."""
+    pinned: list[dict] = []
+    with projects_db.connect_closing() as conn:
+        rows = projects_db.list_projects(conn, include_archived=False)
+        readable = []
+        for p in rows:
+            if getattr(p, "archived", 0) or p.status == "archived":
+                continue
+            role = _member_role_sync(conn, p.id, principal.user_id)
+            profiles = projects_db.get_project_profiles(conn, p.id)
+            if _can_read(p, role, principal, enrolled, profiles):
+                readable.append(p)
+    for p in readable:
+        with _board_conn(p) as bconn:
+            view = kanban_view.build_board_view(
+                bconn, project_id=p.id, principal=principal
+            )
+        for column in view["columns"]:
+            for task in column["tasks"]:
+                if task.get("model_override") and task.get("status") in _PINNED_LIVE_STATUSES:
+                    pinned.append(
+                        {
+                            "project_slug": p.slug,
+                            "project_name": p.name,
+                            "task_id": task["id"],
+                            "title": task.get("title"),
+                            "model": task["model_override"],
+                            "status": task["status"],
+                        }
+                    )
+    return pinned
+
+
+@router.get("/pinned-models")
+async def pinned_models_route(request: Request) -> dict[str, Any]:
+    """Cards pinned to a model, for the Models page — replaces a per-project
+    board fan-out from the BFF with one principal resolution and one pass."""
+    principal = await _principal_read(request)
+    enrolled = frozenset(await _enrolled_profiles(principal.user_id))
+    return {"pinned": await asyncio.to_thread(_pinned_models_sync, principal, enrolled)}
+
+
 @router.get("/doctor")
 async def doctor_route(request: Request) -> dict[str, Any]:
     principal = await _principal_read(request)

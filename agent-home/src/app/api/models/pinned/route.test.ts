@@ -1,21 +1,23 @@
 /**
- * BFF route tests for GET /api/models/pinned — the fan-out that surfaces
- * kanban cards pinned to a model via `model_override`. Contract: only
- * non-terminal cards count, boards that fail to load are skipped, and the
- * project context travels with each row.
+ * BFF route tests for GET /api/models/pinned — kanban cards pinned to a
+ * model via `model_override`. Contract: one upstream call (the Python side
+ * applies the read gate and the live-status filter), its rows pass through,
+ * and upstream failures keep their status.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GET } from "@/app/api/models/pinned/route";
+import { HermesApiError } from "@/lib/api/client";
 import type { Principal } from "@/types";
 
 const getPrincipal = vi.fn<() => Promise<Principal | null>>();
+const projectsPinnedModels = vi.fn();
 const projects = vi.fn();
 const projectBoard = vi.fn();
 
 vi.mock("@/lib/auth/principal", () => ({
   getPrincipal: () => getPrincipal(),
-  apiClientForRequest: async () => ({ projects, projectBoard }),
+  apiClientForRequest: async () => ({ projectsPinnedModels, projects, projectBoard }),
 }));
 
 function get(): Promise<Response> {
@@ -23,23 +25,6 @@ function get(): Promise<Response> {
     new Request("http://home.test/api/models/pinned"),
   ) as unknown as Promise<Response>;
 }
-
-const project = (slug: string, name: string, archived = false) => ({
-  slug,
-  name,
-  archived,
-});
-
-const task = (id: string, status: string, model_override: string | null, title = id) => ({
-  id,
-  title,
-  status,
-  model_override,
-});
-
-const boardOf = (...tasks: ReturnType<typeof task>[]) => ({
-  columns: [{ name: "col", tasks }],
-});
 
 describe("GET /api/models/pinned", () => {
   beforeEach(() => {
@@ -51,68 +36,43 @@ describe("GET /api/models/pinned", () => {
       channels: [],
       is_owner: true,
     });
-    projects.mockResolvedValue({ items: [], next_cursor: null });
+    projectsPinnedModels.mockResolvedValue({ pinned: [] });
   });
 
   it("returns 401 when unauthenticated", async () => {
     getPrincipal.mockResolvedValue(null);
     const res = await get();
     expect(res.status).toBe(401);
+    expect(projectsPinnedModels).not.toHaveBeenCalled();
   });
 
-  it("collects overrides from live cards across boards", async () => {
-    projects.mockResolvedValue({
-      items: [project("canva-deck", "Canva deck"), project("figma", "Figma")],
-      next_cursor: null,
-    });
-    projectBoard.mockImplementation(async (slug: string) =>
-      slug === "canva-deck"
-        ? boardOf(
-            task("t1", "running", "deepseek-chat", "Generate slide 118"),
-            task("t2", "done", "glm-5", "Old card"), // done → ignored
-            task("t3", "ready", null, "Unpinned"), // no override → ignored
-          )
-        : boardOf(task("t4", "blocked", "glm-5", "Rebuild tokens")),
-    );
-    const res = await get();
-    expect(res.status).toBe(200);
-    const { pinned } = await res.json();
-    expect(pinned).toHaveLength(2);
-    expect(pinned[0]).toMatchObject({
+  it("passes the upstream rows through in one call, with no board fan-out", async () => {
+    const row = {
       project_slug: "canva-deck",
       project_name: "Canva deck",
       task_id: "t1",
+      title: "Generate slide 118",
       model: "deepseek-chat",
       status: "running",
-    });
-    expect(pinned[1].task_id).toBe("t4");
+    };
+    projectsPinnedModels.mockResolvedValue({ pinned: [row] });
+    const res = await get();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ pinned: [row] });
+    expect(projectsPinnedModels).toHaveBeenCalledTimes(1);
+    expect(projects).not.toHaveBeenCalled();
+    expect(projectBoard).not.toHaveBeenCalled();
   });
 
-  it("skips archived projects and boards that fail to load", async () => {
-    projects.mockResolvedValue({
-      items: [
-        project("dead", "Archived project", true),
-        project("broken", "Broken board"),
-        project("fine", "Fine"),
-      ],
-      next_cursor: null,
-    });
-    projectBoard.mockImplementation(async (slug: string) => {
-      if (slug === "broken") throw new Error("board blew up");
-      return boardOf(task("t9", "ready", "glm-5"));
-    });
+  it("keeps an upstream error status", async () => {
+    projectsPinnedModels.mockRejectedValue(new HermesApiError(503, "busy"));
     const res = await get();
-    const { pinned } = await res.json();
-    expect(res.status).toBe(200);
-    expect(pinned).toHaveLength(1);
-    expect(pinned[0].project_slug).toBe("fine");
-    expect(projectBoard).not.toHaveBeenCalledWith("dead");
+    expect(res.status).toBe(503);
   });
 
-  it("returns an empty list when nothing is pinned", async () => {
+  it("returns 502 when the AI layer is unreachable", async () => {
+    projectsPinnedModels.mockRejectedValue(new Error("ECONNREFUSED"));
     const res = await get();
-    const { pinned } = await res.json();
-    expect(res.status).toBe(200);
-    expect(pinned).toEqual([]);
+    expect(res.status).toBe(502);
   });
 });

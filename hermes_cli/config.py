@@ -910,6 +910,13 @@ DEFAULT_CONFIG = {
             # Keep the credential in .env and reference it here as
             # ${DATABASE_URL}; an empty value leaves Supabase disabled.
             "dsn": "",
+            # Connections the dashboard process keeps open (0 disables
+            # pooling). Every process on a session-mode pooler (supavisor)
+            # shares its pool_size, so keep this well below it.
+            "pool_size": 5,
+            # Seconds a request waits for a free pooled connection before
+            # falling back to a direct one.
+            "pool_acquire_timeout": 10.0,
         },
         "overrides": {
             "dev": {"supabase_app": {"dsn": ""}},

@@ -1,5 +1,3 @@
-import asyncio
-
 from hermes_cli import web_server
 
 
@@ -62,7 +60,7 @@ class _FakeSessionDB:
 def test_desktop_session_search_merges_id_matches_before_content_matches(monkeypatch):
     monkeypatch.setattr("hermes_state.SessionDB", _FakeSessionDB)
 
-    response = asyncio.run(web_server.search_sessions(q="20260603", limit=2, scope=None))
+    response = web_server.search_sessions(q="20260603", limit=2, scope=None)
 
     # ID match surfaces first; the content hit on the SAME session is deduped
     # by lineage root (not double-listed); the unrelated content hit follows.

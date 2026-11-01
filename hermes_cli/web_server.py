@@ -254,9 +254,16 @@ async def _lifespan(app: "FastAPI"):
     )
     cpu_thread.start()
 
+    # One bounded Postgres pool for the process (datastore.supabase_app.pool_size).
+    from hermes_cli import db_pool
+
+    db_pool_on = db_pool.enable(db_pool.settings_from_config(load_config() or {}))
+
     try:
         yield
     finally:
+        if db_pool_on:
+            await asyncio.to_thread(db_pool.disable)
         cpu_stop.set()
         if cron_stop is not None:
             cron_stop.set()
@@ -3264,6 +3271,20 @@ async def _comms_resolve_principal(request: "Request", *, allow_as: bool = False
         # Unconfigured DSN (SupabaseAppStore.connect) — surface as a soft state
         # the SPA renders as "multi-user datastore not configured".
         raise _CommsNotConfigured(str(exc)) from exc
+    except (OSError, asyncio.TimeoutError) as exc:
+        _log.warning("principal lookup: datastore unreachable: %s", type(exc).__name__)
+        raise HTTPException(
+            status_code=503, detail="Datastore temporarily unavailable"
+        ) from exc
+    except Exception as exc:
+        # A transient datastore failure (pooler limit, dropped connection) is
+        # a retryable 503, never an opaque 500 — and never a fallback identity.
+        if type(exc).__module__.split(".")[0] != "asyncpg":
+            raise
+        _log.warning("principal lookup: datastore error: %s", type(exc).__name__)
+        raise HTTPException(
+            status_code=503, detail="Datastore temporarily unavailable"
+        ) from exc
 
 
 def _chat_scope_for(principal) -> Optional[str]:
@@ -5956,7 +5977,7 @@ async def get_action_status(name: str, lines: int = 200):
 
 
 @app.get("/api/sessions")
-async def get_sessions(
+def get_sessions(
     limit: int = 20,
     offset: int = 0,
     min_messages: int = 0,
@@ -6200,7 +6221,7 @@ def get_profiles_sessions(
 
 
 @app.get("/api/sessions/search")
-async def search_sessions(
+def search_sessions(
     q: str = "",
     limit: int = 20,
     profile: Optional[str] = None,
@@ -10939,7 +10960,7 @@ class BulkDeleteSessions(BaseModel):
 
 
 @app.post("/api/sessions/bulk-delete")
-async def bulk_delete_sessions_endpoint(
+def bulk_delete_sessions_endpoint(
     body: BulkDeleteSessions, scope: Optional[str] = Depends(_chat_scope)
 ):
     """Delete every session in ``body.ids`` in a single DB transaction.
@@ -10994,7 +11015,7 @@ async def bulk_delete_sessions_endpoint(
 
 
 @app.get("/api/sessions/empty/count")
-async def count_empty_sessions_endpoint(
+def count_empty_sessions_endpoint(
     profile: Optional[str] = None, scope: Optional[str] = Depends(_chat_scope)
 ):
     """Return the number of empty, ended, non-archived sessions.
@@ -11012,7 +11033,7 @@ async def count_empty_sessions_endpoint(
 
 
 @app.delete("/api/sessions/empty")
-async def delete_empty_sessions_endpoint(
+def delete_empty_sessions_endpoint(
     profile: Optional[str] = None, scope: Optional[str] = Depends(_chat_scope)
 ):
     """Delete every empty (``message_count == 0``), ended,
@@ -11043,7 +11064,7 @@ async def delete_empty_sessions_endpoint(
 
 
 @app.get("/api/sessions/stats")
-async def get_session_stats(
+def get_session_stats(
     profile: Optional[str] = None, scope: Optional[str] = Depends(_chat_scope)
 ):
     """Session-store statistics for the Sessions page (mirrors `hermes sessions stats`).
@@ -11173,7 +11194,7 @@ async def get_lead_session(request: Request, profile: Optional[str] = None):
 
 
 @app.get("/api/sessions/tags")
-async def list_session_tags(profile: Optional[str] = None):
+def list_session_tags(profile: Optional[str] = None):
     """List all tags with session counts."""
     db = _open_session_db_for_profile(profile)
     try:
@@ -11203,7 +11224,7 @@ async def create_tag(profile: Optional[str] = None, request: Request = None):
 
 
 @app.delete("/api/sessions/tags/{tag_id}")
-async def delete_session_tag(tag_id: str, profile: Optional[str] = None):
+def delete_session_tag(tag_id: str, profile: Optional[str] = None):
     """Delete a tag entirely (removes all session assignments)."""
     db = _open_session_db_for_profile(profile)
     try:
@@ -11216,7 +11237,7 @@ async def delete_session_tag(tag_id: str, profile: Optional[str] = None):
 
 
 @app.get("/api/sessions/{session_id}")
-async def get_session_detail(
+def get_session_detail(
     session_id: str,
     profile: Optional[str] = None,
     scope: Optional[str] = Depends(_chat_scope),
@@ -11252,7 +11273,7 @@ async def get_session_latest_descendant(
     }
 
 @app.get("/api/sessions/{session_id}/messages")
-async def get_session_messages(
+def get_session_messages(
     session_id: str,
     profile: Optional[str] = None,
     visible: bool = False,
@@ -11292,7 +11313,7 @@ async def get_session_messages(
 # Per-session tag endpoints
 # ---------------------------------------------------------------------------
 @app.get("/api/sessions/{session_id}/tags")
-async def get_session_tags(
+def get_session_tags(
     session_id: str,
     profile: Optional[str] = None,
     scope: Optional[str] = Depends(_chat_scope),
@@ -11334,7 +11355,7 @@ async def add_session_tag(
 
 
 @app.delete("/api/sessions/{session_id}/tags/{tag_id}")
-async def remove_session_tag(
+def remove_session_tag(
     session_id: str,
     tag_id: str,
     profile: Optional[str] = None,
@@ -12359,7 +12380,7 @@ async def create_session_endpoint(request: Request):
 
 
 @app.delete("/api/sessions/{session_id}")
-async def delete_session_endpoint(
+def delete_session_endpoint(
     session_id: str,
     profile: Optional[str] = None,
     scope: Optional[str] = Depends(_chat_scope),
@@ -12397,7 +12418,7 @@ class SessionRename(BaseModel):
 
 
 @app.patch("/api/sessions/{session_id}")
-async def rename_session_endpoint(
+def rename_session_endpoint(
     session_id: str, body: SessionRename, scope: Optional[str] = Depends(_chat_scope)
 ):
     """Update a session: rename (or clear its title) and/or archive it.
@@ -12434,7 +12455,7 @@ async def rename_session_endpoint(
 
 
 @app.get("/api/sessions/{session_id}/export")
-async def export_session_endpoint(
+def export_session_endpoint(
     session_id: str,
     profile: Optional[str] = None,
     scope: Optional[str] = Depends(_chat_scope),
@@ -12461,7 +12482,7 @@ class SessionPrune(BaseModel):
 
 
 @app.post("/api/sessions/prune")
-async def prune_sessions_endpoint(
+def prune_sessions_endpoint(
     body: SessionPrune, scope: Optional[str] = Depends(_chat_scope)
 ):
     """Delete ended sessions older than N days (mirrors `hermes sessions prune`)."""
@@ -12797,7 +12818,7 @@ async def get_cron_job(job_id: str, profile: Optional[str] = None):
 
 
 @app.get("/api/cron/jobs/{job_id}/runs", dependencies=_ADMIN)
-async def list_cron_job_runs(job_id: str, profile: Optional[str] = None, limit: int = 20):
+def list_cron_job_runs(job_id: str, profile: Optional[str] = None, limit: int = 20):
     """Run sessions produced by a cron job, newest first.
 
     Cron runs are stored as ordinary sessions whose id is
@@ -16722,7 +16743,7 @@ def get_usage_analytics(days: int = 30, profile: Optional[str] = None):
 
 
 @app.get("/api/analytics/models")
-async def get_models_analytics(days: int = 30, profile: Optional[str] = None):
+def get_models_analytics(days: int = 30, profile: Optional[str] = None):
     """Rich per-model analytics for the Models dashboard page.
 
     Returns token/cost/session breakdown per model plus capability metadata
@@ -16941,7 +16962,7 @@ def _perf_role(caller: Optional[str], platform: Optional[str]) -> str:
 
 
 @app.get("/api/analytics/models/performance")
-async def get_models_performance(
+def get_models_performance(
     days: int = 7, months: int = 6, profile: Optional[str] = None
 ):
     """Per-model call telemetry for the Models page Performance section.

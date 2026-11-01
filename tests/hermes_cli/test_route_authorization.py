@@ -239,6 +239,7 @@ SIGNED_IN = {
     "POST /api/registry/projects",
     "GET /api/registry/projects/doctor",
     "GET /api/registry/projects/running-cards",
+    "GET /api/registry/projects/pinned-models",
     "GET /api/registry/projects/{slug}",
     "PATCH /api/registry/projects/{slug}",
     "POST /api/registry/projects/{slug}/archive",
