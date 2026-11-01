@@ -77,7 +77,8 @@ export function MenuSection() {
       <h2 className="text-sm font-semibold">Menu</h2>
       <p className="mb-3 text-xs text-[var(--color-muted)]">
         Choose which menu items each role sees. Hidden items are also blocked by link. The owner
-        always sees everything; Home and Settings are always shown.
+        always sees everything; Home and Settings are always shown. Changes can take up to 30
+        seconds to reach everyone.
       </p>
       <div role="tablist" aria-label="Role" className="mb-3 flex gap-2">
         {NAV_ROLES.map((r) => (

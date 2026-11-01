@@ -9,6 +9,7 @@ import {
   APP_URLS,
   blockedAppForPath,
   LOCKED_APP_IDS,
+  normalizePath,
   ROLE_GATED_APPS,
   sanitizeHidden,
   seesEverything,
@@ -74,5 +75,18 @@ describe("menu access mapping", () => {
 
   it("sanitizes hidden lists", () => {
     expect(sanitizeHidden(["graph", "home", "graph", 3, "settings"])).toEqual(["graph"]);
+  });
+
+  it("normalizes path variants before matching", () => {
+    expect(normalizePath("/todos/")).toBe("/todos");
+    expect(normalizePath("//todos")).toBe("/todos");
+    expect(normalizePath("/%74odos")).toBe("/todos");
+    expect(normalizePath("/%2574odos")).toBe("/todos");
+    expect(normalizePath("/a/../todos")).toBe("/todos");
+    expect(normalizePath("/api//todos/")).toBe("/api/todos");
+    expect(normalizePath("/")).toBe("/");
+    expect(normalizePath("/%E0%A4%A")).toBe("/%E0%A4%A");
+    expect(blockedAppForPath("/%74odos/", ["todos"])).toEqual({ app: "todos", kind: "page" });
+    expect(blockedAppForPath("//api/todos", ["todos"])).toEqual({ app: "todos", kind: "api" });
   });
 });

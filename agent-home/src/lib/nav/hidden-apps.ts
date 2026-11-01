@@ -3,9 +3,13 @@
  * ids, read from the Python API (`GET /api/agent-home/nav`) and cached briefly.
  *
  * The effective list depends only on the role (the owner sees everything), so
- * the cache key is the role — never a token. A save calls `revalidateTag` with
- * `NAV_CACHE_TAG` and `clearLocalNavCache()`. Failures show everything: the
- * menu list is navigation, not a data permission (Python scopes the data).
+ * cache keys are the role, never a token. A save calls `revalidateTag` with
+ * `NAV_CACHE_TAG` and `clearLocalNavCache()`; another server process still
+ * serves its middleware copy for up to `NAV_CACHE_SECONDS`.
+ *
+ * Stale on error: when a lookup fails, the role's last fetched list is served
+ * (so a Python hiccup does not unblock hidden URLs). Only a role that was
+ * never fetched falls back to showing everything.
  */
 import "server-only";
 
@@ -16,70 +20,79 @@ import { sanitizeHidden, seesEverything } from "@/lib/nav/menu-access";
 import type { Principal } from "@/types";
 
 export const NAV_CACHE_TAG = "agent-home-nav";
-const CACHE_SECONDS = 60;
-
-async function fetchHidden(hermesToken: string): Promise<string[]> {
-  const body = await new HermesApiClient({ hermesToken }).agentHomeNav();
-  return sanitizeHidden(Array.isArray(body.hidden) ? body.hidden : []);
-}
-
-function cachedHidden(role: string, hermesToken: string): Promise<string[]> {
-  return unstable_cache(() => fetchHidden(hermesToken), ["agent-home-nav-hidden", role], {
-    revalidate: CACHE_SECONDS,
-    tags: [NAV_CACHE_TAG],
-  })();
-}
+/** Longest a saved change can take to reach the launcher or URL blocking. */
+export const NAV_CACHE_SECONDS = 30;
 
 /**
- * Process-local fallback for contexts without Next's data cache (middleware).
- * Kept on `globalThis` so the middleware bundle and the route handlers that
- * clear it share one map inside the same server process.
+ * Per-role state shared by the page path and the middleware bundle (kept on
+ * `globalThis` so both see one map inside a server process): `hidden` is the
+ * last list fetched, `at` when; `fresh` is false once a save cleared it.
  */
-const LOCAL_KEY = Symbol.for("agent-home.nav.hidden");
-type LocalCache = Map<string, { at: number; hidden: string[] }>;
+const STATE_KEY = Symbol.for("agent-home.nav.hidden");
+type RoleState = { at: number; hidden: string[]; fresh: boolean };
+type State = Map<string, RoleState>;
 
-function localCache(): LocalCache {
-  const g = globalThis as unknown as Record<symbol, LocalCache | undefined>;
-  return (g[LOCAL_KEY] ??= new Map());
+function state(): State {
+  const g = globalThis as unknown as Record<symbol, State | undefined>;
+  return (g[STATE_KEY] ??= new Map());
 }
 
+/** Drop this process's middleware copies; the last-known lists stay for errors. */
 export function clearLocalNavCache(): void {
-  localCache().clear();
+  for (const entry of state().values()) entry.fresh = false;
 }
 
-async function locallyCachedHidden(role: string, hermesToken: string): Promise<string[]> {
-  const cache = localCache();
-  const hit = cache.get(role);
-  if (hit && Date.now() - hit.at < CACHE_SECONDS * 1000) return hit.hidden;
-  const hidden = await fetchHidden(hermesToken);
-  cache.set(role, { at: Date.now(), hidden });
+async function fetchHidden(role: string, hermesToken: string): Promise<string[]> {
+  const body = await new HermesApiClient({ hermesToken }).agentHomeNav();
+  const hidden = sanitizeHidden(Array.isArray(body.hidden) ? body.hidden : []);
+  state().set(role, { at: Date.now(), hidden, fresh: true });
   return hidden;
+}
+
+function lastKnown(role: string, err: unknown): string[] {
+  const known = state().get(role);
+  console.warn(
+    `[agent-home nav] menu lookup for role "${role}" failed; ${
+      known ? "serving the last known list" : "no list known yet, showing everything"
+    }: ${err instanceof Error ? err.message : String(err)}`,
+  );
+  return known?.hidden ?? [];
 }
 
 type Caller = { role: Principal["role"]; is_owner?: boolean };
 
-/** The caller's hidden app ids; `[]` for the owner, a signed-out caller, or on error. */
+/** The caller's hidden app ids; `[]` for the owner or a signed-out caller. */
 export async function getHiddenApps(
   principal: Caller,
   hermesToken: string | undefined,
 ): Promise<string[]> {
   if (seesEverything(principal) || !hermesToken) return [];
+  const role = principal.role;
   try {
-    return await cachedHidden(principal.role, hermesToken);
-  } catch {
-    return [];
+    return await unstable_cache(() => fetchHidden(role, hermesToken), ["agent-home-nav-hidden", role], {
+      revalidate: NAV_CACHE_SECONDS,
+      tags: [NAV_CACHE_TAG],
+    })();
+  } catch (err) {
+    return lastKnown(role, err);
   }
 }
 
-/** `getHiddenApps` for middleware, where Next's data cache may be unavailable. */
+/**
+ * `getHiddenApps` for middleware, which has no Next data cache: a
+ * process-local copy per role, refetched after `NAV_CACHE_SECONDS`.
+ */
 export async function getHiddenAppsForMiddleware(
   principal: Caller,
   hermesToken: string | undefined,
 ): Promise<string[]> {
   if (seesEverything(principal) || !hermesToken) return [];
+  const role = principal.role;
+  const hit = state().get(role);
+  if (hit?.fresh && Date.now() - hit.at < NAV_CACHE_SECONDS * 1000) return hit.hidden;
   try {
-    return await locallyCachedHidden(principal.role, hermesToken);
-  } catch {
-    return [];
+    return await fetchHidden(role, hermesToken);
+  } catch (err) {
+    return lastKnown(role, err);
   }
 }

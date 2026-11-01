@@ -90,6 +90,31 @@ export const APP_URLS: Record<string, AppUrls> = {
 /** Path the middleware rewrites a hidden page to. */
 export const NOT_AVAILABLE_PATH = "/not-available";
 
+/**
+ * The path a request can reach, for matching only: percent-decoded (until
+ * stable), repeated slashes collapsed, `.`/`..` resolved and a trailing slash
+ * dropped — so `/todos/`, `//todos`, `/%74odos` and `/a/../todos` all match
+ * `/todos`. Over-matching an unroutable path is harmless; under-matching is a
+ * bypass.
+ */
+export function normalizePath(pathname: string): string {
+  let path = pathname;
+  for (let i = 0; i < 3; i++) {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(path);
+    } catch {
+      break;
+    }
+    if (decoded === path) break;
+    path = decoded;
+  }
+  path = path.replace(/\\/g, "/").replace(/\/{2,}/g, "/");
+  if (!path.startsWith("/")) path = `/${path}`;
+  path = new URL(path, "http://n").pathname;
+  return path.length > 1 ? path.replace(/\/+$/, "") : path;
+}
+
 function matches(pathname: string, rule: UrlRule): boolean {
   if (pathname === rule.path) return true;
   return !rule.exact && pathname.startsWith(`${rule.path}/`);
@@ -103,6 +128,7 @@ export function blockedAppForPath(
   pathname: string,
   hidden: readonly string[],
 ): { app: string; kind: "page" | "api" } | null {
+  pathname = normalizePath(pathname);
   const isApi = pathname === "/api" || pathname.startsWith("/api/");
   for (const app of hidden) {
     if (LOCKED_APP_IDS.includes(app)) continue;

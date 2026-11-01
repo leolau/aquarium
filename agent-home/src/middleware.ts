@@ -34,10 +34,9 @@ async function roleGate(request: NextRequest): Promise<NextResponse | null> {
       { status: 403 },
     );
   }
-  const url = request.nextUrl.clone();
-  url.pathname = NOT_AVAILABLE_PATH;
-  url.search = `?app=${encodeURIComponent(blocked.app)}`;
-  return NextResponse.rewrite(url);
+  return NextResponse.rewrite(
+    new URL(`${NOT_AVAILABLE_PATH}?app=${encodeURIComponent(blocked.app)}`, request.url),
+  );
 }
 
 export async function middleware(request: NextRequest): Promise<NextResponse> {

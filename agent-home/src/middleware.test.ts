@@ -12,7 +12,7 @@ vi.mock("@/lib/nav/hidden-apps", () => ({
   getHiddenAppsForMiddleware: (p: { role: string; is_owner?: boolean }) => hiddenFor(p),
 }));
 
-import { middleware } from "@/middleware";
+import { config, middleware } from "@/middleware";
 
 const HIDDEN: Record<string, string[]> = { admin: [], member: ["graph", "todos"], viewer: ["graph"] };
 
@@ -61,5 +61,35 @@ describe("middleware role gate", () => {
     expect(hiddenFor).not.toHaveBeenCalled();
     session.mockReturnValue(null);
     expect((await get("/graph")).headers.get("x-middleware-rewrite")).toBeNull();
+  });
+
+  it.each(["/todos/", "//todos", "/%74odos", "/todos?x=1", "/%2Ftodos", "/x/../todos", "/x/%2e%2e/todos"])(
+    "blocks the page variant %s",
+    async (path) => {
+      as("member");
+      expect((await get(path)).headers.get("x-middleware-rewrite")).toContain("/not-available?app=todos");
+    },
+  );
+
+  it.each(["/api/todos/", "//api/todos", "/api/%74odos", "/api//todos/x", "/api/todos?x=1"])(
+    "403s the API variant %s",
+    async (path) => {
+      as("member");
+      expect((await get(path)).status).toBe(403);
+    },
+  );
+});
+
+describe("middleware matcher", () => {
+  // Next compiles each matcher as an anchored path-to-regexp; this one is a
+  // plain regex group, so anchoring it reproduces what Next runs.
+  const matcher = new RegExp(`^${config.matcher[0]}$`);
+
+  it.each(["/api/todos", "/api/todos/", "/todos", "/graph", "/api/models/overview"])("runs on %s", (p) => {
+    expect(matcher.test(p)).toBe(true);
+  });
+
+  it("skips static assets", () => {
+    expect(matcher.test("/_next/static/chunk.js")).toBe(false);
   });
 });
