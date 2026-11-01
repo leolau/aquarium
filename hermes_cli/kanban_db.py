@@ -2954,6 +2954,7 @@ def list_tasks(
     workflow_template_id: Optional[str] = None,
     current_step_key: Optional[str] = None,
     principal: Optional[Principal] = None,
+    resolve_project: bool = True,
 ) -> list[Task]:
     query = "SELECT * FROM tasks WHERE 1=1"
     params: list[Any] = []
@@ -2976,8 +2977,9 @@ def list_tasks(
         # ``tasks.project_id`` persists the resolved project id, so accept
         # id-or-slug like ``create_task`` does; an unresolvable value simply
         # matches nothing.
+        # ``resolve_project=False``: the caller already holds the project id.
         pid = str(project_id).strip()
-        if pid:
+        if pid and resolve_project:
             try:
                 from hermes_cli import projects_db as _pdb
 

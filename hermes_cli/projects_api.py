@@ -44,11 +44,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import json
 import logging
 import re
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -109,6 +111,27 @@ async def _interactive_subject(request: Request) -> str:
     return _comms_session_subject(request)
 
 
+@dataclass(frozen=True)
+class _ProfileHome:
+    name: str
+    hermes_home: Path
+
+
+def _profile_homes() -> list[_ProfileHome]:
+    """The profile set :func:`get_profile_registry` lists, by name and home.
+
+    The fan-out below only needs each profile's name and ``HERMES_HOME``;
+    the full registry also reads every profile's config, counts its skills
+    and probes its gateway, on the event loop, on every Projects read.
+    """
+    from hermes_cli.profiles import profiles_to_serve
+
+    return [
+        _ProfileHome(name, home)
+        for name, home in profiles_to_serve(multiplex=True)
+    ]
+
+
 async def _enrolled_profiles(user_id: str) -> set[str]:
     """Profiles where the caller holds an **active** principals row.
 
@@ -124,7 +147,10 @@ async def _enrolled_profiles(user_id: str) -> set[str]:
 
         factory = lambda home: PrincipalStore(_comms_app_store())  # noqa: E731
         names = await enrolled_profiles(
-            user_id, store_factory=factory, active_only=True
+            user_id,
+            store_factory=factory,
+            registry=_profile_homes(),
+            active_only=True,
         )
         return set(names)
     except Exception:  # pragma: no cover - defensive: fail closed
@@ -313,7 +339,11 @@ def _card_rollup_sync(bconn, project_id: str, principal) -> dict:
     # same number the refusal is based on. A count leaks no title,
     # assignee or column.
     tasks = kanban_db.list_tasks(
-        bconn, project_id=project_id, principal=principal, include_archived=True
+        bconn,
+        project_id=project_id,
+        principal=principal,
+        include_archived=True,
+        resolve_project=False,
     )
     rollup = {
         "total": 0,
@@ -840,7 +870,17 @@ def _list_sync(
     out = []
     last_examined = None
     exhausted = True
-    with projects_db.connect_closing() as conn:
+    with projects_db.connect_closing() as conn, contextlib.ExitStack() as boards:
+        # One connection per board for the whole page, not one per project:
+        # each open re-runs WAL/pragma setup on the shared kanban.db.
+        board_conns: dict[str, Any] = {}
+
+        def board_conn(project):
+            key = project.board_slug or ""
+            if key not in board_conns:
+                board_conns[key] = boards.enter_context(_board_conn(project))
+            return board_conns[key]
+
         for index, p in enumerate(rows):
             if sorted_by is not None and index < offset:
                 continue
@@ -875,15 +915,15 @@ def _list_sync(
             if rollup_only:
                 # Card counts only: skip outputs, links, members and the
                 # health derivation (run history + cron resolution).
-                with _board_conn(p) as bconn:
-                    out.append({"cards": _card_rollup_sync(bconn, p.id, principal)})
+                out.append(
+                    {"cards": _card_rollup_sync(board_conn(p), p.id, principal)}
+                )
                 continue
             outputs = projects_db.get_project_outputs(conn, p.id)
             deliveries = projects_db.get_output_deliveries(conn, project_id=p.id)
             links = projects_db.get_project_links(conn, p.id)
             members = projects_db.get_project_members(conn, p.id)
-            with _board_conn(p) as bconn:
-                rollup = _card_rollup_sync(bconn, p.id, principal)
+            rollup = _card_rollup_sync(board_conn(p), p.id, principal)
             progress = _derive_progress(
                 p, outputs, deliveries, rollup,
                 [l for l in links if l["kind"] == "goal"],
@@ -1140,6 +1180,21 @@ _PINNED_LIVE_STATUSES = frozenset(
 )
 
 
+def _projects_with_live_pins(bconn) -> set:
+    """Project ids on this board with a live card carrying a ``model_override``."""
+    statuses = sorted(_PINNED_LIVE_STATUSES)
+    placeholders = ",".join("?" * len(statuses))
+    return {
+        row["project_id"]
+        for row in bconn.execute(
+            "SELECT DISTINCT project_id FROM tasks "
+            "WHERE model_override IS NOT NULL AND model_override != '' "
+            f"AND project_id IS NOT NULL AND status IN ({placeholders})",
+            statuses,
+        )
+    }
+
+
 def _pinned_models_sync(principal, enrolled: frozenset) -> list[dict]:
     """Live cards with a ``model_override`` across the caller's readable,
     non-archived projects — one in-process pass with the same read gate and
@@ -1155,7 +1210,17 @@ def _pinned_models_sync(principal, enrolled: frozenset) -> list[dict]:
             profiles = projects_db.get_project_profiles(conn, p.id)
             if _can_read(p, role, principal, enrolled, profiles):
                 readable.append(p)
+    # Only projects holding a live pinned card can contribute a row; find
+    # them with one query per board instead of building every board view.
+    # The board read below still applies the principal filter.
+    pinned_projects: dict[str, set] = {}
     for p in readable:
+        board = p.board_slug or ""
+        if board not in pinned_projects:
+            with _board_conn(p) as bconn:
+                pinned_projects[board] = _projects_with_live_pins(bconn)
+        if p.id not in pinned_projects[board]:
+            continue
         with _board_conn(p) as bconn:
             view = kanban_view.build_board_view(
                 bconn, project_id=p.id, principal=principal
