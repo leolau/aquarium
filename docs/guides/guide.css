@@ -1,0 +1,50 @@
+@page {
+  size: A4;
+  margin: 20mm 18mm 22mm 18mm;
+  @bottom-center { content: counter(page); font: 9pt "DejaVu Sans", Arial, sans-serif; color: #6b7a86; }
+  @top-right { font: 8.5pt "DejaVu Sans", Arial, sans-serif; color: #9aa7b1; }
+}
+@page :first { @bottom-center { content: none; } @top-right { content: none; } }
+
+:root { --ink: #1d2a33; --muted: #5b6b77; --accent: #0b7a8c; --soft: #e8f4f6; --line: #d5dee4; }
+html { font: 10.5pt/1.5 "DejaVu Sans", "Noto Sans", Arial, sans-serif; color: var(--ink); }
+body { margin: 0; }
+
+.cover { height: 250mm; display: flex; flex-direction: column; justify-content: center;
+  break-after: page; border-left: 6mm solid var(--accent); padding-left: 14mm; }
+.cover .brand { font-size: 14pt; letter-spacing: .25em; text-transform: uppercase; color: var(--accent); }
+.cover .title { font-size: 30pt; line-height: 1.15; margin: 6mm 0 4mm; border: 0; }
+.cover .subtitle { font-size: 14pt; color: var(--muted); margin: 0; }
+.cover .version { margin-top: 18mm; color: var(--muted); font-size: 10pt; }
+
+.toc { break-after: page; }
+.toc h2 { border: 0; }
+.toc ul { list-style: none; padding-left: 0; margin: 0; }
+.toc > ul > li { margin: 2.2mm 0; font-weight: 600; }
+.toc ul ul { padding-left: 6mm; font-weight: 400; }
+.toc ul ul li { margin: .8mm 0; }
+.toc a { color: var(--ink); text-decoration: none; }
+
+main h1 { font-size: 19pt; color: var(--accent); margin: 0 0 4mm; padding-bottom: 2mm;
+  border-bottom: 1.5pt solid var(--accent); break-before: page; }
+main > h1:first-child { break-before: auto; }
+h2 { font-size: 13.5pt; margin: 7mm 0 2mm; padding-bottom: 1mm; border-bottom: .6pt solid var(--line); }
+h3 { font-size: 11.5pt; margin: 5mm 0 1.5mm; }
+h1, h2, h3 { break-after: avoid; }
+p, li { orphans: 3; widows: 3; }
+a { color: var(--accent); }
+
+code { font: 9pt "DejaVu Sans Mono", Consolas, monospace; background: #f1f4f6; padding: .2mm 1mm; border-radius: 1mm; }
+pre { background: #f1f4f6; border: .6pt solid var(--line); border-radius: 1.5mm; padding: 3mm 4mm;
+  white-space: pre-wrap; word-break: break-word; break-inside: avoid; }
+pre code { background: none; padding: 0; font-size: 8.6pt; }
+
+table { width: 100%; border-collapse: collapse; margin: 3mm 0; font-size: 9.3pt; break-inside: auto; }
+th { background: var(--soft); text-align: left; }
+th, td { border: .6pt solid var(--line); padding: 1.6mm 2.2mm; vertical-align: top; }
+tr { break-inside: avoid; }
+
+blockquote { margin: 4mm 0; padding: 2.5mm 4mm; background: var(--soft);
+  border-left: 1.2mm solid var(--accent); border-radius: 0 1.5mm 1.5mm 0; break-inside: avoid; }
+blockquote p { margin: 1.2mm 0; }
+blockquote strong:first-child { color: var(--accent); }
