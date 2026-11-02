@@ -531,6 +531,111 @@ documentation in `website/docs/user-guide/messaging/` of the repository.
   `config.yaml` (`/opt/data/hermes-home/config.yaml`) and restart
   `hermes-gateway` and `hermes-dashboard`.
 
+## 10.1 SQL Server databases
+
+People can let the assistant look things up in a Microsoft SQL Server
+database, for example an office ERP or accounting system. Each person saves
+their own connection in **Settings → In&Out → SQL Server databases** (see the
+User Guide). This section covers what IT has to prepare first.
+
+### What Aquarium needs on the Windows side
+
+Nothing is installed on the Windows server, and **no SSH is needed**.
+Aquarium talks to SQL Server directly over its normal network port.
+
+| Need | Where | Why |
+|---|---|---|
+| SQL Server authentication ("mixed mode") | SQL Server instance | Aquarium signs in with a SQL login, not a Windows account |
+| A **read-only** SQL login (`db_datareader`) | the database | the assistant can read but not change data |
+| TCP **1433** (or the instance's fixed port) | Windows Firewall, office firewall/VPN policy | so Aquarium can reach the server |
+
+### Step 1: turn on SQL Server authentication
+
+In SQL Server Management Studio, right-click the server → **Properties** →
+**Security** → choose **SQL Server and Windows Authentication mode** → OK.
+Then restart the SQL Server service.
+
+### Step 2: create a read-only login
+
+Run this in a query window. Use a long random password and your database's
+real name instead of `ERP`:
+
+```sql
+CREATE LOGIN aquarium_reader WITH PASSWORD = 'use-a-long-random-password';
+USE ERP;
+CREATE USER aquarium_reader FOR LOGIN aquarium_reader;
+ALTER ROLE db_datareader ADD MEMBER aquarium_reader;
+```
+
+On SQL Server 2008 R2, replace the last line with
+`EXEC sp_addrolemember 'db_datareader', 'aquarium_reader';`.
+
+**This read-only login is the safety control that matters.** Aquarium also
+refuses anything except a single `SELECT` statement unless writes are allowed,
+but a login that cannot write is the real guarantee. Give it access only to the
+databases people need.
+
+### Step 3: open TCP 1433
+
+1. In **SQL Server Configuration Manager → SQL Server Network Configuration →
+   Protocols**, make sure **TCP/IP** is enabled. A *named instance* uses a
+   changing port by default. Set a fixed port under **TCP/IP → IP Addresses →
+   IPAll → TCP Port** and give that port to the people who will connect.
+2. Allow the port in Windows Firewall, ideally only from the VPN address
+   range (see the command below).
+3. If the server is only reachable through the office VPN, ask whoever runs the
+   FortiGate to allow the SSL-VPN users to reach the server on TCP 1433.
+
+Windows Firewall rule (run in an administrator Command Prompt; replace
+`10.212.134.0/24` with your SSL-VPN's address range, and `1433` with the fixed
+port if it is different):
+
+```bat
+netsh advfirewall firewall add rule name="SQL Server (Aquarium)" dir=in action=allow protocol=TCP localport=1433 remoteip=10.212.134.0/24
+```
+
+### Old servers: Windows Server 2008 R2 / 2012 and TLS
+
+Aquarium encrypts the connection with TLS 1.2 or newer. SQL Server on Windows
+Server 2008 R2 or 2012 without Microsoft's TLS 1.2 updates can only do
+TLS 1.0, so the test fails with "Could not open a secure connection".
+
+- **Best fix:** install the TLS 1.2 updates for that SQL Server and Windows
+  version.
+- **Otherwise:** tick **Older Windows Server 2008/2012 (TLS 1.0)** on that
+  connection (`legacy_tls`). This allows TLS 1.0 for that one connection only;
+  everything else keeps the strict settings.
+
+Most SQL Servers use a self-signed certificate. If the test complains about the
+certificate, tick **Trust the server certificate (self-signed)** on the
+connection, or install a certificate that matches the server name.
+
+### On the Aquarium server
+
+- **Nothing to set up.** The installer installs SQL Server support (the
+  `mssql` extra: a pure-Python driver, no Microsoft ODBC packages). No extra
+  port has to be opened on the Aquarium server; it only connects outwards.
+- **Servers installed before this feature:** if the section says *"SQL Server
+  support is not installed on this server yet"*, run `sudo aquarium update`
+  (release installs) or `git pull` in your clone and re-run
+  `sudo ./install-aquarium.sh` (git installs).
+
+### Reaching the server through the VPN
+
+If the SQL Server is only reachable on the office network, the person first
+adds the office **Fortinet SSL-VPN** login under **Settings → In&Out →
+Private networks** and then picks it in the connection's **Reach it through
+VPN** list. When the database is used, Aquarium:
+
+- connects the VPN if it is not connected. If that VPN has automatic
+  connection switched off, the person has to connect it in Settings → In&Out
+  first.
+- looks up the server name, using the office DNS through the VPN when needed.
+  Names that only exist inside the office work.
+- routes **only that one server address** through the VPN. Internet traffic and
+  the server's own DNS are not changed, and the route is removed when the VPN
+  disconnects (including the automatic idle disconnect).
+
 # 11. Backups
 
 There are two layers of backup. Set up both.
@@ -657,6 +762,10 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:9119/   # 200, 302 or 
 | `--check` fails on port 80 or 443 | another web server (e.g. nginx, apache) is running | stop and disable it, then re-run `--check` |
 | `--check` warns about DNS | the domain does not point at this server yet | fix the A record, wait, re-run `--check` |
 | Installer stops with "need >= 25 GB free disk" | disk too small | use a bigger disk |
+| SQL Server test: "Sign-in failed: check the SQL login and password." | wrong login/password, or SQL Server authentication is off | check the login; turn on mixed mode (section 10.1, step 1) |
+| SQL Server test: "… did not answer in time" or "Could not connect to …" | port 1433 blocked, TCP/IP off, wrong port, or VPN not chosen | section 10.1, step 3; pick the VPN on the connection |
+| SQL Server test: "Could not open a secure connection …" | old TLS (2008 R2/2012) or self-signed certificate | install TLS 1.2 updates or tick the older-server option; tick *Trust the server certificate* |
+| "SQL Server support is not installed on this server yet" | server installed before SQL Server support | update Aquarium (section 10.1) |
 | `aquarium-update.sh` says "git updates support AQUARIUM_ROOT=/opt/data only" | installed with a non-default data folder | `git pull` in your clone and re-run `sudo ./install-aquarium.sh` |
 | `https://home.example.com` does not load; certificate errors | DNS does not point at the server yet, or ports 80/443 closed at the cloud firewall | check `nslookup`, open 80/443, then `sudo systemctl restart caddy` |
 | Health check `FAIL` for one service | the service did not start | `sudo aquarium logs <service>`; fix, then re-run the installer (it is safe) |
@@ -683,7 +792,11 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:9119/   # 200, 302 or 
 - **The assistant's commands run as a separate account** (`hermes-tools`) that
   cannot read Aquarium's secrets or database passwords.
 - **Personal connections stay personal.** Each person's Google, email,
-  WhatsApp, Telegram, tools and VPN are visible and usable only by them.
+  WhatsApp, Telegram, tools, VPN and SQL Server connections are visible and
+  usable only by them.
+- **Give the assistant read-only database logins** (`db_datareader`, section
+  10.1). Only the owner can switch on **Allow changes** for a SQL Server
+  connection, and each change still needs approval in the chat.
 - **Updates are signed.** Only install releases through the installer or
   `aquarium update`, which verify the signature.
 - **Automatic security updates** for Ubuntu are turned on by the installer.
