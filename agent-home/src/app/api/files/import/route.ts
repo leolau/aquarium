@@ -22,9 +22,9 @@ import { pipeline } from "node:stream/promises";
 import { NextResponse } from "next/server";
 
 import { apiClientForRequest, getPrincipal } from "@/lib/auth/principal";
-import { uploadMaxBytes, uploadTooLargeDetail } from "@/lib/chat/upload-limit";
-import { uploadSpaceRefusal } from "@/lib/chat/upload-space";
+import { tooLarge, uploadPolicy, uploadRefusal } from "@/lib/chat/upload-space";
 import { mediaBucket } from "@/lib/env";
+import { guardBodyRoute } from "@/lib/http/body-route-guard";
 import {
   slug,
   storageAvailable,
@@ -192,15 +192,10 @@ async function handleChunkedImport(
   ) {
     return importError("Invalid chunk headers.", 400, "bad_chunk_headers");
   }
-  const maxBytes = uploadMaxBytes();
-  if (maxBytes < Infinity && total > maxBytes) {
-    return NextResponse.json(
-      { error: "too_large", detail: uploadTooLargeDetail(maxBytes) },
-      { status: 413 },
-    );
-  }
+  const policy = await uploadPolicy();
+  if (total > policy.maxBytes) return tooLarge(policy.maxBytes);
   if (offset === 0) {
-    const noSpace = await uploadSpaceRefusal(total);
+    const noSpace = uploadRefusal(total, policy);
     if (noSpace) return noSpace;
   }
 
@@ -297,6 +292,9 @@ async function handleChunkedImport(
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
+  // Not matched by the middleware (`lib/http/body-route-guard.ts`).
+  const denied = await guardBodyRoute(request);
+  if (denied) return denied;
   const principal = await getPrincipal();
   if (!principal) {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
@@ -324,14 +322,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  const maxBytes = uploadMaxBytes();
-  if (maxBytes < Infinity && contentLength > maxBytes) {
-    return NextResponse.json(
-      { error: "too_large", detail: uploadTooLargeDetail(maxBytes) },
-      { status: 413 },
-    );
-  }
-  const noSpace = await uploadSpaceRefusal(contentLength);
+  const policy = await uploadPolicy();
+  if (contentLength > policy.maxBytes) return tooLarge(policy.maxBytes);
+  const noSpace = uploadRefusal(contentLength, policy);
   if (noSpace) return noSpace;
 
   const t0 = Date.now();

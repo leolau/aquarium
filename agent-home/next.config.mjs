@@ -44,6 +44,13 @@ const nextConfig = {
   // Python `/api/*` layer, and does server-side Supabase reads with the
   // principal's RLS context. So there is deliberately NO `output: "export"`.
   reactStrictMode: true,
+  // Upload size: Settings → Uploads (default 1 GB), enforced in the upload
+  // routes. No Next body limit applies to them: they are App Router route
+  // handlers (`serverActions.bodySizeLimit` covers Server Actions only) and
+  // they are kept out of the middleware matcher, so
+  // `experimental.middlewareClientMaxBodySize` (10 MB clone cap) never sees
+  // their bodies. Raising that cap instead would make the middleware buffer
+  // every large body in memory, and still race (see src/middleware.ts).
   // Release tarballs (scripts/build-release.sh) ship a self-contained server
   // so customer boxes never run `next build`. Tracing starts at the repo root
   // because npm workspaces hoist node_modules there.

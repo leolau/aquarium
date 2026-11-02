@@ -100,3 +100,13 @@ export async function sweepProjects(req: APIRequestContext): Promise<number> {
   }
   return n;
 }
+
+/** Delete chat uploads (Storage objects under the caller's own prefix). */
+export async function deleteChatUploads(req: APIRequestContext, paths: string[]): Promise<number> {
+  let n = 0;
+  for (const path of paths) {
+    const res = await req.delete("/api/chat/upload", { data: { path } });
+    if (res.ok()) n += 1;
+  }
+  return n;
+}

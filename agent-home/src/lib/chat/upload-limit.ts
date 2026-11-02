@@ -1,27 +1,42 @@
 /**
- * Chat attachment size cap in bytes. **Unlimited by default** — Supabase
- * Storage enforces its own ceiling (`FILE_SIZE_LIMIT` on the storage
- * service, or the bucket's `file_size_limit`), and uploads stream through
- * the BFF which buffers them anyway, so a second hard cap here only added a
- * refusal point that disagreed with the backend's real limit.
+ * Upload size limit, shared by the BFF upload routes and the composer's
+ * pre-check (client-safe: no server imports here).
  *
- * A deploy that still wants a BFF-side guard (proxy budget, box memory) can
- * set `AGENT_HOME_UPLOAD_MAX_BYTES` to a positive byte count.
+ * The limit is a Settings value (owner/admin, Settings → Uploads), stored in
+ * the default profile's config.yaml as `agent_home.uploads.max_bytes` and
+ * served with `/api/capacity/upload-storage`; 1 GB when unset.
+ * `AGENT_HOME_UPLOAD_MAX_BYTES` is a legacy deploy override that wins when set.
  */
-export function uploadMaxBytes(): number {
+export const DEFAULT_UPLOAD_MAX_BYTES = 1024 ** 3;
+
+/** The legacy env override, or null when unset/invalid. */
+export function legacyUploadMaxBytes(): number | null {
   const raw = Number(process.env.AGENT_HOME_UPLOAD_MAX_BYTES);
-  return Number.isFinite(raw) && raw > 0 ? raw : Number.POSITIVE_INFINITY;
+  return Number.isFinite(raw) && raw > 0 ? raw : null;
+}
+
+/** The limit in force given the configured value (from the API, maybe absent). */
+export function resolveUploadMaxBytes(configured: unknown): number {
+  const legacy = legacyUploadMaxBytes();
+  if (legacy !== null) return legacy;
+  return typeof configured === "number" && Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFAULT_UPLOAD_MAX_BYTES;
 }
 
 /**
- * The client-side *advisory* threshold (100 MB): files bigger than this ask
- * the user to confirm before uploading — very large uploads take a while and
- * buffer in memory on the box — but are never refused outright.
+ * Advisory threshold: the composer asks before uploading files bigger than
+ * this, since they take a while. Not a refusal.
  */
 export const UPLOAD_WARN_BYTES = 100 * 1024 * 1024;
 
-/** The refusal copy for a configured cap — kept in one place for the routes. */
+/** "1 GB", "250 MB" — whole units, rounded up. */
+export function formatUploadLimit(maxBytes: number): string {
+  const gb = maxBytes / 1024 ** 3;
+  if (gb >= 1) return `${Number((Math.ceil(gb * 10) / 10).toFixed(1))} GB`;
+  return `${Math.ceil(maxBytes / (1024 * 1024))} MB`;
+}
+
 export function uploadTooLargeDetail(maxBytes: number): string {
-  const mb = Math.ceil(maxBytes / (1024 * 1024));
-  return `File exceeds the ${mb} MB limit.`;
+  return `File exceeds the ${formatUploadLimit(maxBytes)} upload limit.`;
 }

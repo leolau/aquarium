@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { AccountSecurity } from "@/components/account/AccountSecurity";
-import { AppsSettings } from "@/components/settings/AppsSettings";
+import { AppsSettings, UploadsSettings } from "@/components/settings/AppsSettings";
 import { EntityGoalSection } from "@/components/settings/EntityGoalSection";
 import { MenuSection } from "@/components/settings/MenuSection";
 import { LanguageSwitch } from "@/components/LanguageSwitch";
@@ -146,6 +146,8 @@ export function SettingsView({
       <PushEnroll />
 
       <InOutSection canManageMembers={canManageMembers} isOwner={isOwner} />
+
+      {canManageMembers ? <UploadsSettings /> : null}
 
       {canManageMembers ? <AppsSettings /> : null}
 

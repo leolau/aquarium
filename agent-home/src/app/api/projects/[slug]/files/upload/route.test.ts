@@ -12,13 +12,16 @@ const uploadChatMedia = vi.fn(
   async (
     _principal: Principal,
     sessionId: string,
-    file: { name: string; contentType: string; bytes: ArrayBuffer },
-  ) => ({
-    path: `leo/${sessionId}/${uploadChatMedia.mock.calls.length}-${file.name}`,
-    name: file.name,
-    content_type: file.contentType,
-    size: file.bytes.byteLength,
-  }),
+    file: { name: string; contentType: string; body: ReadableStream<Uint8Array> },
+  ) => {
+    const calls = uploadChatMedia.mock.calls.length;
+    await new Response(file.body).arrayBuffer();
+    return {
+      path: `leo/${sessionId}/${calls}-${file.name}`,
+      name: file.name,
+      content_type: file.contentType,
+    };
+  },
 );
 const registerFile = vi.fn(async () => ({ ok: true }));
 const linkToProject = vi.fn(async (_slug: string, payload: Record<string, unknown>) => ({
@@ -33,7 +36,7 @@ vi.mock("@/lib/auth/principal", () => ({
 vi.mock("@/lib/env", () => ({ mediaBucket: () => "hermes-media" }));
 vi.mock("@/lib/supabase/storage", () => ({
   storageAvailable: () => true,
-  uploadChatMedia: (...args: unknown[]) =>
+  uploadChatMediaStream: (...args: unknown[]) =>
     (uploadChatMedia as (...a: unknown[]) => unknown)(...args),
 }));
 

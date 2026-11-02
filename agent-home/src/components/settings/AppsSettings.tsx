@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useProjectAction } from "@/components/projects/useProjectAction";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { formatUploadLimit } from "@/lib/chat/upload-limit";
 import { Spinner } from "@/components/ui/Spinner";
 
 import { type AppsSettingsKey, useAppsSettingsT } from "./appsSettingsStrings";
@@ -229,6 +230,71 @@ function StorageForm({ view, saved, onSaved, onEdit }: FormProps<StorageView>) {
           action.run(`${BASE}/storage`, {
             method: "PUT",
             body: change,
+            skipRefresh: true,
+            onSuccess: onSaved,
+          })
+        }
+      >
+        {t("save")}
+      </ActionButton>
+      <Feedback error={action.error} saved={saved} t={t} />
+    </>
+  );
+}
+
+export type UploadsView = {
+  max_bytes: number;
+  default_max_bytes: number;
+  min_max_bytes: number;
+  max_max_bytes: number;
+  legacy_override_bytes: number | null;
+};
+
+const MB = 1024 * 1024;
+
+/** Settings → Uploads: the upload size limit (config.yaml, default 1 GB). */
+export function UploadsSettings() {
+  return (
+    <section data-section="uploads" data-component="UploadsSettings" className="mt-6">
+      <Panel<UploadsView> path="/api/settings/uploads" name="Uploads" title="uploadsTitle" intro="uploadsIntro" Form={UploadsForm} />
+    </section>
+  );
+}
+
+function UploadsForm({ view, saved, onSaved, onEdit }: FormProps<UploadsView>) {
+  const t = useAppsSettingsT();
+  const action = useProjectAction<UploadsView>();
+  const [mb, setMb] = useState(Math.round(view.max_bytes / MB));
+  const min = Math.ceil(view.min_max_bytes / MB);
+  const max = Math.floor(view.max_max_bytes / MB);
+  const bytes = mb * MB;
+  const valid = mb >= min && mb <= max;
+  return (
+    <>
+      <label htmlFor="uploads-max-mb" className="text-xs">
+        {t("uploadsMax")}
+        <input id="uploads-max-mb" type="number" min={min} max={max} className={inputClass} value={mb} disabled={action.busy}
+          onChange={(e) => { onEdit(); setMb(Math.max(0, Math.floor(Number(e.target.value) || 0))); }} />
+      </label>
+      <p className="mt-2 text-xs text-[var(--color-muted)]">
+        {t("uploadsDefault", { limit: formatUploadLimit(view.default_max_bytes), current: formatUploadLimit(view.max_bytes) })}{" "}
+        {t("uploadsRange", { min, max })}
+      </p>
+      {view.legacy_override_bytes ? (
+        <p className="mt-1 text-xs text-amber-300">
+          {t("uploadsOverride", { limit: formatUploadLimit(view.legacy_override_bytes) })}
+        </p>
+      ) : null}
+      <ActionButton
+        className={`mt-2 ${buttonClass}`}
+        data-action="save-uploads"
+        disabled={!valid || bytes === view.max_bytes}
+        busy={action.busy}
+        busyLabel={t("saving")}
+        onAction={() =>
+          action.run("/api/settings/uploads", {
+            method: "PUT",
+            body: { max_bytes: bytes },
             skipRefresh: true,
             onSuccess: onSaved,
           })

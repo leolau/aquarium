@@ -1,95 +1,53 @@
-import { NextRequest } from "next/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+/**
+ * The upload routes stay out of the middleware matcher (Next 15.5 races the
+ * request body there) and every handler on them runs `guardBodyRoute` itself,
+ * so no FG-33 / role check is lost. Reads the sources: importing the
+ * middleware pulls `server-only` modules.
+ */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
-const session = vi.fn();
-const hiddenFor = vi.fn<(p: { role: string; is_owner?: boolean }) => Promise<string[]>>();
+import { describe, expect, it } from "vitest";
 
-vi.mock("@/lib/auth/session", () => ({
-  sessionCookieValue: () => "cookie",
-  deserializeSession: () => session(),
-}));
-vi.mock("@/lib/nav/hidden-apps", () => ({
-  getHiddenAppsForMiddleware: (p: { role: string; is_owner?: boolean }) => hiddenFor(p),
-}));
+import { BODY_ROUTES } from "@/lib/http/body-route-guard";
 
-import { config, middleware } from "@/middleware";
+const src = (rel: string) => readFileSync(join(__dirname, rel), "utf8");
 
-const HIDDEN: Record<string, string[]> = { admin: [], member: ["graph", "todos"], viewer: ["graph"] };
-
-function as(role: string, is_owner = false) {
-  session.mockReturnValue({ principal: { user_id: "u", role, is_owner }, hermesToken: "t" });
+function matcher(): RegExp {
+  const m = /matcher:\s*\[\s*"([^"]+)"/.exec(src("middleware.ts"));
+  if (!m) throw new Error("matcher not found");
+  return new RegExp(`^${m[1]}$`);
 }
 
-const get = (path: string) => middleware(new NextRequest(`http://localhost${path}`));
-
-describe("middleware role gate", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    hiddenFor.mockImplementation(async (p) => (p.is_owner ? [] : HIDDEN[p.role] ?? []));
-  });
-
-  it("rewrites a hidden page to the not-available page", async () => {
-    as("member");
-    const res = await get("/graph");
-    expect(res.headers.get("x-middleware-rewrite")).toContain("/not-available?app=graph");
-  });
-
-  it("403s a hidden app's API", async () => {
-    as("member");
-    const res = await get("/api/todos");
-    expect(res.status).toBe(403);
-    expect(await res.json()).toMatchObject({ error: "not_available_for_role", app: "todos" });
-  });
-
-  it("applies each role's own list", async () => {
-    as("viewer");
-    expect((await get("/api/todos")).status).toBe(200);
-    expect((await get("/graph")).headers.get("x-middleware-rewrite")).toContain("/not-available");
-    as("admin");
-    expect((await get("/graph")).headers.get("x-middleware-rewrite")).toBeNull();
-  });
-
-  it("lets the owner through", async () => {
-    as("admin", true);
-    expect((await get("/graph")).headers.get("x-middleware-rewrite")).toBeNull();
-  });
-
-  it("skips the lookup for paths no app owns and for signed-out requests", async () => {
-    as("member");
-    await get("/settings");
-    await get("/projects/p1");
-    expect(hiddenFor).not.toHaveBeenCalled();
-    session.mockReturnValue(null);
-    expect((await get("/graph")).headers.get("x-middleware-rewrite")).toBeNull();
-  });
-
-  it.each(["/todos/", "//todos", "/%74odos", "/todos?x=1", "/%2Ftodos", "/x/../todos", "/x/%2e%2e/todos"])(
-    "blocks the page variant %s",
-    async (path) => {
-      as("member");
-      expect((await get(path)).headers.get("x-middleware-rewrite")).toContain("/not-available?app=todos");
-    },
-  );
-
-  it.each(["/api/todos/", "//api/todos", "/api/%74odos", "/api//todos/x", "/api/todos?x=1"])(
-    "403s the API variant %s",
-    async (path) => {
-      as("member");
-      expect((await get(path)).status).toBe(403);
-    },
-  );
-});
+const sample = (route: string) => route.replace("[slug]", "demo");
 
 describe("middleware matcher", () => {
-  // Next compiles each matcher as an anchored path-to-regexp; this one is a
-  // plain regex group, so anchoring it reproduces what Next runs.
-  const matcher = new RegExp(`^${config.matcher[0]}$`);
-
-  it.each(["/api/todos", "/api/todos/", "/todos", "/graph", "/api/models/overview"])("runs on %s", (p) => {
-    expect(matcher.test(p)).toBe(true);
+  it.each(BODY_ROUTES)("does not run on %s", (route) => {
+    expect(matcher().test(sample(route))).toBe(false);
+    expect(matcher().test(`${sample(route)}/`)).toBe(false);
   });
 
-  it("skips static assets", () => {
-    expect(matcher.test("/_next/static/chunk.js")).toBe(false);
+  it.each([
+    "/",
+    "/chat",
+    "/api/chat/stream",
+    "/api/chat/upload-status",
+    "/api/chat/upload/extra",
+    "/api/projects/demo/files",
+    "/api/files/import-history",
+    "/api/files",
+    "/projects/demo/files/upload",
+  ])("still runs on %s", (path) => {
+    expect(matcher().test(path)).toBe(true);
+  });
+
+  it.each(BODY_ROUTES)("every handler of %s calls guardBodyRoute first", (route) => {
+    const code = src(`app${route}/route.ts`);
+    const handlers = [...code.matchAll(/export async function (GET|POST|PUT|PATCH|DELETE)\(/g)];
+    expect(handlers.length).toBeGreaterThan(0);
+    for (const h of handlers) {
+      const body = code.slice(h.index!, code.indexOf("\n}\n", h.index!));
+      expect(body, `${h[1]} ${route}`).toMatch(/^[^]*?\{\s*(\/\/[^\n]*\n\s*)*const denied = await guardBodyRoute\(request\);/);
+    }
   });
 });

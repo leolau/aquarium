@@ -101,6 +101,7 @@ HANDLER_CHECKED = {
     "POST /api/tools/{name}/purge": ("member", "_lifecycle_call"),
     "PUT /api/access/roles/{role}": ("admin", "_require_role_limits_editor"),
     "PUT /api/agent-home/nav/{role}": ("admin", "_require_role_limits_editor"),
+    "PUT /api/agent-home/uploads": ("admin", "_require_role_limits_editor"),
     "POST /api/profiles/suggestions/{suggestion_id}/adopt": ("owner", "principal.is_owner"),
     "POST /api/profiles/suggestions/{suggestion_id}/dismiss": ("owner", "principal.is_owner"),
     "GET /api/email-accounts": ("owner", "_owner_principal"),
@@ -429,6 +430,8 @@ SIGNED_IN = {
     "GET /api/access/roles",
     # caller-scoped: own effective list; per-role lists only for owner/admin
     "GET /api/agent-home/nav",
+    # Settings → Uploads: the upload size limit (the composer pre-checks it)
+    "GET /api/agent-home/uploads",
     "GET /api/tools/toolsets/{name}/config",
     "GET /api/tools/computer-use/status",
     "GET /api/analytics/usage",
@@ -570,6 +573,7 @@ def test_public_api_routes_match_the_login_gate_allowlist():
 # shapes are realistic so owner/admin requests reach the handler.
 ADMIN_ROUTES = [
     ("put", "/api/agent-home/nav/member", {"hidden": ["graph"]}),
+    ("put", "/api/agent-home/uploads", {"max_bytes": 2 * 1024**3}),
     ("put", "/api/env", {"key": "OPENAI_API_KEY", "value": "sk-test"}),
     ("delete", "/api/env", {"key": "OPENAI_API_KEY"}),
     ("post", "/api/env/reveal", {"key": "OPENAI_API_KEY"}),
