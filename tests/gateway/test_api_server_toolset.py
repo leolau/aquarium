@@ -60,6 +60,12 @@ class TestHermesApiServerToolset:
         assert "mssql_query" in resolve_toolset("hermes-api-server")
         assert "mssql_query" in _HERMES_CORE_TOOLS
 
+    def test_toolset_includes_windows_powershell(self):
+        from toolsets import _HERMES_CORE_TOOLS, resolve_toolset
+
+        assert "windows_powershell" in resolve_toolset("hermes-api-server")
+        assert "windows_powershell" in _HERMES_CORE_TOOLS
+
     def test_toolset_includes_email_mailbox(self):
         # agent-home chat runs on api_server; the person's own mailboxes must
         # be reachable there, not only on CLI/messaging platforms.
@@ -136,6 +142,6 @@ class TestApiServerAdapterToolset:
             mock_agent_cls.assert_called_once()
             call_kwargs = mock_agent_cls.call_args
             toolsets = call_kwargs.kwargs.get("enabled_toolsets")
-            # email_mailbox and mssql are non-configurable toolsets of the platform
+            # email_mailbox, mssql and winrm are non-configurable toolsets of the platform
             # default, so it is recovered even with an explicit override.
-            assert sorted(toolsets) == ["email_mailbox", "mssql", "terminal", "web"]
+            assert sorted(toolsets) == ["email_mailbox", "mssql", "terminal", "web", "winrm"]

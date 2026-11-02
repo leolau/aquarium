@@ -56,6 +56,8 @@ _HERMES_CORE_TOOLS = [
     "email_mailbox",
     # The person's own SQL Server databases (Settings -> In&Out; gated on the driver)
     "mssql_query",
+    # The person's own Windows servers (Settings -> In&Out; gated on pypsrp)
+    "windows_powershell",
     # NOTE: the desktop Project tools (project_list/create/switch) are
     # deliberately NOT here. They only make sense where a GUI can follow the
     # move, so they live in the `project` toolset and are enabled solely by the
@@ -225,6 +227,12 @@ TOOLSETS = {
     "mssql": {
         "description": "Query the person's own SQL Server databases (read-only unless allowed)",
         "tools": ["mssql_query"],
+        "includes": []
+    },
+
+    "winrm": {
+        "description": "Run PowerShell on the person's own Windows servers (commands need approval)",
+        "tools": ["windows_powershell"],
         "includes": []
     },
 
@@ -438,6 +446,8 @@ TOOLSETS = {
             "email_mailbox",
             # The person's own SQL Server databases (Settings -> In&Out; gated on the driver)
             "mssql_query",
+            # The person's own Windows servers (Settings -> In&Out; gated on pypsrp)
+            "windows_powershell",
             # Session history search
             "session_search",
             # Code execution + delegation

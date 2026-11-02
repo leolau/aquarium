@@ -102,6 +102,8 @@ import type {
   EmailMailboxInput,
   MssqlConnection,
   MssqlConnectionInput,
+  WinrmConnection,
+  WinrmConnectionInput,
   EmailPollerAccount,
   EmailServerSettings,
   NetworkFolderInput,
@@ -2845,6 +2847,36 @@ export class HermesApiClient {
   async testMssqlConnection(name: string): Promise<{ connection: MssqlConnection }> {
     return this.request(
       `/api/mssql/connections/${encodeURIComponent(name)}/test`,
+      { method: "POST" },
+    );
+  }
+
+  /** The caller's own Windows servers (PowerShell over WinRM; never any password). */
+  async winrmConnections(): Promise<{ connections: WinrmConnection[]; driver_available: boolean }> {
+    return this.request("/api/winrm/connections");
+  }
+
+  /** Create or replace the caller's Windows server; an empty password keeps it. */
+  async putWinrmConnection(
+    name: string,
+    body: WinrmConnectionInput,
+  ): Promise<{ connection: WinrmConnection }> {
+    return this.request(`/api/winrm/connections/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      json: body,
+    });
+  }
+
+  async deleteWinrmConnection(name: string): Promise<{ deleted: boolean }> {
+    return this.request(`/api/winrm/connections/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    });
+  }
+
+  /** Sign in with the saved settings and read the PowerShell version and computer name. */
+  async testWinrmConnection(name: string): Promise<{ connection: WinrmConnection }> {
+    return this.request(
+      `/api/winrm/connections/${encodeURIComponent(name)}/test`,
       { method: "POST" },
     );
   }

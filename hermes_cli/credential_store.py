@@ -47,7 +47,7 @@ CREDENTIALS_TABLE = "credentials"
 
 #: Opt-in service flags a credential entry can volunteer for. Background
 #: pollers consume an entry only when the matching flag is set (R5).
-SERVICES: Tuple[str, ...] = ("email", "calendar", "drive", "workspace", "mssql")
+SERVICES: Tuple[str, ...] = ("email", "calendar", "drive", "workspace", "mssql", "winrm")
 
 #: Inner spaces allowed (VPN names like "Office files"); no other whitespace,
 #: no edge spaces, no path separators.
@@ -271,6 +271,38 @@ def _validate_mssql(payload: Mapping[str, Any]) -> None:
         fail("strict encryption always checks the server certificate")
 
 
+_WINRM_TRANSPORTS = ("ntlm", "kerberos", "credssp")
+_WINRM_FLAGS = ("verify_tls", "legacy_tls")
+
+
+def _validate_winrm(payload: Mapping[str, Any]) -> None:
+    def fail(msg: str) -> None:
+        raise CredentialError(f"winrm: {msg}")
+
+    host = str(payload.get("host") or "").strip()
+    if not _FORTI_HOST.fullmatch(host):
+        fail("host must be a host name or IPv4 address")
+    port = payload.get("port")
+    if port is not None and (
+        isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535
+    ):
+        fail("port must be a number from 1 to 65535")
+    for field, limit in (("username", 256), ("vpn", 128), ("label", 120)):
+        value = payload.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, str) or _CONTROL.search(value) or len(value) > limit:
+            fail(f"{field} must be text up to {limit} characters")
+    if not str(payload.get("username") or "").strip():
+        fail("username is required")
+    transport = payload.get("transport", "ntlm")
+    if transport not in _WINRM_TRANSPORTS:
+        fail(f"transport must be one of {', '.join(_WINRM_TRANSPORTS)}")
+    for flag in _WINRM_FLAGS:
+        if flag in payload and not isinstance(payload[flag], bool):
+            fail(f"{flag} must be true or false")
+
+
 CREDENTIAL_KINDS: Dict[str, KindSpec] = {
     "google-oauth2": KindSpec(
         name="google-oauth2",
@@ -329,6 +361,15 @@ CREDENTIAL_KINDS: Dict[str, KindSpec] = {
         keep_secrets_on_put=True,
         materialize=False,
         validator=_validate_mssql,
+    ),
+    "winrm": KindSpec(
+        name="winrm",
+        required=("host", "username", "password"),
+        optional=("port", "transport", "verify_tls", "legacy_tls", "vpn", "label"),
+        secret_fields=("password",),
+        keep_secrets_on_put=True,
+        materialize=False,
+        validator=_validate_winrm,
     ),
     "smb-folder": KindSpec(
         name="smb-folder",

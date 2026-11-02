@@ -271,6 +271,9 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
     # SQL Server driver for the ``mssql_query`` tool. Mirrors the ``mssql``
     # extra in pyproject.toml.
     "mssql.driver": ("python-tds==1.17.1", "pyOpenSSL==26.2.0"),
+    # PowerShell remoting for the ``windows_powershell`` tool. Mirrors the
+    # ``winrm`` extra in pyproject.toml.
+    "winrm.driver": ("pypsrp==0.9.1", "pyspnego==0.12.4", "requests-credssp==2.0.0"),
 }
 
 
