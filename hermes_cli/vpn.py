@@ -391,6 +391,53 @@ async def _connect(cred: Credential) -> Dict[str, Any]:
     return build_view(cred, slug, doc, entry)
 
 
+async def ensure_host_route(
+    cred: Credential, user: str, host: str, port: Optional[int] = None, *, agent: bool = False
+) -> Dict[str, Any]:
+    """Connect ``cred`` if needed, then route ``host`` through its tunnel.
+
+    ``user`` names who holds the route (the helper keeps a ``/32`` until its
+    last user lets go). ``agent`` honours the VPN's ``auto_connect: false``.
+    Returns the helper's route doc: ``{routed, ip, reachable, error}``; ``ip``
+    is the server's address as seen through the VPN (its name may only
+    resolve on VPN DNS).
+    """
+    slug = slug_for(cred)
+    doc = await _helper("status", slug)
+    if doc.get("state") != "connected":
+        if agent and cred.payload.get("auto_connect") is False:
+            return {"routed": False, "ip": None, "reachable": None,
+                    "error": f"Connect '{cred.name}' in Settings → In&Out, then try again"}
+        view = await _connect(cred)
+        status = view["status"]
+        if status["state"] != "connected":
+            if status["state"] == "needs_cert":
+                reason = "the VPN server's certificate must be trusted in Settings → In&Out"
+            else:
+                reason = status.get("error") or "the VPN did not connect"
+            return {"routed": False, "ip": None, "reachable": None,
+                    "error": f"VPN connect failed: {reason}"}
+    spec: Dict[str, Any] = {"vpn_slug": slug, "user": user, "host": host}
+    if port:
+        spec["port"] = int(port)
+    try:
+        doc = await _helper("route", slug, spec)
+    except VpnError as exc:
+        return {"routed": False, "ip": None, "reachable": None, "error": str(exc)}
+    if doc.get("routed"):
+        _record(slug, last_used=_now())
+    return doc
+
+
+async def release_host_route(cred: Credential, user: str) -> None:
+    """Let go of ``user``'s host route on ``cred`` (best effort)."""
+    slug = slug_for(cred)
+    try:
+        await _helper("unroute", slug, {"vpn_slug": slug, "user": user})
+    except VpnError:
+        pass
+
+
 async def connect(principal: Any, name: str, *, loose: bool = False) -> Dict[str, Any]:
     return await _connect(await find_vpn(principal, name, loose=loose))
 

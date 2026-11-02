@@ -268,6 +268,9 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
     "documents.pypdf": ("pypdf==5.1.0",),
     "documents.openpyxl": ("openpyxl==3.1.5",),
     "documents.reportlab": ("reportlab==5.0.1",),
+    # SQL Server driver for the ``mssql_query`` tool. Mirrors the ``mssql``
+    # extra in pyproject.toml.
+    "mssql.driver": ("python-tds==1.17.1", "pyOpenSSL==26.2.0"),
 }
 
 

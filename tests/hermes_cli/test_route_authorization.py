@@ -199,6 +199,11 @@ SIGNED_IN = {
     "PUT /api/email/mailboxes/{address}",
     "DELETE /api/email/mailboxes/{address}",
     "POST /api/email/mailboxes/{address}/test",
+    # mssql_connections_api: the caller's own SQL Server connections
+    "GET /api/mssql/connections",
+    "PUT /api/mssql/connections/{name}",
+    "DELETE /api/mssql/connections/{name}",
+    "POST /api/mssql/connections/{name}/test",
     "POST /api/credentials/google/start",
     "POST /api/credentials/google/complete",
     "POST /api/credentials/google/{name}/refresh",

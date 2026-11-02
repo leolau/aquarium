@@ -54,6 +54,8 @@ _HERMES_CORE_TOOLS = [
     "todo", "memory",
     # The person's own IMAP/SMTP mailboxes (Settings -> Email mailboxes)
     "email_mailbox",
+    # The person's own SQL Server databases (Settings -> In&Out; gated on the driver)
+    "mssql_query",
     # NOTE: the desktop Project tools (project_list/create/switch) are
     # deliberately NOT here. They only make sense where a GUI can follow the
     # move, so they live in the `project` toolset and are enabled solely by the
@@ -217,6 +219,12 @@ TOOLSETS = {
     "email_mailbox": {
         "description": "Read and send mail from the person's own IMAP/SMTP mailboxes",
         "tools": ["email_mailbox"],
+        "includes": []
+    },
+
+    "mssql": {
+        "description": "Query the person's own SQL Server databases (read-only unless allowed)",
+        "tools": ["mssql_query"],
         "includes": []
     },
 
@@ -428,6 +436,8 @@ TOOLSETS = {
             "todo", "memory",
             # The person's own IMAP/SMTP mailboxes (Settings -> Email mailboxes)
             "email_mailbox",
+            # The person's own SQL Server databases (Settings -> In&Out; gated on the driver)
+            "mssql_query",
             # Session history search
             "session_search",
             # Code execution + delegation

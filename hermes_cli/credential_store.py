@@ -47,7 +47,7 @@ CREDENTIALS_TABLE = "credentials"
 
 #: Opt-in service flags a credential entry can volunteer for. Background
 #: pollers consume an entry only when the matching flag is set (R5).
-SERVICES: Tuple[str, ...] = ("email", "calendar", "drive", "workspace")
+SERVICES: Tuple[str, ...] = ("email", "calendar", "drive", "workspace", "mssql")
 
 #: Inner spaces allowed (VPN names like "Office files"); no other whitespace,
 #: no edge spaces, no path separators.
@@ -231,6 +231,46 @@ def _validate_email_imap(payload: Mapping[str, Any]) -> None:
             fail(f"{side}_security must be one of {', '.join(_MAIL_SECURITY)}")
 
 
+_MSSQL_ENCRYPT = ("strict", "on", "off")
+_MSSQL_INSTANCE = re.compile(r"^[A-Za-z0-9_$#-]{1,16}$")
+_MSSQL_FLAGS = ("trust_server_certificate", "legacy_tls", "allow_writes")
+
+
+def _validate_mssql(payload: Mapping[str, Any]) -> None:
+    def fail(msg: str) -> None:
+        raise CredentialError(f"mssql: {msg}")
+
+    host = str(payload.get("host") or "").strip()
+    if not _FORTI_HOST.fullmatch(host):
+        fail("host must be a host name or IPv4 address")
+    port = payload.get("port")
+    if port is not None and (
+        isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535
+    ):
+        fail("port must be a number from 1 to 65535")
+    instance = payload.get("instance")
+    if instance not in (None, "") and not _MSSQL_INSTANCE.fullmatch(str(instance)):
+        fail("instance must be a SQL Server instance name")
+    for field, limit in (("database", 128), ("username", 128), ("vpn", 128), ("label", 120)):
+        value = payload.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, str) or _CONTROL.search(value) or len(value) > limit:
+            fail(f"{field} must be text up to {limit} characters")
+    if not str(payload.get("database") or "").strip():
+        fail("database is required")
+    if not str(payload.get("username") or "").strip():
+        fail("username is required")
+    encrypt = payload.get("encrypt", "on")
+    if encrypt not in _MSSQL_ENCRYPT:
+        fail(f"encrypt must be one of {', '.join(_MSSQL_ENCRYPT)}")
+    for flag in _MSSQL_FLAGS:
+        if flag in payload and not isinstance(payload[flag], bool):
+            fail(f"{flag} must be true or false")
+    if encrypt == "strict" and payload.get("trust_server_certificate"):
+        fail("strict encryption always checks the server certificate")
+
+
 CREDENTIAL_KINDS: Dict[str, KindSpec] = {
     "google-oauth2": KindSpec(
         name="google-oauth2",
@@ -277,6 +317,18 @@ CREDENTIAL_KINDS: Dict[str, KindSpec] = {
         keep_secrets_on_put=True,
         materialize=False,
         validator=_validate_email_imap,
+    ),
+    "mssql": KindSpec(
+        name="mssql",
+        required=("host", "database", "username", "password"),
+        optional=(
+            "port", "instance", "encrypt", "trust_server_certificate", "legacy_tls",
+            "vpn", "allow_writes", "label",
+        ),
+        secret_fields=("password",),
+        keep_secrets_on_put=True,
+        materialize=False,
+        validator=_validate_mssql,
     ),
     "smb-folder": KindSpec(
         name="smb-folder",

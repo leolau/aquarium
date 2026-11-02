@@ -1356,6 +1356,45 @@ export interface EmailMailboxInput extends EmailServerSettings {
   preset: EmailPreset;
 }
 
+export type MssqlEncrypt = "on" | "strict" | "off";
+
+/** Connection settings of one SQL Server database (`PUT /api/mssql/connections/{name}`). */
+export interface MssqlSettings {
+  host: string;
+  port: number | null;
+  instance: string;
+  database: string;
+  username: string;
+  encrypt: MssqlEncrypt;
+  trust_server_certificate: boolean;
+  legacy_tls: boolean;
+  vpn: string;
+  allow_writes: boolean;
+  label?: string;
+}
+
+/** One of the caller's own SQL Server connections. Never carries the password. */
+export interface MssqlConnection extends MssqlSettings {
+  name: string;
+  password_set: boolean;
+  state: "working" | "needs_attention" | "untested";
+  last_test: {
+    at: string;
+    ok: boolean;
+    server_version?: string;
+    database?: string;
+    error?: string;
+  } | null;
+}
+
+/** Body of `PUT /api/mssql/connections/{name}`; empty password keeps the saved one. */
+export interface MssqlConnectionInput extends Partial<MssqlSettings> {
+  host: string;
+  database: string;
+  username: string;
+  password?: string;
+}
+
 export interface EmailPollerAccount {
   id: string;
   address: string;
