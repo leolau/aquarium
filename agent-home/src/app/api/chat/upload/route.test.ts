@@ -1,31 +1,36 @@
 /**
- * BFF route tests for POST /api/chat/upload.
+ * BFF route tests for POST/DELETE /api/chat/upload.
  *
- * The route is unlimited by default; `AGENT_HOME_UPLOAD_MAX_BYTES` reinstates
- * a cap when a deploy wants one. The 413 case stubs that env var.
+ * The limit comes from Settings → Uploads (served with the storage probe,
+ * default 1 GB); `AGENT_HOME_UPLOAD_MAX_BYTES` is the legacy override.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { POST } from "@/app/api/chat/upload/route";
+import { DELETE, POST } from "@/app/api/chat/upload/route";
 import type { Principal } from "@/types";
 
 const getPrincipal = vi.fn<() => Promise<Principal | null>>();
-const uploadChatMedia = vi.fn(
+const uploadChatMediaStream = vi.fn(
   async (
     _principal: Principal,
     sessionId: string,
-    file: { name: string; contentType: string; bytes: ArrayBuffer },
-  ) => ({
-    path: `media/${sessionId || "new"}/${file.name}`,
-    name: file.name,
-    content_type: file.contentType,
-    size: file.bytes.byteLength,
-  }),
+    file: { name: string; contentType: string; body: ReadableStream<Uint8Array> },
+  ) => {
+    await new Response(file.body).arrayBuffer();
+    return {
+      path: `mia/${sessionId || "new"}/${file.name}`,
+      name: file.name,
+      content_type: file.contentType,
+    };
+  },
 );
-const registerFile = vi.fn(async () => ({ ok: true }));
-const uploadStorage = vi.fn<() => Promise<{ free_bytes: number | null }>>(
-  async () => ({ free_bytes: null }),
+const removeChatMedia = vi.fn(async (_p: Principal, path: string) => path.startsWith("mia/"));
+const registerFile = vi.fn<(payload: { sha256: string }) => Promise<{ ok: boolean }>>(
+  async () => ({ ok: true }),
 );
+const uploadStorage = vi.fn<
+  () => Promise<{ free_bytes: number | null; max_bytes?: number | null }>
+>(async () => ({ free_bytes: null }));
 
 vi.mock("@/lib/auth/principal", () => ({
   getPrincipal: () => getPrincipal(),
@@ -34,8 +39,10 @@ vi.mock("@/lib/auth/principal", () => ({
 vi.mock("@/lib/env", () => ({ mediaBucket: () => "hermes-media" }));
 vi.mock("@/lib/supabase/storage", () => ({
   storageAvailable: () => true,
-  uploadChatMedia: (...args: unknown[]) =>
-    (uploadChatMedia as (...a: unknown[]) => unknown)(...args),
+  uploadChatMediaStream: (...args: unknown[]) =>
+    (uploadChatMediaStream as (...a: unknown[]) => unknown)(...args),
+  removeChatMedia: (...args: unknown[]) =>
+    (removeChatMedia as (...a: unknown[]) => unknown)(...args),
 }));
 
 const principal: Principal = {
@@ -46,23 +53,40 @@ const principal: Principal = {
   is_owner: false,
 };
 
-function post(file: File): Promise<Response> {
+const URL_ = "http://home.test/api/chat/upload";
+
+function post(file: File, headers: Record<string, string> = {}): Promise<Response> {
   const form = new FormData();
   form.set("file", file);
   form.set("sessionId", "s1");
-  return POST(
-    new Request("http://home.test/api/chat/upload", {
-      method: "POST",
-      body: form,
-    }),
-  ) as unknown as Promise<Response>;
+  return POST(new Request(URL_, { method: "POST", body: form, headers })) as unknown as Promise<Response>;
 }
+
+let warn: ReturnType<typeof vi.spyOn>;
 
 describe("POST /api/chat/upload", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
     getPrincipal.mockResolvedValue(principal);
+    uploadStorage.mockResolvedValue({ free_bytes: null });
+    warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => warn.mockRestore());
+
+  it("uploads a sub-1 MB file and registers its SHA-256", async () => {
+    const bytes = new Uint8Array(300 * 1024).fill(7);
+    const res = await post(new File([bytes], "shot.png", { type: "image/png" }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      path: "mia/s1/shot.png",
+      name: "shot.png",
+      content_type: "image/png",
+      size: bytes.byteLength,
+    });
+    const digest = Buffer.from(await crypto.subtle.digest("SHA-256", bytes)).toString("hex");
+    expect(registerFile).toHaveBeenCalledWith(expect.objectContaining({ sha256: digest }));
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("returns 401 when unauthenticated", async () => {
@@ -71,73 +95,129 @@ describe("POST /api/chat/upload", () => {
     expect(res.status).toBe(401);
   });
 
-  it("refuses a file bigger than the free upload disk space, in plain words", async () => {
+  it("refuses a request from a local app page before reading the body (FG-33 guard, off the middleware)", async () => {
+    const res = await post(new File([new Uint8Array(8)], "a.txt"), {
+      host: "home.test",
+      referer: "http://home.test/apps/notes/",
+      "sec-fetch-site": "same-origin",
+    });
+    expect(res.status).toBe(403);
+    expect(uploadChatMediaStream).not.toHaveBeenCalled();
+  });
+
+  it("refuses a file above the configured limit with 413", async () => {
+    uploadStorage.mockResolvedValue({ free_bytes: null, max_bytes: 1024 * 1024 });
+    const res = await post(new File([new Uint8Array(1024 * 1024 + 1)], "big.bin"));
+    expect(res.status).toBe(413);
+    expect(uploadChatMediaStream).not.toHaveBeenCalled();
+    expect(((await res.json()) as { detail: string }).detail).toMatch(/1 MB upload limit/);
+  });
+
+  it("defaults to a 1 GB limit (refused from Content-Length, body unread)", async () => {
+    const formData = vi.fn();
+    const req = new Request(URL_, {
+      method: "POST",
+      headers: { "content-length": String(1024 ** 3 + 1024 * 1024) },
+    });
+    Object.defineProperty(req, "formData", { value: formData });
+    const res = (await POST(req)) as unknown as Response;
+    expect(res.status).toBe(413);
+    expect(((await res.json()) as { detail: string }).detail).toMatch(/1 GB upload limit/);
+    expect(formData).not.toHaveBeenCalled();
+  });
+
+  it("lets the legacy env override win over the saved limit", async () => {
+    vi.stubEnv("AGENT_HOME_UPLOAD_MAX_BYTES", "100");
+    uploadStorage.mockResolvedValue({ free_bytes: null, max_bytes: 1024 ** 3 });
+    const res = await post(new File([new Uint8Array(101)], "a.bin"));
+    expect(res.status).toBe(413);
+  });
+
+  it("accepts a file above the old 10 MB middleware cap", async () => {
+    const res = await post(new File([new Uint8Array(11 * 1024 * 1024)], "big.bin"));
+    expect(res.status).toBe(200);
+    expect(uploadChatMediaStream).toHaveBeenCalledOnce();
+  });
+
+  it("answers an unreadable body with invalid_form and a human detail, and logs it", async () => {
+    const res = (await POST(
+      new Request(URL_, {
+        method: "POST",
+        body: "--x\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.png\"\r\n\r\nabc",
+        headers: { "content-type": "multipart/form-data; boundary=x" },
+      }),
+    )) as unknown as Response;
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; detail: string };
+    expect(body.error).toBe("invalid_form");
+    expect(body.detail).toMatch(/incomplete or malformed/);
+    expect(warn).toHaveBeenCalledOnce();
+    const line = String(warn.mock.calls[0][0]);
+    expect(line).toMatch(/status=400 error=invalid_form/);
+    expect(line).toMatch(/content_type=multipart\/form-data /);
+    expect(line).not.toMatch(/boundary|abc/);
+  });
+
+  it("returns 502 with the storage error when the upload to Storage fails", async () => {
+    uploadChatMediaStream.mockRejectedValueOnce(new Error("agent-home: media upload failed — boom"));
+    const res = await post(new File([new Uint8Array(512)], "a.png", { type: "image/png" }));
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({
+      error: "upload_failed",
+      detail: "agent-home: media upload failed — boom",
+    });
+    expect(String(warn.mock.calls[0][0])).toMatch(
+      /status=502 error=upload_failed .*file_size=512 file_type=image\/png/,
+    );
+  });
+
+  it("still succeeds when registry registration fails (best effort)", async () => {
+    registerFile.mockRejectedValueOnce(new Error("registry down"));
+    const res = await post(new File([new Uint8Array(512)], "a.png"));
+    expect(res.status).toBe(200);
+  });
+
+  it("refuses a file bigger than the free upload disk space with 507, in plain words", async () => {
     uploadStorage.mockResolvedValue({ free_bytes: 1024 });
     const res = await post(new File([new Uint8Array(4096)], "big.bin"));
     expect(res.status).toBe(507);
     const body = (await res.json()) as { error: string; detail: string };
     expect(body.error).toBe("insufficient_storage");
-    expect(body.detail).toMatch(/Not enough storage space on the server/);
-    expect(uploadChatMedia).not.toHaveBeenCalled();
+    expect(body.detail).toMatch(/Not enough storage space/);
+    expect(uploadChatMediaStream).not.toHaveBeenCalled();
   });
 
-  it("refuses from Content-Length before reading the body", async () => {
-    uploadStorage.mockResolvedValue({ free_bytes: 1024 });
-    const formData = vi.fn();
-    const req = {
-      headers: new Headers({ "content-length": String(10 * 1024 * 1024) }),
-      formData,
-    } as unknown as Request;
-    const res = (await POST(req)) as unknown as Response;
-    expect(res.status).toBe(507);
-    expect(formData).not.toHaveBeenCalled();
-  });
-
-  it("uploads when free space fits the file", async () => {
-    uploadStorage.mockResolvedValue({ free_bytes: 10 * 1024 * 1024 });
-    const res = await post(new File([new Uint8Array(4096)], "ok.bin"));
-    expect(res.status).toBe(200);
-  });
-
-  it("uploads when free space cannot be read (never blocks a working box)", async () => {
+  it("uploads when the storage probe cannot be read (never blocks a working box)", async () => {
     uploadStorage.mockRejectedValue(new Error("backend down"));
     const res = await post(new File([new Uint8Array(4096)], "ok.bin"));
     expect(res.status).toBe(200);
   });
+});
 
-  it("accepts a file above the old 10 MB cap", async () => {
-    const elevenMb = new File(
-      [new Uint8Array(11 * 1024 * 1024)],
-      "big.bin",
-      { type: "application/octet-stream" },
-    );
-    const res = await post(elevenMb);
-    expect(res.status).toBe(200);
-    expect(uploadChatMedia).toHaveBeenCalledOnce();
+describe("DELETE /api/chat/upload", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getPrincipal.mockResolvedValue(principal);
   });
 
-  it("is unlimited by default", async () => {
-    const big = new File(
-      [new Uint8Array(101 * 1024 * 1024)],
-      "huge.bin",
-      { type: "application/octet-stream" },
-    );
-    const res = await post(big);
+  const del = (body: unknown) =>
+    DELETE(
+      new Request(URL_, { method: "DELETE", body: JSON.stringify(body) }),
+    ) as unknown as Promise<Response>;
+
+  it("deletes the caller's own object", async () => {
+    const res = await del({ path: "mia/s1/a.png" });
     expect(res.status).toBe(200);
-    expect(uploadChatMedia).toHaveBeenCalledOnce();
+    expect(removeChatMedia).toHaveBeenCalledWith(principal, "mia/s1/a.png");
   });
 
-  it("refuses a file above a configured cap with 413", async () => {
-    vi.stubEnv("AGENT_HOME_UPLOAD_MAX_BYTES", "104857600");
-    const oversize = new File(
-      [new Uint8Array(100 * 1024 * 1024 + 1)],
-      "huge.bin",
-      { type: "application/octet-stream" },
-    );
-    const res = await post(oversize);
-    expect(res.status).toBe(413);
-    expect(uploadChatMedia).not.toHaveBeenCalled();
-    const body = (await res.json()) as { detail?: string };
-    expect(body.detail).toMatch(/100 MB/);
+  it("does not delete another principal's object", async () => {
+    expect((await del({ path: "bob/s1/a.png" })).status).toBe(404);
+  });
+
+  it("returns 401 when unauthenticated", async () => {
+    getPrincipal.mockResolvedValue(null);
+    expect((await del({ path: "mia/s1/a.png" })).status).toBe(401);
+    expect(removeChatMedia).not.toHaveBeenCalled();
   });
 });

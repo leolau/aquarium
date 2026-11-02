@@ -61,8 +61,9 @@ vi.mock("@/lib/supabase/storage", () => ({
       .replace(/\.{2,}/g, "_")
       .replace(/^[._]+|[._]+$/g, "") || "file",
 }));
-vi.mock("@/lib/chat/upload-limit", () => ({
-  uploadMaxBytes: () => 64,
+vi.mock("@/lib/chat/upload-limit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/chat/upload-limit")>()),
+  resolveUploadMaxBytes: () => 64,
   uploadTooLargeDetail: (n: number) => `File exceeds the ${n} B limit.`,
 }));
 

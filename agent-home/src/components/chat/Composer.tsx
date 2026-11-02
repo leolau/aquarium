@@ -5,8 +5,13 @@ import { ActionButton } from "@/components/ui/ActionButton";
 import { useAction } from "@/lib/use-action";
 
 import { takePendingAttachments } from "@/lib/chat/pending-attachments";
-import { UPLOAD_WARN_BYTES } from "@/lib/chat/upload-limit";
+import { parseJsonObject, uploadFailureMessage } from "@/lib/chat/upload-error";
+import { formatUploadLimit, UPLOAD_WARN_BYTES } from "@/lib/chat/upload-limit";
+import { uploadLimitBytes } from "@/lib/chat/upload-limit-client";
 import type { ChatAttachment } from "@/types";
+
+/** Smallest limit Settings → Uploads allows: smaller files skip the lookup. */
+const MIN_LIMIT_BYTES = 1024 * 1024;
 
 /**
  * The message composer: an auto-clearing text field, an optional attach button
@@ -88,8 +93,19 @@ export function Composer({
   // then a click) before the cleared box renders cannot send the text twice.
   const { run: sendOnce } = useAction(submit);
 
-  function pickFiles(files: File[]) {
+  async function pickFiles(files: File[]) {
     setUploadError(null);
+    if (files.some((f) => f.size > MIN_LIMIT_BYTES)) {
+      const limit = await uploadLimitBytes();
+      const tooBig = limit === null ? [] : files.filter((f) => f.size > limit);
+      if (limit !== null && tooBig.length > 0) {
+        setUploadError(
+          `${tooBig.map((f) => f.name).join(", ")}: over the ${formatUploadLimit(limit)} upload limit.`,
+        );
+        if (fileRef.current) fileRef.current.value = "";
+        return;
+      }
+    }
     const oversize = files.filter((f) => f.size > UPLOAD_WARN_BYTES);
     if (oversize.length > 0) {
       // Advisory gate: the user confirms oversized files rather than being
@@ -109,10 +125,18 @@ export function Composer({
         const form = new FormData();
         form.set("file", file);
         if (sessionId) form.set("sessionId", sessionId);
-        const res = await fetch("/api/chat/upload", { method: "POST", body: form });
-        const body = (await res.json()) as (ChatAttachment & { detail?: string });
-        if (!res.ok) {
-          throw new Error(`${file.name}: ${body.detail ?? "Upload failed."}`);
+        let res: Response;
+        let text: string;
+        try {
+          res = await fetch("/api/chat/upload", { method: "POST", body: form });
+          text = await res.text();
+        } catch (err) {
+          const why = err instanceof Error && err.message ? ` (${err.message})` : "";
+          throw new Error(`${file.name}: Upload failed: the server could not be reached${why}.`);
+        }
+        const body = res.ok ? parseJsonObject<ChatAttachment>(text) : null;
+        if (!res.ok || !body?.path) {
+          throw new Error(uploadFailureMessage(file.name, res.status, text));
         }
         setAttachments((prev) => [...prev, body]);
       }
@@ -200,7 +224,7 @@ export function Composer({
               className="hidden"
               onChange={(e) => {
                 const files = Array.from(e.target.files ?? []);
-                if (files.length > 0) pickFiles(files);
+                if (files.length > 0) void pickFiles(files);
               }}
             />
             <button

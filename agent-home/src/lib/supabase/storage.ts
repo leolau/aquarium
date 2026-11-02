@@ -139,6 +139,26 @@ export async function uploadChatMediaStream(
 }
 
 /**
+ * Delete one of the principal's own media objects (an attachment that was
+ * uploaded but never sent). Refuses any path outside the principal's prefix.
+ */
+export async function removeChatMedia(principal: Principal, path: string): Promise<boolean> {
+  if (!canReadMediaPath(principal, path)) return false;
+  const key = supabaseStorageKey();
+  if (!key) {
+    throw new Error("agent-home: Supabase Storage is not configured.");
+  }
+  const client = createClient(supabaseUrl(), key, {
+    auth: { persistSession: false },
+  });
+  const { error } = await client.storage.from(mediaBucket()).remove([path]);
+  if (error) {
+    throw new Error(`agent-home: media delete failed — ${error.message}`);
+  }
+  return true;
+}
+
+/**
  * Whether `path` is an object key this principal may read.
  *
  * Fail-closed: the path must be a plain, relative, two-or-more-segment key

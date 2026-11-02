@@ -2868,6 +2868,16 @@ export interface UploadStorageStatus {
   /** Warn below this many free bytes (config.yaml `capacity.upload_min_free_*`). */
   min_free_bytes: number | null;
   low: boolean;
+  /** Upload size limit (config.yaml `agent_home.uploads.max_bytes`, default 1 GB). */
+  max_bytes?: number | null;
+}
+
+/** `GET/PUT /api/agent-home/uploads` — Settings → Uploads. */
+export interface UploadSettings {
+  max_bytes: number;
+  default_max_bytes: number;
+  min_max_bytes: number;
+  max_max_bytes: number;
 }
 
 /** Seminar survey answers, as `validate_answers` in `hermes_cli/seminar_survey.py` accepts them. */

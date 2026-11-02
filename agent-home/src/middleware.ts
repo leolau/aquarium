@@ -6,34 +6,21 @@
  * Settings → Menu: pages and BFF routes of an app hidden from the caller's
  * role are refused here — pages render `/not-available`, APIs answer 403
  * (mapping: `lib/nav/menu-access.ts`).
+ *
+ * Upload routes (`BODY_ROUTES` in `lib/http/body-route-guard.ts`) are not
+ * matched: running middleware on a streaming request body corrupts it in
+ * Next 15.5, so those handlers call `guardBodyRoute` for the same checks.
  */
 import { NextResponse, type NextRequest } from "next/server";
 
 import { guardAgentHomeRequest } from "@/lib/apps/guard";
-import { deserializeSession, sessionCookieValue } from "@/lib/auth/session";
-import { getHiddenAppsForMiddleware } from "@/lib/nav/hidden-apps";
-import { blockedAppForPath, NOT_AVAILABLE_PATH, ROLE_GATED_APPS } from "@/lib/nav/menu-access";
+import { notAvailableForRole, roleBlockedApp } from "@/lib/http/body-route-guard";
+import { NOT_AVAILABLE_PATH } from "@/lib/nav/menu-access";
 
 async function roleGate(request: NextRequest): Promise<NextResponse | null> {
-  const { pathname } = request.nextUrl;
-  // Most requests touch no hideable app: skip the session and the lookup.
-  if (!blockedAppForPath(pathname, ROLE_GATED_APPS)) return null;
-  let session;
-  try {
-    session = deserializeSession(sessionCookieValue(request.cookies));
-  } catch {
-    return null;
-  }
-  if (!session) return null;
-  const hidden = await getHiddenAppsForMiddleware(session.principal, session.hermesToken);
-  const blocked = blockedAppForPath(pathname, hidden);
+  const blocked = await roleBlockedApp(request.nextUrl.pathname, request.cookies);
   if (!blocked) return null;
-  if (blocked.kind === "api") {
-    return NextResponse.json(
-      { error: "not_available_for_role", app: blocked.app, detail: "This isn't available for your role." },
-      { status: 403 },
-    );
-  }
+  if (blocked.kind === "api") return notAvailableForRole(blocked.app);
   return NextResponse.rewrite(
     new URL(`${NOT_AVAILABLE_PATH}?app=${encodeURIComponent(blocked.app)}`, request.url),
   );
@@ -50,5 +37,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
 export const config = {
   // Node runtime: an edge bundle would also pull instrumentation.ts (undici).
   runtime: "nodejs",
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|api/chat/upload/?$|api/files/import/?$|api/projects/[^/]+/files/upload/?$).*)",
+  ],
 };

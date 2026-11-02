@@ -15807,7 +15807,49 @@ async def capacity_upload_storage_endpoint(request: Request):
         config = load_config()
     except Exception:
         config = {}
-    return collect_upload_storage(config).as_dict()
+    body = collect_upload_storage(config).as_dict()
+    body["max_bytes"] = _agent_home_upload_settings()["max_bytes"]
+    return body
+
+
+def _agent_home_upload_settings() -> dict:
+    """Settings → Uploads, read from the default profile (like the menu)."""
+    from hermes_cli.agent_home_uploads import upload_settings
+
+    try:
+        with _profile_scope("default"):
+            return upload_settings(load_config())
+    except Exception:
+        return upload_settings({})
+
+
+class AgentHomeUploadsUpdate(BaseModel):
+    max_bytes: int
+
+
+@app.get("/api/agent-home/uploads")
+async def get_agent_home_uploads(request: Request):
+    """The upload size limit (default 1 GB). Any signed-in caller may read it."""
+    await _comms_resolve_principal(request)
+    return _agent_home_upload_settings()
+
+
+@app.put("/api/agent-home/uploads")
+async def update_agent_home_uploads(body: AgentHomeUploadsUpdate, request: Request):
+    """Set ``agent_home.uploads.max_bytes``. Owner and admin only; 400 out of range."""
+    from hermes_cli.agent_home_uploads import set_upload_max_bytes, upload_settings
+
+    await _require_role_limits_editor(
+        request, detail="Only the owner or an admin can change the upload limit."
+    )
+    with _profile_scope("default"):
+        config = load_config()
+        try:
+            set_upload_max_bytes(config, body.max_bytes)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        save_config(config)
+    return upload_settings(config)
 
 
 # ---------------------------------------------------------------------------

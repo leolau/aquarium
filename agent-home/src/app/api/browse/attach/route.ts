@@ -16,8 +16,7 @@ import {
   placeAndPath,
   unauthenticated,
 } from "@/lib/browse/bff";
-import { uploadMaxBytes, uploadTooLargeDetail } from "@/lib/chat/upload-limit";
-import { uploadSpaceRefusal } from "@/lib/chat/upload-space";
+import { uploadPolicy, uploadRefusal } from "@/lib/chat/upload-space";
 import { mediaBucket } from "@/lib/env";
 import { storageAvailable, uploadChatMedia } from "@/lib/supabase/storage";
 
@@ -36,18 +35,10 @@ export async function POST(req: Request): Promise<NextResponse> {
     const client = await apiClientForRequest();
     const upstream = await client.browseFile(target.place, target.path);
     const size = Number(upstream.headers.get("content-length") ?? "0");
-    const maxBytes = uploadMaxBytes();
-    if (size > maxBytes) {
+    const refused = uploadRefusal(size, await uploadPolicy());
+    if (refused) {
       await upstream.body?.cancel();
-      return NextResponse.json(
-        { error: "too_large", detail: uploadTooLargeDetail(maxBytes) },
-        { status: 413 },
-      );
-    }
-    const noSpace = await uploadSpaceRefusal(size);
-    if (noSpace) {
-      await upstream.body?.cancel();
-      return noSpace;
+      return refused;
     }
     const bytes = await upstream.arrayBuffer();
     const attachment = await uploadChatMedia(principal, "", {

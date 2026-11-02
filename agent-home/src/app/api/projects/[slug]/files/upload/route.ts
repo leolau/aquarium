@@ -14,14 +14,22 @@
  * in flight, or for a while after it succeeded, the same key from the same
  * principal and project replays that answer instead of storing the bytes a
  * second time.
+ *
+ * Memory and limits as `/api/chat/upload`: `formData()` buffers the body,
+ * the bytes then stream to Storage; the limit is Settings → Uploads. Not
+ * matched by the middleware (`lib/http/body-route-guard.ts`), so the handler
+ * runs `guardBodyRoute` first.
  */
 import { NextResponse } from "next/server";
 
 import { apiClientForRequest, getPrincipal } from "@/lib/auth/principal";
-import { uploadMaxBytes, uploadTooLargeDetail } from "@/lib/chat/upload-limit";
-import { MULTIPART_SLACK_BYTES, uploadSpaceRefusal } from "@/lib/chat/upload-space";
+import { hashingStream } from "@/lib/chat/hashing-stream";
+import { INVALID_FORM_DETAIL } from "@/lib/chat/upload-error";
+import { logUploadFailure, type UploadFailureInfo } from "@/lib/chat/upload-log";
+import { MULTIPART_SLACK_BYTES, uploadPolicy, uploadRefusal } from "@/lib/chat/upload-space";
 import { mediaBucket } from "@/lib/env";
-import { storageAvailable, uploadChatMedia } from "@/lib/supabase/storage";
+import { guardBodyRoute } from "@/lib/http/body-route-guard";
+import { storageAvailable, uploadChatMediaStream } from "@/lib/supabase/storage";
 import { invalidRequest, withPrincipal } from "../../../hermes-bridge";
 
 const UPLOAD_LINK_KINDS = new Set(["file", "sample", "reference"]);
@@ -78,16 +86,22 @@ export function __resetUploadReplays() {
   replays.clear();
 }
 
-async function digest(bytes: ArrayBuffer): Promise<string> {
-  const hash = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(hash))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
 export async function POST(
   request: Request,
+  ctx: { params: Promise<{ slug: string }> },
+): Promise<NextResponse> {
+  const denied = await guardBodyRoute(request);
+  if (denied) return denied;
+  const info: UploadFailureInfo = {};
+  const res = await upload(request, ctx, info);
+  await logUploadFailure("/api/projects/[slug]/files/upload", request, res, info);
+  return res;
+}
+
+async function upload(
+  request: Request,
   { params }: { params: Promise<{ slug: string }> },
+  info: UploadFailureInfo,
 ): Promise<NextResponse> {
   const { slug } = await params;
   const principal = await getPrincipal();
@@ -102,7 +116,7 @@ export async function POST(
   }
 
   const idemKey = request.headers.get("idempotency-key")?.trim();
-  if (!idemKey) return withUploadSlot(() => handleUpload(request, principal, slug));
+  if (!idemKey) return withUploadSlot(() => handleUpload(request, principal, slug, info));
 
   const replayKey = `${principal.user_id}\u0000${slug}\u0000${idemKey}`;
   const now = Date.now();
@@ -112,7 +126,7 @@ export async function POST(
     const { status, body } = await existing.answer;
     return NextResponse.json(body, { status });
   }
-  const answer = withUploadSlot(() => handleUpload(request, principal, slug)).then(async (res) => ({
+  const answer = withUploadSlot(() => handleUpload(request, principal, slug, info)).then(async (res) => ({
     status: res.status,
     body: await res.clone().json().catch(() => ({})),
   }));
@@ -127,11 +141,13 @@ async function handleUpload(
   request: Request,
   principal: NonNullable<Awaited<ReturnType<typeof getPrincipal>>>,
   slug: string,
+  info: UploadFailureInfo,
 ): Promise<NextResponse> {
   // Refuse before reading the body: formData() buffers the whole upload.
+  const policy = await uploadPolicy();
   const length = Number(request.headers.get("content-length") ?? "0");
   if (Number.isFinite(length) && length > MULTIPART_SLACK_BYTES) {
-    const early = await uploadSpaceRefusal(length - MULTIPART_SLACK_BYTES);
+    const early = uploadRefusal(length - MULTIPART_SLACK_BYTES, policy);
     if (early) return early;
   }
 
@@ -139,21 +155,16 @@ async function handleUpload(
   try {
     form = await request.formData();
   } catch {
-    return NextResponse.json({ error: "invalid_form" }, { status: 400 });
+    return NextResponse.json({ error: "invalid_form", detail: INVALID_FORM_DETAIL }, { status: 400 });
   }
   const file = form.get("file");
   if (!(file instanceof File)) {
     return invalidRequest("A file field is required.");
   }
-  const maxBytes = uploadMaxBytes();
-  if (file.size > maxBytes) {
-    return NextResponse.json(
-      { error: "too_large", detail: uploadTooLargeDetail(maxBytes) },
-      { status: 413 },
-    );
-  }
-  const noSpace = await uploadSpaceRefusal(file.size);
-  if (noSpace) return noSpace;
+  info.fileSize = file.size;
+  info.fileType = file.type;
+  const refused = uploadRefusal(file.size, policy);
+  if (refused) return refused;
 
   const kind = String(form.get("kind") ?? "file").trim() || "file";
   if (!UPLOAD_LINK_KINDS.has(kind)) {
@@ -164,13 +175,14 @@ async function handleUpload(
     (form.get("label") as string | null)?.trim() || file.name || undefined;
 
   try {
-    const bytes = await file.arrayBuffer();
-    const attachment = await uploadChatMedia(principal, slug, {
+    const hashed = hashingStream(file.stream());
+    const stored = await uploadChatMediaStream(principal, slug, {
       name: file.name || "upload",
       contentType: file.type || "application/octet-stream",
-      bytes,
+      body: hashed.stream,
     });
-    const sha256 = await digest(bytes);
+    const attachment = { ...stored, size: file.size };
+    const sha256 = hashed.digest();
 
     // Register + link under the bridged principal — best-effort registration
     // (the bytes are already in the bucket), but the link must succeed or the
