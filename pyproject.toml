@@ -204,6 +204,10 @@ vision = []
 # PDF/Excel parse-read-update-create on the box (skills/productivity/office-documents).
 # Same pins as the ``documents.*`` entries in tools/lazy_deps.py.
 documents = ["pypdf==5.1.0", "openpyxl==3.1.5", "reportlab==5.0.1"]
+# Microsoft SQL Server (Settings -> In&Out -> SQL Server databases, the
+# ``mssql_query`` tool): pure-Python TDS driver + pyOpenSSL for its TLS.
+# pyOpenSSL 26.2 is the newest release that accepts the cryptography pin above.
+mssql = ["python-tds==1.17.1", "pyOpenSSL==26.2.0"]
 # CVE-2026-48710 (BadHost): Starlette is pulled transitively by mcp's
 # sse-starlette / HTTP-SSE stack (and by fastapi in the `web` extra). Before
 # 1.0.1, a malformed Host header makes `request.url.path` desync from the path

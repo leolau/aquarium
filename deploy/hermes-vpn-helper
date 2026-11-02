@@ -17,6 +17,8 @@ local/docker networks are never touched.
     hermes-vpn-helper umount <folder_slug>
     hermes-vpn-helper fstatus <folder_slug>
     hermes-vpn-helper fcheck <folder_slug>   # list the mounted folder, count files
+    hermes-vpn-helper route <spec.json>    # host route: reach one server (e.g. SQL Server) through a connected VPN
+    hermes-vpn-helper unroute <spec.json>
 
 Network folders (Folder Bridge) mount at ``MOUNT_ROOT/net-<folder_slug>``; a
 VPN slug may therefore never start with ``net-``. A folder mount belongs to
@@ -24,6 +26,9 @@ the VPN it was mounted through: ``down``/idle disconnect unmount it too. A VPN
 needs no routes or share of its own: mounting a folder whose file server the
 tunnel doesn't reach yet adds ``<server_ip>/32`` on the tunnel (recorded in
 the VPN state as ``folder_routes``) and the last folder using it removes it.
+``route`` does the same for one server another feature talks to (a SQL
+Server): the spec names a ``user`` (``host_routes``) instead of a folder, and
+a ``/32`` used by folders and hosts alike stays until its last user is gone.
 
 Output is one JSON object on stdout. Exit 0 = handled (a failed connection is
 ``state: error``, not an exit code), 2 = rejected input, 1 = internal failure.
@@ -92,6 +97,7 @@ SHARE_RE = re.compile(r"^[A-Za-z0-9 ._$-]{1,80}$")
 SUBPATH_RE = re.compile(r'^[^/\\\x00-\x1f\x7f:*?"<>|,]{1,255}$')
 SPEC_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+ROUTE_USER_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,80}$")
 
 SPEC_KEYS = {
     "slug", "host", "port", "username", "password", "realm", "trusted_cert",
@@ -103,6 +109,11 @@ MOUNT_SPEC_KEYS = {
     "vpn_slug", "folder_slug", "share_path", "share_username", "share_password",
     "share_domain",
 }
+ROUTE_SPEC_KEYS = {"vpn_slug", "user", "host", "port"}
+#: Bookkeeping buckets of claimed ``/32`` routes in the VPN state.
+ROUTE_BUCKETS = ("folder_routes", "host_routes")
+MAX_HOST_ROUTE_USERS = 64
+PROBE_TIMEOUT = 5.0
 FOLDER_PREFIX = "net-"
 
 #: Never routed through a VPN, whatever the box's tables say.
@@ -306,6 +317,28 @@ def validate_mount_spec(raw):
         "share_password": _plain(raw.get("share_password"), "share_password", required=False),
         "share_domain": _account(raw.get("share_domain"), "share_domain"),
     }
+
+
+def validate_route_spec(raw, *, need_host=True):
+    """``route``/``unroute`` spec: which VPN, who uses the route, which server."""
+    if not isinstance(raw, dict):
+        raise InputError("spec must be a JSON object")
+    unknown = sorted(set(raw) - ROUTE_SPEC_KEYS)
+    if unknown:
+        raise InputError(f"spec has unknown fields: {', '.join(unknown)}")
+    user = raw.get("user")
+    if not isinstance(user, str) or not ROUTE_USER_RE.fullmatch(user):
+        raise InputError("user must be lowercase letters, digits and ._-")
+    spec = {"vpn_slug": check_vpn_slug(raw.get("vpn_slug")), "user": user,
+            "host": None, "port": None}
+    if need_host or raw.get("host"):
+        spec["host"] = check_host(raw.get("host"))
+    port = raw.get("port")
+    if port is not None:
+        if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+            raise InputError("port must be an integer 1-65535")
+        spec["port"] = port
+    return spec
 
 
 def caller_uid():
@@ -1023,43 +1056,66 @@ def add_tunnel_route(state, cidr, iface):
     return None
 
 
-def claim_folder_route(state, folder, share_ip, iface):
-    """Make the tunnel reach ``share_ip`` for ``folder``; error or None.
+def _claimed(state, bucket):
+    owned = state.get(bucket)
+    return owned if isinstance(owned, dict) else {}
+
+
+def _route_users(state, cidr):
+    """Every folder/host user of the claimed route ``cidr`` (all buckets)."""
+    users = []
+    for bucket in ROUTE_BUCKETS:
+        users += [u for u in _claimed(state, bucket).get(cidr) or [] if isinstance(u, str)]
+    return users
+
+
+def _own_routes(state):
+    """The VPN's own routes: everything on the tunnel nobody claimed."""
+    claimed = {c for bucket in ROUTE_BUCKETS for c in _claimed(state, bucket)}
+    return [r for r in state.get("routes") or [] if isinstance(r, str) and r not in claimed]
+
+
+def claim_route(state, bucket, user, ip, iface):
+    """Make the tunnel reach ``ip`` for ``user``; error or None.
 
     Covered by the VPN's own routes: nothing to do. Otherwise ``<ip>/32`` is
-    added (or shared with other folders) and ``folder`` recorded as a user.
+    added (or shared with other folders/hosts) and ``user`` recorded in
+    ``state[bucket]``.
     """
-    cidr = f"{share_ip}/32"
-    owned = state.setdefault("folder_routes", {})
-    if cidr in owned:
-        users = [u for u in owned[cidr] if isinstance(u, str)]
-        owned[cidr] = sorted(set(users) | {folder})
+    cidr = f"{ip}/32"
+    owned = state.setdefault(bucket, {})
+    if cidr in owned or _route_users(state, cidr):
+        users = [u for u in owned.get(cidr) or [] if isinstance(u, str)]
+        owned[cidr] = sorted(set(users) | {user})
         return None
-    if _covered(share_ip, [r for r in state.get("routes") or [] if isinstance(r, str)]):
+    if _covered(ip, _own_routes(state)):
         return None
     error = add_tunnel_route(state, cidr, iface)
     if error:
         return error
-    owned[cidr] = [folder]
+    owned[cidr] = [user]
     return None
 
 
-def release_folder_routes(state, folder, iface, *, keep=None):
-    """Drop ``folder`` from every folder route but ``keep``; a route no
-    folder uses any more comes off the tunnel. Returns True if state changed."""
-    owned = state.get("folder_routes")
+def release_routes(state, bucket, user, iface, *, keep=None):
+    """Drop ``user`` from every route in ``state[bucket]`` but ``keep``; a
+    route no folder or host uses any more comes off the tunnel. Returns True
+    if state changed."""
+    owned = state.get(bucket)
     if not isinstance(owned, dict):
         return False
     changed = False
     for cidr, users in list(owned.items()):
-        if cidr == keep or not isinstance(users, list) or folder not in users:
+        if cidr == keep or not isinstance(users, list) or user not in users:
             continue
         changed = True
-        rest = [u for u in users if u != folder]
+        rest = [u for u in users if u != user]
         if rest:
             owned[cidr] = rest
             continue
         del owned[cidr]
+        if _route_users(state, cidr):
+            continue
         state["routes"] = [r for r in state.get("routes") or [] if r != cidr]
         try:
             net = ipaddress.IPv4Network(cidr)
@@ -1069,6 +1125,14 @@ def release_folder_routes(state, folder, iface, *, keep=None):
             with contextlib.suppress(HelperError):
                 run([bin_path("ip"), "-4", "route", "del", str(net), "dev", iface], timeout=10)
     return changed
+
+
+def claim_folder_route(state, folder, share_ip, iface):
+    return claim_route(state, "folder_routes", folder, share_ip, iface)
+
+
+def release_folder_routes(state, folder, iface, *, keep=None):
+    return release_routes(state, "folder_routes", folder, iface, keep=keep)
 
 
 def retry_vpn_share(slug, spec, state):
@@ -1490,17 +1554,85 @@ def cmd_fcheck(folder_slug):
     return doc
 
 
+# ---------------------------------------------------------------------------
+# Host routes: one server (SQL Server, ...) reached through a connected VPN
+# ---------------------------------------------------------------------------
+
+
+def probe_tcp(ip, port, iface):
+    """True if ``ip:port`` accepts a TCP connection through the tunnel."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.setsockopt(
+            socket.SOL_SOCKET, getattr(socket, "SO_BINDTODEVICE", 25), iface.encode() + b"\0"
+        )
+        sock.settimeout(PROBE_TIMEOUT)
+        sock.connect((ip, port))
+        return True
+    except OSError:
+        return False
+    finally:
+        sock.close()
+
+
+def route_doc(spec, *, ip=None, error=None, reachable=None):
+    return {"vpn_slug": spec["vpn_slug"], "user": spec["user"], "host": spec["host"],
+            "port": spec["port"], "ip": ip, "routed": bool(ip and not error),
+            "reachable": reachable, "error": error}
+
+
+def cmd_route(spec_path):
+    spec = validate_route_spec(read_spec_file(spec_path))
+    vpn_slug, user, host = spec["vpn_slug"], spec["user"], spec["host"]
+    with slug_lock(vpn_slug):
+        if status_doc(vpn_slug)["state"] != "connected":
+            return route_doc(spec, error="VPN is not connected")
+        state = load_state(vpn_slug)
+        iface = state.get("iface") or ""
+        if not IFACE_RE.fullmatch(iface):
+            return route_doc(spec, error="VPN is not connected")
+        ip = lookup_share_ip(host, parse_log(read_log(vpn_slug)), iface)
+        if not ip:
+            release_routes(state, "host_routes", user, iface)
+            save_state(vpn_slug, state)
+            return route_doc(spec, error=f"Can't find the server {host} (not in public or VPN DNS)")
+        users = {u for us in _claimed(state, "host_routes").values()
+                 if isinstance(us, list) for u in us}
+        if user not in users and len(users) >= MAX_HOST_ROUTE_USERS:
+            return route_doc(spec, error="Too many servers are routed through this VPN")
+        release_routes(state, "host_routes", user, iface, keep=f"{ip}/32")
+        error = claim_route(state, "host_routes", user, ip, iface)
+        state["last_activity"] = now_iso()
+        save_state(vpn_slug, state)
+        if error:
+            return route_doc(spec, error=error)
+    reachable = probe_tcp(ip, spec["port"], iface) if spec["port"] else None
+    return route_doc(spec, ip=ip, reachable=reachable)
+
+
+def cmd_unroute(spec_path):
+    spec = validate_route_spec(read_spec_file(spec_path), need_host=False)
+    vpn_slug = spec["vpn_slug"]
+    with slug_lock(vpn_slug):
+        state = load_state(vpn_slug)
+        if release_routes(state, "host_routes", spec["user"], state.get("iface")):
+            save_state(vpn_slug, state)
+    return route_doc(spec)
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     os.environ["PATH"] = SAFE_PATH
     os.umask(0o077)
     commands = {"up": cmd_up, "down": cmd_down, "status": cmd_status,
                 "check": cmd_check, "idle-check": cmd_idle_check, "mount": cmd_mount,
-                "umount": cmd_umount, "fstatus": cmd_fstatus, "fcheck": cmd_fcheck}
+                "umount": cmd_umount, "fstatus": cmd_fstatus, "fcheck": cmd_fcheck,
+                "route": cmd_route, "unroute": cmd_unroute}
     try:
         if len(argv) != 2 or argv[0] not in commands:
             raise InputError(
-                "usage: hermes-vpn-helper up|mount <spec.json> | down|status|check|idle-check <slug>"
+                "usage: hermes-vpn-helper up|mount|route|unroute <spec.json>"
+                " | down|status|check|idle-check <slug>"
                 " | umount|fstatus|fcheck <folder_slug>"
             )
         if os.geteuid() != 0:

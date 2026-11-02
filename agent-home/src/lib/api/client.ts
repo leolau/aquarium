@@ -100,6 +100,8 @@ import type {
   CredentialEntry,
   EmailMailbox,
   EmailMailboxInput,
+  MssqlConnection,
+  MssqlConnectionInput,
   EmailPollerAccount,
   EmailServerSettings,
   NetworkFolderInput,
@@ -2813,6 +2815,36 @@ export class HermesApiClient {
   async testEmailMailbox(address: string): Promise<{ mailbox: EmailMailbox }> {
     return this.request(
       `/api/email/mailboxes/${encodeURIComponent(address)}/test`,
+      { method: "POST" },
+    );
+  }
+
+  /** The caller's own SQL Server connections (never any password). */
+  async mssqlConnections(): Promise<{ connections: MssqlConnection[]; driver_available: boolean }> {
+    return this.request("/api/mssql/connections");
+  }
+
+  /** Create or replace the caller's connection; an empty password keeps it. */
+  async putMssqlConnection(
+    name: string,
+    body: MssqlConnectionInput,
+  ): Promise<{ connection: MssqlConnection }> {
+    return this.request(`/api/mssql/connections/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      json: body,
+    });
+  }
+
+  async deleteMssqlConnection(name: string): Promise<{ deleted: boolean }> {
+    return this.request(`/api/mssql/connections/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    });
+  }
+
+  /** Sign in with the saved settings and read the server version. */
+  async testMssqlConnection(name: string): Promise<{ connection: MssqlConnection }> {
+    return this.request(
+      `/api/mssql/connections/${encodeURIComponent(name)}/test`,
       { method: "POST" },
     );
   }

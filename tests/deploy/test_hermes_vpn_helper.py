@@ -1392,3 +1392,160 @@ def test_mounts_get_the_hermes_tools_group_when_it_exists(monkeypatch):
     assert helper.mount_group() == "root"
     monkeypatch.setattr(helper, "TOOLS_GROUP", "no-such-group-for-tests")
     assert helper.mount_group() == helper.MOUNT_USER
+
+
+# ---------------------------------------------------------------------------
+# Host routes (route / unroute): one server, e.g. SQL Server, through a VPN
+# ---------------------------------------------------------------------------
+
+
+def route_spec(**over):
+    spec = {"vpn_slug": "office-files", "user": "mssql-abc123", "host": "10.20.1.9", "port": 1433}
+    spec.update(over)
+    return {k: v for k, v in spec.items() if v is not None}
+
+
+def hroute(h, **over):
+    return h.cmd_route(write_spec(h, route_spec(**over), name="spec-route.json"))
+
+
+def hunroute(h, **over):
+    return h.cmd_unroute(write_spec(h, route_spec(**over), name="spec-unroute.json"))
+
+
+@pytest.fixture
+def no_probe(h, monkeypatch):
+    seen = []
+    monkeypatch.setattr(h, "probe_tcp", lambda ip, port, iface: seen.append((ip, port, iface)) or True)
+    return seen
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"user": "Bad User"},
+        {"user": ""},
+        {"user": "x" * 90},
+        {"vpn_slug": "net-folder"},
+        {"host": "127.0.0.1"},
+        {"host": "bad host"},
+        {"port": 0},
+        {"port": "1433"},
+        {"extra": 1},
+    ],
+)
+def test_route_spec_rejected(over):
+    h = load_helper()
+    with pytest.raises(h.InputError):
+        h.validate_route_spec(route_spec(**over))
+
+
+def test_route_needs_connected_vpn(h, no_probe):
+    doc = hroute(h)
+    assert doc["routed"] is False and doc["error"] == "VPN is not connected"
+    assert no_probe == []
+
+
+def test_route_lifecycle_on_a_connection_only_vpn(h, no_probe):
+    connection_only(h)
+    doc = hroute(h)
+    assert doc["routed"] is True and doc["ip"] == "10.20.1.9" and doc["reachable"] is True, doc
+    assert no_probe == [("10.20.1.9", 1433, "ppp0")]
+    assert tunnel_routes(h) == [["10.20.1.9/32", "ppp0"]]
+    assert vpn_state(h)["host_routes"] == {"10.20.1.9/32": ["mssql-abc123"]}
+    hroute(h, user="mssql-def456")
+    assert vpn_state(h)["host_routes"] == {"10.20.1.9/32": ["mssql-abc123", "mssql-def456"]}
+    hunroute(h)
+    assert tunnel_routes(h) == [["10.20.1.9/32", "ppp0"]]
+    hunroute(h, user="mssql-def456", host=None, port=None)
+    assert tunnel_routes(h) == []
+    state = vpn_state(h)
+    assert state["host_routes"] == {} and state["routes"] == []
+
+
+def test_route_resolves_name_through_vpn_dns(h, no_probe):
+    connection_only(h)
+    doc = hroute(h, host="fileserver01")
+    assert doc["ip"] == "10.20.1.5" and doc["routed"] is True, doc
+    assert tunnel_routes(h) == [["10.20.1.5/32", "ppp0"]]
+
+
+def test_route_unknown_server(h, no_probe):
+    connection_only(h)
+    doc = hroute(h, host="nosuchhost")
+    assert doc["routed"] is False and "Can't find the server nosuchhost" in doc["error"]
+    assert not (h.world / "routes.json").exists() or tunnel_routes(h) == []
+
+
+def test_route_inside_vpn_routes_adds_no_route(h, no_probe):
+    up(h)
+    assert hroute(h)["routed"] is True
+    assert tunnel_routes(h) == [["10.20.0.0/16", "ppp0"]]
+    assert vpn_state(h).get("host_routes", {}) == {}
+
+
+def test_route_overlapping_the_box_is_refused(h, no_probe):
+    connection_only(h)
+    doc = hroute(h, host="203.0.113.10")
+    assert doc["routed"] is False and "VPN gateway" in doc["error"]
+    assert vpn_state(h).get("host_routes", {}) == {}
+
+
+def test_route_moving_to_another_server_swaps_its_route(h, no_probe):
+    connection_only(h)
+    hroute(h)
+    hroute(h, host="10.20.1.7")
+    assert tunnel_routes(h) == [["10.20.1.7/32", "ppp0"]]
+    assert vpn_state(h)["host_routes"] == {"10.20.1.7/32": ["mssql-abc123"]}
+
+
+def test_route_shared_with_a_folder_stays_until_both_leave(h, no_probe):
+    connection_only(h)
+    assert fmount(h)["mounted"] is True
+    assert hroute(h)["routed"] is True
+    assert tunnel_routes(h) == [["10.20.1.9/32", "ppp0"]]
+    h.cmd_umount("tenders")
+    assert tunnel_routes(h) == [["10.20.1.9/32", "ppp0"]]
+    hunroute(h)
+    assert tunnel_routes(h) == []
+    # and the other way round
+    hroute(h)
+    fmount(h)
+    hunroute(h)
+    assert tunnel_routes(h) == [["10.20.1.9/32", "ppp0"]]
+    h.cmd_umount("tenders")
+    assert tunnel_routes(h) == []
+
+
+def test_down_removes_host_routes(h, no_probe):
+    connection_only(h)
+    hroute(h)
+    h.cmd_down("office-files")
+    assert tunnel_routes(h) == []
+    assert "host_routes" not in vpn_state(h)
+
+
+def test_route_reports_unreachable_port(h, monkeypatch):
+    connection_only(h)
+    monkeypatch.setattr(h, "probe_tcp", lambda ip, port, iface: False)
+    doc = hroute(h)
+    assert doc["routed"] is True and doc["reachable"] is False
+
+
+def test_route_caps_users(h, no_probe, monkeypatch):
+    connection_only(h)
+    monkeypatch.setattr(h, "MAX_HOST_ROUTE_USERS", 1)
+    assert hroute(h)["routed"] is True
+    doc = hroute(h, user="mssql-other")
+    assert doc["routed"] is False and "Too many" in doc["error"]
+    assert hroute(h)["routed"] is True
+
+
+def test_main_route_commands(h, monkeypatch, capsys):
+    monkeypatch.setattr(h.os, "geteuid", lambda: 0)
+    path = write_spec(h, route_spec(user="BAD"), name="spec-route.json")
+    assert h.main(["route", path]) == 2
+    assert json.loads(capsys.readouterr().out)["bad_input"] is True
+    path = write_spec(h, route_spec(), name="spec-route.json")
+    assert h.main(["unroute", path]) == 0
+    assert json.loads(capsys.readouterr().out)["routed"] is False

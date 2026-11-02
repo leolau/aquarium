@@ -101,7 +101,7 @@ LABEL_RE = re.compile(r"^(?:v\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]{0,40})?|g
 TARBALL = "aquarium-{version}-linux-x86_64.tar.gz"
 
 # Must match install-aquarium.sh "Python dependencies" (a test keeps them equal).
-PY_EXTRAS = "all,dev,messaging,app-push,documents,edge-tts,bedrock"
+PY_EXTRAS = "all,dev,messaging,app-push,documents,mssql,edge-tts,bedrock"
 PY_PINS = [
     "mcp>=1.26,<2", "websockets>=15,<16", "google-genai==2.13.0", "pymupdf==1.28.2",
     "pymysql==1.2.0", "pytesseract==0.3.13", "tabulate==0.10.0", "tornado==6.5.7", "numpy==2.4.3",
