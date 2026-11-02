@@ -243,7 +243,7 @@ mkvenv "$APP/.venv"
 # app-mcp runs from its folder (python -m app_mcp.server) on this venv; install only its deps.
 # Extras + pins match the production venv (it carried ~30 packages beyond the lock).
 uv pip install -q --python .venv/bin/python \
-  -e ".[all,dev,messaging,app-push,documents,mssql,edge-tts,bedrock]" \
+  -e ".[all,dev,messaging,app-push,documents,mssql,winrm,edge-tts,bedrock]" \
   "mcp>=1.26,<2" "websockets>=15,<16" google-genai==2.13.0 pymupdf==1.28.2 pymysql==1.2.0 \
   pytesseract==0.3.13 tabulate==0.10.0 tornado==6.5.7 numpy==2.4.3
 

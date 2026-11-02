@@ -15,6 +15,7 @@ import { TelegramLinks } from "@/components/settings/TelegramLinks";
 import { TelegramBotSetup } from "@/components/settings/TelegramBotSetup";
 import { EmailMailboxes } from "@/components/settings/EmailMailboxes";
 import { SqlServerConnections } from "@/components/settings/SqlServerConnections";
+import { WindowsServerConnections } from "@/components/settings/WindowsServerConnections";
 import { VpnConnections } from "@/components/settings/VpnConnections";
 import { WhatsAppBridges } from "@/components/settings/WhatsAppBridges";
 import { BusyRegion } from "@/components/ui/BusyRegion";
@@ -208,7 +209,8 @@ function InOutSection({
       <h2 className="text-base font-semibold">{t("inOut")}</h2>
       <p className="mb-4 text-xs text-[var(--color-muted)]">
         Where messages, mail and calendar events come in and go out: Google
-        accounts, email, private networks (VPN), SQL Server databases, WhatsApp
+        accounts, email, private networks (VPN), SQL Server databases, Windows
+        servers (PowerShell), WhatsApp
         bridges and Telegram.
       </p>
       <div className="space-y-6 border-t border-[var(--color-border)] pt-4">
@@ -217,6 +219,7 @@ function InOutSection({
         <EmailMailboxes />
         <VpnConnections />
         <SqlServerConnections isOwner={isOwner} />
+        <WindowsServerConnections />
         <WhatsAppBridges />
         <TelegramBotSetup />
         <TelegramLinks canManage={canManageMembers} />

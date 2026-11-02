@@ -204,6 +204,11 @@ SIGNED_IN = {
     "PUT /api/mssql/connections/{name}",
     "DELETE /api/mssql/connections/{name}",
     "POST /api/mssql/connections/{name}/test",
+    # winrm_connections_api: the caller's own Windows servers (PowerShell)
+    "GET /api/winrm/connections",
+    "PUT /api/winrm/connections/{name}",
+    "DELETE /api/winrm/connections/{name}",
+    "POST /api/winrm/connections/{name}/test",
     "POST /api/credentials/google/start",
     "POST /api/credentials/google/complete",
     "POST /api/credentials/google/{name}/refresh",

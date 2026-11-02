@@ -1395,6 +1395,42 @@ export interface MssqlConnectionInput extends Partial<MssqlSettings> {
   password?: string;
 }
 
+export type WinrmTransport = "ntlm" | "kerberos" | "credssp";
+
+/** Connection settings of one Windows server (`PUT /api/winrm/connections/{name}`). */
+export interface WinrmSettings {
+  host: string;
+  /** 5986 = HTTPS (default), 5985 = HTTP. */
+  port: number;
+  transport: WinrmTransport;
+  username: string;
+  verify_tls: boolean;
+  legacy_tls: boolean;
+  vpn: string;
+  label?: string;
+}
+
+/** One of the caller's own Windows servers. Never carries the password. */
+export interface WinrmConnection extends WinrmSettings {
+  name: string;
+  password_set: boolean;
+  state: "working" | "needs_attention" | "untested";
+  last_test: {
+    at: string;
+    ok: boolean;
+    ps_version?: string;
+    computer_name?: string;
+    error?: string;
+  } | null;
+}
+
+/** Body of `PUT /api/winrm/connections/{name}`; empty password keeps the saved one. */
+export interface WinrmConnectionInput extends Partial<WinrmSettings> {
+  host: string;
+  username: string;
+  password?: string;
+}
+
 export interface EmailPollerAccount {
   id: string;
   address: string;
