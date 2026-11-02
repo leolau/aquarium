@@ -132,7 +132,7 @@ assistant from your phone's messaging app. It remembers you across all of them.
 | Theme | light/dark look (saved in this browser) |
 | Language | English or Traditional Chinese |
 | Notifications | turn on push notifications on this device |
-| In&Out | your connections: Google, WhatsApp, Telegram, email, VPN |
+| In&Out | your connections: Google, WhatsApp, Telegram, email, VPN, SQL Server databases |
 | Apps / Menu | which apps appear in the menu (owner sets this per role) |
 | Tools & Integrations | the tools the assistant can use |
 | Get ready | the setup checklist |
@@ -197,6 +197,75 @@ The bot then answers only you.
   use them.
 - **Office network (VPN)**: add your VPN login so the assistant can reach
   office file servers; then add network folders under **Files**.
+
+## 5.5 SQL Server databases
+
+If your organisation keeps data in a Microsoft SQL Server database (for
+example an ERP or accounting system), the assistant can look things up in it
+for you. Ask your IT team for a **read-only SQL login** first; the
+Installation Guide (section 10.1) tells them what to set up.
+
+### Adding a database
+
+1. Open **Settings → In&Out → SQL Server databases → Add database**.
+2. Fill in:
+
+   | Field | What to enter |
+   |---|---|
+   | Name | a short name you will use in chat, e.g. `ERP` |
+   | Database | the database name |
+   | Server | the server's name or address |
+   | Port | usually `1433` (IT tells you if it is different) |
+   | Instance (optional) | the instance name, if IT gave you one |
+   | SQL login / Password | the read-only login from IT |
+   | Encryption | keep **Encrypt (recommended)**. **Strict (TDS 8.0)** is for new servers that require it. **Only the sign-in** encrypts just the login. |
+   | Reach it through VPN | pick your office VPN if the server is only reachable from the office, otherwise **No VPN** |
+
+3. Tick the boxes only if IT tells you to, or the test asks for them:
+    - **Trust the server certificate (self-signed)**: the server uses its own
+      certificate.
+    - **Older Windows Server 2008/2012 (TLS 1.0)**: an old server that cannot
+      use modern encryption.
+4. Press **Save and test**. Aquarium signs in and shows **Signed in:** with the
+   server version.
+
+The database then shows **Working**, **Needs attention** (with the reason, for
+example *"Sign-in failed: check the SQL login and password."*) or **Not tested
+yet**. It is marked **Read-only** or **Changes allowed**, and **via** the VPN
+it uses. Use **Test** to check again, **Edit** to change details (leave the
+password empty to keep the saved one), and **Remove** to delete the connection.
+Removing it does not change the database itself.
+
+Only you can see and use your connections. The password stays on the server
+and is never shown again, not even to the assistant.
+
+**Allow changes (owner only).** The owner also sees **Allow changes (each change
+asks you first)** on their own connections. Everyone else's connections are
+always read-only.
+
+### Asking the assistant about a database
+
+Just ask in **Chat**, for example:
+
+- *"List the tables in ERP."*
+- *"What columns does dbo.Orders have?"*
+- *"How many orders did we ship last month, by customer?"*
+- *"Show the ten biggest unpaid invoices."*
+
+If you have more than one database, say which one. The assistant can list your
+connections, list tables, describe a table and run a query.
+
+- **Read-only by default.** It runs one `SELECT` query at a time and never
+  changes data.
+- **Limits:** at most 500 rows per answer (it tells you when there were more),
+  30 seconds per query, and very long values are shortened. Ask for totals or a
+  narrower filter when a result is too big.
+- **Changes** run only on a connection where the owner ticked **Allow
+  changes**. Even then the assistant shows you the exact SQL statement first,
+  and it runs only if you approve.
+- If the database is behind your VPN, Aquarium connects the VPN when needed. If
+  your VPN is set not to connect automatically, connect it in Settings →
+  In&Out first.
 
 # 6. Email mailboxes and polling
 
@@ -379,7 +448,7 @@ Every person has one role.
 |---|---|---|---|
 | **Owner** | one person | everything: settings, model keys, people, backups and security checks; their own connections | hand over ownership in the app (done on the server); read other people's private items unless senior access is on |
 | **Admin** | office manager, IT | invite people and change roles; change settings, tools and model keys; use every assistant tool | make someone owner; set up backups; see or use anyone else's connections; read others' private items (with senior access: only members' and viewers') |
-| **Member** | staff | chat; own private chats and files; everything shared; own Google, WhatsApp, Telegram, email, extra tools and VPN | see other people's private items; change settings; let the assistant run commands on the server |
+| **Member** | staff | chat; own private chats and files; everything shared; own Google, WhatsApp, Telegram, email, extra tools, VPN and SQL Server databases | see other people's private items; change settings; let the assistant run commands on the server |
 | **Viewer** | part-time staff, guests | read what is shared; chat using the tools allowed for viewers | have the assistant write files; change settings; see other people's private items |
 
 Which menu apps each role sees is set by the owner in **Settings → Menu**. A
@@ -457,6 +526,16 @@ section 6.3.
 
 **Can the assistant read a website that needs a login?** Yes, if you are
 allowed to use the site. Give it the address and your login; see section 9.1.
+
+**My SQL Server database says "Needs attention".** Read the reason. *Sign-in
+failed* means a wrong login or password. *Did not answer in time* or *Could
+not connect* usually means the VPN is not chosen or the port is blocked; ask
+IT. For *Could not open a secure connection*, tick the older-server or
+trust-certificate box as the message says.
+
+**Can the assistant change data in our database?** Not by default. It only
+reads. Changes need the owner's **Allow changes** switch and your approval of
+each statement; see section 5.5.
 
 **The assistant does not answer.** The AI model key may be missing or out of
 credit. Ask your owner or admin to check **Get ready → AI model**.
