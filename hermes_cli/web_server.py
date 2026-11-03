@@ -2564,7 +2564,9 @@ def get_system_stats():
         except Exception:
             pass
         try:
-            info["cpu_percent"] = psutil.cpu_percent(interval=0.1)
+            from hermes_cli.capacity import recent_cpu_percent
+
+            info["cpu_percent"] = recent_cpu_percent()
             la = getattr(psutil, "getloadavg", None)
             if la:
                 info["load_avg"] = list(la())

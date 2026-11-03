@@ -94,11 +94,17 @@ export function SessionTabs({
   // (e.g. opened via a memory citation) — but only in reaction to the active
   // conversation changing, so a manual dropdown switch is never fought on
   // the next unrelated re-render.
-  const [prevActiveId, setPrevActiveId] = useState(activeId);
-  if (activeId !== prevActiveId) {
-    setPrevActiveId(activeId);
+  // A brand-new conversation becomes active before the session list
+  // refetch includes it, so the jump waits until it actually appears.
+  const [syncedActiveId, setSyncedActiveId] = useState<string | null>(() =>
+    sessions.some((s) => s.id === activeId) ? activeId : null,
+  );
+  if (activeId !== syncedActiveId) {
     const activeSession = sessions.find((s) => s.id === activeId);
-    if (activeSession) setSelectedCategory(categorizeSession(activeSession, now));
+    if (activeSession) {
+      setSyncedActiveId(activeId);
+      setSelectedCategory(categorizeSession(activeSession, now));
+    }
   }
 
   // If the selected category emptied out (its last conversation was
