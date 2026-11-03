@@ -27,6 +27,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -647,6 +648,45 @@ def collect_upload_storage(
     )
 
 
+#: Shortest window ``recent_cpu_percent`` averages over. A 0.1 s sample
+#: swings 0-40% on an idle box and catches the request reading it.
+CPU_RECENT_WINDOW_S = 5.0
+_cpu_recent_lock = threading.Lock()
+_cpu_recent: Dict[str, Any] = {"at": None, "times": None, "pct": None}
+
+
+def _cpu_busy_idle(times: Any) -> Tuple[float, float]:
+    idle = getattr(times, "idle", 0.0) + getattr(times, "iowait", 0.0)
+    total = sum(times) - getattr(times, "guest", 0.0) - getattr(times, "guest_nice", 0.0)
+    return total - idle, idle
+
+
+def recent_cpu_percent(*, now: Optional[float] = None) -> Optional[float]:
+    """Box-wide CPU busy% averaged since the previous reading (at least
+    ``CPU_RECENT_WINDOW_S``), shared by every caller so the status strip and
+    the Capacity page show the same figure. Uses its own ``cpu_times`` delta
+    so it never disturbs ``psutil.cpu_percent``'s state used by the sampler."""
+    try:
+        import psutil
+    except ImportError:
+        return None
+    at = time.monotonic() if now is None else now
+    with _cpu_recent_lock:
+        prev_at, prev_times, pct = _cpu_recent["at"], _cpu_recent["times"], _cpu_recent["pct"]
+        if prev_at is not None and pct is not None and at - prev_at < CPU_RECENT_WINDOW_S:
+            return pct
+        times = psutil.cpu_times()
+        if prev_times is None:
+            pct = float(psutil.cpu_percent(interval=0.5))
+        else:
+            busy0, idle0 = _cpu_busy_idle(prev_times)
+            busy1, idle1 = _cpu_busy_idle(times)
+            span = (busy1 - busy0) + (idle1 - idle0)
+            pct = round(max(0.0, min(100.0, 100.0 * (busy1 - busy0) / span)), 1) if span > 0 else 0.0
+        _cpu_recent.update(at=at, times=times, pct=pct)
+        return pct
+
+
 def collect_cpu_load() -> CpuLoad:
     load = CpuLoad()
     try:
@@ -656,9 +696,8 @@ def collect_cpu_load() -> CpuLoad:
     try:
         load.cpus = psutil.cpu_count() or None
         load.load1 = psutil.getloadavg()[0]
-        # A short sample: instantaneous busy-ness for display only — the
-        # verdict binds on the sustained load average, not a spike.
-        load.percent = psutil.cpu_percent(interval=0.1)
+        # Display only — the verdict binds on the sustained load average.
+        load.percent = recent_cpu_percent()
     except Exception as exc:
         log.debug("capacity: cpu load unavailable: %s", exc)
     return load

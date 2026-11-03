@@ -754,3 +754,26 @@ def test_samples_older_than_the_retention_window_are_pruned(tmp_path):
         conn.close()
     assert kept == 1
     assert oldest >= now - capacity.CPU_HISTORY_KEEP_S
+
+
+class _Times(tuple):
+    _fields = ("user", "system", "idle", "iowait")
+
+    def __new__(cls, user, system, idle, iowait=0.0):
+        t = super().__new__(cls, (user, system, idle, iowait))
+        t.user, t.system, t.idle, t.iowait = user, system, idle, iowait
+        return t
+
+
+def test_recent_cpu_percent_is_one_shared_windowed_reading(monkeypatch):
+    psutil = pytest.importorskip("psutil")
+    monkeypatch.setattr(capacity, "_cpu_recent", {"at": None, "times": None, "pct": None})
+    samples = iter([_Times(100, 0, 900), _Times(130, 0, 970)])
+    monkeypatch.setattr(psutil, "cpu_times", lambda: next(samples))
+    monkeypatch.setattr(psutil, "cpu_percent", lambda interval=None: 12.0)
+
+    assert capacity.recent_cpu_percent(now=0.0) == 12.0  # first call: a blocking sample
+    # Within the window every caller (strip, Capacity page) gets the same value.
+    assert capacity.recent_cpu_percent(now=1.0) == 12.0
+    # Past it: the busy share of the cpu_times delta (30 busy of 100 ticks).
+    assert capacity.recent_cpu_percent(now=capacity.CPU_RECENT_WINDOW_S + 0.1) == 30.0

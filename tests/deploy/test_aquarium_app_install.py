@@ -241,3 +241,13 @@ def test_deploy_reports_stale_app_runtime_files(tmp_path):
     assert "aquarium.slice differs" not in out
     assert "APP RUNTIME HELPER STALE" in out and "APPS SUDOERS RULE STALE" in out
     assert out.rstrip().endswith("done")
+
+
+def test_deploy_installs_the_service_gated_driver_extras():
+    py_extras = re.search(r'^PY_EXTRAS = "([^"]+)"', (REPO / "deploy/aquarium.py").read_text(), re.M)
+    text = (REPO / "deploy/hermes-deploy.sh").read_text()
+    match = re.search(r'pip install -q -e "\.\[([^\]]+)\]"', text)
+    assert match, "deploy must reinstall the package with its driver extras"
+    extras = set(match.group(1).split(","))
+    assert {"mssql", "winrm"} <= extras
+    assert extras <= set(py_extras.group(1).split(","))
