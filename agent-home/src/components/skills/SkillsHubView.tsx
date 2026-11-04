@@ -98,7 +98,7 @@ export function SkillsHubView({ profile, onInstalled }: { profile: string; onIns
       const res = await getJson<SkillHubSearchResponse>(
         `/api/skills/hub/search?q=${encodeURIComponent(query.trim())}${q ? `&${q}` : ""}`,
       );
-      setResults(res.results);
+      setResults(res.results ?? []);
       setInstalled(res.installed ?? {});
     } catch (err) {
       setMessage({ tone: "error", text: errorText(err) });

@@ -173,15 +173,19 @@ export function SkillsView({ profiles, profile, initialSkills, initialView, erro
                     aria-label={`${s.enabled ? "Disable" : "Enable"} ${s.name}`}
                     disabled={toggle.pending}
                     onClick={() => void toggle.run(s)}
-                    className={`relative mt-1 h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-60 ${
-                      s.enabled ? "bg-[var(--color-accent)]" : "bg-[var(--color-surface-2)]"
-                    }`}
+                    className="flex h-11 w-14 shrink-0 items-center justify-center disabled:opacity-60"
                   >
                     <span
-                      className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${
-                        s.enabled ? "left-[1.375rem]" : "left-0.5"
+                      className={`relative block h-6 w-11 rounded-full transition-colors ${
+                        s.enabled ? "bg-[var(--color-accent)]" : "bg-[var(--color-surface-2)]"
                       }`}
-                    />
+                    >
+                      <span
+                        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${
+                          s.enabled ? "left-[1.375rem]" : "left-0.5"
+                        }`}
+                      />
+                    </span>
                   </button>
                 </li>
               ))}
