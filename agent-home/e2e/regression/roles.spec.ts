@@ -27,6 +27,14 @@ for (const role of ["member", "viewer"] as Role[]) {
       }
     });
 
+    for (const path of ["/profiles", "/skills"]) {
+      test(`${path} is not available`, async ({ page }) => {
+        await page.goto(path);
+        await expect(component(page, "NotAvailableForRole")).toBeVisible();
+        await expect(component(page, path === "/profiles" ? "ProfilesView" : "SkillsView")).toHaveCount(0);
+      });
+    }
+
     test("users page shows the directory but no member management", async ({ page }) => {
       await page.goto("/users");
       await expectPageReady(page, "/users");

@@ -152,6 +152,28 @@ registerApp({
 });
 
 registerApp({
+  id: "profiles",
+  name: "Profiles",
+  glyph: "◍",
+  hint: "Agents on this box",
+  kind: "next-route",
+  route: "/profiles",
+  category: "system",
+  order: 112,
+});
+
+registerApp({
+  id: "skills",
+  name: "Skills",
+  glyph: "✧",
+  hint: "What each agent knows",
+  kind: "next-route",
+  route: "/skills",
+  category: "system",
+  order: 115,
+});
+
+registerApp({
   id: "tools",
   name: "Tools",
   glyph: "⚙",

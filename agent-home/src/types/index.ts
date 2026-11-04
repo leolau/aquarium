@@ -3433,3 +3433,114 @@ export interface BrowseSaveResult {
   filename?: string;
   size?: number;
 }
+
+// ── Profiles & Skills management (owner/admin) ─────────────────────────────
+
+/** One profile from `GET /api/profiles` — filesystem paths are stripped by the BFF. */
+export interface ProfileInfo extends ProfileSummary {
+  model: string | null;
+  provider: string | null;
+  has_env: boolean;
+  skill_count: number;
+  gateway_running: boolean;
+  description_auto: boolean;
+  has_alias?: boolean;
+}
+
+export interface ProfileInfoResponse {
+  profiles: ProfileInfo[];
+}
+
+/** Body of `POST /api/profiles` (Python `ProfileCreate`). */
+export interface ProfileCreateInput {
+  name: string;
+  clone_from?: string | null;
+  clone_all?: boolean;
+  no_skills?: boolean;
+  description?: string;
+  provider?: string;
+  model?: string;
+  keep_skills?: string[];
+  hub_skills?: string[];
+}
+
+export interface ProfileCreateResult {
+  ok: boolean;
+  name: string;
+  model_set: boolean;
+  skills_disabled: number;
+  hub_installs: Array<{ identifier: string; pid: number | null }>;
+}
+
+export interface ProfileDescribeResult {
+  ok: boolean;
+  reason?: string | null;
+  description?: string | null;
+  description_auto: boolean;
+}
+
+/** One installed skill from `GET /api/skills`. */
+export interface SkillInfo {
+  name: string;
+  description: string;
+  category: string;
+  enabled: boolean;
+  /** `hub` (installed from a hub), `builtin` (ships with Hermes) or `local`. */
+  source?: "hub" | "builtin" | "local";
+  trust_level?: string;
+}
+
+export interface SkillContent {
+  name: string;
+  content: string;
+}
+
+export interface SkillHubResult {
+  name: string;
+  description: string;
+  source: string;
+  identifier: string;
+  trust_level: string;
+  repo: string | null;
+  tags: string[];
+}
+
+export interface SkillHubInstalledEntry {
+  name: string | null;
+  trust_level: string | null;
+  scan_verdict: string | null;
+}
+
+export interface SkillHubSearchResponse {
+  results: SkillHubResult[];
+  source_counts: Record<string, number>;
+  timed_out: string[];
+  installed: Record<string, SkillHubInstalledEntry>;
+}
+
+export interface SkillHubSourcesResponse {
+  sources: Array<{ id: string; label: string; rate_limited?: boolean; available?: boolean }>;
+  index_available: boolean;
+  featured: SkillHubResult[];
+  installed: Record<string, SkillHubInstalledEntry>;
+}
+
+export interface SkillHubPreview extends SkillHubResult {
+  skill_md: string;
+  files: string[];
+}
+
+export interface SkillHubScan {
+  name: string;
+  identifier: string;
+  source: string;
+  trust_level: string;
+  /** "safe" | "caution" | "dangerous". */
+  verdict: string;
+  summary: string;
+  /** Install-policy decision for this trust+verdict combo. */
+  policy: "allow" | "ask" | "block";
+  policy_reason: string;
+  findings: Array<{ severity: string; category: string; file: string; line: number; description: string }>;
+  severity_counts: Record<string, number>;
+}

@@ -24,6 +24,8 @@
  *                (the model picker on Get ready).
  *   - users:     `/api/comms/members` stays (Settings → Telegram, Get ready).
  *   - onboarding: `/api/get-ready` stays (Settings → Get ready).
+ *   - profiles:  only the `/profiles` page; `/profiles/suggestions` belongs to
+ *                Suggestions, and `/api/chat/profiles` serves the chat picker.
  * Matching is by path segment: "/inbox" matches "/inbox" only when `exact`,
  * otherwise "/inbox" and "/inbox/…", never "/inboxes".
  */
@@ -34,6 +36,28 @@ export type NavRole = (typeof NAV_ROLES)[number];
 
 /** Locked visible for every role, so nobody can lock themselves out. */
 export const LOCKED_APP_IDS: readonly string[] = ["home", "settings"];
+
+/**
+ * Locked hidden for members and viewers: everything on these pages is an
+ * owner/admin change (the BFF and Python both refuse anyone else), so showing
+ * them would only show a page of refusals. Admins see them unless hidden.
+ */
+export const ADMIN_ONLY_APP_IDS: readonly string[] = ["profiles", "skills"];
+export const ADMIN_ONLY_ROLES: readonly string[] = ["member", "viewer"];
+
+/** Whether `appId` is locked off for `role` (cannot be turned on). */
+export function isLockedOff(role: string, appId: string): boolean {
+  return ADMIN_ONLY_ROLES.includes(role) && ADMIN_ONLY_APP_IDS.includes(appId);
+}
+
+/** `hidden` plus the admin-only apps when `role` is a member or viewer. */
+export function withAdminOnly(role: string, hidden: readonly string[]): string[] {
+  const out = [...hidden];
+  if (ADMIN_ONLY_ROLES.includes(role)) {
+    for (const id of ADMIN_ONLY_APP_IDS) if (!out.includes(id)) out.push(id);
+  }
+  return out;
+}
 
 type UrlRule = { path: string; exact?: boolean };
 
@@ -72,6 +96,11 @@ export const APP_URLS: Record<string, AppUrls> = {
     pages: [{ path: "/profiles/suggestions" }],
     apis: [{ path: "/api/profiles/suggestions" }],
   },
+  profiles: {
+    pages: [{ path: "/profiles", exact: true }],
+    apis: [{ path: "/api/profiles", exact: true }, { path: "/api/profiles/named" }],
+  },
+  skills: { pages: [{ path: "/skills" }], apis: [{ path: "/api/skills" }] },
   tools: { pages: [{ path: "/tools" }], apis: [{ path: "/api/tools/apps" }] },
   models: {
     pages: [{ path: "/models" }],

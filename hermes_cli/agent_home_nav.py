@@ -3,7 +3,9 @@
 Stored in the default profile's config.yaml as
 ``agent_home.nav.roles.<role>.hidden: [app ids]``. The owner always sees every
 item; ``home`` and ``settings`` are locked visible for every role so nobody can
-hide their way out. ``KNOWN_APP_IDS`` mirrors the Coral registry in
+hide their way out. ``ADMIN_ONLY_APP_IDS`` (Profiles, Skills) are the reverse:
+locked hidden for members and viewers, because only an owner/admin can change
+anything there and the API refuses everyone else anyway. ``KNOWN_APP_IDS`` mirrors the Coral registry in
 ``agent-home/src/components/coral/coral-apps.ts`` (a Vitest test keeps the two
 in sync).
 """
@@ -15,6 +17,9 @@ from typing import Any, Dict, Iterable, List
 NAV_ROLES = ("admin", "member", "viewer")
 
 LOCKED_APP_IDS = ("home", "settings")
+
+ADMIN_ONLY_APP_IDS = ("profiles", "skills")
+ADMIN_ONLY_ROLES = ("member", "viewer")
 
 KNOWN_APP_IDS = (
     "home",
@@ -29,6 +34,8 @@ KNOWN_APP_IDS = (
     "capacity",
     "users",
     "suggestions",
+    "profiles",
+    "skills",
     "tools",
     "models",
     "core",
@@ -45,13 +52,20 @@ def _roles_section(config: Dict[str, Any]) -> Dict[str, Any]:
     return roles if isinstance(roles, dict) else {}
 
 
+def _with_admin_only(role: str, hidden: List[str]) -> List[str]:
+    if role in ADMIN_ONLY_ROLES:
+        hidden.extend(a for a in ADMIN_ONLY_APP_IDS if a not in hidden)
+    return hidden
+
+
 def role_hidden(config: Dict[str, Any], role: str) -> List[str]:
-    """*role*'s stored hidden list, minus unknown/locked ids (hand edits)."""
+    """*role*'s stored hidden list, minus unknown/locked ids (hand edits),
+    plus the admin-only apps for members and viewers."""
     entry = _roles_section(config).get(role)
     raw = entry.get("hidden") if isinstance(entry, dict) else None
-    if not isinstance(raw, list):
-        return []
     out: List[str] = []
+    if not isinstance(raw, list):
+        return _with_admin_only(role, out)
     for item in raw:
         if (
             isinstance(item, str)
@@ -60,7 +74,7 @@ def role_hidden(config: Dict[str, Any], role: str) -> List[str]:
             and item not in out
         ):
             out.append(item)
-    return out
+    return _with_admin_only(role, out)
 
 
 def all_role_hidden(config: Dict[str, Any]) -> Dict[str, List[str]]:
@@ -78,7 +92,8 @@ def set_role_hidden(config: Dict[str, Any], role: str, hidden: Iterable[Any]) ->
     """Store *hidden* for *role* in *config*; returns what was stored.
 
     Raises ``ValueError`` for an unknown role (the owner is not editable) or an
-    unknown, duplicate or locked app id.
+    unknown, duplicate or locked app id. Admin-only apps are always stored as
+    hidden for members and viewers, whatever *hidden* says.
     """
     if role not in NAV_ROLES:
         raise ValueError(
@@ -94,6 +109,7 @@ def set_role_hidden(config: Dict[str, Any], role: str, hidden: Iterable[Any]) ->
         if item in clean:
             raise ValueError(f"Duplicate menu item: {item!r}")
         clean.append(item)
+    _with_admin_only(role, clean)
     agent_home = config.get("agent_home")
     if not isinstance(agent_home, dict):
         agent_home = config["agent_home"] = {}

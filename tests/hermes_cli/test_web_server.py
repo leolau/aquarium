@@ -3954,14 +3954,46 @@ class TestNewEndpoints:
                 "description": "active",
                 "category": "demo",
                 "enabled": True,
+                "source": "local",
             },
             {
                 "name": "disabled-skill",
                 "description": "disabled",
                 "category": "demo",
                 "enabled": False,
+                "source": "local",
             },
         ]
+
+    def test_skills_list_reports_where_each_skill_came_from(self, monkeypatch):
+        import json
+        import tools.skills_tool as skills_tool
+        from hermes_constants import get_hermes_home
+
+        skills_dir = get_hermes_home() / "skills"
+        (skills_dir / ".hub").mkdir(parents=True, exist_ok=True)
+        (skills_dir / ".bundled_manifest").write_text("bundled-one:abc\n", encoding="utf-8")
+        (skills_dir / ".hub" / "lock.json").write_text(
+            json.dumps({"version": 1, "installed": {"hub-one": {"trust_level": "trusted"}}}),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            skills_tool,
+            "_find_all_skills",
+            lambda *, skip_disabled=False: [
+                {"name": n, "description": "", "category": "demo"}
+                for n in ("bundled-one", "hub-one", "mine")
+            ],
+        )
+
+        resp = self.client.get("/api/skills")
+
+        assert resp.status_code == 200
+        by_name = {s["name"]: s for s in resp.json()}
+        assert by_name["bundled-one"]["source"] == "builtin"
+        assert by_name["hub-one"]["source"] == "hub"
+        assert by_name["hub-one"]["trust_level"] == "trusted"
+        assert by_name["mine"]["source"] == "local"
 
     def test_toolsets_list(self):
         resp = self.client.get("/api/tools/toolsets")

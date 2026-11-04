@@ -12,7 +12,7 @@ import "@/components/coral/coral-apps";
 import { getApps } from "@/components/coral/coral-registry";
 import { CLUSTER_CATEGORIES, type AppManifest } from "@/components/coral/coral-types";
 import { useAction } from "@/lib/use-action";
-import { LOCKED_APP_IDS, NAV_ROLES, type NavRole } from "@/lib/nav/menu-access";
+import { isLockedOff, LOCKED_APP_IDS, NAV_ROLES, type NavRole } from "@/lib/nav/menu-access";
 import type { AgentHomeNav } from "@/types";
 
 const ROLE_LABEL: Record<NavRole, string> = { admin: "Admin", member: "Member", viewer: "Viewer" };
@@ -56,6 +56,7 @@ export function MenuSection() {
 
   const { run: toggle, pending: saving } = useAction(async (appId: string) => {
     if (!nav?.roles) return;
+    if (isLockedOff(role, appId)) return;
     const next = hidden.includes(appId) ? hidden.filter((id) => id !== appId) : [...hidden, appId];
     setError(null);
     try {
@@ -77,8 +78,9 @@ export function MenuSection() {
       <h2 className="text-sm font-semibold">Menu</h2>
       <p className="mb-3 text-xs text-[var(--color-muted)]">
         Choose which menu items each role sees. Hidden items are also blocked by link. The owner
-        always sees everything; Home and Settings are always shown. Changes can take up to 30
-        seconds to reach everyone.
+        always sees everything; Home and Settings are always shown. Profiles and Skills stay off
+        for members and viewers, because only owners and admins can make changes there. Changes
+        can take up to 30 seconds to reach everyone.
       </p>
       <div role="tablist" aria-label="Role" className="mb-3 flex gap-2">
         {NAV_ROLES.map((r) => (
@@ -117,7 +119,8 @@ export function MenuSection() {
               <ul className="space-y-1">
                 {group.apps.map((app) => {
                   const locked = LOCKED_APP_IDS.includes(app.id);
-                  const visible = locked || !hidden.includes(app.id);
+                  const lockedOff = isLockedOff(role, app.id);
+                  const visible = !lockedOff && (locked || !hidden.includes(app.id));
                   return (
                     <li key={app.id} className="flex items-center justify-between py-1 text-sm">
                       <span>
@@ -125,13 +128,22 @@ export function MenuSection() {
                         {locked ? (
                           <span className="ml-2 text-xs text-[var(--color-muted)]">Always shown</span>
                         ) : null}
+                        {lockedOff ? (
+                          <span
+                            data-locked-off="true"
+                            className="ml-2 text-xs text-[var(--color-muted)]"
+                            title="Only owners and admins can make changes there"
+                          >
+                            Locked off
+                          </span>
+                        ) : null}
                       </span>
                       <input
                         type="checkbox"
                         role="switch"
                         aria-label={`Show ${app.name} to ${ROLE_LABEL[role]}`}
                         checked={visible}
-                        disabled={locked || readOnly || saving}
+                        disabled={locked || lockedOff || readOnly || saving}
                         onChange={() => toggle(app.id)}
                         className="h-4 w-4"
                       />

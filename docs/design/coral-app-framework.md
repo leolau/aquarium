@@ -139,7 +139,7 @@ Rules enforced by the registry, not by taste:
 
 - Petal slots are **ordered and capped at 8**; a 9th top-level registration is a
   build-time error directing the author into a cluster.
-- Cluster arcs max out at 8 members; overflow is again a build-time error
+- Cluster arcs max out at 10 members (raised from 8 when Profiles and Skills joined System); overflow is again a build-time error
   (forces product grouping decisions instead of silent clipping).
 - Deep-linking is untouched: every petal is an `<a href>`, URLs stay canonical,
   so bookmarks, service-worker navigations, and direct links behave as today.
