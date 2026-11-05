@@ -6,7 +6,20 @@
 set -euo pipefail
 
 REPO=/opt/data/hermes-agent
-BRANCH="${1:-develop}"
+# `--ref vX.Y.Z` (a release tag) or `--ref <commit>` deploys exactly that revision,
+# detached, instead of the tip of a branch: Settings → Software upgrade picks a
+# release this way (`aquarium upgrade`), and rolls back to the commit it came from.
+REF=
+if [ "${1:-}" = "--ref" ]; then
+  REF=${2:-}
+  if ! [[ $REF =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]{0,40})?$ || $REF =~ ^[0-9a-f]{7,40}$ ]]; then
+    echo "ABORT: --ref takes a release tag (vX.Y.Z) or a commit id, not '${REF}'" >&2
+    exit 1
+  fi
+  BRANCH=
+else
+  BRANCH="${1:-develop}"
+fi
 ALLOWED_LOCAL_MODS=(
 )
 # Only the long-running services. `hermes-*` also matches the oneshot jobs
@@ -102,7 +115,7 @@ for a in "${ALLOWED_LOCAL_MODS[@]}"; do
 done
 git diff > "/opt/data/backups/deploy-$TS/local-mods.diff" || true
 
-echo "== fetching origin/$BRANCH =="
+echo "== fetching ${REF:-origin/$BRANCH} =="
 # Retried: the fetch is over SSH to github.com from cn-hongkong, where a
 # connect timeout is an occasional fact of life. Aborting is correct — a deploy
 # must never install a revision it could not verify — but a single blip then
@@ -110,8 +123,14 @@ echo "== fetching origin/$BRANCH =="
 # among the passing output to know nothing happened.
 fetched=
 for attempt in 1 2 3; do
-  if git fetch --no-tags origin "$BRANCH"; then
-    fetched=yes
+  if [ -z "${REF:-}" ]; then
+    git fetch --no-tags origin "$BRANCH" && fetched=yes || true
+  elif [[ $REF == v* ]]; then
+    git fetch --no-tags origin "+refs/tags/$REF:refs/tags/$REF" && fetched=yes || true
+  else  # a commit this checkout already has (a rollback) needs no fetch
+    { git cat-file -e "$REF^{commit}" 2>/dev/null || git fetch --no-tags origin; } && fetched=yes || true
+  fi
+  if [ -n "$fetched" ]; then
     break
   fi
   echo "   fetch attempt $attempt failed; retrying in $((attempt * 5))s"
@@ -122,10 +141,19 @@ if [ -z "$fetched" ]; then
   exit 1
 fi
 BEFORE=$(git rev-parse --short HEAD)
-git checkout -q "$BRANCH" 2>/dev/null || git checkout -q -b "$BRANCH" --track "origin/$BRANCH"
-git checkout -f "origin/$BRANCH" -- .
-git reset -q "origin/$BRANCH"
-git merge --ff-only "origin/$BRANCH" >/dev/null 2>&1 || git update-ref "refs/heads/$BRANCH" "origin/$BRANCH"
+TARGET="origin/$BRANCH"
+if [ -n "${REF:-}" ]; then
+  TARGET=$(git rev-parse --verify "$REF^{commit}") || {
+    echo "ABORT: $REF is not a revision of this checkout — nothing deployed" >&2
+    exit 1
+  }
+  git checkout -q -f --detach "$TARGET"
+else
+  git checkout -q "$BRANCH" 2>/dev/null || git checkout -q -b "$BRANCH" --track "origin/$BRANCH"
+  git checkout -f "$TARGET" -- .
+  git reset -q "$TARGET"
+  git merge --ff-only "$TARGET" >/dev/null 2>&1 || git update-ref "refs/heads/$BRANCH" "$TARGET"
+fi
 # `checkout -- .` writes what the new revision HAS; it removes nothing the new
 # revision LACKS, and the reset above then leaves the orphan untracked. So a
 # file deleted or renamed upstream lived on here forever — a stale document is
@@ -143,7 +171,7 @@ while IFS= read -r gone; do
   rm -f "$gone"
   echo "removed upstream-deleted file: $gone"
   rmdir -p --ignore-fail-on-non-empty "$(dirname "$gone")" 2>/dev/null || true
-done < <(git diff --name-only --no-renames --diff-filter=D "$BEFORE" "origin/$BRANCH")
+done < <(git diff --name-only --no-renames --diff-filter=D "$BEFORE" "$TARGET")
 # Orphans from deploys made before the loop above existed, and anything a
 # process wrote into the checkout. Ignored paths (.env, agent-home.env, .next/)
 # are excluded by --porcelain, so what remains is genuinely unaccounted for.
@@ -243,6 +271,7 @@ done
 # warning: those services still own the schema and set up their tables on first
 # use, exactly as before. The address goes over stdin, never into the
 # environment of a process running as hermes.
+echo "== migrating database =="
 DB_ADMIN_ENV=${DB_ADMIN_ENV:-/etc/aquarium/db-admin.env}
 gateway_db_env() {
   local f
@@ -342,6 +371,11 @@ BACKUP_RULE=/etc/sudoers.d/hermes-backup
 if [ -e "$BACKUP_RULE" ] && ! cmp -s "$BACKUP_RULE" "$REPO/deploy/sudoers.d/hermes-backup"; then
   echo "BACKUP SUDOERS RULE STALE: $BACKUP_RULE differs from the reviewed copy at $AFTER. Install it with:"
   echo "    sudo visudo -cf $REPO/deploy/sudoers.d/hermes-backup && sudo install -m 440 -o root -g root $REPO/deploy/sudoers.d/hermes-backup $BACKUP_RULE"
+fi
+UPGRADE_RULE=/etc/sudoers.d/aquarium-upgrade
+if ! cmp -s "$UPGRADE_RULE" "$REPO/deploy/sudoers.d/aquarium-upgrade" 2>/dev/null; then
+  echo "UPGRADE SUDOERS RULE MISSING OR STALE: Settings → Software upgrade needs the reviewed copy at $AFTER. Install it with:"
+  echo "    sudo visudo -cf $REPO/deploy/sudoers.d/aquarium-upgrade && sudo install -m 440 -o root -g root $REPO/deploy/sudoers.d/aquarium-upgrade $UPGRADE_RULE"
 fi
 
 # FG-33 local apps: units/slices, root helpers and sudoers by glob (installed

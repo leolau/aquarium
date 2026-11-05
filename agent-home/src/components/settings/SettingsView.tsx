@@ -167,6 +167,8 @@ export function SettingsView({
 
       <GetReadyLink />
 
+      {canManageMembers ? <SoftwareUpgradeLink /> : null}
+
       <EntityGoalSection goal={entityGoal} readOnly={entityGoalReadOnly} />
 
       <TagsSection />
@@ -188,6 +190,24 @@ function GetReadyLink() {
         className="flex items-center justify-between rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm font-medium"
       >
         {t("nav.open")}
+        <span aria-hidden className="text-[var(--color-muted)]">→</span>
+      </Link>
+    </section>
+  );
+}
+
+/** Owner and admin (admins read only): Settings → Software upgrade. */
+function SoftwareUpgradeLink() {
+  const t = useT("upgrade");
+  return (
+    <section data-section="software-upgrade" data-component="SoftwareUpgradeLink" className="mt-6">
+      <h2 className="text-sm font-semibold">{t("title")}</h2>
+      <p className="mb-3 text-xs text-[var(--color-muted)]">{t("navHint")}</p>
+      <Link
+        href="/settings/upgrade"
+        className="flex items-center justify-between rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm font-medium"
+      >
+        {t("navOpen")}
         <span aria-hidden className="text-[var(--color-muted)]">→</span>
       </Link>
     </section>

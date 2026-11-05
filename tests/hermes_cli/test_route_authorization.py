@@ -595,6 +595,8 @@ ADMIN_ROUTES = [
     ("post", "/api/memory/providers/honcho/oauth/start", None),
     ("post", "/api/mcp/servers", {"name": "evil", "command": "/bin/sh", "args": ["-c", "id"]}),
     ("get", "/api/security-basics", None),
+    ("get", "/api/software-upgrade", None),
+    ("post", "/api/software-upgrade/start", {"version": "v1.0.0", "password": "x"}),
 ]
 
 
@@ -669,6 +671,10 @@ def test_owner_admin_and_operator_can_still_write_env(client, acting, who):
 
 @pytest.mark.parametrize("method,path,body", ADMIN_ROUTES, ids=[f"{m} {p}" for m, p, _ in ADMIN_ROUTES])
 def test_admin_routes_do_not_403_for_an_admin(client, acting, method, path, body):
+    if path == "/api/software-upgrade/start":
+        pytest.skip("owner only; admins are refused (test_software_upgrade_api)")
+    if path == "/api/software-upgrade":
+        pytest.skip("runs the root helper; admin read is covered by test_software_upgrade_api")
     if path in ("/api/hermes/update", "/api/gateway/restart", "/api/skills/hub/install",
                 "/api/memory/providers/honcho/oauth/start", "/api/profiles", "/api/fs/write-text"):
         pytest.skip("side effect on the host; the gate itself is covered by test_role_gate_unit")

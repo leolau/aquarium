@@ -838,6 +838,8 @@ def carry_forward(old: Path, new: Path) -> List[str]:
 
 
 def cmd_update(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
+    # `aquarium upgrade run` passes a hook that marks each step for Settings → Software upgrade.
+    mark: Callable[[str], None] = getattr(args, "progress", None) or (lambda key: None)
     with admin_lock():
         lay = layout(cfg)
         if lay == "git":
@@ -866,6 +868,7 @@ def cmd_update(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
         if free < 5:
             raise Fail(f"only {free:.1f} GB free disk", "Free some space (old backups in /var/backups/aquarium) and retry.")
 
+        mark("download")
         step(f"Downloading {version}")
         folder = P(f"{AQ}/downloads/{version}")
         for n in names:
@@ -875,13 +878,18 @@ def cmd_update(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
         say("  signature ok, checksum ok")
 
         if not args.no_backup:
+            mark("backup")
             step("Backup before the update")
-            state["last_backup"] = real(make_backup(cfg, label=f"pre-update-{version}"))
+            backup = make_backup(cfg, label=f"pre-update-{version}")
+            state["last_backup"] = real(backup)
+            args.backup_path = str(backup)
 
+        mark("install")
         step(f"Unpacking into /opt/aquarium/releases/{version}")
         rel = P(f"{AQ}/releases/{version}")
         partial = P(f"{AQ}/releases/.{version}.partial")
         unpack(tarball, partial)
+        mark("build")
         build_release(cfg, partial)
         for name in carry_forward(P(f"{AQ}/releases/{before}"), partial):
             say(f"  kept settings file {name}")
@@ -892,6 +900,7 @@ def cmd_update(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
         units = service_units()
         required = running_units(units)
         config_copies = snapshot_configs(cfg, folder)
+        mark("database")
         step("Migrating database and settings")
         code, rows = run_probe(cfg, rel, "migrate")
         for row in rows:
@@ -901,6 +910,7 @@ def cmd_update(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
             raise Fail("the migration step failed; the running version was not changed",
                        f"Nothing was switched. Details: journal above; the backup is in {cfg['BACKUP_DIR']}.")
 
+        mark("restart")
         step(f"Switching to {version} and restarting")
         audit(f"update {before} -> {version}: switching")
         symlink_swap(P(f"{AQ}/current"), f"releases/{version}")
@@ -908,6 +918,7 @@ def cmd_update(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
         state.setdefault("history", []).append({"version": version, "from": before, "at": utcnow(), "result": "switched"})
         save_state(state)
         restart_services(units)
+        mark("checks")
         step("Health check")
         failed = wait_healthy(cfg, required)
         if failed:
@@ -2782,6 +2793,497 @@ def cmd_offsite(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
     return offsite_backup_now(cfg) if kind == "backup" else offsite_restore_test_now(cfg)
 
 
+# --------------------------------------------------------------------------- upgrade
+# Settings → Software upgrade (agent-home) is a front end to `aquarium update` (release
+# installs) and the git-checkout deploy script (DATA_ROOT/deploy-hermes.sh --ref <tag>).
+# The dashboard (user hermes) reaches only the verbs in deploy/sudoers.d/aquarium-upgrade:
+# status, releases, check, start, rollback. `start`/`rollback` read a small JSON request on
+# stdin, check it against the cached release list / upgrade history, then hand the job to
+# a transient systemd unit running `aquarium upgrade run` (root; not in sudoers), so it
+# survives the restarts of the web services it performs. Answers carry no secrets; the
+# dashboard also strips paths from error text and the log before the browser sees them.
+
+UPGRADE_STATUS = "/var/lib/aquarium/upgrade-status.json"
+UPGRADE_REQUEST = "/var/lib/aquarium/upgrade-request.json"
+UPGRADE_RELEASES = "/var/lib/aquarium/upgrade-releases.json"
+UPGRADE_LOG_DIR = "/var/log/aquarium-upgrade"
+UPGRADE_UNIT = "aquarium-upgrade"
+UPGRADE_FLOW = {
+    # `aquarium update` downloads and verifies before it spends time on a backup.
+    "release": ("download", "backup", "install", "build", "database", "restart", "checks"),
+    "git": ("backup", "download", "install", "build", "database", "restart", "checks"),
+}
+ROLLBACK_FLOW = ("backup", "download", "install", "build", "database", "restart", "restore", "checks")
+UPGRADE_RELEASES_MAX_AGE = 6 * 3600
+UPGRADE_NOTES_MAX = 20000
+UPGRADE_LOG_LINES = 300
+UPGRADE_HISTORY_KEEP = 50
+UPGRADE_HISTORY_SHOWN = 20
+COMMIT_RE = re.compile(r"^[0-9a-f]{7,40}$")
+BY_STRIP = re.compile(r"[^\w .@'-]")
+
+# deploy-hermes.sh prints "== <stage> ==" lines; the job turns them into steps.
+DEPLOY_MARKERS = (
+    ("== fetching", "download"),
+    ("== reinstalling package", "install"),
+    ("== rebuilding dashboard", "build"),
+    ("== building dashboard", "build"),
+    ("== rebuilding agent-home", "build"),
+    ("== building agent-home", "build"),
+    ("== migrating database", "database"),
+    ("== restarting services", "restart"),
+)
+
+
+def deploy_step_for_line(line: str) -> Optional[str]:
+    text = line.strip()
+    for prefix, key in DEPLOY_MARKERS:
+        if text.startswith(prefix):
+            return key
+    return None
+
+
+def _stamp_iso(stamp: str) -> str:
+    """A utcnow() stamp (20261101T090000Z) as ISO 8601; '' when unreadable."""
+    try:
+        when = _dt.datetime.strptime(stamp, "%Y%m%dT%H%M%SZ").replace(tzinfo=_dt.timezone.utc)
+    except (TypeError, ValueError):
+        return ""
+    return when.isoformat(timespec="seconds")
+
+
+def _age_seconds(at: str) -> Optional[float]:
+    try:
+        return (_dt.datetime.now(_dt.timezone.utc) - _dt.datetime.fromisoformat(at)).total_seconds()
+    except (TypeError, ValueError):
+        return None
+
+
+def _git_out(cfg: Dict[str, str], *args: str) -> str:
+    proc = run(["git", "-c", "safe.directory=*", "-C", str(compat_path(cfg)), *args], check=False)
+    return proc.stdout.decode(errors="replace").strip() if proc.returncode == 0 else ""
+
+
+def installed_info(cfg: Dict[str, str]) -> Dict:
+    """What runs now: version (a release tag, or None for a branch checkout), commit, when, by whom."""
+    lay = layout(cfg)
+    info: Dict = {"layout": lay, "version": None, "commit": None, "branch": None,
+                  "channel": cfg["CHANNEL"], "installed_at": "", "by": ""}
+    if lay == "release":
+        info["version"] = current_release()
+    elif lay == "git":
+        info["commit"] = _git_out(cfg, "rev-parse", "--short", "HEAD") or None
+        tag = _git_out(cfg, "describe", "--tags", "--exact-match", "HEAD")
+        info["version"] = tag if VERSION_RE.match(tag) else None
+        info["branch"] = _git_out(cfg, "symbolic-ref", "--short", "-q", "HEAD") or None
+    state = load_state()
+    here = {info["version"], info["commit"]} - {None}
+    for rec in reversed(state.get("upgrades", [])):
+        if rec.get("result") == "ok" and ({rec.get("to"), rec.get("to_commit")} & here):
+            info["installed_at"], info["by"] = rec.get("finished", ""), rec.get("by", "")
+            return info
+    for rec in reversed(state.get("history", [])):
+        if rec.get("result") == "ok" and rec.get("version") == info["version"]:
+            info["installed_at"] = _stamp_iso(rec.get("at", ""))
+            break
+    return info
+
+
+def installed_label(info: Dict) -> str:
+    if info.get("version"):
+        return info["version"]
+    return f"{info.get('branch') or 'commit'}@{info.get('commit') or '?'}"
+
+
+def _trim_release(raw: Dict) -> Optional[Dict]:
+    tag = str(raw.get("tag_name", ""))
+    if raw.get("draft") or not VERSION_RE.match(tag):
+        return None
+    names = {a.get("name") for a in raw.get("assets") or [] if isinstance(a, dict)}
+    return {"tag": tag, "name": str(raw.get("name") or tag)[:200],
+            "published_at": str(raw.get("published_at") or ""), "prerelease": bool(raw.get("prerelease")),
+            "url": str(raw.get("html_url") or "")[:300], "notes": str(raw.get("body") or "")[:UPGRADE_NOTES_MAX],
+            "packaged": TARBALL.format(version=tag) in names}
+
+
+def refresh_releases(cfg: Dict[str, str]) -> Dict:
+    raw = api_get(f"{cfg['RELEASE_API']}/releases?per_page=50")
+    rels = [r for r in (_trim_release(x) for x in (raw if isinstance(raw, list) else []) if isinstance(x, dict)) if r]
+    rels.sort(key=lambda r: version_key(r["tag"]), reverse=True)
+    data = {"checked_at": now_iso(), "releases": rels, "error": ""}
+    write_private(P(UPGRADE_RELEASES), json.dumps(data, sort_keys=True).encode())
+    return data
+
+
+def cached_releases(cfg: Dict[str, str], *, refresh: bool = False) -> Dict:
+    """The published releases, newest first: from GitHub at most every six hours (or now)."""
+    try:
+        data = json.loads(P(UPGRADE_RELEASES).read_text())
+        if not isinstance(data, dict):
+            raise ValueError
+    except (OSError, ValueError):
+        data = {}
+    age = _age_seconds(data.get("checked_at", ""))
+    if refresh or age is None or age > UPGRADE_RELEASES_MAX_AGE:
+        try:
+            return refresh_releases(cfg)
+        except Fail as error:  # keep showing the last list we had
+            data["error"] = str(error)
+    data.setdefault("checked_at", "")
+    data.setdefault("releases", [])
+    data.setdefault("error", "")
+    return data
+
+
+def load_upgrade_status() -> Dict:
+    try:
+        data = json.loads(P(UPGRADE_STATUS).read_text())
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_upgrade_status(job: Dict) -> None:
+    write_private(P(UPGRADE_STATUS), json.dumps(job, sort_keys=True).encode())
+
+
+def _job_alive(job: Dict) -> bool:
+    if not job or job.get("phase") not in ("starting", "running"):
+        return False
+    return _running_alive({"running": job})
+
+
+def _log_tail(job_id: str) -> List[str]:
+    if not re.match(r"^\d{8}T\d{6}Z$", job_id or ""):
+        return []
+    try:
+        lines = P(f"{UPGRADE_LOG_DIR}/{job_id}.log").read_text(errors="replace").splitlines()
+    except OSError:
+        return []
+    return [line[:500] for line in lines[-UPGRADE_LOG_LINES:]]
+
+
+def _public_record(rec: Dict) -> Dict:
+    keep = ("id", "kind", "from", "to", "by", "started", "finished", "seconds", "result", "error")
+    out = {k: rec.get(k) for k in keep}
+    out["has_backup"] = bool(rec.get("backup"))
+    return out
+
+
+def rollback_target(cfg: Dict[str, str], info: Optional[Dict] = None) -> Optional[Dict]:
+    """The newest finished change, if it was an upgrade to what runs now and its backup is still here."""
+    info = info or installed_info(cfg)
+    here = {info["version"], info["commit"]} - {None}
+    for rec in reversed(load_state().get("upgrades", [])):
+        if rec.get("result") not in ("ok", "rolled back"):
+            continue
+        if (rec.get("result") == "ok" and rec.get("kind") == "upgrade"
+                and ({rec.get("to"), rec.get("to_commit")} & here) and rec.get("from_ref")
+                and rec.get("backup") and Path(rec["backup"]).is_file()):
+            return {"to": rec.get("from"), "ref": rec["from_ref"], "backup": rec["backup"], "id": rec.get("id")}
+        return None
+    return None
+
+
+def upgrade_public_status(cfg: Dict[str, str]) -> Dict:
+    info = installed_info(cfg)
+    job = load_upgrade_status()
+    if job:
+        alive = _job_alive(job)
+        if job.get("phase") in ("starting", "running") and not alive:
+            job = {**job, "phase": "finished", "result": "interrupted",
+                   "error": job.get("error") or "the upgrade job stopped without finishing"}
+        job = {k: v for k, v in job.items() if k not in ("backup", "pid")}
+        job["alive"] = alive
+        job["log"] = _log_tail(str(job.get("id", "")))
+    try:
+        checked = json.loads(P(UPGRADE_RELEASES).read_text()).get("checked_at", "")
+    except (OSError, ValueError, AttributeError):
+        checked = ""
+    rb = rollback_target(cfg, info)
+    upgrades = load_state().get("upgrades", [])
+    return {"ok": True, "installed": {**info, "label": installed_label(info)}, "job": job or None,
+            "history": [_public_record(r) for r in reversed(upgrades[-UPGRADE_HISTORY_SHOWN:])],
+            "releases_checked_at": checked,
+            "rollback": {"to": rb["to"]} if rb else None}
+
+
+def _read_request() -> Dict:
+    raw = json.loads(sys.stdin.read(4096) or "{}")
+    if not isinstance(raw, dict):
+        raise ValueError
+    return raw
+
+
+def deploy_script(cfg: Dict[str, str]) -> Path:
+    """The root-owned git-checkout deploy script, if it can deploy a chosen release."""
+    path = P(f"{cfg['DATA_ROOT']}/deploy-hermes.sh")
+    if not path.is_file():
+        raise Fail("the deploy script of this checkout install is missing", "Re-run install-aquarium.sh.")
+    if not test_mode():
+        for item in (path, path.parent):
+            st = item.stat()
+            if st.st_uid != 0 or st.st_mode & 0o022:
+                raise Fail(f"{real(item)} must be owned by root and writable only by root (it runs as root)",
+                           f"sudo chown root:root {real(item)} && sudo chmod go-w {real(item)}")
+    if "--ref" not in path.read_text(errors="replace"):
+        raise Fail("the installed deploy script is too old to deploy a chosen release",
+                   f"sudo install -m 755 -o root -g root {real(compat_path(cfg))}/deploy/hermes-deploy.sh {real(path)}")
+    return path
+
+
+def upgrade_start(cfg: Dict[str, str], kind: str) -> int:
+    def refuse(message: str) -> int:
+        return _offsite_answer({"ok": False, "error": message}, 1)
+
+    try:
+        req = _read_request()
+    except ValueError:
+        return refuse("the request could not be read")
+    by = BY_STRIP.sub("", str(req.get("by") or ""))[:64].strip()
+    if _job_alive(load_upgrade_status()):
+        return refuse("an upgrade is already running")
+    lay = layout(cfg)
+    if lay not in ("release", "git"):
+        return refuse("no Aquarium installation found")
+    info = installed_info(cfg)
+    if kind == "upgrade":
+        version = str(req.get("version") or "")
+        if not VERSION_RE.match(version):
+            return refuse("pick a release like v1.2.3")
+        release = {r["tag"]: r for r in cached_releases(cfg)["releases"]}.get(version)
+        if not release:
+            return refuse(f"{version} is not a published release")
+        if lay == "release" and not release.get("packaged"):
+            return refuse(f"{version} has no server package")
+        if version == info["version"]:
+            return refuse(f"{version} is already installed")
+        target, target_ref = version, version
+    else:
+        rb = rollback_target(cfg, info)
+        if not rb:
+            return refuse("there is no upgrade to roll back")
+        target, target_ref = rb["to"], rb["ref"]
+    if not (VERSION_RE.match(target_ref) or COMMIT_RE.match(target_ref)):
+        return refuse("that version can't be installed from here")
+    if lay == "git":
+        try:
+            deploy_script(cfg)
+        except Fail as error:
+            return refuse(str(error))
+    job_id = utcnow()
+    flow = ROLLBACK_FLOW if kind == "rollback" else UPGRADE_FLOW[lay]
+    job = {"id": job_id, "kind": kind, "layout": lay, "from": installed_label(info),
+           "from_ref": info["commit"] if lay == "git" else info["version"], "to": target, "to_ref": target_ref,
+           "by": by, "started": now_iso(), "finished": "", "phase": "starting", "result": "", "error": "",
+           "pid": None, "steps": [{"key": k, "state": "pending"} for k in flow]}
+    save_upgrade_status(job)
+    write_private(P(UPGRADE_REQUEST), json.dumps({"id": job_id}).encode())
+    proc = run(["systemd-run", f"--unit={UPGRADE_UNIT}-{job_id.lower()}", "--collect", "--no-block",
+                "--quiet", "--description=Aquarium software upgrade", "--property=Type=exec",
+                SELF_INSTALL, "upgrade", "run"], check=False)
+    if proc.returncode != 0:
+        save_upgrade_status({**job, "phase": "finished", "result": "failed",
+                             "error": "could not start the upgrade job on this server", "finished": now_iso()})
+        return refuse("could not start the upgrade job on this server")
+    audit(f"upgrade {kind} {job['from']} -> {target} requested by {by or '?'}")
+    return _offsite_answer({"ok": True, "started": True, "status": upgrade_public_status(cfg)})
+
+
+class UpgradeJob:
+    """Step bookkeeping for one job; every change is written to UPGRADE_STATUS."""
+
+    def __init__(self, job: Dict) -> None:
+        self.job = job
+        self.began = time.monotonic()
+
+    def _save(self) -> None:
+        save_upgrade_status(self.job)
+
+    def _step(self, key: str) -> Optional[Dict]:
+        return next((s for s in self.job["steps"] if s["key"] == key), None)
+
+    def reached(self, key: str) -> bool:
+        st = self._step(key)
+        return bool(st and st["state"] != "pending")
+
+    def mark(self, key: str) -> None:
+        """`key` starts now; the step running before it is done."""
+        target = self._step(key)
+        if target is None:
+            target = {"key": key, "state": "pending"}
+            self.job["steps"].append(target)
+        if target["state"] in ("running", "done"):
+            return
+        for st in self.job["steps"]:
+            if st["state"] == "running":
+                st.update(state="done", finished=now_iso())
+        target.update(state="running", started=now_iso())
+        self._save()
+
+    def fail_current(self) -> None:
+        for st in self.job["steps"]:
+            if st["state"] == "running":
+                st.update(state="failed", finished=now_iso())
+        self._save()
+
+    def finish(self, result: str, error: str = "") -> None:
+        for st in self.job["steps"]:
+            if st["state"] == "running":
+                st.update(state="failed" if result == "failed" else "done", finished=now_iso())
+            elif st["state"] == "pending" and result == "ok":
+                st["state"] = "skipped"
+        self.job.update(phase="finished", result=result, error=error, finished=now_iso(),
+                        seconds=int(time.monotonic() - self.began))
+        self._save()
+
+
+def _run_deploy(cfg: Dict[str, str], ref: str, mark: Callable[[str], None]) -> None:
+    script = deploy_script(cfg)
+    proc = subprocess.Popen([str(script), "--ref", ref], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            stdin=subprocess.DEVNULL, cwd="/")
+    assert proc.stdout is not None
+    for raw in proc.stdout:
+        line = raw.decode(errors="replace")
+        sys.stdout.write(line)
+        sys.stdout.flush()
+        key = deploy_step_for_line(line)
+        if key:
+            mark(key)
+    code = proc.wait()
+    if code != 0:
+        raise Fail(f"the deploy of {ref} failed (exit {code})", "The technical log shows the step that failed.")
+
+
+def _restore_backup(cfg: Dict[str, str], backup: str) -> None:
+    step("Restoring the backup taken before the upgrade (database and settings)")
+    cmd_restore(argparse.Namespace(file=backup, test=False, yes=True, key_file=None, no_safety_backup=True,
+                                   app=None, mode=None), cfg)
+
+
+def _upgrade_release(cfg: Dict[str, str], tracker: UpgradeJob, ref: str, force: bool) -> None:
+    args = argparse.Namespace(version=ref, channel=None, force=force, no_backup=False, progress=tracker.mark)
+    try:
+        cmd_update(args, cfg)
+    finally:
+        if getattr(args, "backup_path", None):
+            tracker.job["backup"] = args.backup_path
+            tracker._save()
+
+
+def _upgrade_git(cfg: Dict[str, str], tracker: UpgradeJob, ref: str, label: str) -> None:
+    with admin_lock():
+        tracker.mark("backup")
+        step("Backup before the upgrade")
+        tracker.job["backup"] = str(make_backup(cfg, label=label))
+        tracker._save()
+    required = running_units(service_units())
+    _run_deploy(cfg, ref, tracker.mark)
+    if not tracker.reached("restart"):
+        tracker.mark("restart")
+    tracker.mark("checks")
+    step("Health check")
+    failed = wait_healthy(cfg, required)
+    if failed:
+        raise Fail(f"the new version did not pass the health check ({', '.join(failed)})")
+
+
+def upgrade_run(cfg: Dict[str, str]) -> int:
+    """The job itself (root, in the transient unit `upgrade start` asked systemd for)."""
+    try:
+        req = json.loads(P(UPGRADE_REQUEST).read_text())
+        P(UPGRADE_REQUEST).unlink()
+    except (OSError, ValueError):
+        raise Fail("no upgrade was requested", "Start one from Settings → Software upgrade.")
+    job = load_upgrade_status()
+    if not isinstance(req, dict) or job.get("id") != req.get("id") or job.get("phase") != "starting":
+        raise Fail("the upgrade request does not match its status")
+    log_dir = P(UPGRADE_LOG_DIR)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    os.chmod(log_dir, 0o700)
+    log = open(log_dir / f"{job['id']}.log", "a", encoding="utf-8")
+    os.dup2(log.fileno(), 1)
+    os.dup2(log.fileno(), 2)
+    job.update(phase="running", pid=os.getpid())
+    tracker = UpgradeJob(job)
+    tracker._save()
+    kind, lay, ref = job["kind"], job["layout"], job["to_ref"]
+    say(f"{kind} {job['from']} -> {job['to']} (requested by {job.get('by') or '?'})")
+    audit(f"upgrade {kind} {job['from']} -> {job['to']}: started")
+    result, error = "ok", ""
+    try:
+        if kind == "upgrade" and lay == "release":
+            _upgrade_release(cfg, tracker, ref, force=False)
+        elif kind == "upgrade":
+            _upgrade_git(cfg, tracker, ref, label=f"pre-upgrade-{ref}")
+        else:
+            rb = rollback_target(cfg)
+            if not rb or rb["ref"] != ref:
+                raise Fail("the upgrade to roll back is no longer the newest change")
+            if lay == "release":
+                _upgrade_release(cfg, tracker, ref, force=True)
+            else:
+                _upgrade_git(cfg, tracker, ref, label=f"pre-rollback-{job['from']}")
+            tracker.mark("restore")
+            _restore_backup(cfg, rb["backup"])
+            tracker.mark("checks")
+            failed = wait_healthy(cfg, running_units(service_units()))
+            if failed:
+                raise Fail(f"after the rollback {', '.join(failed)} still fail", "Look at `aquarium logs`.")
+    except Fail as failure:
+        result, error = "failed", str(failure)
+        say(f"\nERROR: {failure}")
+        tracker.fail_current()
+        if kind == "upgrade":
+            result = "rolled back"
+            try:
+                _undo_upgrade(cfg, tracker, job)
+            except Fail as undo:
+                result, error = "failed", f"{failure}; putting the old version back also failed: {undo}"
+                say(f"\nERROR: {undo}")
+    tracker.finish(result, error)
+    if result == "ok" and lay == "git":
+        job["to_commit"] = _git_out(cfg, "rev-parse", "--short", "HEAD") or None
+    state = load_state()
+    upgrades = state.setdefault("upgrades", [])
+    upgrades.append({k: job.get(k) for k in ("id", "kind", "from", "from_ref", "to", "to_ref", "to_commit", "by",
+                                             "started", "finished", "seconds", "result", "error", "backup")})
+    del upgrades[:-UPGRADE_HISTORY_KEEP]
+    save_state(state)
+    tracker._save()
+    audit(f"upgrade {kind} {job['from']} -> {job['to']}: {result}" + (f" ({error})" if error else ""))
+    say(f"\n{kind} finished: {result}")
+    return 0 if result == "ok" else 1
+
+
+def _undo_upgrade(cfg: Dict[str, str], tracker: UpgradeJob, job: Dict) -> None:
+    """A failed upgrade puts the old version back and, once the database was touched, the backup."""
+    touched = tracker.reached("database")
+    if job["layout"] == "git" and tracker.reached("download") and job.get("from_ref"):
+        tracker.mark("restore")
+        step(f"Putting back {job['from']}")
+        _run_deploy(cfg, job["from_ref"], lambda key: None)
+    # (release installs: `aquarium update` already switched back to the old release)
+    if touched and job.get("backup"):
+        tracker.mark("restore")
+        _restore_backup(cfg, job["backup"])
+    if tracker.reached("restore"):
+        failed = wait_healthy(cfg, running_units(service_units()))
+        if failed:
+            raise Fail(f"{', '.join(failed)} still fail after putting the old version back")
+
+
+def cmd_upgrade(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
+    verb = args.verb
+    if verb == "run":
+        return upgrade_run(cfg)
+    if verb == "status":
+        return _offsite_answer(upgrade_public_status(cfg))
+    if verb in ("releases", "check"):
+        return _offsite_answer({"ok": True, **cached_releases(cfg, refresh=verb == "check")})
+    return upgrade_start(cfg, "upgrade" if verb == "start" else "rollback")
+
+
 # --------------------------------------------------------------------------- doctor
 
 OK, WARN, FAILED = "ok", "warn", "fail"
@@ -3389,6 +3891,8 @@ def parser() -> argparse.ArgumentParser:
     p = sub.add_parser("offsite", help="encrypted copies in S3-compatible storage (set up in Get ready)")
     p.add_argument("verb", choices=["status", "configure", "test", "run", "restore-test", "remove"])
     p.add_argument("--foreground", action="store_true", help=argparse.SUPPRESS)
+    p = sub.add_parser("upgrade", help="Settings → Software upgrade: status, releases, start, rollback (JSON)")
+    p.add_argument("verb", choices=["status", "releases", "check", "start", "rollback", "run"])
     p = sub.add_parser("doctor", help="check everything and say how to fix what fails")
     p.add_argument("--json", action="store_true", help="print the results as one JSON line")
     p = sub.add_parser("logs", help="service logs")
@@ -3409,7 +3913,8 @@ def parser() -> argparse.ArgumentParser:
 
 COMMANDS = {"status": cmd_status, "update": cmd_update, "backup": cmd_backup, "restore": cmd_restore,
             "doctor": cmd_doctor, "logs": cmd_logs, "migrate-layout": cmd_migrate_layout,
-            "uninstall": cmd_uninstall, "offsite": cmd_offsite, "apps": cmd_apps}
+            "uninstall": cmd_uninstall, "offsite": cmd_offsite, "apps": cmd_apps,
+            "upgrade": cmd_upgrade}
 
 
 def main(argv: Optional[List[str]] = None) -> int:

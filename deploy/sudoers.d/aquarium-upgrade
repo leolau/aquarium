@@ -1,0 +1,15 @@
+# Lets the Hermes dashboard (user hermes) run Settings → Software upgrade (owner
+# starts, owner/admin read; the dashboard checks the role and re-checks the
+# owner's password before it calls sudo). Each line is one exact command of the
+# root-owned /usr/local/sbin/aquarium (installed from deploy/aquarium.py, never
+# the checkout's copy, which the hermes user can write). `start` and `rollback`
+# read {"version": "vX.Y.Z", "by": "<name>"} on stdin, accept only a published
+# release (or the version the last upgrade came from) and hand the job to a
+# transient systemd unit running `aquarium upgrade run`, which is not listed
+# here: hermes cannot run the job, pick a script, or pass any other argument.
+# Install: root:root 0440.
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium upgrade status
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium upgrade releases
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium upgrade check
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium upgrade start
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium upgrade rollback
