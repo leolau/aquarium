@@ -77,6 +77,7 @@ import type {
   SkillHubScan,
   SkillHubSearchResponse,
   SkillHubSourcesResponse,
+  SkillDetails,
   SkillInfo,
   ProfileSuggestionAdoptResponse,
   ProfileSuggestionDismissResponse,
@@ -405,6 +406,10 @@ export class HermesApiClient {
 
   async skillContent(name: string): Promise<{ name: string; content: string }> {
     return this.request(`/api/skills/content?name=${encodeURIComponent(name)}`);
+  }
+
+  async skillDetails(name: string): Promise<SkillDetails> {
+    return this.request(`/api/skills/details?name=${encodeURIComponent(name)}`);
   }
 
   async createSkill(input: {

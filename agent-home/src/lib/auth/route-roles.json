@@ -319,6 +319,7 @@
   "POST /api/skills": "admin",
   "PUT /api/skills/toggle": "admin",
   "GET /api/skills/content": "admin",
+  "GET /api/skills/details": "admin",
   "PUT /api/skills/content": "admin",
   "GET /api/skills/hub/sources": "admin",
   "GET /api/skills/hub/search": "admin",

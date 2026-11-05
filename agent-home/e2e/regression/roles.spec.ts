@@ -27,7 +27,7 @@ for (const role of ["member", "viewer"] as Role[]) {
       }
     });
 
-    for (const path of ["/profiles", "/skills"]) {
+    for (const path of ["/profiles", "/skills", "/skills/zz-e2e-skill", "/skills/zz-e2e-skill/edit"]) {
       test(`${path} is not available`, async ({ page }) => {
         await page.goto(path);
         await expect(component(page, "NotAvailableForRole")).toBeVisible();

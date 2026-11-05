@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GET as getContent, PUT as putContent } from "@/app/api/skills/content/route";
+import { GET as getDetails } from "@/app/api/skills/details/route";
 import { POST as install } from "@/app/api/skills/hub/install/route";
 import { GET as preview } from "@/app/api/skills/hub/preview/route";
 import { GET as scan } from "@/app/api/skills/hub/scan/route";
@@ -19,6 +20,7 @@ const client = {
   createSkill: vi.fn(),
   toggleSkill: vi.fn(),
   skillContent: vi.fn(),
+  skillDetails: vi.fn(),
   updateSkillContent: vi.fn(),
   skillHubSources: vi.fn(),
   skillHubSearch: vi.fn(),
@@ -56,6 +58,7 @@ const CALLS: Array<[string, () => Promise<Response>]> = [
   ["POST /api/skills", () => POST(json("POST", { name: "smoke-s", content: "---\n" }))],
   ["PUT toggle", () => toggle(json("PUT", { name: "a", enabled: false }))],
   ["GET content", () => getContent(get("/api/skills/content?name=a"))],
+  ["GET details", () => getDetails(get("/api/skills/details?name=a"))],
   ["PUT content", () => putContent(json("PUT", { name: "a", content: "x" }))],
   ["GET hub sources", () => sources(get("/api/skills/hub/sources"))],
   ["GET hub search", () => search(get("/api/skills/hub/search?q=linear"))],
@@ -128,5 +131,31 @@ describe("Skills BFF routes", () => {
     expect(await res.json()).toEqual({ ok: true });
     expect(client.installHubSkill).toHaveBeenCalledWith("official/linear");
     expect(boundProfiles).toEqual(["coder"]);
+  });
+
+  it("details: requires a name, binds the profile and forwards only relative file facts", async () => {
+    getPrincipal.mockResolvedValue(who("admin"));
+    expect((await getDetails(get("/api/skills/details"))).status).toBe(400);
+    client.skillDetails.mockResolvedValue({
+      name: "a",
+      files: [{ path: "SKILL.md", size: 10, abs: "/opt/data/x/SKILL.md" }],
+      files_truncated: false,
+      modified_at: 1700000000,
+      used_by: [{ profile: "coder", enabled: true, path: "/opt/data/profiles/coder" }],
+      path: "/opt/data/x",
+    });
+    const res = await getDetails(get("/api/skills/details?name=a&profile=coder"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({
+      name: "a",
+      files: [{ path: "SKILL.md", size: 10 }],
+      files_truncated: false,
+      modified_at: 1700000000,
+      used_by: [{ profile: "coder", enabled: true }],
+    });
+    expect(JSON.stringify(body)).not.toContain("/opt/data");
+    expect(boundProfiles).toEqual(["coder"]);
+    expect(client.skillDetails).toHaveBeenCalledWith("a");
   });
 });

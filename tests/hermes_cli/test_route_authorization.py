@@ -591,6 +591,7 @@ ADMIN_ROUTES = [
     ("post", "/api/gateway/restart", None),
     ("post", "/api/profiles", {"name": "evil"}),
     ("post", "/api/skills/hub/install", {"identifier": "x"}),
+    ("get", "/api/skills/details?name=x", None),
     ("post", "/api/memory/providers/honcho/oauth/start", None),
     ("post", "/api/mcp/servers", {"name": "evil", "command": "/bin/sh", "args": ["-c", "id"]}),
     ("get", "/api/security-basics", None),

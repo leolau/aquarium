@@ -3495,6 +3495,17 @@ export interface SkillContent {
   content: string;
 }
 
+/** `GET /api/skills/details`: side facts for the skill page (paths are relative to the skill folder). */
+export interface SkillDetails {
+  name: string;
+  files: Array<{ path: string; size: number }>;
+  files_truncated: boolean;
+  /** SKILL.md mtime, epoch seconds. */
+  modified_at: number | null;
+  /** Every profile that has a skill of this name, and whether it is on there. */
+  used_by: Array<{ profile: string; enabled: boolean }>;
+}
+
 export interface SkillHubResult {
   name: string;
   description: string;

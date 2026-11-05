@@ -94,6 +94,14 @@ def test_page_verdict_not_found_page():
     assert not smoke.page_verdict(spec, MEMBER, 200, _html(*SHELL))[0]
 
 
+def test_page_verdict_admin_not_found_page():
+    spec = PageSpec("/skills/x", admin_not_found=True, member_markers=("NotAvailableForRole",))
+    assert smoke.page_verdict(spec, ADMIN, 200, '"NEXT_HTTP_ERROR_FALLBACK;404"')[0]
+    assert not smoke.page_verdict(spec, ADMIN, 200, _html(*SHELL))[0]
+    assert smoke.page_verdict(spec, MEMBER, 200, _html(*SHELL, "NotAvailableForRole"))[0]
+    assert not smoke.page_verdict(spec, MEMBER, 200, '"NEXT_HTTP_ERROR_FALLBACK;404"')[0]
+
+
 def _summary(**over):
     base = {
         "cpu_pct": 12.5, "mem_pct": 40, "disk_pct": 70.1,

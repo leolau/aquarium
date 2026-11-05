@@ -16197,6 +16197,92 @@ async def update_skill_content(body: SkillContentUpdate):
     return result
 
 
+
+#: Cap on the Files list of ``GET /api/skills/details`` — a skill folder is a
+#: handful of references/scripts; anything bigger is listed as truncated.
+_SKILL_DETAILS_MAX_FILES = 200
+
+
+def _skill_profile_names() -> List[str]:
+    """Every profile name (``default`` first), from directory names only —
+    cheaper than ``profiles.list_profiles()``, which reads each config and
+    counts skills."""
+    from hermes_cli import profiles as profiles_mod
+
+    names = ["default"]
+    root = profiles_mod._get_profiles_root()
+    if root.is_dir():
+        for entry in sorted(root.iterdir()):
+            if entry.is_dir() and entry.name != "default" and profiles_mod._PROFILE_ID_RE.match(entry.name):
+                names.append(entry.name)
+    return names
+
+
+def _skill_files(skill_dir: Path) -> Dict[str, Any]:
+    """The files in one skill folder as paths relative to it (never absolute)."""
+    files: List[Dict[str, Any]] = []
+    truncated = False
+    for path in sorted(skill_dir.rglob("*")):
+        rel = path.relative_to(skill_dir)
+        if any(part.startswith(".") or part == "__pycache__" for part in rel.parts):
+            continue
+        if path.is_symlink() or not path.is_file():
+            continue
+        if len(files) >= _SKILL_DETAILS_MAX_FILES:
+            truncated = True
+            break
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+        files.append({"path": rel.as_posix(), "size": size})
+    files.sort(key=lambda f: (f["path"] != "SKILL.md", f["path"]))
+    return {"files": files, "files_truncated": truncated}
+
+
+def _skill_details_sync(name: str, profile: Optional[str]) -> Dict[str, Any]:
+    from hermes_cli.skills_config import get_disabled_skills
+    from tools.skill_manager_tool import _find_skill
+
+    with _profile_scope(profile):
+        found = _find_skill(name)
+        if not found:
+            raise HTTPException(status_code=404, detail=f"Skill '{name}' not found.")
+        skill_dir = Path(found["path"])
+        details: Dict[str, Any] = {"name": name, **_skill_files(skill_dir)}
+        try:
+            details["modified_at"] = (skill_dir / "SKILL.md").stat().st_mtime
+        except OSError:
+            details["modified_at"] = None
+
+    used_by: List[Dict[str, Any]] = []
+    for pname in _skill_profile_names():
+        try:
+            with _profile_scope(pname):
+                if not _find_skill(name):
+                    continue
+                enabled = name not in get_disabled_skills(load_config())
+        except HTTPException:
+            continue
+        except Exception:
+            _log.debug("skill details: profile %s unreadable", pname, exc_info=True)
+            continue
+        used_by.append({"profile": pname, "enabled": enabled})
+    details["used_by"] = used_by
+    return details
+
+
+@app.get("/api/skills/details", dependencies=_ADMIN)
+async def get_skill_details(name: str, profile: Optional[str] = None):
+    """Side facts for the agent-home skill page: the skill folder's files
+    (relative paths + sizes), when SKILL.md last changed, and which profiles
+    have a skill of this name (and whether it is on there).
+
+    Never returns filesystem paths.
+    """
+    return await asyncio.to_thread(_skill_details_sync, name, profile)
+
+
 _TOOLSET_DEFAULT_PLATFORM = "cli"
 
 

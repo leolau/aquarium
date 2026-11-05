@@ -1,11 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 
 import { NewSkillModal } from "@/components/skills/NewSkillModal";
-import { SkillEditorModal } from "@/components/skills/SkillEditorModal";
 import { SkillsHubView } from "@/components/skills/SkillsHubView";
+import { skillHref } from "@/components/skills/skill-links";
 import { categoryCounts, filterSkills, sourceLabel, type SkillFilter } from "@/components/skills/skill-filters";
 import { Pill } from "@/components/ui/Pill";
 import { inputClass, primaryButtonClass, secondaryButtonClass } from "@/components/ui/Sheet";
@@ -28,7 +29,6 @@ export function SkillsView({ profiles, profile, initialSkills, initialView, erro
   const [view, setView] = useState(initialView);
   const [filter, setFilter] = useState<SkillFilter>({ kind: "all" });
   const [search, setSearch] = useState("");
-  const [editing, setEditing] = useState<SkillInfo | null>(null);
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState<string | null>(error);
 
@@ -157,15 +157,17 @@ export function SkillsView({ profiles, profile, initialSkills, initialView, erro
                 <li key={s.name} data-component="SkillRow" data-skill={s.name} className="flex items-start gap-3 p-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="font-medium">{s.name}</span>
+                      <Link href={skillHref(s.name, profile)} className="font-medium hover:text-[var(--color-accent)]">
+                        {s.name}
+                      </Link>
                       {s.category ? <Pill>{s.category}</Pill> : null}
                       <Pill tone={s.source === "hub" ? "accent" : "muted"}>{sourceLabel(s)}</Pill>
                     </div>
                     <p className="mt-1 line-clamp-2 text-sm text-[var(--color-muted)]">{s.description}</p>
                   </div>
-                  <button type="button" className={secondaryButtonClass} onClick={() => setEditing(s)}>
+                  <Link href={skillHref(s.name, profile, "edit")} role="button" className={`${secondaryButtonClass} inline-flex items-center`}>
                     Edit
-                  </button>
+                  </Link>
                   <button
                     type="button"
                     role="switch"
@@ -201,17 +203,6 @@ export function SkillsView({ profiles, profile, initialSkills, initialView, erro
         </div>
       )}
 
-      {editing ? (
-        <SkillEditorModal
-          skill={editing}
-          profile={profile}
-          onClose={() => setEditing(null)}
-          onChanged={async () => {
-            setEditing(null);
-            await reload();
-          }}
-        />
-      ) : null}
       {creating ? (
         <NewSkillModal
           profile={profile}

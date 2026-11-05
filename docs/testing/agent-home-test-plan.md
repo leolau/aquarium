@@ -82,9 +82,11 @@ Role shorthand in tables: **all** = viewer, member, admin, owner;
 | 38 | `/not-available` | `NotAvailableForRole` (middleware rewrites a menu item hidden from the caller's role here; URL unchanged) | → `/login` | renders | renders | hidden page's data never rendered; matching APIs answer 403 | HTTP | F |
 | 39 | `/profiles` | `ProfilesView` (owner/admin); others `NotAvailableForRole` | → `/login` | not available | card grid + editor + new-profile dialog | no filesystem paths in HTML; `/api/profiles*` 403 for viewer/member | HTTP + browser | F |
 | 40 | `/skills` | `SkillsView` (owner/admin); others `NotAvailableForRole` | → `/login` | not available | installed skills + Skills hub | `/api/skills*` 403 for viewer/member | HTTP + browser | F |
+| 41 | `/skills/[name]` | `SkillPage` (owner/admin); others `NotAvailableForRole`; unknown skill → 404 | → `/login` | not available | rendered SKILL.md + outline + details; Files / Used by tabs from `/api/skills/details` | `/api/skills/details` 403 for viewer/member; no filesystem paths in HTML | HTTP + browser | F |
+| 42 | `/skills/[name]/edit` | `SkillEditor` (owner/admin); others `NotAvailableForRole`; unknown skill → 404 | → `/login` | not available | Structured / Plain text views of one document, validation bar, Review & save diff | save goes through `PUT /api/skills/content` (admin) | HTTP + browser | F |
 
 One row per `page.tsx` (the "34 routes" in the brief predates a few additions;
-the tree has 40 today). `tests/scripts/test_agent_home_smoke.py` fails if a
+the tree has 42 today). `tests/scripts/test_agent_home_smoke.py` fails if a
 `page.tsx` is added without a smoke `PageSpec`, so this table and the script
 stay in step.
 
