@@ -28,7 +28,7 @@ def _update_block() -> str:
     """The checkout/reset/prune sequence, verbatim from the deploy script."""
     text = DEPLOY_SCRIPT.read_text()
     match = re.search(
-        r"^git checkout -f \"origin/\$BRANCH\" -- \.$.*?^fi$", text, re.S | re.M
+        r"^TARGET=\"origin/\$BRANCH\"$.*?^untracked=.*?^fi$", text, re.S | re.M
     )
     assert match, "the update block moved; update this test with it"
     return match.group(0)
@@ -72,14 +72,16 @@ def box(tmp_path: Path) -> Path:
     return clone
 
 
-def _run_update(box: Path) -> subprocess.CompletedProcess[str]:
+def _run_update(box: Path, ref: str = "") -> subprocess.CompletedProcess[str]:
     script = box.parent / "update.sh"
     script.write_text(
         "set -euo pipefail\n"
         "BRANCH=develop\n"
+        f"REF={ref}\n"
         "ALLOWED_LOCAL_MODS=(.env)\n"
         "cd \"$1\"\n"
         "git fetch -q --no-tags origin develop\n"
+        "git fetch -q --tags origin\n"
         "BEFORE=$(git rev-parse --short HEAD)\n"
         "git checkout -q $BRANCH\n" + _update_block() + "\n"
     )
@@ -125,3 +127,20 @@ def test_a_clean_checkout_reports_nothing(box: Path) -> None:
     result = _run_update(box)
 
     assert "untracked files in the deployment checkout" not in result.stdout
+
+
+def test_a_release_tag_is_deployed_detached_and_still_prunes(box: Path) -> None:
+    """`--ref vX.Y.Z` (Settings → Software upgrade) lands exactly on the tag,
+    with the same delete handling as a branch deploy."""
+    origin = box.parent / "origin"
+    _git(origin, "tag", "v1.1.0")
+    (origin / "later.py").write_text("print('after the tag')\n")
+    _git(origin, "add", "-A")
+    _git(origin, "commit", "-qm", "after the tag")
+
+    result = _run_update(box, ref="v1.1.0")
+
+    assert result.returncode == 0, result.stderr
+    assert _git(box, "rev-parse", "HEAD") == _git(origin, "rev-parse", "v1.1.0^{commit}")
+    assert not (box / "retired.py").exists()
+    assert not (box / "later.py").exists()

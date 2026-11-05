@@ -123,7 +123,7 @@ echo "== fetching ${REF:-origin/$BRANCH} =="
 # among the passing output to know nothing happened.
 fetched=
 for attempt in 1 2 3; do
-  if [ -z "$REF" ]; then
+  if [ -z "${REF:-}" ]; then
     git fetch --no-tags origin "$BRANCH" && fetched=yes || true
   elif [[ $REF == v* ]]; then
     git fetch --no-tags origin "+refs/tags/$REF:refs/tags/$REF" && fetched=yes || true
@@ -141,18 +141,18 @@ if [ -z "$fetched" ]; then
   exit 1
 fi
 BEFORE=$(git rev-parse --short HEAD)
-if [ -z "$REF" ]; then
-  TARGET="origin/$BRANCH"
-  git checkout -q "$BRANCH" 2>/dev/null || git checkout -q -b "$BRANCH" --track "origin/$BRANCH"
-  git checkout -f "$TARGET" -- .
-  git reset -q "$TARGET"
-  git merge --ff-only "$TARGET" >/dev/null 2>&1 || git update-ref "refs/heads/$BRANCH" "$TARGET"
-else
+TARGET="origin/$BRANCH"
+if [ -n "${REF:-}" ]; then
   TARGET=$(git rev-parse --verify "$REF^{commit}") || {
     echo "ABORT: $REF is not a revision of this checkout — nothing deployed" >&2
     exit 1
   }
   git checkout -q -f --detach "$TARGET"
+else
+  git checkout -q "$BRANCH" 2>/dev/null || git checkout -q -b "$BRANCH" --track "origin/$BRANCH"
+  git checkout -f "$TARGET" -- .
+  git reset -q "$TARGET"
+  git merge --ff-only "$TARGET" >/dev/null 2>&1 || git update-ref "refs/heads/$BRANCH" "$TARGET"
 fi
 # `checkout -- .` writes what the new revision HAS; it removes nothing the new
 # revision LACKS, and the reset above then leaves the orphan untracked. So a
