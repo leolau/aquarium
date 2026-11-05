@@ -1,8 +1,9 @@
 "use client";
 
-import { CATEGORY_LABEL, formatWhen, roundQuestions } from "@/components/projects/scope/clarify";
+import { CATEGORY_LABEL, roundQuestions } from "@/components/projects/scope/clarify";
 import { CARD } from "@/components/projects/scope/ui";
 import type { ClarifyState } from "@/types";
+import { useTimeLabel } from "@/components/projects/useTimeLabel";
 
 /** Every round's questions and answers, collapsed by round, newest first. */
 export function ScopeHistory({
@@ -15,6 +16,7 @@ export function ScopeHistory({
   excludeRound?: number;
   title?: string;
 }) {
+  const timeLabel = useTimeLabel();
   const rounds = [...state.rounds]
     .filter((r) => r.round_no !== excludeRound)
     .sort((a, b) => b.round_no - a.round_no);
@@ -25,7 +27,7 @@ export function ScopeHistory({
       <div className="mt-2 flex flex-col divide-y divide-[var(--color-border)]">
         {rounds.map((round) => {
           const questions = roundQuestions(state, round.round_no);
-          const when = formatWhen(round.created_at);
+          const when = round.created_at ? timeLabel(round.created_at, "date") : null;
           return (
             <details key={round.round_no} data-round={round.round_no} className="py-2">
               <summary className="cursor-pointer text-sm">

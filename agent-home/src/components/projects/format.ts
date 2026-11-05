@@ -62,3 +62,12 @@ export function callDurationLabel(ms: number | null | undefined): string {
   const seconds = Math.round(ms / 1000);
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
+
+/**
+ * "2026-11-05" — the UTC day, identical on the server and in any browser.
+ * What clock/locale/zone-dependent labels show until the page has hydrated.
+ */
+export function isoDayLabel(epochSeconds: number): string {
+  const date = new Date(epochSeconds * 1000);
+  return Number.isNaN(date.getTime()) ? "—" : date.toISOString().slice(0, 10);
+}

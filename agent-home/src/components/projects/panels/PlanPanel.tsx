@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { friendlyError } from "@/components/projects/errors";
 
-import { dateTimeLabel } from "@/components/projects/format";
 import { BusyRegion } from "@/components/ui/BusyRegion";
 import { useRefresh } from "@/components/ui/useRefresh";
 import { ActionButton } from "@/components/projects/ActionButton";
@@ -15,6 +14,7 @@ import type {
   ProjectPlaybookDraftState,
   ProjectPlaybookResponse,
 } from "@/types";
+import { useTimeLabel } from "@/components/projects/useTimeLabel";
 
 /** How often the panel asks the server whether the agent's draft is ready. */
 export const DRAFT_POLL_MS = 2_000;
@@ -96,6 +96,7 @@ export function PlanPanel({
   canActivate: boolean;
   archived: boolean;
 }) {
+  const timeLabel = useTimeLabel();
   const { refresh } = useRefresh();
   const active = playbook?.active ?? null;
   const proposed = (playbook?.revisions ?? []).filter((rev) => !rev.active);
@@ -328,7 +329,7 @@ export function PlanPanel({
                 revision {active.rev}
                 {active.note ? ` · ${active.note}` : ""}
                 {active.activated_at != null
-                  ? ` · activated ${dateTimeLabel(active.activated_at)}`
+                  ? ` · activated ${timeLabel(active.activated_at)}`
                   : ""}
                 {active.created_by ? ` · by ${active.created_by}` : ""}
               </p>

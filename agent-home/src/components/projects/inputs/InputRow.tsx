@@ -13,6 +13,7 @@ import { friendlyFileName } from "@/components/projects/panels/LinkRow";
 import { useProjectAction } from "@/components/projects/useProjectAction";
 import type { ProjectLink } from "@/types";
 import { newTabRel } from "@/lib/http/link-rel";
+import { useTimeLabel } from "@/components/projects/useTimeLabel";
 
 /** What a row calls an input: its label, else a readable form of its ref. */
 export function inputTitle(link: Pick<ProjectLink, "kind" | "ref" | "label">): string {
@@ -25,9 +26,13 @@ export function inputTitle(link: Pick<ProjectLink, "kind" | "ref" | "label">): s
 }
 
 /** "Template to match · added by you · 2d ago". */
-export function inputMeta(link: ProjectLink, callerUserId?: string): string {
+export function inputMeta(
+  link: ProjectLink,
+  callerUserId?: string,
+  ago: (epochSeconds: number | null) => string = agoLabel,
+): string {
   const who = addedByLabel(link.added_by, callerUserId);
-  return [inputRoleLabel(link), who ? `added by ${who}` : null, agoLabel(link.added_at)]
+  return [inputRoleLabel(link), who ? `added by ${who}` : null, ago(link.added_at)]
     .filter(Boolean)
     .join(" · ");
 }
@@ -59,6 +64,7 @@ export function InputRow({
   opening?: boolean;
   icon?: string;
 }) {
+  const timeLabel = useTimeLabel();
   const action = useProjectAction();
   const title = inputTitle(link);
   const unresolved = link.resolved === null;
@@ -109,7 +115,7 @@ export function InputRow({
         <div className="min-w-0 flex-1">
           {titleNode}
           <span className="block truncate text-xs text-[var(--color-muted)]">
-            {inputMeta(link, callerUserId)}
+            {inputMeta(link, callerUserId, (at) => timeLabel(at, "ago"))}
           </span>
         </div>
         {onDownload ? (

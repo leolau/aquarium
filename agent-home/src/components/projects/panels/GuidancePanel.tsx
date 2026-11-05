@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 
-import { agoLabel } from "@/components/projects/format";
 import { prependDirective } from "@/components/projects/envelopes";
 import { ActionButton } from "@/components/projects/ActionButton";
 import { ActionError } from "@/components/projects/ActionError";
@@ -10,6 +9,7 @@ import { useProjectAction } from "@/components/projects/useProjectAction";
 import { BusyRegion } from "@/components/ui/BusyRegion";
 import { useAction } from "@/lib/use-action";
 import type { ProjectDirective, ProjectDirectivesResponse } from "@/types";
+import { useTimeLabel } from "@/components/projects/useTimeLabel";
 
 /**
  * Standing instructions, newest-first (§5). The add field says what the rule
@@ -27,6 +27,7 @@ export function GuidancePanel({
   /** §13: a shelved project offers restore as the only write. */
   archived?: boolean;
 }) {
+  const timeLabel = useTimeLabel();
   const [directives, setDirectives] = useState<ProjectDirective[]>(
     initial?.directives ?? [],
   );
@@ -102,7 +103,7 @@ export function GuidancePanel({
                 <p className="mt-1 flex items-center justify-between text-xs text-[var(--color-muted)]">
                   <span>
                     {directive.author_user_id} ·{" "}
-                    {agoLabel(directive.created_at)}
+                    {timeLabel(directive.created_at, "ago")}
                     {directive.kind === "feedback" ? " · feedback" : ""}
                   </span>
                   {archived ? null : (
@@ -142,7 +143,7 @@ export function GuidancePanel({
                     <p className="mt-1 flex items-center justify-between text-xs text-[var(--color-muted)]">
                       <span>
                         {directive.author_user_id} ·{" "}
-                        {agoLabel(directive.created_at)}
+                        {timeLabel(directive.created_at, "ago")}
                       </span>
                       {archived ? null : (
                         <DirectiveAction

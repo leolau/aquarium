@@ -30,6 +30,7 @@ import {
   type StopMode,
   type StopRequest,
 } from "./liveState";
+import { useHydrated } from "@/lib/use-hydrated";
 
 /** Scrolled past this many pixels, the bar folds to one line. */
 export const COLLAPSE_AFTER_PX = 160;
@@ -43,13 +44,15 @@ const PRIMARY_BTN =
 const GHOST_BTN =
   "rounded-xl border border-[var(--color-border)] px-3 py-1.5 text-sm disabled:opacity-50";
 
-function useNow(): number {
+/** Seconds since epoch, ticking; `null` on the server and while hydrating (no #418). */
+function useNow(): number | null {
+  const hydrated = useHydrated();
   const [now, setNow] = useState(() => Date.now() / 1000);
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now() / 1000), 1000);
     return () => clearInterval(id);
   }, []);
-  return now;
+  return hydrated ? now : null;
 }
 
 function useScrolledPast(px: number): boolean {
@@ -223,7 +226,7 @@ function TaskRow({
 }: {
   slug: string;
   task: LiveTask;
-  now: number;
+  now: number | null;
   stopped: boolean;
   canStop: boolean;
   onStopped: (task: LiveTask) => void;
@@ -254,9 +257,9 @@ function TaskRow({
                 ? `step ${task.stepIndex} of ${task.stepTotal}`
                 : "",
               task.profile ? `worker on ${task.profile}` : "",
-              task.startedAt != null ? elapsedLabel(now - task.startedAt) : "",
+              task.startedAt != null && now != null ? elapsedLabel(now - task.startedAt) : "",
             ]}
-            silentFor={stopped || heard == null ? null : Math.max(0, now - heard)}
+            silentFor={stopped || heard == null || now == null ? null : Math.max(0, now - heard)}
           />
         </div>
         <Link href={href} className="shrink-0 rounded-lg px-2 py-1 text-xs text-[var(--color-accent)]">
@@ -312,7 +315,7 @@ function InlineRow({
   runNo: number;
   profile: string | null;
   startedAt: number | null;
-  now: number;
+  now: number | null;
   reasoning: string;
   tools: ToolChip[];
 }) {
@@ -329,7 +332,7 @@ function InlineRow({
           <RowMeta
             parts={[
               profile ? `on ${profile}` : "",
-              startedAt != null ? elapsedLabel(now - startedAt) : "",
+              startedAt != null && now != null ? elapsedLabel(now - startedAt) : "",
             ]}
             silentFor={null}
           />
@@ -509,7 +512,7 @@ function PrimaryAction({
   );
 }
 
-function summaryLine(state: LiveState, project: ProjectDetail, now: number): string {
+function summaryLine(state: LiveState, project: ProjectDetail, now: number | null): string {
   const n = state.runNo;
   if (state.kind === "idle") {
     const last = project.runs[0];
@@ -526,7 +529,7 @@ function summaryLine(state: LiveState, project: ProjectDetail, now: number): str
         : count === 1
           ? "1 task running"
           : `${count} tasks running`,
-    state.runStartedAt != null ? `started ${startedAgo(now - state.runStartedAt)}` : "",
+    state.runStartedAt != null && now != null ? `started ${startedAgo(now - state.runStartedAt)}` : "",
   ];
   return parts.filter(Boolean).join(" · ");
 }

@@ -5,8 +5,8 @@ import { useState } from "react";
 import { ActionButton } from "@/components/projects/ActionButton";
 import { ActionError } from "@/components/projects/ActionError";
 import { useProjectAction } from "@/components/projects/useProjectAction";
-import { dateTimeLabel } from "@/components/projects/format";
 import type { ProjectAutonomy, ProjectDetail } from "@/types";
+import { useTimeLabel } from "@/components/projects/useTimeLabel";
 
 export const AUTONOMY_OPTIONS: {
   value: ProjectAutonomy;
@@ -53,6 +53,7 @@ export function SettingsPanel({
   canLead: boolean;
   hasActivePlan: boolean;
 }) {
+  const timeLabel = useTimeLabel();
   const slugPath = `/api/projects/${encodeURIComponent(project.slug)}`;
   const [schedule, setSchedule] = useState(project.schedule ?? "");
   const [autonomy, setAutonomy] = useState<ProjectAutonomy>(project.autonomy);
@@ -144,7 +145,7 @@ export function SettingsPanel({
             <p className="text-xs text-[var(--color-muted)]">
               {current.schedule
                 ? current.next_run_at != null
-                  ? `Runs ${current.schedule} · next ${dateTimeLabel(current.next_run_at)}`
+                  ? `Runs ${current.schedule} · next ${timeLabel(current.next_run_at)}`
                   : `Runs ${current.schedule}`
                 : "No schedule yet — a repeatable project needs one to fire on its own."}
               {current.schedule && !hasActivePlan

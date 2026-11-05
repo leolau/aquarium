@@ -8,12 +8,11 @@ import { ActionError } from "@/components/projects/ActionError";
 import { useProjectAction } from "@/components/projects/useProjectAction";
 
 import {
-  agoLabel,
-  dateTimeLabel,
   durationLabel,
 } from "@/components/projects/format";
 import { Pill } from "@/components/ui/Pill";
 import type { ProjectRunBrief, ProjectRunStatus } from "@/types";
+import { useTimeLabel } from "@/components/projects/useTimeLabel";
 
 const RUN_TONE: Record<
   ProjectRunStatus,
@@ -53,6 +52,7 @@ export function RunsPanel({
   runs: ProjectRunBrief[];
   archived?: boolean;
 }) {
+  const timeLabel = useTimeLabel();
   return (
     <section
       id="panel-runs"
@@ -85,9 +85,9 @@ export function RunsPanel({
                 >
                   <span className="font-medium">#{run.run_no}</span>
                   <span className="min-w-0 flex-1 truncate text-xs text-[var(--color-muted)]">
-                    {run.trigger} · {dateTimeLabel(run.started_at)} ·{" "}
+                    {run.trigger} · {timeLabel(run.started_at)} ·{" "}
                     {live
-                      ? `${LIVE_HINT[run.status]} · ${agoLabel(run.started_at)}`
+                      ? `${LIVE_HINT[run.status]} · ${timeLabel(run.started_at, "ago")}`
                       : durationLabel(run.duration_seconds)}
                     {run.outcome ? ` · ${run.outcome}` : ""}
                     {run.score_user != null ? ` · ${run.score_user}/5` : ""}
@@ -108,7 +108,7 @@ export function RunsPanel({
 
       {runs.length > 0 ? (
         <p className="mt-2 text-xs text-[var(--color-muted)]">
-          newest run {agoLabel(runs[0].started_at)}
+          newest run {timeLabel(runs[0].started_at, "ago")}
         </p>
       ) : null}
     </section>

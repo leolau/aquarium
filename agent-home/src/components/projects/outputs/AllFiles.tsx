@@ -2,12 +2,12 @@
 
 import { useState } from "react";
 
-import { dateTimeLabel } from "@/components/projects/format";
 import { newestFirst, provenanceLabel } from "@/components/projects/outputs/artifacts";
 import { FileBadge } from "@/components/projects/outputs/FileBadge";
 import { OpenArtifact, type OpenFile } from "@/components/projects/outputs/OpenArtifact";
 import { Pill, type Tone } from "@/components/ui/Pill";
 import type { ProjectArtifact, ProjectArtifactKind } from "@/types";
+import { useTimeLabel } from "@/components/projects/useTimeLabel";
 
 const KIND_LABEL: Record<ProjectArtifactKind, string> = {
   deliverable: "final",
@@ -48,6 +48,7 @@ export function AllFiles({
   onDownloadFile?: OpenFile;
   resolving?: string | null;
 }) {
+  const timeLabel = useTimeLabel();
   const [filter, setFilter] = useState<Filter>("all");
   const rows = newestFirst(artifacts.filter((a) => filter === "all" || a.kind === filter));
   return (
@@ -106,7 +107,7 @@ export function AllFiles({
               <span className="min-w-0 flex-1">
                 <span className="block break-all text-sm">{file.title}</span>
                 <span className="block truncate text-xs text-[var(--color-muted)]">
-                  {provenanceLabel(file)} · {dateTimeLabel(file.created_at)}
+                  {provenanceLabel(file)} · {timeLabel(file.created_at)}
                 </span>
               </span>
               <Pill tone={KIND_TONE[file.kind]}>{KIND_LABEL[file.kind]}</Pill>

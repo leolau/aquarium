@@ -18,8 +18,6 @@ import {
 } from "@/components/projects/readiness";
 import { revealTarget } from "@/components/projects/revealTarget";
 import {
-  agoLabel,
-  dayDistance,
   durationLabel,
   tokenCountLabel,
 } from "@/components/projects/format";
@@ -59,6 +57,7 @@ import type {
   ProjectPlaybookResponse,
   ProjectUsage,
 } from "@/types";
+import { useTimeLabel } from "@/components/projects/useTimeLabel";
 
 const HEALTH_TONE: Record<ProjectHealth, Tone> = {
   ok: "success",
@@ -111,6 +110,7 @@ export function ProjectDetailView({
   /** From `?tab=`; anything unknown lands on the Dashboard. */
   initialTab?: string;
 }) {
+  const timeLabel = useTimeLabel();
   const { refresh, refreshing } = useRefresh();
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -194,7 +194,7 @@ export function ProjectDetailView({
     CADENCE_LABEL[project.cadence],
     project.schedule ?? undefined,
     project.next_run_at != null
-      ? `next ${dayDistance(project.next_run_at)}`
+      ? `next ${timeLabel(project.next_run_at, "day")}`
       : undefined,
     project.autonomy,
   ]
@@ -309,7 +309,7 @@ export function ProjectDetailView({
                   <p className="italic">{project.summary}</p>
                   {project.summary_at != null ? (
                     <p className="mt-1 text-xs text-[var(--color-muted)]">
-                      Summarised {agoLabel(project.summary_at)}
+                      Summarised {timeLabel(project.summary_at, "ago")}
                     </p>
                   ) : null}
                 </div>

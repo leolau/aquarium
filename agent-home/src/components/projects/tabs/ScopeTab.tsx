@@ -29,6 +29,7 @@ import { useClarifyState } from "@/components/projects/scope/useClarifyState";
 import { useScopeActions, type ScopeActions } from "@/components/projects/scope/useScopeActions";
 import type { ProjectTab, ProjectTabProps } from "@/components/projects/tabs/types";
 import type { ClarifyState } from "@/types";
+import { useTimeLabel } from "@/components/projects/useTimeLabel";
 
 /**
  * Scope — before implementation the agent reads the brief, goal, outputs and
@@ -80,6 +81,7 @@ function ScopeBody({
   archived: boolean;
   onNavigate: (tab: ProjectTab) => void;
 }) {
+  const timeLabel = useTimeLabel();
   const [drafts, setDrafts] = useState<AnswerDrafts>({});
   const [edit, setEdit] = useState<{ round: number; text: string } | null>(null);
   const [focus, setFocus] = useState("");
@@ -262,7 +264,7 @@ function ScopeBody({
             </p>
             {formatWhen(state.confirmed_at ?? round?.confirmed_at) ? (
               <p className="mt-2 text-xs text-[var(--color-muted)]">
-                Confirmed {formatWhen(state.confirmed_at ?? round?.confirmed_at)}. The plan and
+                Confirmed {timeLabel(state.confirmed_at ?? round?.confirmed_at, "date")}. The plan and
                 every run follow this scope.
               </p>
             ) : null}

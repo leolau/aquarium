@@ -55,8 +55,8 @@ describe("InputsTab (SSR)", () => {
     });
     expect(html).not.toContain('data-component="InputsEmptyState"');
     expect(html).toContain("MOU_template.docx");
-    expect(html).toContain("Template to match · added by you · 2d ago");
-    expect(html).toContain("Reference to read · added by yan · 2d ago");
+    expect(html).toMatch(/Template to match · added by you · \d{4}-\d{2}-\d{2}/);
+    expect(html).toMatch(/Reference to read · added by yan · \d{4}-\d{2}-\d{2}/);
     expect(html).toContain("ConnectAR Ltd company details");
     expect(html).toContain("Memory · added by you");
     expect(html).toContain("Keep it under one page");
