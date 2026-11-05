@@ -54,6 +54,7 @@ import type {
   MemoryDocumentsResponse,
   ModelInfo,
   OffsiteBackupStatus,
+  SoftwareUpgradeStatus,
   ModelOptionsResponse,
   ModelSetResponse,
   ModelTestResponse,
@@ -2765,6 +2766,34 @@ export class HermesApiClient {
     action: "test" | "run" | "restore-test",
   ): Promise<OffsiteBackupStatus | { started: boolean; status: OffsiteBackupStatus }> {
     return this.request(`/api/backups/offsite/${action}`, { method: "POST" });
+  }
+
+  // -- software upgrade (Settings → Software upgrade; owner, admins read) ----
+
+  async softwareUpgrade(): Promise<SoftwareUpgradeStatus> {
+    return this.request("/api/software-upgrade");
+  }
+
+  /** Progress poll: status without the release list. */
+  async softwareUpgradeJob(): Promise<SoftwareUpgradeStatus> {
+    return this.request("/api/software-upgrade/job");
+  }
+
+  async checkSoftwareUpgrade(): Promise<SoftwareUpgradeStatus> {
+    return this.request("/api/software-upgrade/check", { method: "POST" });
+  }
+
+  async startSoftwareUpgrade(body: {
+    version: string;
+    password: string;
+  }): Promise<{ started: boolean; status: SoftwareUpgradeStatus }> {
+    return this.request("/api/software-upgrade/start", { method: "POST", json: body });
+  }
+
+  async rollbackSoftwareUpgrade(body: {
+    password: string;
+  }): Promise<{ started: boolean; status: SoftwareUpgradeStatus }> {
+    return this.request("/api/software-upgrade/rollback", { method: "POST", json: body });
   }
 
   // -- private networks (Settings → In&Out → Fortinet VPN) -----------------

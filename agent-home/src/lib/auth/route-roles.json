@@ -258,7 +258,6 @@
   "GET /api/tools/apps/[name]/mcp": "signed-in",
   "PUT /api/tools/apps/[name]/mcp": "signed-in",
   "GET /api/tools/apps/[name]/secrets": "signed-in",
-  "PUT /api/tools/apps/[name]/secrets": "signed-in",
   "DELETE /api/tools/apps/[name]/secrets": "signed-in",
   "GET /api/email/mailboxes": "signed-in",
   "PUT /api/email/mailboxes/[address]": "signed-in",
@@ -299,13 +298,6 @@
   "GET /api/browse/file": "signed-in",
   "POST /api/browse/save": "signed-in",
   "POST /api/browse/attach": "signed-in",
-  "GET /api/settings/apps/limits": "admin",
-  "PUT /api/settings/apps/limits": "admin",
-  "GET /api/settings/apps/storage": "admin",
-  "PUT /api/settings/apps/storage": "admin",
-  "GET /api/settings/apps/github": "admin",
-  "PUT /api/settings/apps/github": "admin",
-  "DELETE /api/settings/apps/github": "admin",
   "GET /api/profiles": "admin",
   "POST /api/profiles": "admin",
   "PATCH /api/profiles/named/[name]": "admin",
@@ -325,5 +317,10 @@
   "GET /api/skills/hub/preview": "admin",
   "GET /api/skills/hub/scan": "admin",
   "POST /api/skills/hub/install": "admin",
-  "POST /api/skills/hub/uninstall": "admin"
+  "POST /api/skills/hub/uninstall": "admin",
+  "GET /api/software-upgrade": "admin",
+  "GET /api/software-upgrade/job": "admin",
+  "POST /api/software-upgrade/check": "admin",
+  "POST /api/software-upgrade/start": "owner",
+  "POST /api/software-upgrade/rollback": "owner"
 }

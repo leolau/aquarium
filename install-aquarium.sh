@@ -509,6 +509,8 @@ install -m 755 -o root -g root deploy/aquarium.py /usr/local/sbin/aquarium
 # until the owner saves a storage target there (no timer or unit exists before that).
 visudo -cqf deploy/sudoers.d/hermes-backup
 install -m 440 -o root -g root deploy/sudoers.d/hermes-backup /etc/sudoers.d/hermes-backup
+visudo -cqf deploy/sudoers.d/aquarium-upgrade
+install -m 440 -o root -g root deploy/sudoers.d/aquarium-upgrade /etc/sudoers.d/aquarium-upgrade
 # Agent terminal commands run as hermes-tools (terminal.run_as): root-owned helpers, the
 # sudoers rule, the `hermes` allowlist and folder access in HERMES_HOME; see the script header.
 bash deploy/hermes-tools-setup --hermes-home "$HERMES_HOME_DIR" --hermes-bin "$APP/.venv/bin/hermes" \

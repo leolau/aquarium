@@ -3544,3 +3544,77 @@ export interface SkillHubScan {
   findings: Array<{ severity: string; category: string; file: string; line: number; description: string }>;
   severity_counts: Record<string, number>;
 }
+
+// -- Settings → Software upgrade --------------------------------------------
+
+export interface SoftwareUpgradeRelease {
+  tag: string;
+  name: string;
+  published_at: string;
+  prerelease: boolean;
+  url: string;
+  highlights: { title: string; items: string[] }[];
+}
+
+export type SoftwareUpgradeStepState = "pending" | "running" | "done" | "failed" | "skipped";
+
+export interface SoftwareUpgradeStep {
+  key: string;
+  state: SoftwareUpgradeStepState;
+  started: string | null;
+  finished: string | null;
+}
+
+export interface SoftwareUpgradeJob {
+  id: string;
+  kind: "upgrade" | "rollback";
+  from: string | null;
+  to: string | null;
+  by: string | null;
+  started: string | null;
+  finished: string | null;
+  running: boolean;
+  result: "ok" | "failed" | "rolled back" | "interrupted" | string | null;
+  error: string | null;
+  steps: SoftwareUpgradeStep[];
+  log: string[];
+}
+
+export interface SoftwareUpgradeHistoryRow {
+  id: string;
+  kind: "upgrade" | "rollback";
+  from: string | null;
+  to: string | null;
+  by: string | null;
+  started: string | null;
+  finished: string | null;
+  seconds: number | null;
+  result: string | null;
+  error: string | null;
+}
+
+export interface SoftwareUpgradeStatus {
+  available: boolean;
+  error?: string;
+  installed?: {
+    version: string | null;
+    label: string;
+    commit: string | null;
+    kind: "release" | "checkout";
+    channel: "stable" | "beta";
+    installed_at: string | null;
+    by: string | null;
+  };
+  job?: SoftwareUpgradeJob | null;
+  history?: SoftwareUpgradeHistoryRow[];
+  checked_at?: string | null;
+  rollback_to?: string | null;
+  releases?: {
+    newer: SoftwareUpgradeRelease[];
+    older: SoftwareUpgradeRelease[];
+    latest: string | null;
+  };
+  release_error?: string | null;
+  /** Set by the BFF: owners can upgrade, admins only look. */
+  can_upgrade?: boolean;
+}

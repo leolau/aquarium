@@ -144,3 +144,58 @@ minutes (npm ci + two Next builds). Local builds are not signed.
   workflow asks for `contents: write` (publish job) and `id-token: write`
   (signing job) itself.
 - If a tag ruleset is added later, allow Leo to create `v*` tags.
+
+## 8. Settings → Software upgrade (agent-home)
+
+The owner can upgrade (or roll back) from agent-home: Settings → Software
+upgrade. It is a front end to the same `aquarium update` described above; it
+does not download or verify anything itself.
+
+**Who:** the owner upgrades and rolls back; admins see the page read only;
+members and viewers are refused by the page, the agent-home BFF
+(`/api/software-upgrade/*`) and the Python API (`hermes_cli/software_upgrade_api.py`).
+Starting an upgrade or a rollback needs the owner's password again; the Python
+API re-checks it with the same login provider (Supabase password sign-in), with
+the login page's attempt limit.
+
+**Privilege boundary:** the dashboard runs as `hermes`. The only root it gets
+for this is `deploy/sudoers.d/aquarium-upgrade` (installed by
+`install-aquarium.sh`; `hermes-deploy.sh` warns when the installed copy is
+missing or stale):
+
+```
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium upgrade status
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium upgrade releases
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium upgrade check
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium upgrade start
+hermes ALL=(root) NOPASSWD: /usr/local/sbin/aquarium upgrade rollback
+```
+
+Exact commands, no wildcards, no extra arguments. `start` reads one JSON line
+on stdin (`{"version": "vX.Y.Z", "by": "..."}`) and the root helper validates
+it: the version must match the release tag pattern and be a published release
+of this repo's GitHub Releases (a packaged one on release installs, a tag on
+git-checkout installs). `rollback` takes no target: it goes back to the
+version the last successful upgrade came from. `upgrade run` (the job itself)
+is not in the rule; `start` launches it as a transient systemd unit
+(`systemd-run --unit aquarium-upgrade-…`), so it survives agent-home and
+dashboard restarts. It restarts the Aquarium services, never the machine.
+
+**What the job does:**
+
+- release installs: `aquarium update --version <tag>` (verify signature and
+  checksums, back up, unpack, build agent-home locally, migrate, switch,
+  restart, health checks; restores the backup itself if anything fails);
+- git-checkout installs: back up, then `deploy/hermes-deploy.sh --ref <tag>`
+  (fetch the tag, install packages, build, migrate, restart, verify); on
+  failure it deploys the previous commit again and restores the backup.
+
+Progress (7 steps), the log tail and the history live in
+`/var/lib/aquarium/upgrade-status.json` and `/var/log/aquarium-upgrade/`;
+the API returns them without filesystem paths, backup locations or process
+ids.
+
+**Publishing a release so it shows up there:** tag and push as in section 1
+(`git tag v1.2.0 && git push origin v1.2.0`). The release notes' headings and
+bullets become the highlights the page shows (e.g. `### New`, `### Fixes`).
+Boxes refresh the list when someone opens the page or presses "check now".

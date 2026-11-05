@@ -128,6 +128,11 @@ PAGES: Tuple[PageSpec, ...] = (
     PageSpec("/settings", ("SettingsView", "AccountSecurity"), quick=True),
     PageSpec("/settings/tools", ("ToolsSettings", "RoleLimitsSection")),
     PageSpec("/settings/get-ready", ("GetReadyView",)),
+    PageSpec(
+        "/settings/upgrade",
+        admin_markers=("SoftwareUpgradeView",),
+        member_markers=("NotAvailableForRole",),
+    ),
     PageSpec("/profiles/suggestions", ("ProfileSuggestionsView",)),
     # Owner/admin only: members and viewers get the not-available page.
     PageSpec("/profiles", admin_markers=("ProfilesView",), member_markers=("NotAvailableForRole",)),
@@ -199,6 +204,8 @@ APIS: Tuple[ApiSpec, ...] = (
     ApiSpec("/api/goals/entity", OK),
     ApiSpec("/api/google-client", OWNER_ONLY),
     ApiSpec("/api/backups/offsite", OWNER_ONLY),
+    # Read-only status: GET never starts an upgrade (start/rollback are POST + password).
+    ApiSpec("/api/software-upgrade", ADMIN_ONLY),
     ApiSpec("/api/incomings", OK, quick=True),
     ApiSpec("/api/incomings/facets", OK),
     ApiSpec("/api/incomings/zz-smoke-missing", _same(404)),
