@@ -87,6 +87,8 @@ class PageSpec:
     # Signed-in redirect target, if the page always redirects.
     redirect: Optional[str] = None
     not_found: bool = False
+    # 404 for admins only (members/viewers get the not-available page first).
+    admin_not_found: bool = False
     admin_markers: Tuple[str, ...] = ()
     member_markers: Tuple[str, ...] = ()
     # Public pages render outside the signed-in shell even for a session.
@@ -132,6 +134,8 @@ PAGES: Tuple[PageSpec, ...] = (
     # Owner/admin only: members and viewers get the not-available page.
     PageSpec("/profiles", admin_markers=("ProfilesView",), member_markers=("NotAvailableForRole",)),
     PageSpec("/skills", admin_markers=("SkillsView",), member_markers=("NotAvailableForRole",)),
+    PageSpec("/skills/zz-smoke-missing", admin_not_found=True, member_markers=("NotAvailableForRole",)),
+    PageSpec("/skills/zz-smoke-missing/edit", admin_not_found=True, member_markers=("NotAvailableForRole",)),
     PageSpec("/webview", ("WebviewConsole",)),
     PageSpec(
         "/users",
@@ -220,6 +224,7 @@ APIS: Tuple[ApiSpec, ...] = (
     ApiSpec("/api/projects/zz-smoke-missing", _same(404)),
     ApiSpec("/api/security-basics", ADMIN_ONLY),
     ApiSpec("/api/skills", ADMIN_ONLY),
+    ApiSpec("/api/skills/details?name=zz-smoke-missing", {VIEWER: 403, MEMBER: 403, ADMIN: 404}),
     ApiSpec("/api/settings/apps/github", ADMIN_ONLY),
     ApiSpec("/api/settings/apps/limits", ADMIN_ONLY),
     ApiSpec("/api/settings/apps/storage", ADMIN_ONLY),
@@ -328,7 +333,7 @@ def page_verdict(spec: PageSpec, role: str, status: int, html: str) -> Tuple[boo
         return (target == spec.redirect, f"redirect -> {target or 'none'} (want {spec.redirect})")
     if target:
         return False, f"unexpected redirect -> {target}"
-    if spec.not_found:
+    if spec.not_found or (spec.admin_not_found and role == ADMIN):
         return (streamed_not_found(html), "404 page" if streamed_not_found(html) else "no 404 marker")
     want = (list(SHELL_MARKERS) if spec.shell else []) + list(spec.markers)
     want += list(spec.admin_markers if role == ADMIN else spec.member_markers)
