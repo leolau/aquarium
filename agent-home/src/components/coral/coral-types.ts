@@ -60,5 +60,9 @@ export const CLUSTER_CATEGORIES: readonly string[] = ["workspace", "system"];
 /** Hard cap on top-level petals (apps + clusters). Design doc §4.3. */
 export const MAX_PETALS = 8;
 
-/** Hard cap on members of a single cluster. Design doc §4.3. */
-export const MAX_CLUSTER_MEMBERS = 8;
+/**
+ * Hard cap on members of a single cluster. Design doc §4.3 set 8; raised to
+ * 10 when Profiles and Skills joined System (the grid panel shows every
+ * section flat, so a 10-tile section still fits without nesting).
+ */
+export const MAX_CLUSTER_MEMBERS = 10;

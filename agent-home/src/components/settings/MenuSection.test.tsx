@@ -48,6 +48,27 @@ describe("MenuSection", () => {
     expect((screen.getByLabelText(/show graph to viewer/i) as HTMLInputElement).checked).toBe(true);
   });
 
+  it("locks Profiles and Skills off for members and viewers only", async () => {
+    fetchMock.mockReturnValue(reply(NAV));
+    render(<MenuSection />);
+    await screen.findByRole("tabpanel");
+    fireEvent.click(screen.getByRole("tab", { name: "Admin" }));
+    for (const name of [/show profiles to admin/i, /show skills to admin/i]) {
+      const box = (await screen.findByLabelText(name)) as HTMLInputElement;
+      expect(box.checked).toBe(true);
+      expect(box.disabled).toBe(false);
+    }
+    for (const role of ["Member", "Viewer"]) {
+      fireEvent.click(screen.getByRole("tab", { name: role }));
+      for (const app of ["profiles", "skills"]) {
+        const box = screen.getByLabelText(new RegExp(`show ${app} to ${role}`, "i")) as HTMLInputElement;
+        expect(box.checked).toBe(false);
+        expect(box.disabled).toBe(true);
+      }
+    }
+    expect(document.querySelectorAll('[data-locked-off="true"]').length).toBeGreaterThan(0);
+  });
+
   it("locks Home and Settings on", async () => {
     fetchMock.mockReturnValue(reply(NAV));
     render(<MenuSection />);

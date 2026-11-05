@@ -18,6 +18,8 @@ export const component = (page: Page | Locator, name: string): Locator =>
  */
 export const PAGE_MARKERS: Record<string, string> = {
   "/": "PrincipalCard",
+  "/profiles": "ProfilesView",
+  "/skills": "SkillsView",
   "/todos": "TodosList",
   "/chat": "ChatPane",
   "/inbox": "InboxView",

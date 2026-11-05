@@ -8,11 +8,13 @@ import { getApps } from "@/components/coral/coral-registry";
 import {
   APP_URLS,
   blockedAppForPath,
+  isLockedOff,
   LOCKED_APP_IDS,
   normalizePath,
   ROLE_GATED_APPS,
   sanitizeHidden,
   seesEverything,
+  withAdminOnly,
 } from "@/lib/nav/menu-access";
 
 describe("menu access mapping", () => {
@@ -56,6 +58,43 @@ describe("menu access mapping", () => {
     expect(blockedAppForPath("/api/incomings/i1", ["inbox"])).toBeNull();
     // Chat APIs feed the badge and other surfaces.
     expect(blockedAppForPath("/api/chat/sessions", ["chat"])).toBeNull();
+  });
+
+  it("blocks hidden Profiles and Skills pages and their BFF APIs", () => {
+    expect(blockedAppForPath("/profiles", ["profiles"])).toEqual({ app: "profiles", kind: "page" });
+    expect(blockedAppForPath("/api/profiles", ["profiles"])).toEqual({ app: "profiles", kind: "api" });
+    expect(blockedAppForPath("/api/profiles/named/coder/soul", ["profiles"])).toEqual({
+      app: "profiles",
+      kind: "api",
+    });
+    expect(blockedAppForPath("/skills", ["skills"])).toEqual({ app: "skills", kind: "page" });
+    expect(blockedAppForPath("/api/skills/hub/install", ["skills"])).toEqual({ app: "skills", kind: "api" });
+    // Profile suggestions belong to Suggestions; the chat picker stays reachable.
+    expect(blockedAppForPath("/profiles/suggestions", ["profiles"])).toBeNull();
+    expect(blockedAppForPath("/api/profiles/suggestions", ["profiles"])).toBeNull();
+    expect(blockedAppForPath("/api/chat/profiles", ["profiles"])).toBeNull();
+  });
+
+  it("locks Profiles and Skills off for members and viewers", () => {
+    for (const role of ["member", "viewer"]) {
+      expect(isLockedOff(role, "profiles")).toBe(true);
+      expect(isLockedOff(role, "skills")).toBe(true);
+      expect(withAdminOnly(role, ["graph"])).toEqual(["graph", "profiles", "skills"]);
+    }
+    expect(isLockedOff("admin", "profiles")).toBe(false);
+    expect(isLockedOff("member", "graph")).toBe(false);
+    expect(withAdminOnly("admin", [])).toEqual([]);
+  });
+
+  it("locks off the same apps for the same roles as the Python API", () => {
+    const src = readFileSync(resolve(__dirname, "../../../../hermes_cli/agent_home_nav.py"), "utf8");
+    const ids = (name: string) =>
+      [...(new RegExp(`${name} = \\(([^)]*)\\)`).exec(src)?.[1] ?? "").matchAll(/"([a-z-]+)"/g)].map((m) => m[1]);
+    expect(ids("ADMIN_ONLY_APP_IDS")).toEqual(["profiles", "skills"]);
+    expect(ids("ADMIN_ONLY_ROLES")).toEqual(["member", "viewer"]);
+    for (const role of ids("ADMIN_ONLY_ROLES")) {
+      for (const app of ids("ADMIN_ONLY_APP_IDS")) expect(isLockedOff(role, app)).toBe(true);
+    }
   });
 
   it("never blocks locked or unknown apps", () => {

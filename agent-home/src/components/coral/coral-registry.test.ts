@@ -23,11 +23,11 @@ const app = (over: Partial<AppManifest> & { id: string }): AppManifest => ({
 });
 
 describe("coral Phase 1 registrations", () => {
-  it("registers all 18 destinations with unique ids and routes", () => {
+  it("registers all 20 destinations with unique ids and routes", () => {
     const apps = getApps();
-    expect(apps).toHaveLength(18);
-    expect(new Set(apps.map((a) => a.id)).size).toBe(18);
-    expect(new Set(apps.map((a) => a.route)).size).toBe(18);
+    expect(apps).toHaveLength(20);
+    expect(new Set(apps.map((a) => a.id)).size).toBe(20);
+    expect(new Set(apps.map((a) => a.route)).size).toBe(20);
   });
 
   it("builds 8 petals: 6 apps + 2 clusters, in order-band sequence", () => {
@@ -45,7 +45,7 @@ describe("coral Phase 1 registrations", () => {
     ]);
   });
 
-  it("clusters hold the remaining 12 destinations", () => {
+  it("clusters hold the remaining 14 destinations", () => {
     const petals = buildCoralLayout();
     const workspace = petals.find((p) => p.type === "cluster" && p.id === "workspace");
     const system = petals.find((p) => p.type === "cluster" && p.id === "system");
@@ -61,6 +61,8 @@ describe("coral Phase 1 registrations", () => {
     expect(system.members.map((m) => m.id)).toEqual([
       "users",
       "suggestions",
+      "profiles",
+      "skills",
       "tools",
       "models",
       "core",
@@ -132,13 +134,13 @@ describe("coral caps and registration errors", () => {
     expect(() => buildCoralLayout()).toThrow(/cap of 8.*cluster/);
   });
 
-  it("rejects a 9th cluster member", () => {
+  it("rejects an 11th cluster member", () => {
     __resetCoralRegistryForTests();
     registerCluster("system", { label: "System", glyph: "❖" });
-    for (let i = 0; i < 9; i += 1) {
+    for (let i = 0; i < 11; i += 1) {
       registerApp(app({ id: `s-${i}`, category: "system", order: i }));
     }
-    expect(() => buildCoralLayout()).toThrow(/cap is 8/);
+    expect(() => buildCoralLayout()).toThrow(/cap is 10/);
   });
 
   it("rejects two apps in one non-cluster category", () => {

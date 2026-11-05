@@ -17,6 +17,9 @@ ADMIN = SimpleNamespace(user_id="ann", display="Ann", role="admin", is_owner=Fal
 MEMBER = SimpleNamespace(user_id="mia", display="Mia", role="member", is_owner=False)
 VIEWER = SimpleNamespace(user_id="vic", display="Vic", role="viewer", is_owner=False)
 
+# Profiles and Skills are locked hidden for members and viewers.
+LOCKED_OFF = ["profiles", "skills"]
+
 
 @pytest.fixture(autouse=True)
 def _isolate_hermes_home(tmp_path, monkeypatch):
@@ -57,11 +60,11 @@ def _saved_nav():
     return (load_config().get("agent_home") or {}).get("nav")
 
 
-def test_defaults_hide_nothing(client, acting):
-    for who in (OWNER, ADMIN, MEMBER, VIEWER):
+def test_defaults_hide_only_admin_only_apps_from_members_and_viewers(client, acting):
+    for who, hidden in ((OWNER, []), (ADMIN, []), (MEMBER, LOCKED_OFF), (VIEWER, LOCKED_OFF)):
         acting["as"] = who
         body = client.get("/api/agent-home/nav").json()
-        assert body["hidden"] == []
+        assert body["hidden"] == hidden
         assert body["role"] == who.role
         assert set(body["locked"]) == {"home", "settings"}
 
@@ -71,15 +74,20 @@ def test_owner_and_admin_save_a_role_list(client, acting, who):
     acting["as"] = who
     resp = client.put("/api/agent-home/nav/member", json={"hidden": ["graph", "core"]})
     assert resp.status_code == 200, resp.text
-    assert resp.json()["roles"]["member"] == ["graph", "core"]
-    assert _saved_nav() == {"roles": {"member": {"hidden": ["graph", "core"]}}}
+    assert resp.json()["roles"]["member"] == ["graph", "core", *LOCKED_OFF]
+    assert _saved_nav() == {"roles": {"member": {"hidden": ["graph", "core", *LOCKED_OFF]}}}
 
 
 def test_each_role_gets_its_own_effective_list(client, acting):
     client.put("/api/agent-home/nav/member", json={"hidden": ["graph"]})
     client.put("/api/agent-home/nav/viewer", json={"hidden": ["graph", "tools"]})
     client.put("/api/agent-home/nav/admin", json={"hidden": ["core"]})
-    expected = [(OWNER, []), (ADMIN, ["core"]), (MEMBER, ["graph"]), (VIEWER, ["graph", "tools"])]
+    expected = [
+        (OWNER, []),
+        (ADMIN, ["core"]),
+        (MEMBER, ["graph", *LOCKED_OFF]),
+        (VIEWER, ["graph", "tools", *LOCKED_OFF]),
+    ]
     for who, hidden in expected:
         acting["as"] = who
         assert client.get("/api/agent-home/nav").json()["hidden"] == hidden, who.role
@@ -89,7 +97,7 @@ def test_per_role_lists_only_for_owner_and_admin(client, acting):
     client.put("/api/agent-home/nav/viewer", json={"hidden": ["tools"]})
     for who in (OWNER, ADMIN):
         acting["as"] = who
-        assert client.get("/api/agent-home/nav").json()["roles"]["viewer"] == ["tools"]
+        assert client.get("/api/agent-home/nav").json()["roles"]["viewer"] == ["tools", *LOCKED_OFF]
     for who in (MEMBER, VIEWER):
         acting["as"] = who
         assert "roles" not in client.get("/api/agent-home/nav").json()
@@ -128,7 +136,22 @@ def test_hand_edited_config_cannot_hide_locked_or_unknown_items(client, acting):
     cfg["agent_home"] = {"nav": {"roles": {"member": {"hidden": ["home", "x", "graph", "settings"]}}}}
     save_config(cfg)
     acting["as"] = MEMBER
-    assert client.get("/api/agent-home/nav").json()["hidden"] == ["graph"]
+    assert client.get("/api/agent-home/nav").json()["hidden"] == ["graph", *LOCKED_OFF]
+
+
+@pytest.mark.parametrize("role", ["member", "viewer"])
+def test_admin_only_apps_cannot_be_shown_to_members_or_viewers(client, acting, role):
+    resp = client.put(f"/api/agent-home/nav/{role}", json={"hidden": []})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["roles"][role] == LOCKED_OFF
+    assert _saved_nav()["roles"][role]["hidden"] == LOCKED_OFF
+
+
+def test_admin_only_apps_stay_optional_for_admins(client, acting):
+    resp = client.put("/api/agent-home/nav/admin", json={"hidden": ["skills"]})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["roles"]["admin"] == ["skills"]
+    assert client.put("/api/agent-home/nav/admin", json={"hidden": []}).json()["roles"]["admin"] == []
 
 
 def test_operator_without_datastore_is_the_owner(client, monkeypatch):

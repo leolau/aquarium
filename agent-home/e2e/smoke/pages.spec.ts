@@ -10,6 +10,19 @@ test.describe("key pages", { tag: "@smoke" }, () => {
     await expect(component(page, "AccountSecurity")).toBeVisible();
   });
 
+  test("profiles loads", async ({ page }) => {
+    await page.goto("/profiles");
+    await expectPageReady(page, "/profiles");
+    await expect(component(page, "ProfilesView")).toBeVisible();
+    await expect(component(page, "ProfileCard").first()).toBeVisible();
+  });
+
+  test("skills loads", async ({ page }) => {
+    await page.goto("/skills");
+    await expectPageReady(page, "/skills");
+    await expect(component(page, "SkillsView")).toBeVisible();
+  });
+
   test("projects list and a project page render", async ({ page }) => {
     await page.goto("/projects");
     await expectPageReady(page, "/projects");

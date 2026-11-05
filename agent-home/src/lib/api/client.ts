@@ -69,7 +69,15 @@ import type {
   NotificationsResponse,
   OnboardingReadinessResponse,
   Principal,
+  ProfileCreateInput,
+  ProfileCreateResult,
+  ProfileDescribeResult,
   ProfilesResponse,
+  SkillHubPreview,
+  SkillHubScan,
+  SkillHubSearchResponse,
+  SkillHubSourcesResponse,
+  SkillInfo,
   ProfileSuggestionAdoptResponse,
   ProfileSuggestionDismissResponse,
   ProfileSuggestionsResponse,
@@ -323,6 +331,118 @@ export class HermesApiClient {
    */
   async profiles(): Promise<ProfilesResponse> {
     return this.request("/api/profiles");
+  }
+
+  // ── Profiles & Skills management (owner/admin pages) ──────────────────
+  // Profile-scoped skill calls get `?profile=` / `profile` from the client's
+  // bound profile (see `scopedPath` / `scopedJson`).
+
+  async profileInfos(): Promise<{ profiles: Array<Record<string, unknown>> }> {
+    return this.request("/api/profiles");
+  }
+
+  async createProfile(input: ProfileCreateInput): Promise<ProfileCreateResult> {
+    return this.request("/api/profiles", { method: "POST", json: input });
+  }
+
+  async renameProfile(name: string, newName: string): Promise<{ ok: boolean; name: string }> {
+    return this.request(`/api/profiles/${encodeURIComponent(name)}`, {
+      method: "PATCH",
+      json: { new_name: newName },
+    });
+  }
+
+  async deleteProfile(name: string): Promise<{ ok: boolean }> {
+    return this.request(`/api/profiles/${encodeURIComponent(name)}`, { method: "DELETE" });
+  }
+
+  async profileSoul(name: string): Promise<{ content: string; exists?: boolean }> {
+    return this.request(`/api/profiles/${encodeURIComponent(name)}/soul`);
+  }
+
+  async setProfileSoul(name: string, content: string): Promise<{ ok: boolean }> {
+    return this.request(`/api/profiles/${encodeURIComponent(name)}/soul`, {
+      method: "PUT",
+      json: { content },
+    });
+  }
+
+  async setProfileDescription(
+    name: string,
+    description: string,
+  ): Promise<{ ok: boolean; description: string; description_auto: boolean }> {
+    return this.request(`/api/profiles/${encodeURIComponent(name)}/description`, {
+      method: "PUT",
+      json: { description },
+    });
+  }
+
+  async describeProfileAuto(name: string, overwrite: boolean): Promise<ProfileDescribeResult> {
+    return this.request(`/api/profiles/${encodeURIComponent(name)}/describe-auto`, {
+      method: "POST",
+      json: { overwrite },
+    });
+  }
+
+  async setProfileModel(
+    name: string,
+    provider: string,
+    model: string,
+  ): Promise<{ ok: boolean; provider: string; model: string }> {
+    return this.request(`/api/profiles/${encodeURIComponent(name)}/model`, {
+      method: "PUT",
+      json: { provider, model },
+    });
+  }
+
+  async skillList(): Promise<SkillInfo[]> {
+    return this.request("/api/skills");
+  }
+
+  async toggleSkill(name: string, enabled: boolean): Promise<{ ok: boolean }> {
+    return this.request("/api/skills/toggle", { method: "PUT", json: { name, enabled } });
+  }
+
+  async skillContent(name: string): Promise<{ name: string; content: string }> {
+    return this.request(`/api/skills/content?name=${encodeURIComponent(name)}`);
+  }
+
+  async createSkill(input: {
+    name: string;
+    content: string;
+    category?: string;
+  }): Promise<{ success: boolean; message?: string }> {
+    return this.request("/api/skills", { method: "POST", json: input });
+  }
+
+  async updateSkillContent(name: string, content: string): Promise<{ success: boolean; message?: string }> {
+    return this.request("/api/skills/content", { method: "PUT", json: { name, content } });
+  }
+
+  async skillHubSources(): Promise<SkillHubSourcesResponse> {
+    return this.request("/api/skills/hub/sources");
+  }
+
+  async skillHubSearch(q: string, limit = 20): Promise<SkillHubSearchResponse> {
+    return this.request(
+      `/api/skills/hub/search?q=${encodeURIComponent(q)}&source=all&limit=${limit}`,
+    );
+  }
+
+  async skillHubPreview(identifier: string): Promise<SkillHubPreview> {
+    return this.request(`/api/skills/hub/preview?identifier=${encodeURIComponent(identifier)}`);
+  }
+
+  async skillHubScan(identifier: string): Promise<SkillHubScan> {
+    return this.request(`/api/skills/hub/scan?identifier=${encodeURIComponent(identifier)}`);
+  }
+
+  async installHubSkill(identifier: string): Promise<{ ok: boolean; pid?: number }> {
+    return this.request("/api/skills/hub/install", { method: "POST", json: { identifier } });
+  }
+
+  async uninstallHubSkill(name: string): Promise<{ ok: boolean; pid?: number }> {
+    return this.request("/api/skills/hub/uninstall", { method: "POST", json: { name } });
   }
 
   // --- Profile suggestions (FG-30) ---------------------------------------

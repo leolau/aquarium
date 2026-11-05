@@ -16062,13 +16062,46 @@ class SkillToggle(BaseModel):
 async def get_skills(profile: Optional[str] = None):
     from tools.skills_tool import _find_all_skills
     from hermes_cli.skills_config import get_disabled_skills
+    from tools import skills_tool as _skills_tool
     with _profile_scope(profile):
         config = load_config()
         disabled = get_disabled_skills(config)
         skills = _find_all_skills(skip_disabled=True)
+        origins = _skill_origins(Path(_skills_tool.SKILLS_DIR))
     for s in skills:
         s["enabled"] = s["name"] not in disabled
+        s.update(origins.get(s["name"], {"source": "local"}))
     return skills
+
+
+def _skill_origins(skills_dir: Path) -> Dict[str, Dict[str, Any]]:
+    """Where each installed skill came from: ``hub`` (with its trust level),
+    ``builtin`` (bundled with Hermes) — anything else is ``local``.
+
+    Read from the profile's own hub lock file and bundled-skills manifest.
+    Best-effort: an unreadable file just leaves those skills ``local``.
+    """
+    origins: Dict[str, Dict[str, Any]] = {}
+    try:
+        for line in (skills_dir / ".bundled_manifest").read_text(encoding="utf-8").splitlines():
+            name = line.partition(":")[0].strip()
+            if name:
+                origins[name] = {"source": "builtin"}
+    except OSError:
+        pass
+    try:
+        from tools.skills_hub import HubLockFile
+
+        for entry in HubLockFile(skills_dir / ".hub" / "lock.json").list_installed():
+            name = entry.get("name")
+            if name:
+                origins[name] = {
+                    "source": "hub",
+                    "trust_level": entry.get("trust_level") or "community",
+                }
+    except Exception:
+        pass
+    return origins
 
 
 @app.put("/api/skills/toggle", dependencies=_ADMIN)

@@ -129,6 +129,9 @@ PAGES: Tuple[PageSpec, ...] = (
     PageSpec("/settings/tools", ("ToolsSettings", "RoleLimitsSection")),
     PageSpec("/settings/get-ready", ("GetReadyView",)),
     PageSpec("/profiles/suggestions", ("ProfileSuggestionsView",)),
+    # Owner/admin only: members and viewers get the not-available page.
+    PageSpec("/profiles", admin_markers=("ProfilesView",), member_markers=("NotAvailableForRole",)),
+    PageSpec("/skills", admin_markers=("SkillsView",), member_markers=("NotAvailableForRole",)),
     PageSpec("/webview", ("WebviewConsole",)),
     PageSpec(
         "/users",
@@ -208,6 +211,7 @@ APIS: Tuple[ApiSpec, ...] = (
     ApiSpec("/api/models/pinned", OK),
     ApiSpec("/api/notifications/vapid-public-key", OK),
     ApiSpec("/api/notifications/config", _same(401)),  # internal: never a browser session
+    ApiSpec("/api/profiles", ADMIN_ONLY),
     ApiSpec("/api/profiles/suggestions", OK),
     ApiSpec("/api/project-categories", OK),
     ApiSpec("/api/projects", OK, quick=True),
@@ -215,6 +219,7 @@ APIS: Tuple[ApiSpec, ...] = (
     ApiSpec("/api/projects/doctor", OK),
     ApiSpec("/api/projects/zz-smoke-missing", _same(404)),
     ApiSpec("/api/security-basics", ADMIN_ONLY),
+    ApiSpec("/api/skills", ADMIN_ONLY),
     ApiSpec("/api/settings/apps/github", ADMIN_ONLY),
     ApiSpec("/api/settings/apps/limits", ADMIN_ONLY),
     ApiSpec("/api/settings/apps/storage", ADMIN_ONLY),

@@ -80,9 +80,11 @@ Role shorthand in tables: **all** = viewer, member, admin, owner;
 | 36 | `/users` | `UsersView`, `DirectoryPanel`; mgmt adds `CreateUserForm`, `UsersList`; others `UsersReadOnlyNotice` | → `/login` | read-only directory | full roster + create/import | `CreateUserForm`/`CsvImportPanel`/`UserRow`/`IdentityActivityPanel` never in viewer/member HTML; directory carries no e-mail | HTTP | Q |
 | 37 | `/members` | legacy alias | → `/users` | → `/users` | → `/users` | — | HTTP | F |
 | 38 | `/not-available` | `NotAvailableForRole` (middleware rewrites a menu item hidden from the caller's role here; URL unchanged) | → `/login` | renders | renders | hidden page's data never rendered; matching APIs answer 403 | HTTP | F |
+| 39 | `/profiles` | `ProfilesView` (owner/admin); others `NotAvailableForRole` | → `/login` | not available | card grid + editor + new-profile dialog | no filesystem paths in HTML; `/api/profiles*` 403 for viewer/member | HTTP + browser | F |
+| 40 | `/skills` | `SkillsView` (owner/admin); others `NotAvailableForRole` | → `/login` | not available | installed skills + Skills hub | `/api/skills*` 403 for viewer/member | HTTP + browser | F |
 
 One row per `page.tsx` (the "34 routes" in the brief predates a few additions;
-the tree has 38 today). `tests/scripts/test_agent_home_smoke.py` fails if a
+the tree has 40 today). `tests/scripts/test_agent_home_smoke.py` fails if a
 `page.tsx` is added without a smoke `PageSpec`, so this table and the script
 stay in step.
 
@@ -96,7 +98,7 @@ table mirrors it for every read-only GET that needs no path parameter:
 |---|---|---|---|---|---|---|
 | signed-in | 401 | 200 | 200 | 200 | 200 | `/api/status/summary`, `/api/chat/sessions`, `/api/projects`, `/api/todos`, `/api/files`, `/api/memory/rows`, `/api/models/overview`, `/api/activity/running`, `/api/settings/menu` |
 | signed-in, needs a query param | 401 | 400 | 400 | 400 | 400 | `/api/chat/messages`, `/api/browse/list`, `/api/files/by-path` |
-| admin | 401 | 403 | 403 | 200 | 200 | `/api/comms/members`, `/api/get-ready/people`, `/api/security-basics`, `/api/settings/apps/{github,limits,storage}`, `/api/tools/personal-mcp/people` |
+| admin | 401 | 403 | 403 | 200 | 200 | `/api/comms/members`, `/api/get-ready/people`, `/api/profiles`, `/api/security-basics`, `/api/skills`, `/api/settings/apps/{github,limits,storage}`, `/api/tools/personal-mcp/people` |
 | owner | 401 | 403 | 403 | 403 | 200 | `/api/google-client`, `/api/backups/offsite` |
 | internal | 401 | 401 | 401 | 401 | 401 | `/api/notifications/config` (server-to-server only) |
 | missing resource | 401 | 404 | 404 | 404 | 404 | `/api/projects/<missing>`, `/api/todos/<missing>`, `/api/incomings/<missing>` |
