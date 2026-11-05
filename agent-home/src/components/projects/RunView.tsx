@@ -9,7 +9,6 @@ import { ActionError } from "@/components/projects/ActionError";
 import { useProjectAction } from "@/components/projects/useProjectAction";
 
 import {
-  dateTimeLabel,
   durationLabel,
 } from "@/components/projects/format";
 import { unwrapRunEnvelope } from "@/components/projects/envelopes";
@@ -25,6 +24,7 @@ import type {
   ProjectRunCard,
   ProjectRunStatus,
 } from "@/types";
+import { useTimeLabel } from "@/components/projects/useTimeLabel";
 
 /**
  * One colour per run state, used for the badge, the progress bar and the
@@ -233,6 +233,7 @@ export function RunView({
   run: ProjectRun;
   archived?: boolean;
 }) {
+  const timeLabel = useTimeLabel();
   const router = useRouter();
   const [run, setRun] = useServerState(initial);
   // Run controls share one lock (one move at a time on a run); the retro and
@@ -535,7 +536,7 @@ export function RunView({
             ) : null}
             <p className="mt-1 text-xs text-[var(--color-muted)]">
               {run.trigger} · on {run.profile} · started{" "}
-              {dateTimeLabel(run.started_at)} ·{" "}
+              {timeLabel(run.started_at)} ·{" "}
               {durationLabel(run.duration_seconds)}
               {run.playbook_rev != null ? ` · plan rev ${run.playbook_rev}` : ""}
             </p>
@@ -838,7 +839,7 @@ export function RunView({
                   >
                     {deliveryLabel(delivery)}
                     <span className="ml-2 text-xs text-[var(--color-muted)]">
-                      {dateTimeLabel(delivery.delivered_at)}
+                      {timeLabel(delivery.delivered_at)}
                     </span>
                   </li>
                 ))}

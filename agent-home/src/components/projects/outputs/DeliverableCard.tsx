@@ -1,7 +1,6 @@
 "use client";
 
 import { ActionButton } from "@/components/projects/ActionButton";
-import { dateTimeLabel } from "@/components/projects/format";
 import { ActionError } from "@/components/projects/outputs/ActionError";
 import {
   decodeEscapes,
@@ -19,6 +18,7 @@ import type {
   ProjectOutputStatus,
   ProjectOutputWithDeliveries,
 } from "@/types";
+import { useTimeLabel } from "@/components/projects/useTimeLabel";
 
 const STATUS_TONE: Record<ProjectOutputStatus, Tone> = {
   pending: "muted",
@@ -64,6 +64,7 @@ export function DeliverableCard({
   onDownloadFile?: OpenFile;
   resolving?: string | null;
 }) {
+  const timeLabel = useTimeLabel();
   const accept = useProjectAction<AcceptEnvelope>();
   const supersede = useProjectAction<ProjectOutputWithDeliveries>();
   const remove = useProjectAction<{ deleted: string }>();
@@ -99,7 +100,7 @@ export function DeliverableCard({
           {versions.map((v) => (
             <li key={`${v.version}`} data-component="OutputVersion">
               <p className="text-xs text-[var(--color-muted)]">
-                {versionLabel(v)} · {dateTimeLabel(v.deliveredAt)}
+                {versionLabel(v)} · {timeLabel(v.deliveredAt)}
               </p>
               <ul className="mt-1 flex flex-col gap-1">
                 {v.files.map(({ delivery, artifact }) => {
@@ -143,7 +144,7 @@ export function DeliverableCard({
 
       {output.status === "accepted" && output.accepted_at != null ? (
         <p className="mt-2 text-xs text-[var(--color-muted)]">
-          accepted {dateTimeLabel(output.accepted_at)}
+          accepted {timeLabel(output.accepted_at)}
           {output.accepted_by ? ` by ${output.accepted_by}` : ""}
         </p>
       ) : null}

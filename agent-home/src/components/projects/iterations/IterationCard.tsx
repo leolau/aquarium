@@ -1,8 +1,9 @@
 import Link from "next/link";
 
-import { dateTimeLabel, durationLabel } from "@/components/projects/format";
+import { durationLabel } from "@/components/projects/format";
 import type { Iteration, IterationStatus } from "@/components/projects/iterations/groupIterations";
 import { Pill, type Tone } from "@/components/ui/Pill";
+import { useTimeLabel } from "@/components/projects/useTimeLabel";
 
 const STATUS: Record<IterationStatus, { label: string; tone: Tone }> = {
   upcoming: { label: "ready to start", tone: "muted" },
@@ -16,6 +17,7 @@ const STATUS: Record<IterationStatus, { label: string; tone: Tone }> = {
 
 /** One iteration: requirement version + plan revision + its runs and deliveries. */
 export function IterationCard({ iteration, slug }: { iteration: Iteration; slug: string }) {
+  const timeLabel = useTimeLabel();
   const status = STATUS[iteration.status];
   const runs = iteration.runs.length;
   return (
@@ -31,7 +33,7 @@ export function IterationCard({ iteration, slug }: { iteration: Iteration; slug:
         <span className="text-xs text-[var(--color-muted)]">
           {iteration.planRev != null ? `plan rev ${iteration.planRev}` : "no plan yet"}
           {runs ? ` · ${runs} ${runs === 1 ? "run" : "runs"}` : ""}
-          {iteration.startedAt ? ` · ${dateTimeLabel(iteration.startedAt)}` : ""}
+          {iteration.startedAt ? ` · ${timeLabel(iteration.startedAt)}` : ""}
         </span>
       </summary>
       <div className="mt-2 flex flex-col gap-2 text-sm">

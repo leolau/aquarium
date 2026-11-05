@@ -1,6 +1,6 @@
 import type { ActivityEntry, ActivityTone } from "@/components/projects/dashboard/activity";
 import { initial } from "@/components/projects/dashboard/requirements";
-import { agoLabel } from "@/components/projects/format";
+import { useTimeLabel } from "@/components/projects/useTimeLabel";
 
 const DOT: Record<ActivityTone, string> = {
   ok: "bg-emerald-400",
@@ -18,6 +18,7 @@ export function ActivityCard({
   entries: ActivityEntry[];
   onIterations: () => void;
 }) {
+  const timeLabel = useTimeLabel();
   return (
     <section
       data-component="DashboardActivity"
@@ -42,7 +43,7 @@ export function ActivityCard({
               <span aria-hidden className={`mt-1.5 inline-block h-2 w-2 shrink-0 rounded-full ${DOT[entry.tone]}`} />
               <span className="min-w-0 flex-1">
                 {entry.text}
-                <span className="ml-1 text-xs text-[var(--color-muted)]">· {agoLabel(entry.at)}</span>
+                <span className="ml-1 text-xs text-[var(--color-muted)]">· {timeLabel(entry.at, "ago")}</span>
               </span>
               {entry.actor ? (
                 <span

@@ -4,7 +4,6 @@ import { useState } from "react";
 
 import { ActionButton } from "@/components/projects/ActionButton";
 import { applyAcceptEnvelope } from "@/components/projects/envelopes";
-import { dateTimeLabel } from "@/components/projects/format";
 import { useFileRefOpener } from "@/components/files/FileRefOpener";
 import { ActionError } from "@/components/projects/outputs/ActionError";
 import { AddOutputForm } from "@/components/projects/outputs/AddOutputForm";
@@ -20,6 +19,7 @@ import type {
   ProjectOutputWithDeliveries,
 } from "@/types";
 import { newTabRel } from "@/lib/http/link-rel";
+import { useTimeLabel } from "@/components/projects/useTimeLabel";
 
 const STATUS_TONE: Record<
   ProjectOutputStatus,
@@ -150,6 +150,7 @@ function OutputRow({
   onOpenFile: (target: { ref: string; label?: string | null }) => Promise<void>;
   resolving: string | null;
 }) {
+  const timeLabel = useTimeLabel();
   const accept = useProjectAction<AcceptEnvelope>();
   const remove = useProjectAction<{ deleted: string }>();
   const base = `/api/projects/${encodeURIComponent(slug)}/outputs/${encodeURIComponent(output.id)}`;
@@ -184,7 +185,7 @@ function OutputRow({
                 onOpenFile={onOpenFile}
                 resolving={resolving}
               />{" "}
-              · {dateTimeLabel(delivery.delivered_at)}
+              · {timeLabel(delivery.delivered_at)}
             </li>
           ))}
         </ul>
@@ -211,7 +212,7 @@ function OutputRow({
       ) : null}
       {output.status === "accepted" && output.accepted_at != null ? (
         <p className="mt-1 text-xs text-[var(--color-muted)]">
-          accepted {dateTimeLabel(output.accepted_at)}
+          accepted {timeLabel(output.accepted_at)}
           {output.accepted_by ? ` by ${output.accepted_by}` : ""}
         </p>
       ) : null}

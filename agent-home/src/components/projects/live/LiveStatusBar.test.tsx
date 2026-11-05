@@ -99,11 +99,13 @@ describe("LiveStatusBar (SSR)", () => {
     expect(html).toContain("sticky top-0 z-30");
     expect(html).toContain('data-dot="pulse"');
     expect(html).toContain("Working");
-    expect(html).toContain("Run 3 · 2 tasks running · started 12 min ago");
+    // Clock-dependent text waits for hydration (React #418).
+    expect(html).toContain("Run 3 · 2 tasks running</span>");
+    expect(html).not.toContain("min ago");
     expect(html).toContain("<b>1 of 3</b> steps done");
     expect(html.match(/data-component="LiveTaskRow"/g)).toHaveLength(2);
     expect(html).toContain("Draft MOU · Mr Chan");
-    expect(html).toContain("step 2 of 3 · worker on default · 6m 12s");
+    expect(html).toContain("step 2 of 3 · worker on default</div>");
     expect(html).toContain('href="/projects/mou/cards/t1"');
     expect(html.match(/■ Stop</g)).toHaveLength(2);
     expect(html).toContain("■ Stop all");

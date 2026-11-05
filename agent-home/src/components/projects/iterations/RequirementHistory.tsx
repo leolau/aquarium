@@ -1,10 +1,11 @@
 import { changeKindLabel } from "@/components/projects/changes/kinds";
-import { dateTimeLabel } from "@/components/projects/format";
 import type { Requirement } from "@/components/projects/iterations/groupIterations";
 import { Pill } from "@/components/ui/Pill";
+import { useTimeLabel } from "@/components/projects/useTimeLabel";
 
 /** Every requirement change, newest first: who, when, what kind, and where it first applied. */
 export function RequirementHistory({ requirements }: { requirements: Requirement[] }) {
+  const timeLabel = useTimeLabel();
   return (
     <section
       data-component="RequirementHistory"
@@ -33,7 +34,7 @@ export function RequirementHistory({ requirements }: { requirements: Requirement
                   <Pill key={k}>{changeKindLabel(k)}</Pill>
                 ))}
                 <span>
-                  {r.author} · {dateTimeLabel(r.createdAt)}
+                  {r.author} · {timeLabel(r.createdAt)}
                 </span>
                 <span>
                   ·{" "}

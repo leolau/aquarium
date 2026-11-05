@@ -7,12 +7,14 @@ import { CardActions } from "@/components/projects/CardActions";
 import { CardApprovals } from "@/components/projects/CardApprovals";
 import { CardEditor } from "@/components/projects/CardEditor";
 import { CardModelCalls } from "@/components/projects/CardModelCalls";
-import { agoLabel, dateTimeLabel, durationLabel } from "@/components/projects/format";
+import { durationLabel } from "@/components/projects/format";
 import { useCardLive } from "@/components/projects/useCardLive";
 import { Spinner } from "@/components/ui/Spinner";
 import { Pill, type Tone } from "@/components/ui/Pill";
 import { useServerState } from "@/components/ui/useRefresh";
 import type { ProjectCardDetail } from "@/types";
+import { useTimeLabel } from "@/components/projects/useTimeLabel";
+import { useHydrated } from "@/lib/use-hydrated";
 
 const STATUS_TONE: Record<string, Tone> = {
   todo: "muted",
@@ -64,6 +66,8 @@ export function CardDetailView({
   /** §13: an archived project's cards are read-only. */
   archived?: boolean;
 }) {
+  const timeLabel = useTimeLabel();
+  const hydrated = useHydrated();
   const [card, setCard] = useServerState(initial);
 
   // A worker runs in its own process — there is no *in-memory* reasoning
@@ -96,14 +100,14 @@ export function CardDetailView({
     return () => window.clearInterval(id);
   }, [isRunning]);
   const elapsedSeconds =
-    isRunning && card.started_at != null
+    isRunning && card.started_at != null && hydrated
       ? Math.max(0, Math.floor(now / 1000) - card.started_at)
       : null;
   const timing = [
-    `created ${dateTimeLabel(card.created_at)}`,
-    card.started_at != null ? `started ${dateTimeLabel(card.started_at)}` : null,
+    `created ${timeLabel(card.created_at)}`,
+    card.started_at != null ? `started ${timeLabel(card.started_at)}` : null,
     card.completed_at != null
-      ? `completed ${dateTimeLabel(card.completed_at)}`
+      ? `completed ${timeLabel(card.completed_at)}`
       : null,
     card.age?.time_to_complete_seconds != null
       ? `took ${durationLabel(card.age.time_to_complete_seconds)}`
@@ -206,7 +210,7 @@ export function CardDetailView({
             <p className="mt-2 whitespace-pre-wrap text-sm">
               {heartbeat.note}
               <span className="ml-2 text-xs text-[var(--color-muted)]">
-                updated {agoLabel(heartbeat.created_at)}
+                updated {timeLabel(heartbeat.created_at, "ago")}
               </span>
             </p>
           ) : null}
@@ -272,7 +276,7 @@ export function CardDetailView({
               <li key={`${c.created_at}-${i}`} className="text-sm">
                 <p className="whitespace-pre-wrap">{c.body}</p>
                 <p className="mt-0.5 text-xs text-[var(--color-muted)]">
-                  {c.author} · {dateTimeLabel(c.created_at)}
+                  {c.author} · {timeLabel(c.created_at)}
                 </p>
               </li>
             ))}

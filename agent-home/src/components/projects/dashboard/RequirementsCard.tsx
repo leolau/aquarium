@@ -1,6 +1,6 @@
 import { initial, personLabel } from "@/components/projects/dashboard/requirements";
 import type { RequirementsSummary } from "@/components/projects/dashboard/requirements";
-import { dateTimeLabel } from "@/components/projects/format";
+import { useTimeLabel } from "@/components/projects/useTimeLabel";
 
 /** The brief's key points plus active directives; the newest change stands out. */
 export function RequirementsCard({
@@ -12,6 +12,7 @@ export function RequirementsCard({
   callerUserId: string;
   onHistory: () => void;
 }) {
+  const timeLabel = useTimeLabel();
   return (
     <section
       data-component="CurrentRequirements"
@@ -69,7 +70,7 @@ export function RequirementsCard({
                         <span>{who}</span>
                       </>
                     ) : null}
-                    {line.at != null ? <span>· {dateTimeLabel(line.at)}</span> : null}
+                    {line.at != null ? <span>· {timeLabel(line.at)}</span> : null}
                   </span>
                 ) : null}
               </li>
