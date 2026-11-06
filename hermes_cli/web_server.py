@@ -3770,6 +3770,7 @@ async def _comms_member_service(request: "Request"):
 
 def _comms_member_error(exc: Exception) -> "HTTPException":
     """Map a user-service error onto the right HTTP status."""
+    from hermes_cli.console_scope import AccountLevelPermissionError
     from hermes_cli.invitations import InvitationError
     from hermes_cli.members import (
         MemberConflictError,
@@ -3781,7 +3782,7 @@ def _comms_member_error(exc: Exception) -> "HTTPException":
         return HTTPException(status_code=409, detail=str(exc))
     if isinstance(exc, MemberConflictError):
         return HTTPException(status_code=409, detail=str(exc))
-    if isinstance(exc, PermissionError):
+    if isinstance(exc, (PermissionError, AccountLevelPermissionError)):
         return HTTPException(status_code=403, detail=str(exc))
     if isinstance(exc, (MemberError, InvitationError)):
         return HTTPException(status_code=400, detail=str(exc))

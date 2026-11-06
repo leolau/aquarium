@@ -242,3 +242,130 @@ def test_no_profile_param_leaves_the_legacy_path_byte_identical(two_homes) -> No
         ws._comms_resolve_principal = ws_legacy
     assert actor.user_id == "op"
     assert seen["home"] == default_home
+
+
+# -- account-level verbs: guarded or self-service ---------------------------
+
+#: GoTrue primitives that change a box-wide account, plus the one service verb
+#: that hands an admin a token which does so when redeemed. Each affects every
+#: profile the account is enrolled in.
+_ACCOUNT_LEVEL_VERBS = frozenset(
+    {
+        "activate_with_password",
+        "set_password",
+        "set_banned",
+        "delete_user",
+        "issue_invitation",
+    }
+)
+
+#: The single sanctioned seam for those verbs (FG-28 D4).
+_ACCOUNT_GUARD = "guard_account_level_op"
+
+#: Routes where the *holder* acts on their own account, proven by a password,
+#: a single-use token or the first-run setup token — not by admin authority.
+_SELF_SERVICE_PREFIXES = (
+    "/api/account/password",
+    "/api/auth/invitations/",
+    "/api/setup/owner",
+)
+
+#: Deleting an account this same call just created, when its enrolment failed.
+#: It cannot reach anybody else's account, so the walk stops there.
+_ROLLBACK_ONLY = frozenset({"_rollback_account"})
+
+_CALL_GRAPH_MODULES = (
+    "hermes_cli.web_server",
+    "hermes_cli.members",
+    "hermes_cli.first_run",
+    "hermes_cli.console_scope",
+)
+
+
+def _call_graph() -> dict[str, set[str]]:
+    """``{function name: names it calls}`` across the account-verb modules.
+
+    Keyed by bare name, so methods and functions that share a name merge —
+    an over-approximation, which errs towards flagging a route.
+    """
+    import ast
+    import importlib
+
+    graph: dict[str, set[str]] = {}
+    for module_name in _CALL_GRAPH_MODULES:
+        tree = ast.parse(inspect.getsource(importlib.import_module(module_name)))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            calls = graph.setdefault(node.name, set())
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Call):
+                    func = sub.func
+                    if isinstance(func, ast.Name):
+                        calls.add(func.id)
+                    elif isinstance(func, ast.Attribute):
+                        calls.add(func.attr)
+    return graph
+
+
+def _reachable(start: str, graph: dict[str, set[str]]) -> set[str]:
+    seen: set[str] = set()
+    todo = [start]
+    while todo:
+        name = todo.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        if name in _ROLLBACK_ONLY:
+            continue
+        todo.extend(graph.get(name, ()))
+    return seen
+
+
+def test_the_activation_link_verb_itself_goes_through_the_guard() -> None:
+    assert _ACCOUNT_GUARD in _reachable("issue_invitation", _call_graph())
+
+
+def test_no_route_reaches_an_account_level_verb_without_the_guard() -> None:
+    graph = _call_graph()
+    offenders = []
+    for route in ws.app.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        reached = _reachable(route.endpoint.__name__, graph)
+        verbs = reached & _ACCOUNT_LEVEL_VERBS
+        if not verbs or _ACCOUNT_GUARD in reached:
+            continue
+        if route.path.startswith(_SELF_SERVICE_PREFIXES):
+            continue
+        offenders.append((route.path, sorted(verbs)))
+    assert offenders == [], (
+        "these routes reach a box-wide account verb without "
+        f"guard_account_level_op and are not self-service: {offenders}"
+    )
+
+
+def test_the_walk_sees_the_self_service_routes_it_exempts() -> None:
+    """Guards the test above against a call graph that sees nothing."""
+    graph = _call_graph()
+    paths = {
+        route.path: route
+        for route in ws.app.routes
+        if isinstance(route, APIRoute)
+    }
+    for path in ("/api/account/password", "/api/auth/invitations/redeem"):
+        reached = _reachable(paths[path].endpoint.__name__, graph)
+        assert reached & _ACCOUNT_LEVEL_VERBS, path
+
+
+def test_an_account_level_refusal_is_a_403_with_its_reason() -> None:
+    from hermes_cli.console_scope import AccountLevelPermissionError
+    from hermes_cli.members import MemberAuthorizationError
+
+    for exc in (
+        AccountLevelPermissionError("enrolled in profiles you do not administer"),
+        MemberAuthorizationError("already activated their account"),
+    ):
+        mapped = ws._comms_member_error(exc)
+        assert mapped.status_code == 403
+        assert mapped.detail == str(exc)

@@ -63,7 +63,7 @@ from typing import Any, Mapping, Optional
 import httpx
 
 from agent.secret_scope import UnscopedSecretError, get_secret
-from hermes_cli.access import ROLES, Principal, PrincipalStore, Role
+from hermes_cli.access import ROLES, Principal, PrincipalStore, Role, role_rank
 from hermes_cli.invitations import (
     Invitation,
     InvitationError,
@@ -752,11 +752,18 @@ class MemberService:
         *,
         config: Mapping[str, object] | None = None,
         invitations: InvitationStore | None = None,
+        store_factory: Any = None,
+        registry: Any = None,
     ) -> None:
         self._store = store
         self._admin = admin
         self._config = config or {}
         self._invitations = invitations
+        # FG-28 account-level guard inputs: how to read another profile's
+        # ``principals`` and which profiles exist. ``None`` means production
+        # (the scoped app store, the box's profile registry).
+        self._store_factory = store_factory
+        self._registry = registry
 
     @property
     def invitations(self) -> InvitationStore:
@@ -1069,11 +1076,42 @@ class MemberService:
         The regenerate action behind the console's "Regenerate link": the
         previous link is revoked in the same transaction, so the five-minute
         window an admin missed does not leave two live links behind.
+
+        Redeeming the link sets the **box-wide** password and lifts the ban, so
+        handing its token to an admin is an account-level act (FG-28 D4). It is
+        refused (:class:`MemberAuthorizationError` /
+        :class:`~hermes_cli.console_scope.AccountLevelPermissionError`, both
+        403) unless:
+
+        - the actor strictly outranks the target (``ROLE_RANK``): an admin
+          never mints for the owner or a peer admin;
+        - the target is enrolled only in profiles the actor administers
+          (:func:`~hermes_cli.console_scope.guard_account_level_op`);
+        - the account has never been activated — a person who has signed in
+          resets their own password instead: only once they have asked for a
+          reset (an open self-service ``recovery`` request, the console's
+          "Send reset link") is a link minted for them, and then always as
+          ``recovery``.
         """
         require_member_admin(actor)
         principal = await self._store.get(user_id)
         if principal is None:
             raise MemberError(f"No enrolled principal {user_id!r}.")
+        if role_rank(actor.role) >= role_rank(principal.role):
+            raise MemberAuthorizationError(
+                f"A {actor.role} cannot issue a sign-in link for a "
+                f"{principal.role}; only someone who outranks them can."
+            )
+        await self._guard_account_level_op(actor, principal.user_id)
+        if _account_is_activated(self._account(principal.user_id)):
+            if not await self._reset_requested(principal.user_id):
+                raise MemberAuthorizationError(
+                    "This person has already activated their account, so an "
+                    "admin cannot issue them a link. Ask them to use \"Forgot "
+                    "password\" on the sign-in page; you can then send their "
+                    "reset link here."
+                )
+            kind = "recovery"
         minted = await self.invitations.mint(
             user_id=principal.user_id, created_by=actor.user_id, kind=kind
         )
@@ -1155,6 +1193,18 @@ class MemberService:
         if principal is None:
             await self.invitations.release(invitation.id)
             return False
+        if invitation.kind == "activation":
+            try:
+                account = self._account(invitation.user_id)
+            except MemberError:
+                await self.invitations.release(invitation.id)
+                raise
+            if _account_is_activated(account):
+                # A stale or admin-minted activation link must never reset a
+                # live account's password. The claim stays consumed (the link
+                # is dead either way) and the answer is the same as any other
+                # bad token.
+                return False
         email = self._account_email(invitation.user_id)
         try:
             validate_password(password, email=email)
@@ -1379,6 +1429,38 @@ class MemberService:
             )
             return {}
 
+    def _account(self, user_id: str) -> dict[str, Any] | None:
+        """The GoTrue account for ``user_id`` (``None`` if there is none).
+
+        Raises :class:`MemberError` when GoTrue is unreachable, so a caller
+        deciding whether an account-level act is safe fails closed.
+        """
+        return self._admin.list_users().get(user_id)
+
+    async def _reset_requested(self, user_id: str) -> bool:
+        """Whether ``user_id``'s latest invitation is an open reset request."""
+        latest = (await self.invitations.latest_for_users([user_id])).get(user_id)
+        return (
+            latest is not None
+            and latest.kind == "recovery"
+            and latest.status() == "open"
+        )
+
+    async def _guard_account_level_op(
+        self, actor: Principal, user_id: str
+    ) -> None:
+        from hermes_cli.console_scope import (
+            guard_account_level_op,
+            principal_store_factory,
+        )
+
+        await guard_account_level_op(
+            actor,
+            user_id,
+            store_factory=self._store_factory or principal_store_factory(),
+            registry=self._registry,
+        )
+
     def _account_email(self, user_id: str) -> str:
         try:
             accounts = self._admin.list_users()
@@ -1580,6 +1662,25 @@ def _normalize_platform(platform: str) -> str:
             f"{', '.join(sorted(valid))}."
         )
     return candidate
+
+
+def _account_is_activated(account: dict[str, Any] | None) -> bool:
+    """Whether a GoTrue account has left the FG-26 pending-activation state.
+
+    An account this console creates starts **banned and never signed in**
+    (``create_user(banned=True)``); redeeming its activation link lifts the
+    ban. So an account is pending only while both hold: it has no
+    ``last_sign_in_at`` *and* it is still banned. Anything else — signed in
+    once (even if banned since), or never banned (activated, or an existing
+    account enrolled here) — is a live account whose password belongs to its
+    holder. A missing account is treated as activated: there is nothing an
+    activation link could legitimately do for it.
+    """
+    if account is None:
+        return True
+    if str(account.get("last_sign_in_at") or "").strip():
+        return True
+    return not _is_banned(account)
 
 
 def _is_banned(account: dict[str, Any]) -> bool:

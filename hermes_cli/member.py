@@ -23,6 +23,7 @@ import asyncio
 import sys
 
 from hermes_cli.access import Principal, PrincipalStore, Role
+from hermes_cli.console_scope import AccountLevelPermissionError
 from hermes_cli.datastore import get_store
 from hermes_cli.invitations import activation_path
 from hermes_cli.members import (
@@ -180,7 +181,13 @@ def member_invite_command(args: argparse.Namespace) -> int:
         invitation, token = asyncio.run(
             service.issue_invitation(_actor(), user_id=args.user_id)
         )
-    except (MemberError, PermissionError, RuntimeError, ValueError) as error:
+    except (
+        AccountLevelPermissionError,
+        MemberError,
+        PermissionError,
+        RuntimeError,
+        ValueError,
+    ) as error:
         print(f"Could not issue an invitation: {error}", file=sys.stderr)
         raise SystemExit(1) from error
 

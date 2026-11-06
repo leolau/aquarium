@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -46,6 +48,9 @@ from hermes_cli.members import (
     parse_member_csv,
     require_member_admin,
 )
+from hermes_cli.console_scope import AccountLevelPermissionError
+from hermes_cli.members import _account_is_activated
+from hermes_cli.profile_registry import ProfileRegistryEntry
 
 _URL = "https://supabase.example.com"
 _KEY = "service-role-key-abcdefghijklmnopqrstuvwxyz0123456789"
@@ -310,6 +315,9 @@ class _FakeStore:
     async def get(self, user_id: str) -> Principal | None:
         return self.principals.get(user_id)
 
+    async def resolve_alias(self, subject: str) -> str | None:
+        return None
+
     async def get_owner(self) -> Principal | None:
         for p in self.principals.values():
             if p.role == "owner":
@@ -528,16 +536,53 @@ def administered_default() -> Any:
         yield
 
 
+def _profile_entry(name: str, home: Path) -> ProfileRegistryEntry:
+    return ProfileRegistryEntry(
+        name=name,
+        hermes_home=home,
+        is_default=(name == "default"),
+        served=True,
+        base_url="" if name == "default" else f"/p/{name}/",
+        schema="app_prod" if name == "default" else f"app_prod_{name}",
+        has_env=False,
+        gateway_running=False,
+    )
+
+
 def _service(
     store: _FakeStore,
     admin: _FakeAdmin,
     invitations: _FakeInvitations | None = None,
+    *,
+    profiles: dict[str, tuple[Path, _FakeStore]] | None = None,
 ) -> MemberService:
+    """A service over fakes on a real profile registry.
+
+    By default the box has one profile — the per-test ``HERMES_HOME`` — whose
+    ``principals`` are ``store``; pass ``profiles`` for a multi-profile box.
+    """
+    if profiles is None:
+        profiles = {"default": (Path(os.environ["HERMES_HOME"]), store)}
+    by_home = {home: profile_store for home, profile_store in profiles.values()}
+    for home in by_home:
+        home.mkdir(parents=True, exist_ok=True)
     return MemberService(
         store,  # type: ignore[arg-type]
         admin,  # type: ignore[arg-type]
         invitations=invitations or _FakeInvitations(),  # type: ignore[arg-type]
+        store_factory=lambda home: by_home[home],
+        registry=[_profile_entry(name, home) for name, (home, _) in profiles.items()],
     )
+
+
+def _pending_account(user_id: str = _SUB) -> dict[str, Any]:
+    """A GoTrue account as FG-26 creates it: banned, never signed in."""
+    return {
+        "id": user_id,
+        "email": "mia@x.io",
+        "banned_until": "2999-01-01T00:00:00Z",
+        "last_sign_in_at": None,
+    }
 
 
 # -- creation ---------------------------------------------------------------
@@ -967,9 +1012,12 @@ async def test_issue_invitation_regenerates_and_revokes_the_previous_link(
     audit_events: list[dict[str, Any]],
 ) -> None:
     store = _FakeStore()
-    store.principals = {_SUB: Principal(user_id=_SUB, display="Mia", role="member")}
+    store.principals = {
+        "u1": Principal(user_id="u1", display="Leo", role="owner"),
+        _SUB: Principal(user_id=_SUB, display="Mia", role="member"),
+    }
     invitations = _FakeInvitations()
-    svc = _service(store, _FakeAdmin(), invitations)
+    svc = _service(store, _FakeAdmin(users={_SUB: _pending_account()}), invitations)
     first, first_token = await svc.issue_invitation(
         _principal("owner"), user_id=_SUB
     )
@@ -990,6 +1038,196 @@ async def test_issue_invitation_requires_admin_and_an_enrolled_target() -> None:
         await svc.issue_invitation(_principal("member"), user_id=_SUB)
     with pytest.raises(MemberError):
         await svc.issue_invitation(_principal("owner"), user_id="ghost")
+
+
+def test_account_is_activated_only_leaves_pending_for_banned_never_signed_in() -> None:
+    pending = _pending_account()
+    assert not _account_is_activated(pending)
+    # Signed in once, even if banned since: a live account.
+    assert _account_is_activated({**pending, "last_sign_in_at": "2026-01-01T00:00:00Z"})
+    # Ban lifted (activated, or an existing account enrolled here).
+    assert _account_is_activated({**pending, "banned_until": None})
+    assert _account_is_activated({**pending, "banned_until": "none"})
+    # No account: nothing an activation link could legitimately do.
+    assert _account_is_activated(None)
+
+
+@pytest.mark.asyncio
+async def test_first_activation_of_an_account_created_here_still_works(
+    audit_events: list[dict[str, Any]],
+) -> None:
+    store = _FakeStore()
+    store.principals = {
+        "leo_admin": Principal(user_id="leo_admin", display="Admin", role="admin")
+    }
+    admin = _FakeAdmin()
+    svc = _service(store, admin)
+    created = await svc.create_member(
+        _principal("admin", "leo_admin"), email="mia@x.io", profile="default"
+    )
+    user_id = created.principal.user_id
+
+    # The admin missed the first link and regenerates it.
+    _invitation, token = await svc.issue_invitation(
+        _principal("admin", "leo_admin"), user_id=user_id
+    )
+    assert await svc.redeem_invitation(token=token, password="correct-horse-battery")
+    assert admin.activated == [(user_id, "correct-horse-battery")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "account",
+    [
+        {"banned_until": None},
+        {"last_sign_in_at": "2026-01-01T00:00:00Z"},
+    ],
+    ids=["ban-lifted", "signed-in-then-banned"],
+)
+async def test_issue_invitation_refuses_an_activated_account(account) -> None:
+    store = _FakeStore()
+    store.principals = {
+        "u1": Principal(user_id="u1", display="Leo", role="owner"),
+        _SUB: Principal(user_id=_SUB, display="Mia", role="member"),
+    }
+    invitations = _FakeInvitations()
+    svc = _service(
+        store, _FakeAdmin(users={_SUB: {**_pending_account(), **account}}), invitations
+    )
+    for kind in ("activation", "recovery"):
+        with pytest.raises(MemberAuthorizationError, match="Forgot password"):
+            await svc.issue_invitation(_principal("owner"), user_id=_SUB, kind=kind)
+    assert invitations.rows == {}
+
+
+@pytest.mark.asyncio
+async def test_a_reset_request_lets_an_admin_send_a_recovery_link_only() -> None:
+    """Self-service reset: the holder asks, the console hands over the link."""
+    store = _FakeStore()
+    store.principals = {
+        "u1": Principal(user_id="u1", display="Leo", role="owner"),
+        _SUB: Principal(user_id=_SUB, display="Mia", role="member"),
+    }
+    admin = _FakeAdmin(users={_SUB: {**_pending_account(), "banned_until": None}})
+    invitations = _FakeInvitations()
+    svc = _service(store, admin, invitations)
+    assert await svc.request_password_reset(email="mia@x.io") is not None
+
+    invitation, token = await svc.issue_invitation(_principal("owner"), user_id=_SUB)
+    assert invitation.kind == "recovery"
+    assert await svc.redeem_invitation(token=token, password="correct-horse-battery")
+
+    # The request is spent with the link; another link needs another request.
+    with pytest.raises(MemberAuthorizationError):
+        await svc.issue_invitation(_principal("owner"), user_id=_SUB)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("actor_role", "target_role", "allowed"),
+    [
+        ("admin", "owner", False),
+        ("admin", "admin", False),
+        ("admin", "member", True),
+        ("admin", "viewer", True),
+        ("owner", "admin", True),
+    ],
+)
+async def test_issue_invitation_only_goes_down_the_role_ladder(
+    actor_role: Role, target_role: Role, allowed: bool
+) -> None:
+    store = _FakeStore()
+    store.principals = {
+        "actor": Principal(user_id="actor", display="Actor", role=actor_role),
+        _SUB: Principal(user_id=_SUB, display="Mia", role=target_role),
+    }
+    invitations = _FakeInvitations()
+    svc = _service(store, _FakeAdmin(users={_SUB: _pending_account()}), invitations)
+    actor = _principal(actor_role, "actor")
+    if allowed:
+        await svc.issue_invitation(actor, user_id=_SUB)
+        assert len(invitations.rows) == 1
+    else:
+        with pytest.raises(MemberAuthorizationError):
+            await svc.issue_invitation(actor, user_id=_SUB)
+        assert invitations.rows == {}
+
+
+@pytest.mark.asyncio
+async def test_issue_invitation_refuses_a_target_enrolled_where_the_actor_is_not_admin(
+    tmp_path: Path,
+) -> None:
+    """An hr admin must not mint a link for someone who also works in engineers."""
+    hr, engineers = _FakeStore(), _FakeStore()
+    hr.principals = {
+        "hr-admin": Principal(user_id="hr-admin", display="CFO", role="admin"),
+        _SUB: Principal(user_id=_SUB, display="Mia", role="member"),
+    }
+    engineers.principals = {
+        _SUB: Principal(user_id=_SUB, display="Mia", role="member"),
+    }
+    invitations = _FakeInvitations()
+    svc = _service(
+        hr,
+        _FakeAdmin(users={_SUB: _pending_account()}),
+        invitations,
+        profiles={
+            "hr": (tmp_path / "hr", hr),
+            "engineers": (tmp_path / "engineers", engineers),
+        },
+    )
+    actor = _principal("admin", "hr-admin")
+    with pytest.raises(AccountLevelPermissionError, match="engineers"):
+        await svc.issue_invitation(actor, user_id=_SUB)
+    assert invitations.rows == {}
+
+    # Administering both profiles is enough authority.
+    engineers.principals["hr-admin"] = Principal(
+        user_id="hr-admin", display="CFO", role="admin"
+    )
+    await svc.issue_invitation(actor, user_id=_SUB)
+    assert len(invitations.rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_redeem_refuses_an_activation_link_for_an_activated_account(
+    audit_events: list[dict[str, Any]],
+) -> None:
+    store = _FakeStore()
+    store.principals = {_SUB: Principal(user_id=_SUB, display="Mia", role="member")}
+    admin = _FakeAdmin(
+        users={_SUB: {**_pending_account(), "last_sign_in_at": "2026-01-01T00:00:00Z"}}
+    )
+    invitations = _FakeInvitations()
+    minted = await invitations.mint(user_id=_SUB, created_by="leo_owner")
+    svc = _service(store, admin, invitations)
+
+    assert not await svc.redeem_invitation(
+        token=minted.token, password="correct-horse-battery"
+    )
+    assert admin.activated == []
+    assert not any(e["action"] == "user.activate" for e in audit_events)
+    # The link is spent, not handed back for another try.
+    assert invitations.released == []
+    assert not await svc.redeem_invitation(
+        token=minted.token, password="correct-horse-battery"
+    )
+
+
+@pytest.mark.asyncio
+async def test_redeem_still_honours_a_recovery_link_for_an_activated_account() -> None:
+    store = _FakeStore()
+    store.principals = {_SUB: Principal(user_id=_SUB, display="Mia", role="member")}
+    admin = _FakeAdmin(users={_SUB: {**_pending_account(), "banned_until": None}})
+    invitations = _FakeInvitations()
+    minted = await invitations.mint(
+        user_id=_SUB, created_by="leo_owner", kind="recovery"
+    )
+    svc = _service(store, admin, invitations)
+    assert await svc.redeem_invitation(
+        token=minted.token, password="correct-horse-battery"
+    )
+    assert admin.activated == [(_SUB, "correct-horse-battery")]
 
 
 @pytest.mark.asyncio
@@ -1046,7 +1284,7 @@ async def test_redeem_invitation_rejects_weak_password_without_burning_link() ->
     """A password the policy refuses is a form error, not a spent invitation."""
     store = _FakeStore()
     store.principals = {_SUB: Principal(user_id=_SUB, display="Mia", role="member")}
-    admin = _FakeAdmin(users={_SUB: {"id": _SUB, "email": "mia@x.io"}})
+    admin = _FakeAdmin(users={_SUB: _pending_account()})
     invitations = _FakeInvitations()
     minted = await invitations.mint(user_id=_SUB, created_by="leo_owner")
     svc = _service(store, admin, invitations)
@@ -1065,7 +1303,7 @@ async def test_redeem_invitation_rejects_weak_password_without_burning_link() ->
 async def test_redeem_invitation_rejects_password_equal_to_email() -> None:
     store = _FakeStore()
     store.principals = {_SUB: Principal(user_id=_SUB, display="Mia", role="member")}
-    admin = _FakeAdmin(users={_SUB: {"id": _SUB, "email": "mia@example.io"}})
+    admin = _FakeAdmin(users={_SUB: {**_pending_account(), "email": "mia@example.io"}})
     invitations = _FakeInvitations()
     minted = await invitations.mint(user_id=_SUB, created_by="leo_owner")
     svc = _service(store, admin, invitations)

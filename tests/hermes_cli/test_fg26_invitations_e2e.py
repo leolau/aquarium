@@ -47,6 +47,7 @@ from pathlib import Path
 import asyncpg
 import httpx
 import pytest
+import yaml
 
 from hermes_cli.access import Principal, PrincipalStore, initialize_access
 from hermes_cli.datastore import get_store, initialize_supabase_app
@@ -346,6 +347,9 @@ def service(auth_stack: _Auth, default_profile: Path) -> Iterator[MemberService]
     """A :class:`MemberService` over real Postgres + real GoTrue, freshly reset."""
     asyncio.run(_reset(auth_stack.dsn))
     config = {"datastore": {"supabase_app": {"dsn": auth_stack.dsn}}}
+    # The account-level guard reads each profile's principals through the
+    # profile's own config.yaml, as production does.
+    (default_profile / "config.yaml").write_text(yaml.safe_dump(config))
     store = PrincipalStore(get_store("supabase-app", "prod", config=config))
     admin = GoTrueAdminClient(
         url=auth_stack.url, service_role_key=auth_stack.service_role_key

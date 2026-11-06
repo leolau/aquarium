@@ -92,7 +92,7 @@ def _drive_chat(
         body["profile"] = profile
     # The handler reads only ``await request.json()``; a Starlette Request would
     # need a live ASGI scope to build.
-    request = cast("Request", SimpleNamespace(json=_async(body)))
+    request = cast("Request", SimpleNamespace(json=_async(body), state=SimpleNamespace()))
 
     result = asyncio.new_event_loop().run_until_complete(
         web_server.session_chat("home_1", request)
@@ -139,7 +139,7 @@ def _drive_chat_stream(monkeypatch: pytest.MonkeyPatch, profile: str | None) -> 
     body = {"message": "hello"}
     if profile is not None:
         body["profile"] = profile
-    request = cast("Request", SimpleNamespace(json=_async(body)))
+    request = cast("Request", SimpleNamespace(json=_async(body), state=SimpleNamespace()))
 
     async def _run() -> str:
         response = await web_server.session_chat_stream("home_1", request)
