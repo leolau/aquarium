@@ -73,6 +73,7 @@ BOX_WIDE_PREFIXES = (
     "/api/gateway/drain",
     "/api/audio",
     "/api/wa-bridges",
+    "/api/email-accounts",
 )
 
 

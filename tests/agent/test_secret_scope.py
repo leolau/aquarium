@@ -147,3 +147,61 @@ class TestEnvFileParsing:
         assert ss.build_profile_secret_scope(tmp_path) == {
             "ANTHROPIC_API_KEY": "sk-profile"
         }
+
+
+class TestEnvironHome:
+    """A process that declares whose credentials os.environ holds (the
+    dashboard) keeps reading them for that profile, and only that profile."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_environ_home(self):
+        ss.set_environ_home(None)
+        yield
+        ss.set_environ_home(None)
+
+    def test_own_profile_reads_environ_under_multiplex(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-own")
+        ss.set_environ_home(tmp_path)
+        ss.set_multiplex_active(True)
+        assert ss.get_secret("ANTHROPIC_API_KEY") == "sk-own"
+
+    def test_another_profile_home_without_its_scope_fails_closed(self, tmp_path, monkeypatch):
+        from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+        hr = tmp_path / "profiles" / "hr"
+        hr.mkdir(parents=True)
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-own")
+        ss.set_environ_home(tmp_path)
+        ss.set_multiplex_active(True)
+        token = set_hermes_home_override(str(hr))
+        try:
+            with pytest.raises(ss.UnscopedSecretError):
+                ss.get_secret("ANTHROPIC_API_KEY")
+        finally:
+            reset_hermes_home_override(token)
+
+    def test_undeclared_process_fails_every_unscoped_read(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-own")
+        ss.set_multiplex_active(True)
+        with pytest.raises(ss.UnscopedSecretError):
+            ss.get_secret("ANTHROPIC_API_KEY")
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "HERMES_DASHBOARD_SUPABASE_ANON_KEY",
+            "HERMES_DASHBOARD_SUPABASE_JWT_SECRET",
+            "GOTRUE_JWT_SECRET",
+        ],
+    )
+    def test_dashboard_supabase_aliases_are_box_wide(self, monkeypatch, name):
+        monkeypatch.setenv(name, "box-value")
+        ss.set_multiplex_active(True)
+        token = ss.set_secret_scope({name: "profile-value"})
+        try:
+            assert ss.get_secret(name) == "box-value"
+        finally:
+            ss.reset_secret_scope(token)

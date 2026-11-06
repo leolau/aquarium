@@ -40,8 +40,9 @@ _MULTIPLEX_ACTIVE: bool = False
 def set_multiplex_active(active: bool) -> None:
     """Mark whether the process is running as a profile multiplexer.
 
-    Called once at gateway startup. When True, ``get_secret`` fails closed on
-    an unscoped read instead of falling back to ``os.environ``.
+    Called once at gateway startup, and at dashboard startup when the box has
+    more than one profile. When True, ``get_secret`` fails closed on an
+    unscoped read instead of falling back to ``os.environ``.
     """
     global _MULTIPLEX_ACTIVE
     _MULTIPLEX_ACTIVE = bool(active)
@@ -50,6 +51,35 @@ def set_multiplex_active(active: bool) -> None:
 def is_multiplex_active() -> bool:
     """Return whether the process is running as a profile multiplexer."""
     return _MULTIPLEX_ACTIVE
+
+
+# The profile home whose credentials ``os.environ`` holds, when the process
+# declares one. The dashboard loads only its own profile's ``.env`` into
+# ``os.environ`` and switches to another profile through
+# ``profile_runtime_scope``; so with multiplexing on, an unscoped read made
+# while ``HERMES_HOME`` still resolves to that home is the dashboard's own
+# profile reading its own value — startup, background jobs, executor threads.
+# A read under another profile's ``HERMES_HOME`` with no secret scope still
+# fails closed. The gateway never sets it, so it keeps failing every unscoped
+# read.
+_ENVIRON_HOME: Optional[Path] = None
+
+
+def set_environ_home(home: Optional[Path]) -> None:
+    """Declare the profile home ``os.environ``'s credentials belong to (or None)."""
+    global _ENVIRON_HOME
+    _ENVIRON_HOME = Path(home).resolve() if home is not None else None
+
+
+def _environ_is_current_profile() -> bool:
+    if _ENVIRON_HOME is None:
+        return False
+    from hermes_constants import get_hermes_home
+
+    try:
+        return Path(get_hermes_home()).resolve() == _ENVIRON_HOME
+    except OSError:
+        return False
 
 
 # Names that reached os.environ from an env file in this process. See
@@ -119,6 +149,9 @@ _GLOBAL_ENV_EXACT = frozenset({
     "HERMES_DASHBOARD_SUPABASE_URL",
     "HERMES_DASHBOARD_SUPABASE_SERVICE_ROLE_KEY",
     "HERMES_SUPABASE_SERVICE_ROLE_KEY",
+    # ...and every name the dashboard's Supabase auth provider reads.
+    "HERMES_DASHBOARD_SUPABASE_ANON_KEY", "HERMES_DASHBOARD_SUPABASE_JWT_SECRET",
+    "HERMES_DASHBOARD_SUPABASE_AUDIENCE", "GOTRUE_JWT_SECRET",
 })
 _GLOBAL_ENV_PREFIXES = (
     "HERMES_KANBAN_",
@@ -149,7 +182,10 @@ def get_secret(name: str, default: Optional[str] = None) -> Optional[str]:
        - multiplex INACTIVE (default deployment): read ``os.environ`` —
          identical to the legacy ``os.getenv`` behavior every caller had before.
        - multiplex ACTIVE: FAIL CLOSED. Raise ``UnscopedSecretError`` so the
-         missing scope is caught loudly instead of leaking a cross-profile value.
+         missing scope is caught loudly instead of leaking a cross-profile value
+         — unless ``HERMES_HOME`` resolves to the home declared with
+         ``set_environ_home`` (the process's own profile), whose values
+         ``os.environ`` holds.
     """
     if _is_global_env(name):
         val = os.environ.get(name)
@@ -160,7 +196,7 @@ def get_secret(name: str, default: Optional[str] = None) -> Optional[str]:
         val = scope.get(name)
         return val if val is not None else default
 
-    if _MULTIPLEX_ACTIVE:
+    if _MULTIPLEX_ACTIVE and not _environ_is_current_profile():
         raise UnscopedSecretError(
             f"get_secret({name!r}) called with no profile secret scope active "
             f"while multiplexing is on. This credential read must run inside a "

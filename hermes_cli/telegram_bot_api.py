@@ -131,7 +131,9 @@ async def _require_entry(principal):
 
 
 def _install_bot_id() -> str:
-    token = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
+    from agent.secret_scope import get_secret
+
+    token = (get_secret("TELEGRAM_BOT_TOKEN") or "").strip()
     return bot_id_of(token) if token else ""
 
 
