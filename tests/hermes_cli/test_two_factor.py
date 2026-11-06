@@ -1,8 +1,10 @@
 """Two-factor login (TOTP + recovery codes) through the real routes.
 
 Drives ``/auth/password-login`` and ``/api/account/*`` through the real
-dashboard-auth middleware with a temp ``HERMES_HOME``. Only the principal
-lookup (a datastore read) is replaced: the login subject is its own principal.
+dashboard-auth middleware over a real temp hermes root with a real
+``profiles/hr`` home, the real profile registry and the real scope switch. The
+principal store is the only stand-in: it answers from whichever profile home
+is *scoped at call time*, so a lookup made in the wrong profile is caught.
 """
 
 from __future__ import annotations
@@ -10,26 +12,76 @@ from __future__ import annotations
 import os
 import stat
 import time
+from pathlib import Path
+from types import SimpleNamespace
 
 import pyotp
 import pytest
 
 from hermes_cli import two_factor
+from hermes_cli.access import Principal
 from tests.hermes_cli.test_dashboard_auth_password_login import (  # noqa: F401
     gated_app,
     pw_provider,
 )
 
 
+class _ScopedPrincipals:
+    """``PrincipalStore`` stand-in keyed by the profile home in scope."""
+
+    rows: dict[Path, dict[str, Principal]] = {}
+    aliases: dict[Path, dict[str, str]] = {}
+
+    def __init__(self, _store=None) -> None:
+        pass
+
+    @staticmethod
+    def _home() -> Path:
+        from hermes_constants import get_hermes_home
+
+        return Path(get_hermes_home()).resolve()
+
+    async def resolve_alias(self, subject: str):
+        return _ScopedPrincipals.aliases.get(self._home(), {}).get(subject)
+
+    async def get(self, user_id: str):
+        return _ScopedPrincipals.rows.get(self._home(), {}).get(user_id)
+
+    async def get_owner(self):
+        here = _ScopedPrincipals.rows.get(self._home(), {}).values()
+        return next((p for p in here if p.role == "owner"), None)
+
+
 @pytest.fixture(autouse=True)
 def _home(tmp_path, monkeypatch):
-    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    """The box root; ``admin`` (the test login) owns the default profile."""
+    import hermes_constants
+    from hermes_cli import web_server
 
-    async def _self(session):
-        return session.user_id
+    root = tmp_path / "hermes-root"
+    (root / "profiles" / "hr").mkdir(parents=True)
+    monkeypatch.setattr(hermes_constants, "get_default_hermes_root", lambda: root)
+    monkeypatch.setenv("HERMES_HOME", str(root))
+    _ScopedPrincipals.rows = {
+        root.resolve(): {"admin": Principal("admin", "Admin", "owner")},
+        _hr(root).resolve(): {},
+    }
+    _ScopedPrincipals.aliases = {}
+    monkeypatch.setattr("hermes_cli.access.PrincipalStore", _ScopedPrincipals)
+    monkeypatch.setattr(web_server, "_comms_app_store", lambda: None)
+    return root
 
-    monkeypatch.setattr(two_factor, "principal_id_for_session", _self)
-    return tmp_path
+
+def _hr(root: Path) -> Path:
+    return root / "profiles" / "hr"
+
+
+def _enrol(root: Path, *, default=None, hr=None) -> None:
+    """Replace who is enrolled where (``None`` leaves that profile empty)."""
+    _ScopedPrincipals.rows = {
+        root.resolve(): dict(default or {}),
+        _hr(root).resolve(): dict(hr or {}),
+    }
 
 
 LOGIN = {"provider": "testpw", "username": "admin", "password": "hunter2"}
@@ -233,3 +285,110 @@ def test_pending_setup_expires(_home, monkeypatch):
 def test_any_enabled_ignores_unconfirmed_setups(_home):
     two_factor.start("u2", "u2")
     assert two_factor.any_enabled() is False
+
+
+# --- account-level: one record per login at the box root (FG-28 B5) -----------
+
+
+def test_an_hr_only_login_manages_two_factor_and_must_enter_a_code(gated_app, _home):
+    _enrol(_home, hr={"admin": Principal("admin", "Admin", "member")})
+    secret, codes = _turn_on(gated_app)
+    assert gated_app.get("/api/account/security").json()["two_factor"]["enabled"] is True
+    assert list((_home / "auth" / "two_factor").glob("*.json"))
+    assert not (_hr(_home) / "auth").exists()
+
+    gated_app.cookies.clear()
+    assert _sign_in(gated_app).json() == {"ok": False, "two_factor_required": True}
+    assert _sign_in(gated_app, code=_now_code(secret, 30)).json()["ok"] is True
+
+    recovery = gated_app.post(
+        "/api/account/two-factor/recovery-codes",
+        json={"password": "hunter2", "code": codes[0]},
+    )
+    assert recovery.status_code == 200
+    off = gated_app.post(
+        "/api/account/two-factor/disable",
+        json={"password": "hunter2", "code": recovery.json()["recovery_codes"][0]},
+    )
+    assert off.status_code == 200
+    assert not two_factor.is_enabled("admin")
+
+
+def test_a_login_enrolled_nowhere_is_not_linked_to_a_person(gated_app, _home):
+    _enrol(_home)
+    assert _sign_in(gated_app).status_code == 200
+    assert gated_app.get("/api/account/security").status_code == 409
+    assert gated_app.get("/api/me/preferences").status_code == 409
+
+
+def test_a_login_suspended_in_every_profile_cannot_manage_it(gated_app, _home):
+    _enrol(_home, hr={"admin": Principal("admin", "Admin", "admin", active=False)})
+    assert _sign_in(gated_app).status_code == 200
+    assert gated_app.get("/api/account/security").status_code == 403
+
+
+def test_an_hr_only_login_keeps_its_preferences_at_the_root(gated_app, _home):
+    from hermes_cli import user_prefs
+
+    _enrol(_home, hr={"admin": Principal("admin", "Admin", "member")})
+    assert _sign_in(gated_app).status_code == 200
+    saved = gated_app.put("/api/me/preferences", json={"language": "zh-Hant"})
+    assert saved.status_code == 200, saved.text
+    assert gated_app.get("/api/me/preferences").json()["language"] == "zh-Hant"
+    assert user_prefs.get_language("admin") == "zh-Hant"
+    assert list((_home / "auth" / "user_prefs").glob("*.json"))
+    assert not (_hr(_home) / "auth").exists()
+
+
+def test_a_request_scoped_to_another_profile_uses_the_root_record(_home):
+    from agent.profile_runtime import profile_runtime_scope
+
+    with profile_runtime_scope(_hr(_home)):
+        started = two_factor.start("u1", "u1@example.com")
+        two_factor.confirm("u1", pyotp.TOTP(started["secret"]).now())
+        assert two_factor.is_enabled("u1")
+    assert two_factor.is_enabled("u1") and two_factor.any_enabled()
+    assert len(list((_home / "auth" / "two_factor").glob("*.json"))) == 1
+    assert not (_hr(_home) / "auth").exists()
+
+
+@pytest.mark.asyncio
+async def test_the_account_id_comes_from_the_default_profile_in_any_scope(_home):
+    from agent.profile_runtime import profile_runtime_scope
+
+    _ScopedPrincipals.aliases = {_home.resolve(): {"sub-1": "owner-1"}}
+    owner = SimpleNamespace(user_id="sub-1", provider="supabase")
+    hr_only = SimpleNamespace(user_id="sub-2", provider="supabase")
+    with profile_runtime_scope(_hr(_home)):
+        assert await two_factor.principal_id_for_session(owner) == "owner-1"
+        assert await two_factor.principal_id_for_session(hr_only) == "sub-2"
+    assert await two_factor.principal_id_for_session(owner) == "owner-1"
+    assert await two_factor.principal_id_for_session(SimpleNamespace(user_id="")) == ""
+
+
+def test_an_existing_owner_record_still_verifies(gated_app, _home):
+    """Owner records written before FG-28 B5 sit at the default home (the root),
+    keyed by the alias-resolved principal id; nothing needs migrating."""
+    _ScopedPrincipals.aliases = {_home.resolve(): {"admin": "owner-1"}}
+    _enrol(_home, default={"owner-1": Principal("owner-1", "Owner", "owner")})
+    started = two_factor.start("owner-1", "owner", home=_home)
+    two_factor.confirm("owner-1", _now_code(started["secret"]), home=_home)
+
+    assert _sign_in(gated_app).json() == {"ok": False, "two_factor_required": True}
+    assert _sign_in(gated_app, code=_now_code(started["secret"], 30)).json()["ok"] is True
+    assert gated_app.get("/api/account/security").json()["two_factor"]["enabled"] is True
+
+
+def test_records_under_a_named_profile_process_home_are_still_read(_home, monkeypatch):
+    """A process launched with a named profile as ``HERMES_HOME`` kept its
+    records there; they stay readable, and turning it off removes both."""
+    legacy_home = _hr(_home)
+    started = two_factor.start("u3", "u3", home=legacy_home)
+    two_factor.confirm("u3", pyotp.TOTP(started["secret"]).now(), home=legacy_home)
+    monkeypatch.setenv("HERMES_HOME", str(legacy_home))
+
+    assert two_factor.is_enabled("u3") and two_factor.any_enabled()
+    two_factor.regenerate_recovery_codes("u3")
+    assert list((_home / "auth" / "two_factor").glob("*.json"))
+    two_factor.disable("u3")
+    assert not two_factor.is_enabled("u3") and not two_factor.any_enabled()

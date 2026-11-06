@@ -1,14 +1,18 @@
 """Per-person interface preferences: the agent-home language and the
 Projects view mode (Task mode or Project mode, one choice per device class).
 
-One small JSON file per login under ``$HERMES_HOME/auth/user_prefs/``, named
-by a hash of the principal's ``user_id`` so an id can never become a path.
+One small JSON file per login under ``<root>/auth/user_prefs/``, named by a
+hash of the account id so an id can never become a path. ``<root>`` is the box
+root the profile registry hangs off, never a profile home: preferences belong
+to the login, which is box-wide, so a request scoped to another profile reads
+and writes the same file (FG-28 B5).
 Files are 0600 in a 0700 directory, written atomically. Nothing here is a
 secret; it lives under ``auth/`` because that is where per-login runtime
 state already goes (the checkout may be root-owned).
 
 A person only ever reads or writes their own file: the web routes pass the
-acting principal's ``user_id`` and never take one from the request.
+signed-in account's id (``two_factor.principal_id_for_session``) and never
+take one from the request.
 """
 
 from __future__ import annotations
@@ -20,33 +24,60 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from hermes_constants import get_hermes_home
+import hermes_constants
 
 #: Languages agent-home ships strings for. ``en`` is the default.
 SUPPORTED_LANGUAGES = ("en", "zh-Hant")
 
 
 def _prefs_dir() -> Path:
-    return get_hermes_home() / "auth" / "user_prefs"
+    return hermes_constants.get_default_hermes_root() / "auth" / "user_prefs"
+
+
+def _legacy_prefs_dir() -> Optional[Path]:
+    """A pre-FG-28 process's own ``HERMES_HOME`` store, when that is not the root.
+
+    On a standard install the default profile home *is* the root, so this is
+    ``None``; only a process launched with a named profile home has older
+    files to read (a save moves them to the root).
+    """
+    launched = os.environ.get("HERMES_HOME", "").strip()
+    if not launched:
+        return None
+    legacy = Path(launched) / "auth" / "user_prefs"
+    if hermes_constants.resolve_path_cached(legacy) == hermes_constants.resolve_path_cached(_prefs_dir()):
+        return None
+    return legacy
+
+
+def _prefs_name(user_id: str) -> str:
+    if not isinstance(user_id, str) or not user_id.strip():
+        raise ValueError("user_id is required")
+    return hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:40] + ".json"
 
 
 def _prefs_path(user_id: str) -> Path:
-    if not isinstance(user_id, str) or not user_id.strip():
-        raise ValueError("user_id is required")
-    digest = hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:40]
-    return _prefs_dir() / f"{digest}.json"
+    return _prefs_dir() / _prefs_name(user_id)
+
+
+def _read_doc(path: Path, user_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(doc, dict) or doc.get("user_id") != user_id:
+        return None
+    return doc
 
 
 def read_prefs(user_id: str) -> Dict[str, Any]:
     """This person's saved preferences, ``{}`` when none are saved."""
-    path = _prefs_path(user_id)
-    try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    if not isinstance(doc, dict) or doc.get("user_id") != user_id:
-        return {}
-    return doc
+    doc = _read_doc(_prefs_path(user_id), user_id)
+    if doc is None:
+        legacy = _legacy_prefs_dir()
+        if legacy is not None:
+            doc = _read_doc(legacy / _prefs_name(user_id), user_id)
+    return doc or {}
 
 
 def get_language(user_id: str) -> Optional[str]:

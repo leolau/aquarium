@@ -3630,10 +3630,18 @@ class UserPreferencesUpdate(BaseModel):
     project_view_mode: Optional[ProjectViewModeUpdate] = None
 
 
-async def _preferences_principal(request: Request):
-    """The acting principal for a preferences call (never ``?as=``)."""
+async def _preferences_user_id(request: Request) -> str:
+    """Whose preferences a call reads and writes (never ``?as=``).
+
+    A signed-in login is its box-wide account (:func:`_account_login`), so the
+    same file answers in every profile it is enrolled in; a sessionless
+    operator caller is the enrolled owner, as before.
+    """
+    if _comms_session_subject(request):
+        _session, user_id = await _account_login(request)
+        return user_id
     try:
-        return await _comms_resolve_principal(request)
+        return (await _comms_resolve_principal(request)).user_id
     except _CommsNotConfigured:
         raise HTTPException(
             status_code=503, detail="Per-person settings need the user directory."
@@ -3646,10 +3654,10 @@ async def get_my_preferences(request: Request):
     Projects view mode per device class (``{}`` until one is chosen)."""
     from hermes_cli.user_prefs import get_language, get_project_view_modes
 
-    principal = await _preferences_principal(request)
+    user_id = await _preferences_user_id(request)
     return {
-        "language": get_language(principal.user_id),
-        "project_view_mode": get_project_view_modes(principal.user_id),
+        "language": get_language(user_id),
+        "project_view_mode": get_project_view_modes(user_id),
     }
 
 
@@ -3665,7 +3673,7 @@ async def put_my_preferences(body: UserPreferencesUpdate, request: Request):
         set_project_view_mode,
     )
 
-    principal = await _preferences_principal(request)
+    user_id = await _preferences_user_id(request)
     if body.language is None and body.project_view_mode is None:
         raise HTTPException(status_code=422, detail="nothing to save")
     if body.language is not None and body.language not in SUPPORTED_LANGUAGES:
@@ -3676,17 +3684,17 @@ async def put_my_preferences(body: UserPreferencesUpdate, request: Request):
     if body.project_view_mode is not None:
         try:
             set_project_view_mode(
-                principal.user_id,
+                user_id,
                 body.project_view_mode.device,
                 body.project_view_mode.mode,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
     if body.language is not None:
-        set_language(principal.user_id, body.language)
+        set_language(user_id, body.language)
     return {
-        "language": get_language(principal.user_id),
-        "project_view_mode": get_project_view_modes(principal.user_id),
+        "language": get_language(user_id),
+        "project_view_mode": get_project_view_modes(user_id),
     }
 
 def _comms_user_service(actor=None):
@@ -4468,18 +4476,35 @@ async def setup_domain(request: Request):
 
 
 async def _account_login(request: "Request"):
-    """``(session, principal_id)`` of the signed-in caller, or 403/409/503."""
+    """``(session, account_id)`` of the signed-in caller, or 403/409/503.
+
+    Account-level (FG-28 B5): a login is linked to a person when it holds an
+    active enrolment in **any** profile, not only the default, and the id is
+    the box-wide account id the root two-factor and preference files are keyed
+    by — whichever profile the request is scoped to.
+    """
     from hermes_cli import two_factor
+    from hermes_cli.console_scope import enrolments
 
     session = getattr(request.state, "session", None)
-    if session is None or not (getattr(session, "user_id", "") or "").strip():
+    subject = (getattr(session, "user_id", "") or "").strip() if session is not None else ""
+    if not subject:
         raise HTTPException(status_code=403, detail="Sign in to manage your login.")
     try:
         user_id = await two_factor.principal_id_for_session(session)
+        rows = []
+        # The account id differs from the subject only for an aliased owner
+        # (resolved per profile anyway) and the basic-auth operator login.
+        for who in dict.fromkeys((subject, user_id)):
+            rows = await enrolments(who, store_factory=lambda home: _EnrolmentStore())
+            if rows:
+                break
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail="Accounts are not set up on this server yet.") from exc
-    if not user_id:
+    if not rows:
         raise HTTPException(status_code=409, detail="This login is not linked to a person yet.")
+    if not any(getattr(e.principal, "active", True) for e in rows):
+        raise HTTPException(status_code=403, detail="This login is suspended in every profile.")
     return session, user_id
 
 

@@ -38,12 +38,13 @@ from fastapi import HTTPException
 from starlette.requests import HTTPConnection, Request
 
 #: Surfaces that own their profile semantics and are authorised elsewhere:
-#: login/session and 2FA (B1–B3/B5), the account's own settings (B5), first-run
-#: setup, and profile CRUD for the operator dashboard, which names its target
-#: in the path.
+#: login/session and 2FA (B1–B3/B5), the account's own settings and per-person
+#: preferences, which live at the box root (B5), first-run setup, and profile
+#: CRUD for the operator dashboard, which names its target in the path.
 SELF_SCOPED_PREFIXES = (
     "/api/auth",
     "/api/account",
+    "/api/me",
     "/api/setup",
     "/api/profiles",
 )

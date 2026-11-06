@@ -45,6 +45,43 @@ def test_store_rejects_unknown_language_and_path_like_ids(_home):
                for p in (_home / "auth" / "user_prefs").iterdir())
 
 
+def test_store_is_at_the_box_root_whichever_profile_is_scoped(tmp_path, monkeypatch):
+    """Preferences belong to the box-wide login (FG-28 B5): a request scoped to
+    another profile reads and writes the root file, never the profile home."""
+    import hermes_constants
+    from agent.profile_runtime import profile_runtime_scope
+    from hermes_cli import user_prefs
+
+    root = tmp_path / "root"
+    hr = root / "profiles" / "hr"
+    hr.mkdir(parents=True)
+    monkeypatch.setattr(hermes_constants, "get_default_hermes_root", lambda: root)
+    monkeypatch.setenv("HERMES_HOME", str(root))
+    with profile_runtime_scope(hr):
+        user_prefs.set_language("amy", "zh-Hant")
+    assert user_prefs.get_language("amy") == "zh-Hant"
+    assert len(list((root / "auth" / "user_prefs").glob("*.json"))) == 1
+    assert not (hr / "auth").exists()
+
+
+def test_files_under_a_named_profile_process_home_are_still_read(tmp_path, monkeypatch):
+    import hermes_constants
+    from hermes_cli import user_prefs
+
+    root = tmp_path / "root"
+    hr = root / "profiles" / "hr"
+    hr.mkdir(parents=True)
+    monkeypatch.setattr(hermes_constants, "get_default_hermes_root", lambda: hr)
+    monkeypatch.setenv("HERMES_HOME", str(hr))
+    user_prefs.set_language("amy", "zh-Hant")  # written where a pre-B5 process put it
+    monkeypatch.setattr(hermes_constants, "get_default_hermes_root", lambda: root)
+
+    assert user_prefs.get_language("amy") == "zh-Hant"
+    user_prefs.set_project_view_mode("amy", "phone", "task")
+    assert (root / "auth" / "user_prefs").is_dir()
+    assert user_prefs.read_prefs("amy")["language"] == "zh-Hant"
+
+
 @pytest.fixture
 def acting(monkeypatch):
     from hermes_cli import web_server

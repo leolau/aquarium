@@ -74,6 +74,8 @@ describe("CardDetailView approvals", () => {
     ).toBe("https://www.canva.com/design/DAHXSa-9nsc/view");
     expect(within(rows[1] as HTMLElement).getByText("python3 -c \"print('py ok')\"")).toBeTruthy();
     expect(view.queryByText("Make ready")).toBeNull();
+    expect(view.queryByText("Answer the agent")).toBeNull();
+    expect(view.queryByText("Re-run card")).toBeNull();
   });
 
   it("Allow answers that approval for this card, once", async () => {
@@ -101,9 +103,9 @@ describe("CardDetailView approvals", () => {
     expect(view.queryByText("Deny")).toBeNull();
   });
 
-  it("a card blocked for anything else keeps Make ready", () => {
+  it("a card blocked for anything else offers Re-run card", () => {
     const view = render(<CardDetailView slug="tender" card={blocked({ pending_approvals: [] })} />);
     expect(view.container.querySelector('[data-component="CardApproval"]')).toBeNull();
-    expect(view.getByText("Make ready")).toBeTruthy();
+    expect(view.getByText("Re-run card")).toBeTruthy();
   });
 });

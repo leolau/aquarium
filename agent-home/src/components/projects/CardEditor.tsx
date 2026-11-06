@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { ActionButton } from "@/components/projects/ActionButton";
 import { ActionError } from "@/components/projects/ActionError";
+import { unblockPath } from "@/components/projects/CardActions";
 import { useProjectAction } from "@/components/projects/useProjectAction";
 import { cardMoves, cardPatch } from "@/components/projects/cardMoves";
 import { BusyRegion } from "@/components/ui/BusyRegion";
@@ -13,17 +14,29 @@ import type { ProjectCardDetail } from "@/types";
  * The hand edits a member may make to a card (§10): title, brief, which
  * project profile works it, and the column it sits in. Every change is one
  * `PATCH /api/projects/{slug}/cards/{id}`; the backend refuses moves the
- * dispatcher owns and names why.
+ * dispatcher owns and names why. On a blocked card (`canRerun`) **Save &
+ * re-run** saves the edit and, only once that landed, unblocks the card
+ * (with any answer typed above) so the next worker starts from the revised
+ * brief.
  */
 export function CardEditor({
   slug,
   card,
   profiles,
+  canRerun = false,
+  rerunAnswer = "",
+  onUpdated,
 }: {
   slug: string;
   card: ProjectCardDetail;
   /** The project's profiles — the only valid assignees. */
   profiles: string[];
+  /** Blocked and not waiting on an approval: offer Save & re-run. */
+  canRerun?: boolean;
+  /** What the person typed in "Answer the agent"; sent along on re-run. */
+  rerunAnswer?: string;
+  /** The card as the server returned it after Save & re-run. */
+  onUpdated?: (card: ProjectCardDetail) => void;
 }) {
   const before = {
     title: card.title,
@@ -32,12 +45,16 @@ export function CardEditor({
   };
   const [editing, setEditing] = useState(false);
   const [fields, setFields] = useState(before);
-  const action = useProjectAction();
+  const action = useProjectAction<ProjectCardDetail>();
   const busy = action.busy;
   const [moving, setMoving] = useState(false);
+  const [rerunning, setRerunning] = useState(false);
   const [invalid, setInvalid] = useState<string | null>(null);
 
-  const patch = (body: Record<string, unknown>, onSaved?: () => void) =>
+  const patch = (
+    body: Record<string, unknown>,
+    onSaved?: () => void,
+  ) =>
     action.run(
       `/api/projects/${encodeURIComponent(slug)}/cards/${encodeURIComponent(card.id)}`,
       { method: "PATCH", body, onSuccess: onSaved },
@@ -58,6 +75,29 @@ export function CardEditor({
     await patch(body, () => setEditing(false));
   };
 
+  const saveAndRerun = async () => {
+    if (action.busy) return;
+    if (!fields.title.trim()) {
+      setInvalid("A card needs a title.");
+      return;
+    }
+    setInvalid(null);
+    setMoving(false);
+    const body = cardPatch(before, fields);
+    if (Object.keys(body).length > 0) {
+      const saved = await patch(body);
+      if (!saved?.ok) return;
+    }
+    const reason = rerunAnswer.trim();
+    await action.run(unblockPath(slug, card.id), {
+      body: reason ? { reason } : {},
+      onSuccess: (fresh) => {
+        setEditing(false);
+        onUpdated?.(fresh);
+      },
+    });
+  };
+
   const moves = cardMoves(card.status);
   const assignees = Array.from(
     new Set([...(card.assignee ? [card.assignee] : []), ...profiles]),
@@ -76,6 +116,7 @@ export function CardEditor({
             className="flex flex-col gap-2"
             onSubmit={(e) => {
               e.preventDefault();
+              setRerunning(false);
               void save();
             }}
           >
@@ -142,12 +183,31 @@ export function CardEditor({
               <span className="flex-1" />
               <ActionButton
                 type="submit"
-                busy={busy}
+                busy={busy && !rerunning}
+                disabled={busy}
                 pendingLabel="Saving…"
-                className="rounded-lg bg-[var(--color-accent)] px-3 py-1.5 text-xs font-medium text-[var(--color-accent-fg)] disabled:opacity-40"
+                className={
+                  canRerun
+                    ? buttonClass
+                    : "rounded-lg bg-[var(--color-accent)] px-3 py-1.5 text-xs font-medium text-[var(--color-accent-fg)] disabled:opacity-40"
+                }
               >
                 Save
               </ActionButton>
+              {canRerun ? (
+                <ActionButton
+                  busy={busy && rerunning}
+                  disabled={busy}
+                  pendingLabel="Re-running…"
+                  onClick={() => {
+                    setRerunning(true);
+                    void saveAndRerun();
+                  }}
+                  className="rounded-lg bg-[var(--color-accent)] px-3 py-1.5 text-xs font-medium text-[var(--color-accent-fg)] disabled:opacity-40"
+                >
+                  Save &amp; re-run
+                </ActionButton>
+              ) : null}
             </div>
           </form>
         ) : (
