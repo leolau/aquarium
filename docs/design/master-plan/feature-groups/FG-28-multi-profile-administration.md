@@ -1,6 +1,72 @@
 # FG-28 — Multi-profile administration (one admin, several profiles)
 
-**Wave:** P6-C (Phase-6 follow-on — after FG-26; requires FG-27 Layers 3+1). **Also carries the one-gateway-for-all-profiles consolidation.** · **Owner agent:** _unassigned_ · **Status:** IN PROGRESS — the registry, the credential scoping and the console chokepoint have landed and are wired (#225, #227/#229, review below); the switcher, the picker, the account-verb call site, the real-Postgres matrix and the live system test are open
+**Wave:** P6-C (Phase-6 follow-on — after FG-26; requires FG-27 Layers 3+1). **Also carries the one-gateway-for-all-profiles consolidation.** · **Owner agent:** _unassigned_ · **Status:** IN PROGRESS — backend chokepoint built (#225, #227/#229); re-reviewed 2026-11-01: two security fixes, login/activation across profiles, the admin switcher/picker, secret isolation and real-Postgres tests are open — see §"Revised plan (2026-11-01)"
+
+## Revised plan (2026-11-01) — re-reviewed against `develop` `f4a7cda8a`
+
+> **Read this section first.** Every claim below was re-checked against the code
+> at `f4a7cda8a` by three parallel reviews (login/identity/activation; console
+> scope and admin UI; secrets, account verbs, audit and tests). Where an older
+> section of this doc disagrees, this section wins; the older sections are kept
+> as history and carry correction notes. **Nothing in the FG-28 code paths has
+> changed since 2026-08-14** — the backend chokepoint is as shipped, and every
+> open item below is still open.
+
+### What is built (verified)
+
+- **Profile registry** (`hermes_cli/profile_registry.py`, `hermes profile registry list|health`) — derived view, no authority data. No HTTP endpoint.
+- **Console chokepoint** `require_console_scope` (`web_server.py`) → `console_scope._scoped_to` → `agent.profile_runtime.profile_runtime_scope`, held for the whole handler. Declared by **15** routes, all `/api/comms/{whoami,members*,directory}`.
+- **Principal re-derived in the target, no owner fallback** — `resolve_console_principal` / `_comms_console_actor`: no subject 401, not enrolled 403, suspended 403. Structural route-table test (`tests/hermes_cli/test_fg28_console_routes.py`) passes.
+- **`guard_account_level_op` / `enrolled_profiles` / `administered_profiles`** (`console_scope.py`) — written and unit-tested; the guard has **no production caller**.
+- **Scoped admin credentials** — only `members.py` `_resolve_url` / `_resolve_service_role_key` read through `get_secret`.
+
+### Two security findings (fix before any FG-28 UI)
+
+1. **An admin-minted link resets a box-wide password.** `POST /api/comms/members/{user_id}/invitation` → `MemberService.issue_invitation` is gated only by `require_member_admin`, works for **any** enrolled principal (already active or not, any role), and returns the **raw token to the admin**. Redeeming it calls `activate_with_password` — a box-wide GoTrue password set **plus ban lift**. So an `hr` admin can set the password of an account also enrolled in `engineers` and sign in as that person there (INFERRED from code; not exercised live). Within one profile the same path lets an admin take over another admin's or the owner's account. This is the escalation `guard_account_level_op` exists for; §"Re-read against the shipped code, 2026-08-13" below was wrong to call `set_password` holder-only.
+2. **The chat profile picker is a grant.** agent-home's chat `ProfilePicker` lists every profile from unauthenticated `GET /api/profiles`. `session_chat` / `session_chat_stream` resolve the principal in the **acting (default)** profile *before* reading `profile`, then run the turn — that profile's brain, config and credentials — inside `_chat_turn_profile_scope(profile)`. A default-profile member can therefore chat as any profile they are not enrolled in, and a default owner sees every profile's conversations.
+
+### Gaps the original plan did not cover
+
+- **Login lands only in the default profile.** agent-home login calls `whoami` with no `?profile=`; a person enrolled only in a named profile passes the password check and gets 409 `no_principal`. The session cookie carries no profile, and `principal.role` is the default profile's role — so the BFF's `requireMemberAdmin` 403s an `hr` admin who is only a member in default before Python's scoped check runs.
+- **The BFF never sends `?profile=` on member routes**, so the cross-profile console is unreachable from agent-home even though Python accepts it; body `profile=hr` without `?profile` is a 409.
+- **Everything outside `/api/comms/{members,directory,whoami}` is acting-profile only**: 15 more `/api/comms` routes, 21 other `web_server.py` routes, 14 router modules and 140 `_ADMIN` routes resolve through the legacy resolver or the dashboard token.
+- **2FA and `/api/account/*` resolve the person in the default profile**; someone not enrolled there skips 2FA and cannot manage it.
+- **Password-reset requests** require a principal in the acting profile and silently do nothing for a named-profile-only user.
+- **Fail-closed secrets are unarmed in the dashboard process** (`set_multiplex_active` is called only by the gateway) even though the dashboard already serves several profiles per request (`require_console_scope`, `_chat_turn_profile_scope`, `_profile_scope`).
+- **Audit** lands in the target profile's ledger by construction (INFERRED), but the payload does not name the acting/target profile and no test asserts placement.
+
+### Decisions needed from Leo
+
+| # | Decision | Recommendation |
+|---|---|---|
+| D1 | Login for someone not enrolled in `default` | Land them in an enrolled profile (hint → default → only → first), not "enrol everyone in default as Viewer" |
+| D2 | Supabase URL / service-role / JWT keys: box-wide or per profile | Box-wide (one GoTrue): add them to `secret_scope._GLOBAL_ENV_EXACT` |
+| D3 | Chatting in a profile requires enrolment there; owner visibility from the *target* profile | Yes |
+| D4 | May an admin mint a link for an account that has already signed in? | No — first activation only; a signed-in person uses self-service reset. Never for a higher-ranked target |
+
+### Revised implementation order
+
+Each row is about one PR. Phase A is standalone and ships first.
+
+| # | Step | Where (existing seams) | Tests | Effort | Needs |
+|---|---|---|---|---|---|
+| **A1** | Close the invitation hole: `issue_invitation` refuses an already-activated account (D4) and any target outside the actor's administered profiles via `guard_account_level_op`; never a higher-ranked target; `redeem_invitation` refuses `kind="activation"` for an account that has signed in; `AccountLevelPermissionError` → 403 | `hermes_cli/members.py`, `hermes_cli/console_scope.py` (store-factory helper), `web_server.py` `_comms_member_error` | `test_members.py`; structural test in `test_fg28_console_routes.py`: any route reaching `activate_with_password` / `set_password` / `set_banned` / `delete_user` calls the guard or is on a self-service allowlist (`/api/account/password`, `/api/auth/invitations/*`) | 1 d | D4 |
+| **A2** | Chat authority: read `profile` first, resolve the principal **in that profile** (`_chat_principal`), apply to `_chat_scope` and every chat read route; `GET /api/chat/profiles` lists only active enrolments; `GET /api/profiles` requires auth | `web_server.py` `session_chat`, `session_chat_stream`, attach/cancel, `_chat_scope`; `agent-home/src/app/api/chat/profiles/route.ts` | `test_web_server_session_chat.py` with real temp profile homes (pattern: `test_fg26_profile_scope_e2e.py`): not enrolled → 403; enrolled → target role; default owner ≠ hr owner | 1–1.5 d | D3 |
+| B1 | `console_scope.enrolments(subject)` → `[(entry, principal)]`; `enrolled_profiles` / `administered_profiles` become wrappers. One endpoint `GET /api/auth/my-profiles` → `[{name, role, active, is_default, health?}]`, subject required, no owner fallback, not under `require_console_scope`. Feeds both the login chooser and the admin switcher | `console_scope.py`, `web_server.py`, `agent-home/src/lib/api/client.ts` | `test_fg28_console_scope.py`; route-auth table; no subject → 401 | 0.5 d | — |
+| B2 | Login lands in a profile; cookie gains `profile` (old cookies read as `default`); signed last-profile hint cookie; `LoginForm` messages for `no_principal` / `suspended` | `agent-home/src/app/api/session/login/route.ts`, `lib/auth/principal.ts`, `lib/auth/session.ts`, `components/LoginForm.tsx` | `login/route.test.ts`: hr-only → 200 with `profile=hr`; hint honoured only when enrolled; all suspended → 403 | 1 d | B1, D1 |
+| B3 | Session profile everywhere: `apiClientForRequest()` defaults to `session.profile`; `POST /api/session/profile` re-runs `whoami?profile=` and rewrites the cookie only on 200; header switcher replaces the chat-only picker; non-chat pages gated to `default` until B4 | `lib/auth/principal.ts`, new `app/api/session/profile/route.ts`, `components/chat/ProfilePicker.tsx` → header switcher, `app/chat/page.tsx` | switch to an unenrolled profile → 403, cookie unchanged | 1–1.5 d | B2 |
+| B4 | Profile-aware legacy resolver: `_comms_resolve_principal`, `route_roles.role_dependency` and `_account_login` enter the named profile and refuse owner fallback when a subject is present; each remaining `/api/comms` route and router module either honours `?profile=` or rejects it. `HermesApiClient.scopedPath` becomes opt-in per method | `web_server.py`, `hermes_cli/route_roles.py`, router modules, `agent-home/src/lib/api/client.ts` | extend the structural test: `GET /api/comms/goals?profile=hr` is scoped or refused, never served from the acting profile | 1.5–2 d | B3 |
+| B5 | 2FA and user prefs are account-level at the box root (keyed by GoTrue subject, never `""` for an authenticated subject) | `hermes_cli/two_factor.py`, `dashboard_auth/routes.py`, user-prefs callers | hr-only user with 2FA must enter a code; scoped request writes to the root | 0.5–1 d | B4 |
+| C1 | Profile-aware BFF for `/api/comms/members*` and `/directory`: bind `apiClientForRequest({profile})`, gate on `whoami?profile=` instead of the session role | `agent-home/src/lib/api/member-bff.ts`, `app/api/comms/members/**`, shared `lib/profile.ts` | BFF forwards `?profile`; default-member/hr-admin is not 403'd by the BFF | 1 d | B1 |
+| C2 | Activation and recovery links carry the profile: `/activate/<profile>/<token>` (legacy `/activate/<token>` = default); new tokens hash-bound to the profile (`hash("v2:"+profile+":"+token)`); redeem/request validate against the registry and run inside `_scoped_to`; reset request mints where the person is enrolled; same neutral 400 for every failure | `hermes_cli/invitations.py`, `members.py`, `web_server.py` `auth_redeem_invitation`, `auth_request_invitation`, `comms_issue_invitation`; agent-home `app/activate/[profile]/[token]`, `ActivateForm`, redeem/request BFF routes | `test_fg26_invitations_e2e.py`: hr link redeems; tampered profile → neutral 400; v1 links still work | 1.5 d | D2, A1 |
+| C3 | Admin switcher on the Users screen (`?profile=` in the URL, validated against B1, hidden with < 2 administered profiles) | new `components/users/AdminProfileSwitcher.tsx`, `UsersView.tsx`, `app/users/page.tsx`, member components via `withProfileQuery` | `UsersView.test.tsx`, `AdminProfileSwitcher.test.tsx` | 1 d | C1 |
+| C4 | Create-user and CSV-import picker over administered profiles; body `profile` must equal `?profile=` | `CreateUserForm.tsx`, `CsvImportPanel.tsx`, `comms_create_member` / `comms_import_members` | picker is not a grant: `?profile=hr` by an hr member → 403 | 0.5–1 d | C2, C3 |
+| D-1 | Box-wide Supabase keys (D2) in `_GLOBAL_ENV_EXACT`; arm fail-closed in the dashboard when the registry serves > 1 profile (config.yaml, not an env var); migrate remaining console-reachable `os.environ` reads (`_llm_tag_suggest`, ElevenLabs, `EMAIL_CONFIG_PATH`) | `agent/secret_scope.py`, `web_server.py` startup, `hermes_cli/config.py`, `email_accounts_api.py` | `test_fg28_member_credentials.py`, `test_secret_scope.py` | 1 d | D2 |
+| D-2 | Audit payload names acting and target profile; real-Postgres negative matrix (CFO/CTO/shared-member over `hr`/`engineers`/`testers`) and two-profiles-one-process secret isolation, reusing the Docker fixture lifted out of `test_fg26_profile_scope_e2e.py` | `identity_audit.py`, `members.py`; new `tests/hermes_cli/test_fg28_console_matrix_e2e.py`, `test_fg28_secret_isolation_e2e.py` | itself (write red first) | 2 d | A1–C4 |
+| D-3 | System test on the current production box via the private runbook (`PRODUCTION.md` in `leolau/aquarium-ops`), or the Docker e2e above as the gate; `scripts/fg28_systest.py` docstring updated | — | — | 0.5 d | all |
+
+Total ≈ 14–17 engineer-days (about 3 Devin sessions). A1 and A2 are each a
+standalone security PR.
 
 ## Reframing (2026-08-10) — this is the console over the goal tree
 
@@ -472,9 +538,12 @@ console with a dropdown.
 
 **Out:**
 
-- users spanning profiles (still exactly one profile per user);
+- ~~users spanning profiles (still exactly one profile per user);~~ *retired —
+  one account may hold `principals` rows in several profiles (§"Cloud-agent prompt" item 1);*
 - shared memory, skills or agent state across profiles;
-- in-process multiplexing of profiles in the web tier (see the blocker);
+- ~~in-process multiplexing of profiles in the web tier (see the blocker);~~
+  *superseded by §"Architecture decision (2026-08-13)": the dashboard already
+  serves profiles per request in one process;*
 - a second authority model — entitlement remains the `principals` row.
 
 ## Prerequisites and open decisions
@@ -541,6 +610,11 @@ an account also enrolled in `engineers` and revoke their access there — per-pr
 authority exercised through a globally-scoped credential.
 
 ### Re-read against the shipped code, 2026-08-13 — the hazard is latent, not live
+
+> **Correction (2026-11-01):** the `set_password` row below is wrong. An admin
+> mints the activation token through `issue_invitation` and receives it raw, so
+> redemption *is* an admin-reachable account-level verb (password set + ban
+> lift) — see §"Revised plan (2026-11-01)", security finding 1, and step A1.
 
 FG-26 shipped, so this is now a question about code rather than intent, and the
 code does **not** expose the escalation. Verified in `hermes_cli/members.py` at
@@ -646,6 +720,10 @@ console cannot reintroduce either defect silently.
 
 ### Still open after this review
 
+> **Superseded (2026-11-01)** by §"Revised plan (2026-11-01)". One correction:
+> a chat-only `ProfilePicker` now exists in agent-home, but it is not the admin
+> switcher and it is a grant (security finding 2).
+
 - **The switcher and the picker do not exist yet.** The backend chokepoint is
   ready and `administered_profiles()` is the list it needs, but there is no
   registry HTTP endpoint, no console switcher, and FG-26's "creating in" field is
@@ -713,6 +791,10 @@ something enforces it.
   per method.
 
 ## Live system test (2026-08-14) — `scripts/fg28_systest.py`
+
+> **Historical:** `hermes-systest` is the decommissioned Alibaba box (see
+> `AGENTS.md`). Re-run against the current production box only through the
+> private runbook, or use the Docker e2e in step D-2 as the gate.
 
 Run on `hermes-systest` against `main` `48973a102` (which carries the review
 fixes above), as `hermes` with `HERMES_HOME=/opt/data/hermes-home-staging`, over
@@ -792,10 +874,17 @@ secret-isolation tests green on real Postgres; `scripts/run_tests.sh`, `ruff`,
 - [ ] Negative matrix + secret-isolation tests on real Postgres — still synthetic (Protocol store + monkeypatched registry); the two-profiles-one-process isolation run is the load-bearing one
 - [~] System test on `hermes-systest` passed — the **principal-resolution** half passed live, 6/6, reproduced independently at `main` `48973a102` (see §"Live system test"); the secret-isolation half, the account-verb guard and the HTTP route path are still unexercised on the box
 
+- [ ] **A1** Admin-minted links cannot reset an activated or cross-profile account (guard wired + structural test) — security
+- [ ] **A2** Chat turns and chat reads authorised in the requested profile; chat picker lists only enrolments — security
+- [ ] **B1–B5** Login lands in an enrolled profile; session carries the profile; legacy resolver profile-aware; 2FA account-level
+- [ ] **C2** Activation/recovery links carry the profile (bound hash); scoped redeem/request
+- [ ] Decisions D1–D4 recorded (§"Revised plan (2026-11-01)")
+
 ## Audit log
 
 | Date | Edition | Author | Change | Rationale |
 |------|---------|--------|--------|-----------|
+| 2026-11-01 | 9 | devin (for Leo) | Re-reviewed against `develop` `f4a7cda8a`; added §"Revised plan (2026-11-01)" (two security findings, login/activation gaps, decisions D1–D4, phased plan A→D); corrected the 2026-08-13 account-verb claim, the Scope/Out list and the `hermes-systest` references | Leo asked for FG-28 to be reviewed against the current code and the plan revised to fit it; nothing in the FG-28 paths had changed since 2026-08-14 while chat, login and invitations grew around them |
 | 2026-08-14 | 8 | devin (for Leo) | Live system test recorded, with its blind spot stated; the systest script and the HTTP wiring test landed on `develop` | Leo said FG-28 was tested and asked for the results to be reviewed. They were real and they were good — 6/6 on the box against `main` `48973a102`, reproduced independently on review, and the first FG-28 evidence that runs on real Postgres rather than a stub: one process resolving the same subject to two different `principals` rows in `app_prod` and `app_prod_maintenance`, and a genuine cross-schema refusal. But the script calls `resolve_console_principal` directly and never crosses HTTP, so **all three defects edition 7 fixed would have passed it** — every one of them lived in a route's pairing of scope and identity, not in the function under test. That is the same shape as FG-26's activation bug, where a green suite could not see a gate it never instantiated, so the checklist item is marked partial rather than done and the three things still unexercised live are named: secret isolation with credentials that actually differ (the box's two profiles share one Supabase key, so nothing there can catch an unmigrated `os.getenv`), the route path under a real session, and the account-verb guard. Also a process finding worth more than the test result: both artifacts were stranded on `fg-28/profile-admin`, whose PR was closed, so neither the systest nor the HTTP wiring test was on `develop` or `main` and the box had no copy — the evidence for the checklist item existed nowhere the repo could see it. |
 | 2026-08-14 | 7 | devin (for Leo) | Implementation reviewed: three wiring defects fixed, three runtime findings recorded, checklist marked per item | Leo said the to-dos were implemented and asked for a review. The chokepoint core was sound; all three defects were in the **pairing** of scope and identity at the routes, which is exactly the risk the one-process decision moved from a process boundary onto discipline — `deactivate`/`activate` re-derived the caller in the target profile and then built the service after the scope had closed (authority in one profile, effect in another), `delete_member` declared the scope but bound its actor through the legacy owner-fallback resolver (a sessionless `DELETE …?profile=hr` would have run as `hr`'s owner), and `guard_account_level_op` short-circuited on `role == "owner"` — a role read from the *target* profile, so an `hr` owner could ban an account enrolled in `engineers`, the very escalation the guard exists to refuse. Fixed and asserted structurally over the route table rather than route by route, so the next console route cannot reintroduce either defect silently. Reading the deployed box alongside the code added three things nothing in the repo states: the fail-closed credential mode is armed only by `gateway/run.py`, so in the dashboard's own process the strict branch is unreachable; a secret scope is a profile's `.env` and nothing else, so a profile without the Supabase admin credential answers 503 on every console route, and the box only works because all three env sources carry identical values (verified by digest); and agent-home appends `?profile=` to every path while only the user-management routes honour it, so a switcher built on that client would render one profile's goals and traces under another's name. Checklist now marks partial items as partial rather than open, because "open" hid that the security core has in fact landed. |
 | 2026-08-13 | 6 | devin (for Leo) | Account-level verb relocation ruled **out of scope**; replaced with a chokepoint requirement | Leo noticed this section's “decide before FG-26 ships” condition had expired — FG-26 shipped in #217 — and asked whether moving ban/delete/reset behind the control plane was still in scope. Re-read the shipped code instead of the doc's intent, and the premise turned out stale: `set_member_active` is an un-enrol with no GoTrue call, `delete_member` is owner-only and deliberately leaves the box-wide account alone, `set_password` is only the token-redemption path, `delete_user` is only enrolment rollback, and `set_banned` has **no production caller as an admin verb**. So no admin-reachable account-level verb exists to relocate, and the one-process decision already puts the service-role key in one place — relocation is moot, not deferred, and FG-26's UI does not need rebuilding. What replaces it is smaller and stronger: the escalation is currently prevented by *absence*, so any future account-level verb must pass one guarded seam requiring owner or “enrolled solely in profiles the actor administers”, asserted by a test that a bare `require_member_admin` route cannot reach the GoTrue admin client. That check is only computable once FG-28 can read across profiles, which is why FG-26 was right to refuse it. |
@@ -806,6 +895,10 @@ secret-isolation tests green on real Postgres; `scripts/run_tests.sh`, `ruff`,
 | 2026-08-10 | 1 | devin (for Leo) | Created FG doc | Leo asked for one admin to create users in several profiles (CTO → engineers+testers, CFO → hr) while users stay single-profile. Code reading found the entitlement model needs **no new tables** — the GoTrue `sub` is already `principal.user_id`, so a per-profile `principals` row *is* the per-profile grant, and `_comms_resolve_principal` already 409s for an authenticated-but-unenrolled subject. It also found the architectural constraint: `HERMES_HOME` is a contextvar but `os.environ` is not, and `dsn: ${DATABASE_URL}` resolves through `_expand_env_vars` reading `os.environ`, with ~2,250 env call sites and no context-local seam — so a single process cannot hold per-profile secrets, and the console must fan out to per-profile processes rather than multiplex in-process. Recorded the owner-fallback in `_comms_resolve_principal` as the most dangerous hole: correct today, an escalation to *the target profile's owner* the moment a sessionless service-to-service hop is introduced. Sequenced after FG-27 Layers 1+3 because per-profile schemas turn a wrong-DSN resolution from a silent merge into a detectable error. |
 
 ## Cloud-agent prompt
+
+> **2026-11-01:** start from §"Revised plan (2026-11-01)" — steps A1 and A2
+> first. Where this prompt says `hermes-systest`, read "the current production
+> box via the private runbook, or the Docker e2e (D-2)".
 
 > **[Start here. Nothing gates this FG any more: FG-26 and FG-27 are done,
 > deployed and system-tested, and item 1 of this FG's checklist is closed.]**
