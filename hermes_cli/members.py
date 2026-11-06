@@ -757,6 +757,7 @@ class MemberService:
         invitations: InvitationStore | None = None,
         store_factory: Any = None,
         registry: Any = None,
+        acting_profile: str | None = None,
     ) -> None:
         self._store = store
         self._admin = admin
@@ -767,6 +768,9 @@ class MemberService:
         # (the scoped app store, the box's profile registry).
         self._store_factory = store_factory
         self._registry = registry
+        # FG-28: the profile the serving process acts as, when the request was
+        # scoped into another one (``None``: this service's own profile).
+        self._acting_profile = acting_profile
 
     @property
     def invitations(self) -> InvitationStore:
@@ -1522,6 +1526,8 @@ class MemberService:
             user_id=user_id,
             payload=payload,
             config=self._config,
+            acting_profile=self._acting_profile or self.profile,
+            target_profile=self.profile,
         )
 
 

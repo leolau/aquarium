@@ -153,7 +153,7 @@ def two_homes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     seen: dict[str, Any] = {}
 
-    def _service(actor=None):
+    def _service(actor=None, **_scope):
         from hermes_constants import get_hermes_home
 
         seen["home"] = Path(str(get_hermes_home()))
@@ -268,7 +268,7 @@ def hr_roles(two_homes, monkeypatch: pytest.MonkeyPatch):
     created: list[dict[str, Any]] = []
 
     class _Service:
-        def __init__(self, actor) -> None:
+        def __init__(self, actor, **_scope) -> None:
             from hermes_constants import get_hermes_home
 
             self.home = Path(str(get_hermes_home()))
@@ -498,7 +498,7 @@ def picker_box(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         ws,
         "_comms_user_service",
-        lambda actor=None: MemberService(
+        lambda actor=None, **_scope: MemberService(
             stores[_home()],
             admin,
             invitations=invitations[_home()],

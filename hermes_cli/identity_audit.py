@@ -52,12 +52,19 @@ async def record_identity_event(
     user_id: str,
     payload: Mapping[str, object] | None = None,
     config: Mapping[str, object] | None = None,
+    acting_profile: str | None = None,
+    target_profile: str | None = None,
 ) -> None:
     """Record one identity administration event in C5 and C8.
 
     ``action`` is a stable verb (``user.create``, ``user.role``,
     ``user.invitation``, ``user.activate``, ``user.delete``, …). Best-effort by
     design: see the module docstring.
+
+    ``acting_profile`` (the profile the serving process acts as) and
+    ``target_profile`` (the profile whose ``store`` this event lands in) are
+    recorded when given, so a cross-profile act names both ends. They are
+    written after the caller's payload so a caller cannot misattribute them.
     """
     # ``action`` and ``user_id`` travel *inside* the payload as well as in the
     # approval row, because ``ChangeEvent`` exposes the payload but not the
@@ -67,6 +74,10 @@ async def record_identity_event(
         "user_id": user_id,
         **_safe_payload(payload),
     }
+    if acting_profile is not None:
+        safe["acting_profile"] = acting_profile
+    if target_profile is not None:
+        safe["target_profile"] = target_profile
     try:
         await _record_change(
             store=store,
