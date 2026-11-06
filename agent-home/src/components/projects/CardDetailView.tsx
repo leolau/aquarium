@@ -82,6 +82,15 @@ export function CardDetailView({
     setCard((prev) => ({ ...prev, ...fresh })),
   );
 
+  // Unblock answers with the card row (no comments / log tail), so merge it
+  // over what the page already has: the badge and banner flip at once and
+  // the refresh fills in the rest.
+  const [answer, setAnswer] = useState("");
+  const applyServerCard = (fresh: ProjectCardDetail) => {
+    setAnswer("");
+    setCard((prev) => ({ ...prev, ...fresh }));
+  };
+
   const tone = STATUS_TONE[card.status] ?? "muted";
   const isRunning = card.status === "running";
   const heartbeat = card.latest_heartbeat ?? null;
@@ -167,8 +176,8 @@ export function CardDetailView({
               </p>
             ) : (
               <p className="mt-2 text-xs text-[var(--color-muted)]">
-                Use Edit card below to answer or adjust the brief, then Make
-                ready to let the agent pick it back up.
+                Answer the agent below, or use Edit card to change the brief,
+                then re-run the card.
               </p>
             )}
           </div>
@@ -180,8 +189,18 @@ export function CardDetailView({
               taskId={card.id}
               status={card.status}
               awaitingApproval={approvals.length > 0}
+              onUpdated={applyServerCard}
+              answer={answer}
+              onAnswerChange={setAnswer}
             />
-            <CardEditor slug={slug} card={card} profiles={profiles} />
+            <CardEditor
+              slug={slug}
+              card={card}
+              profiles={profiles}
+              canRerun={card.status === "blocked" && approvals.length === 0}
+              rerunAnswer={answer}
+              onUpdated={applyServerCard}
+            />
           </>
         ) : null}
         <Link

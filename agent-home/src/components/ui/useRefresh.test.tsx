@@ -55,7 +55,7 @@ describe("useServerState", () => {
   });
 });
 
-describe("CardActions — Make ready", () => {
+describe("CardActions — Re-run a blocked card", () => {
   it("disables the button from the click until the refresh has rendered", async () => {
     let resolveFetch: (r: Response) => void = () => {};
     vi.spyOn(globalThis, "fetch").mockImplementation(
@@ -71,17 +71,16 @@ describe("CardActions — Make ready", () => {
     const { getByText, getByRole } = render(
       <CardActions slug="digest" taskId="t_1" status="blocked" />,
     );
-    const button = getByText("Make ready") as HTMLButtonElement;
+    const button = getByText("Re-run card").closest("button") as HTMLButtonElement;
     expect(button.disabled).toBe(false);
 
     fireEvent.click(button);
     fireEvent.click(button);
     expect(button.disabled).toBe(true);
     expect(fetch).toHaveBeenCalledTimes(1);
-    expect((fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][1]).toMatchObject({
-      method: "PATCH",
-      body: JSON.stringify({ status: "ready" }),
-    });
+    const call = (fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0];
+    expect(call[0]).toBe("/api/projects/digest/cards/t_1/unblock");
+    expect(call[1]).toMatchObject({ method: "POST", body: JSON.stringify({}) });
 
     await act(async () => {
       resolveFetch(new Response("{}", { status: 200 }));
@@ -89,7 +88,7 @@ describe("CardActions — Make ready", () => {
     // PATCH answered, refresh in flight: still busy, still one click only.
     expect(router.refresh).toHaveBeenCalledTimes(1);
     expect(button.disabled).toBe(true);
-    expect(getByRole("status").textContent).toContain("Making ready");
+    expect(getByRole("status").textContent).toContain("Re-running");
 
     await act(async () => {
       landRefresh();
@@ -106,9 +105,9 @@ describe("CardActions — Make ready", () => {
     const { getByText, findByText } = render(
       <CardActions slug="digest" taskId="t_1" status="blocked" />,
     );
-    fireEvent.click(getByText("Make ready"));
+    fireEvent.click(getByText("Re-run card"));
     await findByText(/claimed by a worker/);
-    expect((getByText("Make ready") as HTMLButtonElement).disabled).toBe(false);
+    expect((getByText("Re-run card").closest("button") as HTMLButtonElement).disabled).toBe(false);
     expect(router.refresh).not.toHaveBeenCalled();
   });
 });
