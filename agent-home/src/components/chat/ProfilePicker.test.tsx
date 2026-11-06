@@ -2,7 +2,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { ProfilePicker } from "@/components/chat/ProfilePicker";
-import type { ProfileSummary } from "@/types";
+import { activeEnrolments } from "@/lib/api/my-profiles";
+import type { MyProfile, ProfileSummary } from "@/types";
 
 const PROFILES: ProfileSummary[] = [
   { name: "default", is_default: true, description: "" },
@@ -64,5 +65,42 @@ describe("ProfilePicker", () => {
     expect(html).toContain("disabled");
     // The description gives way to the wait rather than sitting beside it.
     expect(html).not.toContain("Support &amp; upkeep");
+  });
+
+  describe("fed the account's enrolments (FG-28 D3)", () => {
+    const enrolment = (name: string, active = true): MyProfile => ({
+      name,
+      role: "member",
+      active,
+      is_default: name === "default",
+    });
+
+    it("lists only the profiles the account is actively enrolled in", () => {
+      const html = renderToStaticMarkup(
+        <ProfilePicker
+          profiles={activeEnrolments({
+            profiles: [enrolment("default"), enrolment("hr"), enrolment("finance", false)],
+          })}
+          selected="default"
+          onSelect={() => {}}
+        />,
+      );
+      expect(html).toContain('value="hr"');
+      expect(html).toContain('value="default"');
+      expect(html).not.toContain("finance");
+    });
+
+    it("is hidden when only one enrolment is active", () => {
+      const html = renderToStaticMarkup(
+        <ProfilePicker
+          profiles={activeEnrolments({
+            profiles: [enrolment("default"), enrolment("hr", false)],
+          })}
+          selected="default"
+          onSelect={() => {}}
+        />,
+      );
+      expect(html).toBe("");
+    });
   });
 });

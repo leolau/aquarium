@@ -1,15 +1,19 @@
 /**
- * GET /api/chat/profiles — the profiles this box serves (FG-28).
+ * GET /api/chat/profiles — the profiles the signed-in account may chat in
+ * (FG-28 D3).
  *
  * Feeds the chat profile picker. Each profile is an independent `HERMES_HOME`,
- * so choosing one changes which brain answers the turn — the list comes from
- * the Python API (`GET /api/profiles`), never a hard-coded name.
+ * so choosing one changes which brain answers the turn. The list is the
+ * account's *active* enrolments from the Python API
+ * (`GET /api/auth/my-profiles`) — never every profile the box serves, and
+ * never a hard-coded name. Python re-checks enrolment on every chat call; this
+ * only keeps the picker honest.
  */
 import { NextResponse } from "next/server";
 
 import { HermesApiError } from "@/lib/api/client";
+import { activeEnrolments } from "@/lib/api/my-profiles";
 import { apiClientForRequest, getPrincipal } from "@/lib/auth/principal";
-import type { ProfileSummary } from "@/types";
 
 export async function GET(): Promise<NextResponse> {
   const principal = await getPrincipal();
@@ -18,14 +22,9 @@ export async function GET(): Promise<NextResponse> {
   }
   try {
     const client = await apiClientForRequest();
-    const data = await client.profiles();
     // Only what the picker needs — a profile's model, credentials and paths are
     // operator information and stay in the dashboard.
-    const profiles: ProfileSummary[] = (data.profiles ?? []).map((p) => ({
-      name: p.name,
-      is_default: Boolean(p.is_default),
-      description: p.description ?? "",
-    }));
+    const profiles = activeEnrolments(await client.myProfiles());
     return NextResponse.json({ profiles });
   } catch (err) {
     if (err instanceof HermesApiError) {

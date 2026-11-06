@@ -3327,18 +3327,126 @@ def _chat_scope_for(principal) -> Optional[str]:
     return None if getattr(principal, "is_owner", False) else principal.user_id
 
 
+def _chat_target_profile(profile: Optional[str]):
+    """The registry entry of the profile a chat request names, or ``None``.
+
+    ``None`` means the acting profile — no name, or a name that resolves to
+    this process's own home — where the legacy resolver runs unchanged. An
+    unknown name is a 404, the status chat routes already gave it.
+    """
+    from hermes_cli.profile_registry import get_profile_registry
+    from hermes_constants import get_hermes_home
+
+    name = (profile or "").strip()
+    if not name:
+        return None
+    entry = next((e for e in get_profile_registry() if e.name == name), None)
+    if entry is None or not entry.hermes_home.is_dir():
+        raise HTTPException(status_code=404, detail=f"unknown target profile: {name!r}")
+    if entry.hermes_home.resolve() == Path(get_hermes_home()).resolve():
+        return None
+    return entry
+
+
+async def _chat_principal(request: "Request", profile: Optional[str]):
+    """The principal a chat request acts as **in the profile it addresses**.
+
+    FG-28 D3: the profile picker is a routing hint, never a grant. For another
+    profile the verified subject is re-resolved in that profile's own
+    ``principals`` (not enrolled / suspended → 403) with no owner-fallback, so
+    visibility, the turn's memory user and its principal ticket all carry the
+    target profile's role. A sessionless operator caller resolves that
+    profile's owner. The acting profile runs :func:`_comms_resolve_principal`
+    byte-identically.
+    """
+    entry = _chat_target_profile(profile)
+    if entry is None:
+        return await _comms_resolve_principal(request)
+
+    from hermes_cli.access import PrincipalStore
+    from hermes_cli.console_scope import (
+        ProfileScopeError,
+        _scoped_to,
+        resolve_console_principal,
+    )
+
+    subject = _comms_session_subject(request)
+    if not subject:
+        with _scoped_to(entry.hermes_home):
+            return await _comms_resolve_principal(request)
+    try:
+        return await resolve_console_principal(
+            subject,
+            entry.name,
+            store_factory=lambda home: PrincipalStore(_comms_app_store()),
+            registry=[entry],
+        )
+    except ProfileScopeError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        # No multi-user datastore in the target profile: nothing there can
+        # vouch for this login, so it fails closed rather than going unscoped.
+        raise HTTPException(
+            status_code=403,
+            detail=f"profile {entry.name!r} has no multi-user datastore",
+        ) from exc
+
+
+async def _requested_chat_profile(request: "Request") -> Optional[str]:
+    """``profile`` from the query string, else from a JSON body."""
+    profile = request.query_params.get("profile")
+    if profile is None and request.method not in ("GET", "HEAD"):
+        try:
+            body = await request.json()
+        except Exception:
+            body = None
+        if isinstance(body, dict):
+            profile = body.get("profile")
+    return (str(profile).strip() if profile else "") or None
+
+
+async def _owner_everywhere(subject: str) -> bool:
+    """Whether ``subject`` is the active owner of every served profile."""
+    from hermes_cli.access import PrincipalStore
+    from hermes_cli.console_scope import enrolments
+    from hermes_cli.profile_registry import get_profile_registry
+
+    registry = [e for e in get_profile_registry() if e.hermes_home.is_dir()]
+    owned = [
+        e
+        for e in await enrolments(
+            subject,
+            store_factory=lambda home: PrincipalStore(_comms_app_store()),
+            registry=registry,
+        )
+        if e.principal.active and e.principal.is_owner
+    ]
+    return len(owned) == len(registry)
+
+
 async def _chat_scope(request: "Request") -> Optional[str]:
     """Dependency: the chat-visibility scope of the calling login.
 
     A caller with no interactive login (the operator dashboard, the desktop app,
     an internal service) keeps full access, as does a single-user install with
     no multi-user datastore; an enrolled login is scoped by
-    :func:`_chat_scope_for`.
+    :func:`_chat_scope_for` using its role **in the requested profile**
+    (:func:`_chat_principal`). ``profile=all`` (the cross-profile list) is
+    unscoped only for the owner of every profile.
     """
     if not _comms_session_subject(request):
         return None
+    profile = await _requested_chat_profile(request)
     try:
-        principal = await _comms_resolve_principal(request)
+        if profile == "all":
+            principal = await _comms_resolve_principal(request)
+            scope = _chat_scope_for(principal)
+            if scope is None and not await _owner_everywhere(
+                _comms_session_subject(request)
+            ):
+                return principal.user_id
+            return scope
+        principal = await _chat_principal(request, profile)
     except _CommsNotConfigured:
         return None
     return _chat_scope_for(principal)
@@ -3425,6 +3533,56 @@ async def require_console_scope(request: "Request"):
         )
     with _scoped_to(entry.hermes_home):
         yield entry
+
+
+class _EnrolmentStore:
+    """A profile's principals, read as "no row" where it has no datastore."""
+
+    def __init__(self) -> None:
+        from hermes_cli.access import PrincipalStore
+
+        self._store = PrincipalStore(_comms_app_store())
+
+    async def resolve_alias(self, subject: str):
+        try:
+            return await self._store.resolve_alias(subject)
+        except RuntimeError:
+            return None
+
+    async def get(self, user_id: str):
+        try:
+            return await self._store.get(user_id)
+        except RuntimeError:
+            return None
+
+
+@app.get("/api/auth/my-profiles")
+async def auth_my_profiles(request: Request):
+    """The profiles the signed-in account is enrolled in, with its role in each.
+
+    ``{"profiles": [{name, role, active, is_default}]}`` in registry order,
+    suspended enrolments included (``active: false``). Accounts are box-wide
+    but authority is profile-local, so each row is read from that profile's
+    own ``principals``. A verified subject is required (401 without one) —
+    there is no owner-fallback, so the operator token sees nothing here.
+    """
+    from hermes_cli.console_scope import enrolments
+
+    subject = _comms_session_subject(request)
+    if not subject:
+        raise HTTPException(status_code=401, detail=_CONSOLE_NO_SUBJECT)
+    rows = await enrolments(subject, store_factory=lambda home: _EnrolmentStore())
+    return {
+        "profiles": [
+            {
+                "name": e.profile.name,
+                "role": e.principal.role,
+                "active": bool(e.principal.active),
+                "is_default": bool(e.profile.is_default),
+            }
+            for e in rows
+        ]
+    }
 
 
 @app.get("/api/comms/whoami")
@@ -11241,7 +11399,7 @@ async def get_lead_session(request: Request, profile: Optional[str] = None):
     session with a new id, and every read path resolves the chain from the
     root, so the root stays the name of the conversation for its whole life.
     """
-    principal = await _comms_resolve_principal(request)
+    principal = await _chat_principal(request, profile)
     db = _open_session_db_for_profile(profile)
     try:
         sid = lead_session_id(principal.user_id)
@@ -11259,7 +11417,9 @@ async def get_lead_session(request: Request, profile: Optional[str] = None):
 
 
 @app.get("/api/sessions/tags")
-def list_session_tags(profile: Optional[str] = None):
+def list_session_tags(
+    profile: Optional[str] = None, _scope: Optional[str] = Depends(_chat_scope)
+):
     """List all tags with session counts."""
     db = _open_session_db_for_profile(profile)
     try:
@@ -11269,7 +11429,11 @@ def list_session_tags(profile: Optional[str] = None):
 
 
 @app.post("/api/sessions/tags")
-async def create_tag(profile: Optional[str] = None, request: Request = None):
+async def create_tag(
+    profile: Optional[str] = None,
+    request: Request = None,
+    _scope: Optional[str] = Depends(_chat_scope),
+):
     """Create a standalone tag (not attached to any session).
 
     Body: ``{"name": "bug", "color": "red"?}``
@@ -11289,7 +11453,11 @@ async def create_tag(profile: Optional[str] = None, request: Request = None):
 
 
 @app.delete("/api/sessions/tags/{tag_id}")
-def delete_session_tag(tag_id: str, profile: Optional[str] = None):
+def delete_session_tag(
+    tag_id: str,
+    profile: Optional[str] = None,
+    _scope: Optional[str] = Depends(_chat_scope),
+):
     """Delete a tag entirely (removes all session assignments)."""
     db = _open_session_db_for_profile(profile)
     try:
@@ -11545,15 +11713,15 @@ async def session_chat(session_id: str, request: Request):
     passed verbatim, no synthetic user message is injected, and the system
     prompt is not rebuilt mid-conversation (no ``ephemeral_system_prompt``).
     """
-    principal = await _comms_resolve_principal(request)
     try:
         body = await request.json()
     except Exception:
         body = {}
+    profile = (body or {}).get("profile") or None
+    principal = await _chat_principal(request, profile)
     user_message = str((body or {}).get("message", "")).strip()
     if not user_message:
         raise HTTPException(status_code=400, detail="message is required")
-    profile = (body or {}).get("profile") or None
 
     # Attachments live in a private Supabase bucket the brain can't reach;
     # download them into the shared document cache and point the brain at the
@@ -11952,15 +12120,15 @@ async def session_chat_stream(session_id: str, request: Request):
     endpoint above binds ``platform="api_server"`` but registers no surface).
     Prompt caching / strict alternation are preserved exactly as in ``/chat``.
     """
-    principal = await _comms_resolve_principal(request)
     try:
         body = await request.json()
     except Exception:
         body = {}
+    profile = (body or {}).get("profile") or None
+    principal = await _chat_principal(request, profile)
     user_message = str((body or {}).get("message", "")).strip()
     if not user_message:
         raise HTTPException(status_code=400, detail="message is required")
-    profile = (body or {}).get("profile") or None
 
     # Attachments live in a private Supabase bucket the brain can't reach;
     # download them into the shared document cache and point the brain at the
@@ -12216,7 +12384,7 @@ async def active_chat_run(
     """The in-flight turn for this session, if any — a reloaded page (or a
     second device) asks this first and then attaches to the stream to resume
     live rendering."""
-    principal = await _comms_resolve_principal(request)
+    principal = await _chat_principal(request, profile)
     _require_chat_access_by_id(session_id, profile, _chat_scope_for(principal))
     resolved = _resolved_chat_session_id(session_id, profile)
     for run_id, entry in _CHAT_RUNS.items():
@@ -12242,9 +12410,8 @@ async def activity_running(request: Request):
         # No multi-user datastore → no principal to scope rows to; show
         # nothing rather than everything.
         return []
-    scope = _chat_scope_for(principal)
     # Snapshot on the loop that mutates the registry, then read off it.
-    runs = [
+    all_runs = [
         {
             "run_id": run_id,
             "session_id": entry["session_id"],
@@ -12254,6 +12421,22 @@ async def activity_running(request: Request):
         for run_id, entry in list(_CHAT_RUNS.items())
         if not entry["done"]
     ]
+    # A run is visible under the caller's role in the run's own profile
+    # (FG-28 D3); a profile the caller is not enrolled in shows nothing.
+    chat_groups: list = []
+    for run_profile in {r["profile"] or None for r in all_runs}:
+        try:
+            run_principal = (
+                principal
+                if run_profile is None
+                else await _chat_principal(request, run_profile)
+            )
+        except (HTTPException, _CommsNotConfigured):
+            continue
+        chat_groups.append((
+            [r for r in all_runs if (r["profile"] or None) == run_profile],
+            _chat_scope_for(run_principal),
+        ))
     enrolled = (
         set() if _instance_admin(principal)
         else await _enrolled_profiles(principal.user_id)
@@ -12262,7 +12445,11 @@ async def activity_running(request: Request):
     def _collect() -> list:
         items: list = []
         for label, read in (
-            ("chats", lambda: act.chat_items(runs, scope, _open_session_db_for_profile)),
+            ("chats", lambda: [
+                item
+                for runs, scope in chat_groups
+                for item in act.chat_items(runs, scope, _open_session_db_for_profile)
+            ]),
             ("projects", lambda: act.project_items(principal, enrolled)),
             ("cron", lambda: act.cron_items(principal, enrolled, act.cron_dirs())),
         ):
@@ -12284,11 +12471,11 @@ async def session_chat_stream_attach(session_id: str, request: Request):
     (``_chat_run_publish``), so the snapshot index and the queue hand off
     without a gap or a duplicate.
     """
-    principal = await _comms_resolve_principal(request)
     try:
         body = await request.json()
     except Exception:
         body = {}
+    principal = await _chat_principal(request, (body or {}).get("profile"))
     _require_chat_access_by_id(
         session_id, (body or {}).get("profile"), _chat_scope_for(principal)
     )
@@ -12346,11 +12533,11 @@ async def session_chat_stream_cancel(session_id: str, request: Request):
     winds down and persists whatever it produced, and every attached stream
     receives ``run.cancelled`` followed by the normal completion frames.
     """
-    principal = await _comms_resolve_principal(request)
     try:
         body = await request.json()
     except Exception:
         body = {}
+    principal = await _chat_principal(request, (body or {}).get("profile"))
     _require_chat_access_by_id(
         session_id, (body or {}).get("profile"), _chat_scope_for(principal)
     )
@@ -12384,10 +12571,10 @@ async def resolve_run_approval(run_id: str, request: Request):
     explicit choice. Owner-attributed like the other write endpoints — the
     endpoint forwards the user's decision, it does not itself decide consent.
     """
-    principal = await _comms_resolve_principal(request)
+    entry = _CHAT_RUNS.get(run_id)
+    principal = await _chat_principal(request, entry.get("profile") if entry else None)
     scope = _chat_scope_for(principal)
     if scope is not None:
-        entry = _CHAT_RUNS.get(run_id)
         if entry is None:
             raise HTTPException(status_code=404, detail="no such run")
         _require_chat_access_by_id(entry["session_id"], entry.get("profile"), scope)
@@ -12419,13 +12606,13 @@ async def create_session_endpoint(request: Request):
     endpoints. The first ``/chat`` turn then populates it; the session is the
     same row every other surface (gateway, Telegram, desktop) reads.
     """
-    principal = await _comms_resolve_principal(request)
     try:
         body = await request.json()
     except Exception:
         body = {}
     body = body or {}
     profile = body.get("profile") or None
+    principal = await _chat_principal(request, profile)
     raw_id = body.get("id") or body.get("session_id")
     session_id = str(raw_id).strip() if raw_id else f"home_{int(time.time())}_{uuid.uuid4().hex[:8]}"
 
@@ -15468,7 +15655,7 @@ def _disable_unselected_skills(profile_dir: Path, keep: List[str]) -> int:
     return disabled_count
 
 
-@app.get("/api/profiles")
+@app.get("/api/profiles", dependencies=_ADMIN)
 async def list_profiles_endpoint():
     from hermes_cli import profiles as profiles_mod
     try:

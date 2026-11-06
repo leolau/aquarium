@@ -14,6 +14,7 @@
  */
 import "server-only";
 
+import { activeEnrolments } from "@/lib/api/my-profiles";
 import { hermesApiBaseUrl } from "@/lib/env";
 import type { SecurityBasicsResult } from "@/lib/api/security-basics";
 import type {
@@ -78,6 +79,7 @@ import type {
   ProfileCreateInput,
   ProfileCreateResult,
   ProfileDescribeResult,
+  MyProfilesResponse,
   ProfilesResponse,
   SkillHubPreview,
   SkillHubScan,
@@ -332,12 +334,19 @@ export class HermesApiClient {
   }
 
   /**
-   * List the profiles this box serves (FG-28). Each is an independent
-   * `HERMES_HOME` — its own SOUL, goal, skills, memory and credentials — so the
-   * chat surface can address one deliberately instead of always the default.
+   * The profiles the signed-in account may chat in (FG-28 D3): its *active*
+   * enrolments. Each is an independent `HERMES_HOME` — its own SOUL, goal,
+   * skills, memory and credentials — so the chat surface can address one
+   * deliberately instead of always the default. Never the box's full list: a
+   * profile you are not enrolled in is not yours to address.
    */
   async profiles(): Promise<ProfilesResponse> {
-    return this.request("/api/profiles");
+    return { profiles: activeEnrolments(await this.myProfiles()) };
+  }
+
+  /** Every enrolment of the signed-in account, with its role in each profile. */
+  async myProfiles(): Promise<MyProfilesResponse> {
+    return this.request("/api/auth/my-profiles");
   }
 
   // ── Profiles & Skills management (owner/admin pages) ──────────────────

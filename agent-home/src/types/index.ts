@@ -428,6 +428,22 @@ export interface ProfilesResponse {
 }
 
 /**
+ * FG-28 — one profile the signed-in account is enrolled in, with its role
+ * there (`GET /api/auth/my-profiles`). Authority is profile-local, so the role
+ * differs per row; `active: false` is a suspended enrolment.
+ */
+export interface MyProfile {
+  name: string;
+  role: Role;
+  active: boolean;
+  is_default: boolean;
+}
+
+export interface MyProfilesResponse {
+  profiles: MyProfile[];
+}
+
+/**
  * FG-30 — a profile suggestion: a proposal (with evidence) that work in one
  * profile has clustered into a distinct sub-goal deserving its own profile.
  *
