@@ -3436,8 +3436,14 @@ async def comms_whoami(request: Request, _console_scope=Depends(require_console_
 
 
 
+class ProjectViewModeUpdate(BaseModel):
+    device: str
+    mode: str
+
+
 class UserPreferencesUpdate(BaseModel):
-    language: str
+    language: Optional[str] = None
+    project_view_mode: Optional[ProjectViewModeUpdate] = None
 
 
 async def _preferences_principal(request: Request):
@@ -3452,25 +3458,52 @@ async def _preferences_principal(request: Request):
 
 @app.get("/api/me/preferences")
 async def get_my_preferences(request: Request):
-    """The signed-in person's own interface preferences (e.g. language)."""
-    from hermes_cli.user_prefs import get_language
+    """The signed-in person's own interface preferences: the language and the
+    Projects view mode per device class (``{}`` until one is chosen)."""
+    from hermes_cli.user_prefs import get_language, get_project_view_modes
 
     principal = await _preferences_principal(request)
-    return {"language": get_language(principal.user_id)}
+    return {
+        "language": get_language(principal.user_id),
+        "project_view_mode": get_project_view_modes(principal.user_id),
+    }
 
 
 @app.put("/api/me/preferences")
 async def put_my_preferences(body: UserPreferencesUpdate, request: Request):
-    """Save the signed-in person's own preferences; nobody else's."""
-    from hermes_cli.user_prefs import SUPPORTED_LANGUAGES, set_language
+    """Save the signed-in person's own preferences; nobody else's. Each field
+    is optional and only the ones sent change."""
+    from hermes_cli.user_prefs import (
+        SUPPORTED_LANGUAGES,
+        get_language,
+        get_project_view_modes,
+        set_language,
+        set_project_view_mode,
+    )
 
     principal = await _preferences_principal(request)
-    if body.language not in SUPPORTED_LANGUAGES:
+    if body.language is None and body.project_view_mode is None:
+        raise HTTPException(status_code=422, detail="nothing to save")
+    if body.language is not None and body.language not in SUPPORTED_LANGUAGES:
         raise HTTPException(
             status_code=400,
             detail=f"language must be one of: {', '.join(SUPPORTED_LANGUAGES)}",
         )
-    return {"language": set_language(principal.user_id, body.language)}
+    if body.project_view_mode is not None:
+        try:
+            set_project_view_mode(
+                principal.user_id,
+                body.project_view_mode.device,
+                body.project_view_mode.mode,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    if body.language is not None:
+        set_language(principal.user_id, body.language)
+    return {
+        "language": get_language(principal.user_id),
+        "project_view_mode": get_project_view_modes(principal.user_id),
+    }
 
 def _comms_user_service(actor=None):
     """Build a :class:`MemberService` over this profile's store + GoTrue.

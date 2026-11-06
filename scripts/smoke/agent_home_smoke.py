@@ -106,6 +106,8 @@ PAGES: Tuple[PageSpec, ...] = (
     PageSpec("/onboarding", ("OnboardingWizard",)),
     PageSpec("/chat", ("ChatPane", "Composer", "ProfilePicker", "SessionTabs"), quick=True),
     PageSpec("/projects", ("ProjectsList", "ProjectsFilters", "NewProjectAction"), quick=True),
+    PageSpec("/projects?view=task", ("ModeSwitch", "TaskHome")),
+    PageSpec("/projects?view=project", ("ModeSwitch", "ProjectsList")),
     PageSpec("/projects/new", ("NewProjectForm",)),
     PageSpec("/projects/zz-smoke-missing", not_found=True),
     PageSpec("/projects/zz-smoke-missing/cards/zz-smoke-missing", not_found=True),

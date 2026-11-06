@@ -940,6 +940,7 @@ def _list_sync(
             item_health = _full_health(conn, p, rollup, profiles)
             if health_set and item_health not in health_set:
                 continue
+            latest = projects_db.list_project_runs(conn, p.id, limit=1)
             out.append(
                 _project_payload(
                     p,
@@ -948,6 +949,12 @@ def _list_sync(
                         "output_rollup": _output_rollup(outputs),
                         "member_count": len(members),
                         "health": item_health,
+                        # Task mode sorts tasks by their newest run.
+                        "latest_run": (
+                            {"run_no": latest[0]["run_no"], "status": latest[0]["status"]}
+                            if latest
+                            else None
+                        ),
                         **_sort_extra(p, sorted_by, sort_values),
                     },
                 )
@@ -1159,6 +1166,264 @@ def _doctor_sync(principal, enrolled: frozenset, slug: Optional[str]) -> dict:
                 )
     return {"items": items}
 
+
+
+# ---------------------------------------------------------------------------
+# Task mode: one request -> a one-off project that plans and starts itself
+# ---------------------------------------------------------------------------
+
+#: The "Check in with me" choices of Task mode, as the autonomy they set.
+QUICK_TASK_AUTONOMY = ("supervised", "autonomous", "manual")
+
+_TASK_BRIEF_SYSTEM = (
+    "You turn a person's request to an AI agent into a short project brief. "
+    "Reply with ONE JSON object and nothing else, shaped as "
+    '{"title": "<at most 8 words>", "goal": "<one sentence: the outcome '
+    'wanted>", "output": "<the one thing to hand back, at most 8 words>"}. '
+    "Use the request's own language."
+)
+
+
+def _call_brief_model(prompt: str) -> str:
+    from agent.auxiliary_client import _get_auxiliary_task_config, call_llm
+
+    task = (
+        _PLAN_DRAFT_TASK
+        if _get_auxiliary_task_config(_PLAN_DRAFT_TASK).get("provider")
+        else _PLAN_DRAFT_FALLBACK_TASK
+    )
+    response = call_llm(
+        task,
+        messages=[
+            {"role": "system", "content": _TASK_BRIEF_SYSTEM},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.2,
+        max_tokens=300,
+    )
+    return response.choices[0].message.content or ""
+
+
+def _clip(text: str, limit: int) -> str:
+    text = " ".join(str(text or "").split())
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 1].rsplit(" ", 1)[0] or text[: limit - 1]
+    return cut.rstrip(" ,.;:") + "…"
+
+
+def _task_title(request_text: str) -> str:
+    """The name a task carries until the agent words a better one."""
+    first = str(request_text or "").strip().splitlines()[0] if request_text else ""
+    return _clip(first, 60) or "Task"
+
+
+def _derive_task_brief(request_text: str) -> dict:
+    """The agent's title / goal / expected output for a request; ``{}`` when
+    the model is unavailable — the request itself is then the brief."""
+    try:
+        data = _extract_json_object(_call_brief_model(request_text))
+    except Exception as exc:  # noqa: BLE001 — the task starts either way
+        logger.info("task brief: keeping the request as the brief (%s)", exc)
+        return {}
+    brief = {}
+    for key, limit in (("title", 80), ("goal", 160), ("output", 80)):
+        value = _clip(data.get(key) or "", limit)
+        if value:
+            brief[key] = value
+    return brief
+
+
+def _launch_task_sync(project_id: str, rev: Optional[int], principal) -> dict:
+    """Activate ``rev`` (when given), make the project active and start run 1
+    — the three steps a lead takes by hand in Project mode."""
+    with projects_db.connect_closing() as conn:
+        if rev is not None:
+            if not projects_db.activate_playbook_rev(
+                conn, project_id, rev, note="activated by Start task"
+            ):
+                raise ValueError(f"playbook revision {rev} not found")
+        project = projects_db.get_project(conn, project_id)
+        if project.status == "planning":
+            projects_db.set_project_status(conn, project_id, "active")
+            project = projects_db.get_project(conn, project_id)
+        with _board_conn(project) as bconn:
+            return projects_run.start_run(
+                conn,
+                bconn,
+                project=project,
+                trigger="manual",
+                triggered_by=principal.user_id,
+            )
+
+
+def _quick_task_job(
+    *, project_id: str, request_text: str, principal, check_plan_first: bool
+) -> None:
+    """Background: word the brief, draft the plan, then (unless the person
+    asked to check the plan first) activate it and start run 1. Progress and
+    failures land on the same draft state ``GET …/playbook/draft`` reads."""
+    def _set(**fields: Any) -> None:
+        with _PLAN_DRAFTS_LOCK:
+            state = _PLAN_DRAFTS.get(project_id)
+            if state is not None:
+                state.update(fields)
+
+    try:
+        brief = _derive_task_brief(request_text)
+        with projects_db.connect_closing() as conn:
+            if brief.get("title") or brief.get("goal"):
+                projects_db.update_project(
+                    conn, project_id, name=brief.get("title"), goal=brief.get("goal")
+                )
+            outputs = projects_db.get_project_outputs(conn, project_id)
+            if brief.get("output") and len(outputs) == 1:
+                projects_db.update_project_output(
+                    conn, outputs[0]["id"], title=brief["output"]
+                )
+                outputs = projects_db.get_project_outputs(conn, project_id)
+            project = projects_db.get_project(conn, project_id)
+            profiles = projects_db.get_project_profiles(conn, project_id)
+        _plan_draft_job(**_plan_draft_job_kwargs(project, outputs, profiles, principal))
+    except Exception as exc:  # noqa: BLE001 — surfaced to the UI, not raised
+        logger.warning("task setup failed for project %s: %s", project_id, exc)
+        _set(status="failed", detail=str(exc), finished_at=int(time.time()))
+        return
+    with _PLAN_DRAFTS_LOCK:
+        state = dict(_PLAN_DRAFTS.get(project_id) or {})
+    if state.get("status") != "done" or check_plan_first:
+        return
+    try:
+        started = _launch_task_sync(project_id, state.get("rev"), principal)
+        _set(launch={"status": "started", "run_no": (started.get("run") or {}).get("run_no")})
+    except Exception as exc:  # noqa: BLE001 — surfaced to the UI, not raised
+        logger.warning("task start failed for project %s: %s", project_id, exc)
+        _set(launch={"status": "failed", "detail": str(exc)})
+
+
+def _start_quick_task_job(project, request_text: str, principal, check_plan_first: bool) -> dict:
+    started = _claim_plan_draft(project)
+    threading.Thread(
+        target=_quick_task_job,
+        kwargs={
+            "project_id": project.id,
+            "request_text": request_text,
+            "principal": principal,
+            "check_plan_first": check_plan_first,
+        },
+        name=f"quick-task-{project.slug}",
+        daemon=True,
+    ).start()
+    return started
+
+
+@router.post("/quick-task")
+async def create_quick_task_route(request: Request) -> dict[str, Any]:
+    """Task mode's Start task: one request becomes an ordinary one-off
+    project (the same create the wizard uses), then the agent words its
+    brief, drafts the plan, activates it and starts run 1 in the
+    background. ``check_plan_first`` stops after the draft so the person
+    approves the plan (``POST /{slug}/quick-task/start``). Starting runs the
+    agent, so it is a human act like activation."""
+    principal = await _principal_write(request)
+    await _require_human(request, "starting a task")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid JSON body")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="expected a JSON object")
+    request_text = str(body.get("request") or "").strip()
+    host_profile = str(body.get("host_profile") or "").strip()
+    missing = [k for k, v in (("request", request_text), ("host_profile", host_profile)) if not v]
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail={"missing": missing,
+                    "message": f"refused: missing mandatory {', '.join(missing)}"},
+        )
+    autonomy = str(body.get("autonomy") or "supervised").strip()
+    if autonomy not in QUICK_TASK_AUTONOMY:
+        raise HTTPException(
+            status_code=422,
+            detail=f"autonomy must be one of {', '.join(QUICK_TASK_AUTONOMY)}",
+        )
+    check_plan_first = bool(body.get("check_plan_first"))
+
+    def _create_sync():
+        with projects_db.connect_closing() as conn:
+            pid = projects_db.create_full_project(
+                conn,
+                goal=_clip(request_text, 160),
+                description=request_text,
+                name=_task_title(request_text),
+                owner_user_id=principal.user_id,
+                cadence="one_off",
+                autonomy=autonomy,
+            )
+            projects_db.add_project_profile(
+                conn, project_id=pid, profile=host_profile, role="host",
+                added_by=principal.user_id,
+            )
+            projects_db.add_project_member(
+                conn, project_id=pid, user_id=principal.user_id, role="lead",
+                added_by=principal.user_id,
+            )
+            projects_db.add_project_output(
+                conn, project_id=pid, title="The result", kind="artifact",
+                required=True, recurring=False,
+            )
+            return projects_db.get_project(conn, pid)
+
+    try:
+        project = await asyncio.to_thread(_create_sync)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    draft = _start_quick_task_job(project, request_text, principal, check_plan_first)
+    return _project_payload(
+        project, extra={"draft": draft, "check_plan_first": check_plan_first}
+    )
+
+
+@router.post("/{slug}/quick-task/start")
+async def start_quick_task_route(request: Request) -> dict[str, Any]:
+    """Carry a task on from wherever it stopped: approve the proposed plan
+    ("Let me check the plan first") and start the run, run the active plan
+    again after a failure (Retry), or draft afresh when no plan landed.
+    The same lead + human gates as activating a plan by hand."""
+    project, _role, _profiles, principal = await _require_write(request)
+    _refuse_if_archived(project, "starting it")
+    await _require_human(request, "starting a task")
+
+    def _plan_sync():
+        with projects_db.connect_closing() as conn:
+            open_run = any(
+                r.get("status") in ("running", "waiting", "blocked")
+                for r in projects_db.list_project_runs(conn, project.id)
+            )
+            revs = projects_db.list_playbook_revs(conn, project.id)
+        return open_run, revs
+
+    open_run, revs = await asyncio.to_thread(_plan_sync)
+    if open_run:
+        raise HTTPException(status_code=409, detail="the task is already running")
+    active = next((r for r in revs if r.get("active")), None)
+    newest = revs[0] if revs else None
+    if newest is None:
+        return {
+            "status": "drafting",
+            "draft": _start_quick_task_job(
+                project, project.description or project.goal or "", principal, False
+            ),
+        }
+    rev = None if active is not None and newest["rev"] <= active["rev"] else newest["rev"]
+    try:
+        started = await asyncio.to_thread(_launch_task_sync, project.id, rev, principal)
+    except (projects_db.RunAlreadyOpen, projects_run.ScheduledRunSkipped) as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"status": "started", "run": started.get("run")}
 
 @router.get("/running-cards")
 async def running_cards_route(request: Request) -> dict[str, Any]:
@@ -3317,6 +3582,50 @@ def _plan_draft_job(
         )
 
 
+def _plan_draft_job_kwargs(project, outputs, profiles, principal) -> dict:
+    """The arguments :func:`_plan_draft_job` drafts ``project``'s plan with."""
+    profile_names = {p["profile"] for p in profiles}
+    assignee = project.host_profile or (
+        sorted(profile_names)[0] if profile_names else None
+    )
+    enabled_toolsets: Optional[list[str]] = None
+    if assignee:
+        try:
+            enabled_toolsets = projects_run._enabled_toolsets_for_profile(
+                assignee
+            )
+        except Exception:  # noqa: BLE001 — the draft works without a catalog
+            logger.debug(
+                "plan draft: toolset catalog unavailable for %s",
+                assignee, exc_info=True,
+            )
+    return {
+        "project_id": project.id,
+        "prompt": _plan_draft_prompt(
+            project, outputs, enabled_toolsets=enabled_toolsets
+        ),
+        "assignee": assignee,
+        "profile_names": profile_names,
+        "created_by": principal.user_id,
+        "enabled_toolsets": enabled_toolsets,
+    }
+
+
+def _claim_plan_draft(project) -> dict:
+    """Mark a draft running for ``project``; 409 while one already is.
+    Returns a snapshot of the started state (the job updates it in place
+    and can finish before the caller returns)."""
+    with _PLAN_DRAFTS_LOCK:
+        current = _PLAN_DRAFTS.get(project.id)
+        if current and current.get("status") == "running":
+            raise HTTPException(
+                status_code=409, detail="the agent is already drafting a plan"
+            )
+        state = {"status": "running", "started_at": int(time.time())}
+        _PLAN_DRAFTS[project.id] = state
+        return dict(state)
+
+
 def start_plan_draft(project, profiles, principal) -> dict:
     """Start the background plan draft for ``project``; returns the job state.
 
@@ -3336,39 +3645,11 @@ def start_plan_draft(project, profiles, principal) -> dict:
             status_code=409,
             detail="declare at least one output before drafting a plan",
         )
-    profile_names = {p["profile"] for p in profiles}
-    assignee = project.host_profile or (
-        sorted(profile_names)[0] if profile_names else None
-    )
-    enabled_toolsets: Optional[list[str]] = None
-    if assignee:
-        try:
-            enabled_toolsets = projects_run._enabled_toolsets_for_profile(
-                assignee
-            )
-        except Exception:  # noqa: BLE001 — the draft works without a catalog
-            logger.debug(
-                "plan draft: toolset catalog unavailable for %s",
-                assignee, exc_info=True,
-            )
-    state = {"status": "running", "started_at": int(time.time())}
-    with _PLAN_DRAFTS_LOCK:
-        _PLAN_DRAFTS[project.id] = state
-        # Snapshot before the job starts: it updates ``state`` in place and
-        # can finish before this function returns.
-        started = dict(state)
+    kwargs = _plan_draft_job_kwargs(project, outputs, profiles, principal)
+    started = _claim_plan_draft(project)
     threading.Thread(
         target=_plan_draft_job,
-        kwargs={
-            "project_id": project.id,
-            "prompt": _plan_draft_prompt(
-                project, outputs, enabled_toolsets=enabled_toolsets
-            ),
-            "assignee": assignee,
-            "profile_names": profile_names,
-            "created_by": principal.user_id,
-            "enabled_toolsets": enabled_toolsets,
-        },
+        kwargs=kwargs,
         name=f"plan-draft-{project.slug}",
         daemon=True,
     ).start()

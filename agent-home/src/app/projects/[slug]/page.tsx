@@ -2,6 +2,8 @@ import { notFound } from "next/navigation";
 
 import { MobileShell } from "@/components/MobileShell";
 import { BackToProjects } from "@/components/projects/BackToProject";
+import { ProjectViewSwitch } from "@/components/projects/task/ProjectViewSwitch";
+import { projectViewContext } from "@/components/projects/task/viewModeServer";
 import { ProjectDetailView } from "@/components/projects/ProjectDetailView";
 import { HermesApiError } from "@/lib/api/client";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
@@ -29,11 +31,12 @@ export default async function Page({
   searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams?: Promise<{ tab?: string | string[] }>;
+  searchParams?: Promise<{ tab?: string | string[]; view?: string | string[] }>;
 }) {
   const principal = await requirePrincipal();
   const { slug } = await params;
-  const rawTab = (await searchParams)?.tab;
+  const query = await searchParams;
+  const rawTab = query?.tab;
   const initialTab = Array.isArray(rawTab) ? rawTab[0] : rawTab;
   const client = await apiClientForRequest();
 
@@ -62,7 +65,7 @@ export default async function Page({
     );
   }
 
-  const [board, playbook, directives, doctor] = await Promise.all([
+  const [board, playbook, directives, doctor, view] = await Promise.all([
     client.projectBoard(slug).catch((): ProjectBoardView | null => null),
     client.projectPlaybook(slug).catch(
       (): ProjectPlaybookResponse | null => null,
@@ -71,21 +74,37 @@ export default async function Page({
       (): ProjectDirectivesResponse | null => null,
     ),
     client.projectDoctor(slug).catch((): ProjectDoctorDetail | null => null),
+    // A tab link means Project mode: tabs only exist there.
+    projectViewContext(client, initialTab ? "project" : query?.view),
   ]);
+  const isInstanceAdmin = principal.role === "owner" || principal.role === "admin";
 
   return (
     <MobileShell title={project.name}>
       <BackToProjects />
-      <ProjectDetailView
-        project={project}
-        board={board}
-        playbook={playbook}
-        directives={directives}
-        doctor={doctor}
-        callerUserId={principal.user_id}
-        isInstanceAdmin={principal.role === "owner" || principal.role === "admin"}
-        initialTab={initialTab}
-      />
+      <ProjectViewSwitch
+        initialMode={view.mode}
+        device={view.device}
+        task={{
+          project,
+          board,
+          playbook,
+          directives,
+          callerUserId: principal.user_id,
+          isInstanceAdmin,
+        }}
+      >
+        <ProjectDetailView
+          project={project}
+          board={board}
+          playbook={playbook}
+          directives={directives}
+          doctor={doctor}
+          callerUserId={principal.user_id}
+          isInstanceAdmin={isInstanceAdmin}
+          initialTab={initialTab}
+        />
+      </ProjectViewSwitch>
     </MobileShell>
   );
 }

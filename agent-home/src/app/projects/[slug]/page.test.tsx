@@ -30,6 +30,9 @@ vi.mock("@/components/MobileShell", () => ({
 }));
 
 // The detail view has its own tests; only the page's chrome is under test.
+vi.mock("@/components/projects/task/viewModeServer", () => ({
+  projectViewContext: async () => ({ device: "desktop", mode: "project" }),
+}));
 vi.mock("@/components/projects/ProjectDetailView", () => ({
   ProjectDetailView: () => <div data-testid="detail" />,
 }));

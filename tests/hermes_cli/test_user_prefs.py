@@ -80,18 +80,57 @@ def test_routes_need_sign_in():
     assert c.put("/api/me/preferences", json={"language": "en"}).status_code == 401
 
 
+def _lang(client):
+    return client.get("/api/me/preferences").json()["language"]
+
+
 def test_each_person_reads_and_writes_only_their_own(client, acting):
-    assert client.get("/api/me/preferences").json() == {"language": None}
+    assert client.get("/api/me/preferences").json() == {
+        "language": None,
+        "project_view_mode": {},
+    }
     r = client.put("/api/me/preferences", json={"language": "zh-Hant"})
-    assert r.status_code == 200 and r.json() == {"language": "zh-Hant"}
-    assert client.get("/api/me/preferences").json() == {"language": "zh-Hant"}
+    assert r.status_code == 200 and r.json()["language"] == "zh-Hant"
+    assert _lang(client) == "zh-Hant"
 
     acting["as"] = BEN
-    assert client.get("/api/me/preferences").json() == {"language": None}
+    assert _lang(client) is None
     # A user id in the request is ignored: the write lands on the actor.
     client.put("/api/me/preferences?as=amy", json={"language": "en", "user_id": "amy"})
     acting["as"] = AMY
-    assert client.get("/api/me/preferences").json() == {"language": "zh-Hant"}
+    assert _lang(client) == "zh-Hant"
+
+
+def test_project_view_mode_is_kept_per_device_and_per_person(client, acting):
+    r = client.put(
+        "/api/me/preferences",
+        json={"project_view_mode": {"device": "phone", "mode": "project"}},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["project_view_mode"] == {"phone": "project"}
+    client.put(
+        "/api/me/preferences",
+        json={"project_view_mode": {"device": "desktop", "mode": "task"}},
+    )
+    prefs = client.get("/api/me/preferences").json()
+    assert prefs["project_view_mode"] == {"phone": "project", "desktop": "task"}
+    # Saving the view leaves the language alone, and the other way round.
+    client.put("/api/me/preferences", json={"language": "en"})
+    assert client.get("/api/me/preferences").json() == {
+        "language": "en",
+        "project_view_mode": {"phone": "project", "desktop": "task"},
+    }
+    acting["as"] = BEN
+    assert client.get("/api/me/preferences").json()["project_view_mode"] == {}
+
+
+@pytest.mark.parametrize(
+    "view", [{"device": "tablet", "mode": "task"}, {"device": "phone", "mode": "chat"}]
+)
+def test_unknown_view_device_or_mode_is_400(client, view):
+    r = client.put("/api/me/preferences", json={"project_view_mode": view})
+    assert r.status_code == 400
+    assert client.get("/api/me/preferences").json()["project_view_mode"] == {}
 
 
 def test_unsupported_language_is_400(client):

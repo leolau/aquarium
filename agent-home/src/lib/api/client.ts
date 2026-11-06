@@ -30,6 +30,11 @@ import type {
   ChatSendResponse,
   CoreManifestResponse,
   CreateProjectPayload,
+  ProjectViewMode,
+  QuickTaskPayload,
+  QuickTaskResponse,
+  QuickTaskStartResponse,
+  ViewDevice,
   DirectoryResponse,
   EntityGoalResponse,
   FileAsset,
@@ -698,9 +703,24 @@ export class HermesApiClient {
     return this.request("/api/comms/whoami");
   }
 
-  /** The signed-in person's own saved preferences (``language`` is null until chosen). */
-  async myPreferences(): Promise<{ language: string | null }> {
+  /** The signed-in person's own saved preferences (``language`` is null until
+   * chosen; ``project_view_mode`` holds only the device classes chosen so far). */
+  async myPreferences(): Promise<{
+    language: string | null;
+    project_view_mode?: Partial<Record<ViewDevice, ProjectViewMode>>;
+  }> {
     return this.request("/api/me/preferences");
+  }
+
+  /** Save the signed-in person's Projects view for one device class. */
+  async setMyProjectViewMode(
+    device: ViewDevice,
+    mode: ProjectViewMode,
+  ): Promise<{ project_view_mode: Partial<Record<ViewDevice, ProjectViewMode>> }> {
+    return this.request("/api/me/preferences", {
+      method: "PUT",
+      json: { project_view_mode: { device, mode } },
+    });
   }
 
   /** Save the signed-in person's own language; nobody else's. */
@@ -1989,6 +2009,22 @@ export class HermesApiClient {
       method: "POST",
       json: payload,
     });
+  }
+
+  /** Task mode's Start task: a one-off project that plans and starts itself. */
+  async createQuickTask(payload: QuickTaskPayload): Promise<QuickTaskResponse> {
+    return this.request("/api/registry/projects/quick-task", {
+      method: "POST",
+      json: payload,
+    });
+  }
+
+  /** Carry a task on: approve its proposed plan and start, retry, or redraft. */
+  async startQuickTask(slug: string): Promise<QuickTaskStartResponse> {
+    return this.request(
+      `/api/registry/projects/${encodeURIComponent(slug)}/quick-task/start`,
+      { method: "POST", json: {} },
+    );
   }
 
   /** The whole record in one read: fields, outputs, people, links, runs, health. */
