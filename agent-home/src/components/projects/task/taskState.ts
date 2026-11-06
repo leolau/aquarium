@@ -1,5 +1,8 @@
 import type {
   PlaybookRev,
+  ProjectBoardOpenRun,
+  ProjectRun,
+  ProjectRunCard,
   ProjectDetail,
   ProjectPlaybookDraftState,
   ProjectPlaybookResponse,
@@ -53,4 +56,89 @@ export function stepState(index: number, done: number, phase: TaskPhase): "done"
   if (index < done) return "done";
   if (index === done && (phase === "running" || phase === "waiting")) return "current";
   return "todo";
+}
+
+export type StepState = "done" | "current" | "todo";
+
+const SETTLED = new Set(["done", "archived"]);
+
+/**
+ * Each plan step's state. With the open run's cards a step is ticked once
+ * its card settles and current while its card runs (several may run at
+ * once); before any card runs — or without the run's cards — the next
+ * unticked step is current, as `stepState` counts it.
+ */
+export function planStepStates(
+  stepKeys: string[],
+  phase: TaskPhase,
+  done: number,
+  cards?: ProjectRunCard[] | null,
+): StepState[] {
+  if (phase === "done" || !cards || cards.length === 0) {
+    return stepKeys.map((_, i) => stepState(i, done, phase));
+  }
+  const status = new Map(cards.filter((c) => c.step_key).map((c) => [c.step_key as string, c.status]));
+  const states: StepState[] = stepKeys.map((key) => {
+    const s = status.get(key);
+    if (s && SETTLED.has(s)) return "done";
+    return s === "running" ? "current" : "todo";
+  });
+  if (!states.includes("current") && (phase === "running" || phase === "waiting")) {
+    const next = states.indexOf("todo");
+    if (next >= 0) states[next] = "current";
+  }
+  return states;
+}
+
+/**
+ * The cards of a run whose Start already approved them (Task mode). While
+ * they sit in triage they are queued for a slot, not waiting on a person,
+ * so they stay out of Needs you.
+ */
+export function queuedCardIds(openRun: ProjectBoardOpenRun | null | undefined): Set<string> {
+  return new Set(openRun?.auto_approve ? openRun.card_ids : []);
+}
+
+export interface TaskSummary {
+  /** Since the task was started; to its finish once done. `null` until the clock is known. */
+  totalSeconds: number | null;
+  /** The open run's time so far, or `null` with no open run. */
+  runSeconds: number | null;
+  runNo: number | null;
+  runs: number;
+  /** Model tokens of every card, `null` when not recorded. */
+  tokens: number | null;
+  /** The open run's cost from the trace ledger (USD), `null` when not recorded. */
+  costUsd: number | null;
+}
+
+/**
+ * The Task page's time and spend line. `now` is the client clock (epoch
+ * seconds) — `null` on the server and while hydrating, when only a finished
+ * task's fixed span is shown. `run` is the open run's streamed row.
+ */
+export function taskSummary(
+  project: ProjectDetail,
+  run: ProjectRun | null,
+  now: number | null,
+): TaskSummary {
+  const open = project.runs.find((r) => r.status === "running" || r.status === "waiting") ?? null;
+  const end = project.completed_at ?? (open ? null : (project.runs[0]?.ended_at ?? null));
+  const settled = !open && end != null;
+  const totalSeconds = settled
+    ? Math.max(0, (end as number) - project.created_at)
+    : now != null
+      ? Math.max(0, now - project.created_at)
+      : null;
+  const runSeconds =
+    open && now != null && open.started_at != null ? Math.max(0, now - open.started_at) : null;
+  const cost = run && open && run.run_no === open.run_no && run.cost_recorded ? (run.cost ?? null) : null;
+  return {
+    totalSeconds,
+    runSeconds,
+    runNo: open?.run_no ?? null,
+    runs: project.usage?.runs ?? project.runs.length,
+    tokens: project.usage?.tokens?.total ?? null,
+    costUsd: cost,
+  };
 }

@@ -18,6 +18,7 @@ import { DRAFT_POLL_MS } from "@/components/projects/panels/PlanPanel";
 import { ProjectLifecycleMenu } from "@/components/projects/ProjectLifecycleMenu";
 import { useProjectAction } from "@/components/projects/useProjectAction";
 import { useProjectEvents } from "@/components/projects/useProjectEvents";
+import { useRunLive } from "@/components/projects/useRunLive";
 import { useTimeLabel } from "@/components/projects/useTimeLabel";
 import { useRefresh, useServerState } from "@/components/ui/useRefresh";
 import type {
@@ -28,11 +29,14 @@ import type {
   ProjectOutputWithDeliveries,
   ProjectPlaybookDraftState,
   ProjectPlaybookResponse,
+  ProjectRun,
   QuickTaskStartResponse,
 } from "@/types";
 
 import { checkInLabel } from "./viewMode";
-import { PHASE_LABEL, stepState, taskPhase, taskPlan, type TaskPhase } from "./taskState";
+import { TaskLiveCard } from "./TaskLiveCard";
+import { TaskSummaryBar } from "./TaskSummaryBar";
+import { PHASE_LABEL, planStepStates, queuedCardIds, taskPhase, taskPlan, type TaskPhase } from "./taskState";
 
 const CARD = "rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3";
 const BTN = "rounded-lg border border-[var(--color-border)] px-2.5 py-1 text-xs disabled:opacity-50";
@@ -118,8 +122,19 @@ export function TaskView({
   const draft = useTaskDraft(project.slug, noRunYet && !project.archived);
   const phase = taskPhase(project, playbook, draft);
   const plan = taskPlan(playbook);
-  const live = liveState(project, board);
   const open = openRunOf(project);
+  // The open run's row (its cards' step keys and states), streamed once
+  // here and handed to the live bar so it doesn't open a second stream.
+  const [streamedRun, setStreamedRun] = useState<ProjectRun | null>(null);
+  useRunLive(project.slug, open?.run_no ?? 0, open ? open.status : "done", setStreamedRun);
+  const runDetail = streamedRun && open && streamedRun.run_no === open.run_no ? streamedRun : null;
+  const live = liveState(project, board, { run: runDetail });
+  const stepStates = planStepStates(
+    plan?.steps?.map((s) => s.key) ?? [],
+    phase,
+    live.done,
+    runDetail?.cards,
+  );
   const latest = project.runs[0] ?? null;
 
   const [changeOpen, setChangeOpen] = useState(false);
@@ -254,6 +269,8 @@ export function TaskView({
           ) : null}
         </section>
 
+        {project.runs.length > 0 ? <TaskSummaryBar project={project} run={runDetail} /> : null}
+
         {phase === "done" ? (
           <TaskResult
             project={project}
@@ -269,9 +286,16 @@ export function TaskView({
             {plan?.steps && plan.steps.length > 0 ? (
               <ol className="flex flex-col gap-1.5 text-sm">
                 {plan.steps.map((step, i) => {
-                  const state = stepState(i, live.done, phase);
+                  const state = stepStates[i] ?? "todo";
                   return (
-                    <li key={step.key} data-step={state} className="flex items-start gap-2">
+                    <li
+                      key={step.key}
+                      data-step={state}
+                      aria-current={state === "current" ? "step" : undefined}
+                      className={`flex items-start gap-2 ${
+                        state === "current" ? "-mx-1.5 rounded-lg bg-sky-500/10 px-1.5 py-1 ring-1 ring-sky-500/30" : ""
+                      }`}
+                    >
                       <span aria-hidden className="w-4 shrink-0 text-center">
                         {state === "done" ? "✓" : state === "current" ? "◐" : "○"}
                       </span>
@@ -295,7 +319,17 @@ export function TaskView({
           </section>
         )}
 
-        {open && open.status !== "waiting" ? <LiveStatusBar project={project} board={board} /> : null}
+        {live.running.length > 0 ? (
+          <div data-component="TaskLiveCards" className="flex flex-col gap-2">
+            {live.running.map((task) => (
+              <TaskLiveCard key={task.id} slug={project.slug} task={task} />
+            ))}
+          </div>
+        ) : null}
+
+        {open && open.status !== "waiting" ? (
+          <LiveStatusBar project={project} board={board} run={runDetail} streamRun={false} showTaskRows={false} />
+        ) : null}
 
 
         {!project.archived ? (
@@ -360,7 +394,10 @@ function TaskBoardNeeds({
   const tasks = boardTasks(liveBoard).filter((t) => t.project_id == null || t.project_id === project.id);
   const live = new Map(tasks.map((t) => [t.id, t]));
   const source = tasks.filter((t) => !held[t.id]).concat(Object.values(held));
-  const items: StripItem[] = needsYou(source).map((item) => ({ ...item, live: live.get(item.task.id) ?? null }));
+  const queued = queuedCardIds(context?.open_run);
+  const items: StripItem[] = needsYou(source)
+    .filter((item) => !(item.task.status === "triage" && queued.has(item.task.id)))
+    .map((item) => ({ ...item, live: live.get(item.task.id) ?? null }));
   if (items.length === 0) return null;
   return (
     <NeedsYouStrip

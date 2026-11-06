@@ -45,7 +45,7 @@ const GHOST_BTN =
   "rounded-xl border border-[var(--color-border)] px-3 py-1.5 text-sm disabled:opacity-50";
 
 /** Seconds since epoch, ticking; `null` on the server and while hydrating (no #418). */
-function useNow(): number | null {
+export function useNow(): number | null {
   const hydrated = useHydrated();
   const [now, setNow] = useState(() => Date.now() / 1000);
   useEffect(() => {
@@ -546,6 +546,8 @@ export function LiveStatusBar({
   run: initialRun = null,
   runnable = true,
   ownsNextStep = true,
+  streamRun = true,
+  showTaskRows = true,
 }: {
   project: ProjectDetail;
   board: ProjectBoardView | null;
@@ -555,6 +557,10 @@ export function LiveStatusBar({
   runnable?: boolean;
   /** False where the journey bar owns Continue / Start next iteration. */
   ownsNextStep?: boolean;
+  /** False when the page streams the run itself and passes it as `run`. */
+  streamRun?: boolean;
+  /** False when the page shows the running cards itself (Task mode). */
+  showTaskRows?: boolean;
 }) {
   const slug = project.slug;
   const now = useNow();
@@ -562,7 +568,7 @@ export function LiveStatusBar({
   const [streamedRun, setStreamedRun] = useState<ProjectRun | null>(null);
   const runDetail =
     streamedRun && streamedRun.run_no === open?.run_no ? streamedRun : initialRun;
-  useRunLive(slug, open?.run_no ?? 0, open ? open.status : "done", setStreamedRun);
+  useRunLive(slug, open?.run_no ?? 0, streamRun && open ? open.status : "done", setStreamedRun);
   const inline = useRunActivity(slug, open?.run_no ?? 0, open !== undefined);
   const inlineActive =
     !inline.unavailable && (inline.reasoning !== "" || inline.tools.length > 0);
@@ -607,7 +613,7 @@ export function LiveStatusBar({
   };
 
   const runningIds = new Set(state.running.map((t) => t.id));
-  const rows: { task: LiveTask; stopped: boolean }[] = [
+  const rows: { task: LiveTask; stopped: boolean }[] = !showTaskRows ? [] : [
     ...state.running.map((task) => ({ task, stopped: task.id in stoppedTasks })),
     ...Object.values(stoppedTasks)
       .filter((t) => !runningIds.has(t.id))

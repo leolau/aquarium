@@ -124,6 +124,7 @@ async def board_context(request: Request) -> dict[str, Any]:
                     ],
                     "blocked_tree_count": len(blocked),
                     "stalled": _run_stalled(run, cards, blocked),
+                    "auto_approve": bool(run.get("auto_approve")),
                 }
         return {"card_runs": card_runs, "open_run": open_run}
 
