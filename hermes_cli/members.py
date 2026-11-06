@@ -189,9 +189,9 @@ def assert_profile_administered(profile: str) -> str:
     current = administered_profile()
     if requested != current:
         raise MemberProfileMismatchError(
-            f"This console administers the {current!r} profile and cannot "
-            f"enrol into {requested!r}. Cross-profile assignment arrives with "
-            "FG-28; until then, run the console for that profile."
+            f"This request administers the {current!r} profile and cannot "
+            f"enrol into {requested!r}. Name the target profile in the "
+            f"request as well (?profile={requested}) — it must match the form."
         )
     return current
 

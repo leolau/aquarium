@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { activationUrl, errorMessage, sendJson } from "@/components/users/api";
+import { targetOptions } from "@/components/users/CreateUserForm";
 import { withProfileQuery } from "@/lib/profile";
 import type { MemberImportResponse } from "@/types";
 import { ActionButton } from "@/components/ui/ActionButton";
@@ -17,9 +18,27 @@ import { ActionButton } from "@/components/ui/ActionButton";
  * batch — one typo in row 12 shouldn't strand rows 13-40.
  *
  * The activation links for newly created accounts are shown once here, in
- * order, for the admin to hand out.
+ * order, for the admin to hand out — as the server returned them, profile and
+ * all.
+ *
+ * FG-28 C4: the target is picked from `profiles` (the caller's administered
+ * profiles), starting on the one being viewed. Changing it drops the preview:
+ * a preview of `hr` is not permission to apply into `default`.
  */
-export function CsvImportPanel({ profile }: { profile: string }) {
+export function CsvImportPanel({
+  profile,
+  profiles = [],
+  onApplied,
+}: {
+  /** The profile being viewed — the target until another is picked. */
+  profile: string;
+  /** The profiles the caller administers; a picker appears for two or more. */
+  profiles?: string[];
+  /** Told after an apply, with the profile it went into. */
+  onApplied?: (target: string, result: MemberImportResponse) => unknown;
+}) {
+  const [target, setTarget] = useState(profile);
+  const options = targetOptions(profile, profiles);
   const [csv, setCsv] = useState("");
   const [result, setResult] = useState<MemberImportResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -29,13 +48,13 @@ export function CsvImportPanel({ profile }: { profile: string }) {
     setBusy(true);
     setError(null);
     try {
-      setResult(
-        await sendJson<MemberImportResponse>(withProfileQuery("/api/comms/members/import", profile), "POST", {
-          csv,
-          profile,
-          dry_run: dryRun,
-        }),
+      const outcome = await sendJson<MemberImportResponse>(
+        withProfileQuery("/api/comms/members/import", target),
+        "POST",
+        { csv, profile: target, dry_run: dryRun },
       );
+      setResult(outcome);
+      if (!dryRun) await onApplied?.(target, outcome);
     } catch (err) {
       setError(errorMessage(err, "The import was refused."));
     } finally {
@@ -49,9 +68,31 @@ export function CsvImportPanel({ profile }: { profile: string }) {
       className="flex flex-col gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
     >
       <h2 className="text-sm font-medium">Bulk import</h2>
+      {options.length > 1 ? (
+        <label className="flex items-center justify-between gap-2 text-xs">
+          <span className="text-[var(--color-muted)]">Import into</span>
+          <select
+            aria-label="Import into profile"
+            value={target}
+            disabled={busy}
+            onChange={(e) => {
+              setTarget(e.target.value);
+              setResult(null);
+              setError(null);
+            }}
+            className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-xs"
+          >
+            {options.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
       <p className="text-xs text-[var(--color-muted)]">
         One <code>email,display,role</code> per line. Previewed against{" "}
-        <code>{profile}</code> before anything is created.
+        <code>{target}</code> before anything is created.
       </p>
       <textarea
         aria-label="CSV rows"

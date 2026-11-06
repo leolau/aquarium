@@ -688,7 +688,8 @@ async def test_create_member_refuses_foreign_profile_before_touching_gotrue(
         await svc.create_member(
             _principal("owner"), email="x@x.io", profile="other-tenant"
         )
-    assert "FG-28" in str(excinfo.value)
+    # The refusal names the scope to ask for instead of a dead end.
+    assert "?profile=other-tenant" in str(excinfo.value)
     assert admin.created == [] and admin.deleted == []
     assert store.principals == {}
     assert audit_events == []

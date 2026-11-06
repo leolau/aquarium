@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 import { AdminProfileSwitcher } from "@/components/users/AdminProfileSwitcher";
@@ -77,6 +78,9 @@ export function UsersView({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /** A create/import that landed in a profile other than the one on screen. */
+  const [elsewhere, setElsewhere] = useState<string | null>(null);
+  const targets = administered.map((p) => p.name);
   const [link, setLink] = useState<
     { label: string; path: string; expiresAt?: string | null } | null
   >(null);
@@ -117,6 +121,7 @@ export function UsersView({
     setBusy(key);
     setError(null);
     setNotice(null);
+    setElsewhere(null);
     try {
       const message = await run();
       if (message) setNotice(message);
@@ -135,24 +140,33 @@ export function UsersView({
     role: Role;
   }) {
     await mutate("create", async () => {
+      // The target goes in the query (the scope Python authorises in) and in
+      // the body (what it compares with); the BFF refuses a mismatch.
+      const target = input.profile;
       const resp = await sendJson<MemberCreateResponse>(
-        scoped("/api/comms/members"),
+        withProfileQuery("/api/comms/members", target),
         "POST",
-        { ...input, profile },
+        { ...input, profile: target },
       );
+      if (target !== profile) setElsewhere(target);
       if (resp.activation_path) {
         setLink({
-          label: input.email,
+          label: target === profile ? input.email : `${input.email} (${target})`,
           path: resp.activation_path,
           expiresAt: resp.invitation?.expires_at ?? null,
         });
         return null;
       }
       return resp.enrolled_existing
-        ? `${input.email} already had an account on this box and is now enrolled — ` +
+        ? `${input.email} already had an account on this box and is now enrolled in ${target} — ` +
             "their existing password still works, so there is no link to send."
-        : `Enrolled ${resp.member.user_id}.`;
+        : `Enrolled ${resp.member.user_id} in ${target}.`;
     });
+  }
+
+  async function imported(target: string) {
+    setElsewhere(target === profile ? null : target);
+    await load({});
   }
 
   async function changeRole(member: Member, next: Role) {
@@ -282,6 +296,21 @@ export function UsersView({
       {notice ? (
         <p className="rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-sm">{notice}</p>
       ) : null}
+      {elsewhere ? (
+        <p
+          data-component="CreatedElsewhere"
+          role="status"
+          className="rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-sm"
+        >
+          Created in <code>{elsewhere}</code> —{" "}
+          <Link
+            href={withProfileQuery("/users", elsewhere)}
+            className="text-[var(--color-accent)] underline"
+          >
+            view
+          </Link>
+        </p>
+      ) : null}
       {error ? (
         <p className="rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-sm text-red-300">
           {error}
@@ -324,6 +353,7 @@ export function UsersView({
         >
           <CreateUserForm
             profile={profile}
+            profiles={targets}
             busy={busy === "create"}
             disabled={page ? !page.configured : false}
             onCreate={createUser}
@@ -436,7 +466,7 @@ export function UsersView({
             </ActionButton>
           </div>
 
-          <CsvImportPanel profile={profile} />
+          <CsvImportPanel profile={profile} profiles={targets} onApplied={imported} />
           <IdentityActivityPanel profile={profile} />
         </BusyRegion>
       ) : null}

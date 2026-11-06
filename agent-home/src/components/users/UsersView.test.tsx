@@ -1,5 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: () => {}, refresh: () => {} }) }));
 
 import { PAGE_SIZE } from "@/components/users/api";
 import { UsersView } from "@/components/users/UsersView";
@@ -129,22 +131,30 @@ describe("UsersView", () => {
     expect(html).toContain("activation link");
   });
 
-  it("requires a profile on the create form", () => {
-    const html = renderToStaticMarkup(
-      <UsersView
-        role="owner"
-        userId="leo_owner"
-        profile="acme"
-        directory={DIRECTORY}
-        initialPage={page([OWNER])}
-      />,
-    );
-    const form = html.slice(html.indexOf('data-component="CreateUserForm"'));
-    // The profile travels to the server on every create; a foreign value is a
-    // 409 rather than a silent fall back to the administered profile.
-    const select = form.slice(0, form.indexOf('name="profile"'));
-    expect(form).toContain('name="profile"');
-    expect(select.slice(select.lastIndexOf("<select"))).toContain('required=""');
+  it("names the target profile on the create form, picking only among administered ones", () => {
+    const render = (administered: string[]) => {
+      const html = renderToStaticMarkup(
+        <UsersView
+          role="owner"
+          userId="leo_owner"
+          profile="acme"
+          administered={administered.map((name) => ({ name, is_default: false, description: "" }))}
+          directory={DIRECTORY}
+          initialPage={page([OWNER])}
+        />,
+      );
+      return html.slice(html.indexOf('data-component="CreateUserForm"'), html.indexOf("</form>"));
+    };
+    // One administered profile: no picker, but the form says where it creates.
+    const single = render(["acme"]);
+    expect(single).not.toContain('name="profile"');
+    expect(single).toContain("Creating in <code>acme</code>");
+    // Several: a required picker over exactly those, on the viewed one.
+    const several = render(["acme", "hr"]);
+    const select = several.slice(several.indexOf("<select required"), several.indexOf("</select>", several.indexOf('name="profile"')));
+    expect(select).toContain('name="profile"');
+    expect([...select.matchAll(/<option value="([^"]+)"/g)].map((m) => m[1])).toEqual(["acme", "hr"]);
+    expect(select).toMatch(/<option value="acme" selected="">/);
   });
 
   it("marks a pending account as awaiting activation, not as suspended", () => {

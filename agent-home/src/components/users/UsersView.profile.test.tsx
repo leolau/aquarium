@@ -167,4 +167,52 @@ describe("UsersView — the administered profile (FG-28 C3)", () => {
     expect(router.push).toHaveBeenCalledWith("/users?profile=default");
     expect(requests().some((r) => r.url.pathname === "/api/session/profile")).toBe(false);
   });
+
+  it("creates in a picked profile, refreshes the viewed one and links to the other", async () => {
+    fetchMock.mockImplementation(async (url: unknown, init?: RequestInit) => {
+      const u = new URL(String(url), "http://x");
+      if (init?.method === "POST" && u.pathname === "/api/comms/members") {
+        return Response.json({
+          ok: true,
+          enrolled_existing: false,
+          member: { user_id: "new", display: "", role: "member", email: "n@x.io" },
+          invitation: MIA.invitation,
+          activation_path: "/activate/default/srv-token",
+        });
+      }
+      return Response.json(PAGE);
+    });
+    view([p("default"), p("hr")]);
+    const picker = screen.getByLabelText("Profile") as HTMLSelectElement;
+    expect([...picker.options].map((o) => o.value)).toEqual(["default", "hr"]);
+    expect(picker.value).toBe("hr");
+
+    fireEvent.change(picker, { target: { value: "default" } });
+    fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "n@x.io" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create user" }));
+
+    const notice = await screen.findByText((_, el) => el?.getAttribute("data-component") === "CreatedElsewhere");
+    expect(notice.textContent).toContain("Created in default");
+    expect(notice.querySelector("a")?.getAttribute("href")).toBe("/users?profile=default");
+    // The link is the server's, as returned — not rebuilt for the viewed profile.
+    expect(document.body.textContent).toContain("/activate/default/srv-token");
+
+    const create = requests().find((r) => r.method === "POST" && r.url.pathname === "/api/comms/members");
+    expect([create?.url.searchParams.get("profile"), create?.body.profile]).toEqual(["default", "default"]);
+    // The roster re-read after the create is the one on screen.
+    await waitFor(() => {
+      const reread = requests().filter((r) => r.method === "GET" && r.url.pathname === "/api/comms/members");
+      expect(reread.map((r) => r.url.searchParams.get("profile"))).toEqual(["hr"]);
+    });
+  });
+
+  it("says nothing extra when the create lands in the viewed profile", async () => {
+    view([p("default"), p("hr")]);
+    fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "n@x.io" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create user" }));
+    await waitFor(() =>
+      expect(requests().some((r) => r.method === "GET" && r.url.pathname === "/api/comms/members")).toBe(true),
+    );
+    expect(document.querySelector('[data-component="CreatedElsewhere"]')).toBeNull();
+  });
 });
