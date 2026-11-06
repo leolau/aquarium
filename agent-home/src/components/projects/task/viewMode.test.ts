@@ -65,7 +65,8 @@ describe("taskLists", () => {
   });
 
   it("sorts each task into the list its own state says", () => {
-    expect(taskBucket(item())).toBe("running");
+    expect(taskBucket(item())).toBe("not_started");
+    expect(taskBucket(item({ status: "planning" }))).toBe("running");
     expect(taskBucket(item({ latest_run: { run_no: 1, status: "running" } }))).toBe("running");
     expect(taskBucket(item({ latest_run: { run_no: 1, status: "waiting" } }))).toBe("needs_you");
     expect(taskBucket(item({ health: "attention" }))).toBe("needs_you");
@@ -74,6 +75,12 @@ describe("taskLists", () => {
     ).toBe("needs_you");
     expect(taskBucket(item({ latest_run: { run_no: 2, status: "failed" } }))).toBe("failed");
     expect(taskBucket(item({ status: "done" }))).toBe("done");
+  });
+
+  it("puts an active task nobody started under Needs you, not Running", () => {
+    const lists = taskLists([item()]);
+    expect(lists.needsYou).toHaveLength(1);
+    expect(lists.running).toHaveLength(0);
   });
 
   it("puts failed tasks under Needs you", () => {
