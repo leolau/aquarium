@@ -41,6 +41,7 @@ const PRIMARY = "rounded-lg bg-[var(--color-accent)] px-3 py-1 text-xs font-medi
 const PHASE_TONE: Record<TaskPhase, string> = {
   planning: "text-sky-400",
   plan_review: "text-amber-400",
+  ready: "text-amber-400",
   running: "text-sky-400",
   waiting: "text-amber-400",
   failed: "text-red-400",
@@ -175,6 +176,20 @@ export function TaskView({
                     Not these: tell the agent…
                   </button>
                 </>
+              ) : null}
+            </NeedsCard>
+          ) : null}
+          {phase === "ready" ? (
+            <NeedsCard title="Ready to start" body="The plan is approved, but the agent hasn't started. Nothing happens until it is started.">
+              {canAct ? (
+                <button
+                  type="button"
+                  disabled={start.busy}
+                  onClick={() => void start.run(`${slugPath}/quick-task/start`)}
+                  className={PRIMARY}
+                >
+                  {start.busy ? "Starting…" : "▶ Start task"}
+                </button>
               ) : null}
             </NeedsCard>
           ) : null}

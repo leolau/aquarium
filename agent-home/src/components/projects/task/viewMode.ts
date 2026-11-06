@@ -65,7 +65,7 @@ export function checkInLabel(autonomy: ProjectAutonomy): string {
   return CHECK_IN_CHOICES.find((c) => c.autonomy === autonomy)?.label ?? autonomy;
 }
 
-export type TaskBucket = "needs_you" | "running" | "done" | "failed";
+export type TaskBucket = "needs_you" | "not_started" | "running" | "done" | "failed";
 
 /**
  * Which Task-mode list a one-off project belongs in, from the list row the
@@ -87,6 +87,10 @@ export function taskBucket(item: ProjectListItem): TaskBucket {
   ) {
     return "needs_you";
   }
+  // Active with no run and nothing on the board: nobody has started it yet.
+  if (item.status === "active" && !item.latest_run && (item.progress?.cards?.running ?? 0) === 0) {
+    return "not_started";
+  }
   return "running";
 }
 
@@ -98,7 +102,7 @@ export interface TaskLists {
   hiddenCount: number;
 }
 
-/** Split the caller's projects into Task mode's lists; failed tasks sit in Needs you. */
+/** Split the caller's projects into Task mode's lists; failed and not-started tasks sit in Needs you. */
 export function taskLists(items: ProjectListItem[]): TaskLists {
   const lists: TaskLists = { needsYou: [], running: [], done: [], hiddenCount: 0 };
   for (const item of items) {

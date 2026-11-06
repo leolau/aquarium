@@ -5,11 +5,12 @@ import type {
   ProjectPlaybookResponse,
 } from "@/types";
 
-export type TaskPhase = "planning" | "plan_review" | "running" | "waiting" | "failed" | "done";
+export type TaskPhase = "planning" | "plan_review" | "ready" | "running" | "waiting" | "failed" | "done";
 
 export const PHASE_LABEL: Record<TaskPhase, string> = {
   planning: "Planning",
   plan_review: "Check the plan",
+  ready: "Not started",
   running: "Running",
   waiting: "Needs you",
   failed: "Failed",
@@ -41,7 +42,8 @@ export function taskPhase(
   if (draft?.status === "failed" || draft?.launch?.status === "failed") return "failed";
   if (draft?.status === "running") return "planning";
   if (!playbook?.active && taskPlan(playbook)) return "plan_review";
-  if (playbook?.active) return "running";
+  // An approved plan with no run: nothing is working until someone starts it.
+  if (playbook?.active) return "ready";
   return draft?.status === "idle" ? "failed" : "planning";
 }
 

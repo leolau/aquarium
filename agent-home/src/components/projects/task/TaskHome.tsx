@@ -130,6 +130,7 @@ function TaskSection({
 
 const BUCKET_LABEL = {
   needs_you: "Needs you",
+  not_started: "Not started",
   running: "Running",
   done: "Done",
   failed: "Failed",
@@ -148,7 +149,7 @@ function TaskRow({ item, canRetry }: { item: ProjectListItem; canRetry: boolean 
           {item.latest_run ? ` · run ${item.latest_run.run_no}` : ""} · {timeLabel(item.created_at, "ago")}
         </span>
       </Link>
-      {bucket === "failed" && canRetry ? (
+      {(bucket === "failed" || bucket === "not_started") && canRetry ? (
         <button
           type="button"
           disabled={retry.busy}
@@ -157,7 +158,9 @@ function TaskRow({ item, canRetry }: { item: ProjectListItem; canRetry: boolean 
           }
           className="rounded-lg border border-[var(--color-border)] px-2.5 py-1 text-xs disabled:opacity-50"
         >
-          {retry.busy ? "Retrying…" : "Retry"}
+          {bucket === "not_started"
+            ? retry.busy ? "Starting…" : "Start"
+            : retry.busy ? "Retrying…" : "Retry"}
         </button>
       ) : null}
     </li>
