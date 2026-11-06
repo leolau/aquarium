@@ -1,6 +1,6 @@
 # FG-20 — `agent-home`: mobile-first Next.js face on the Python AI layer + Supabase
 
-**Wave:** Phase-3 (A→B→C) · **Owner agent:** _unassigned_ · **Status:** PLAN — **owner-confirmed** (Leo, 2026-07-11: all four decisions in §"Open decisions (RESOLVED)" locked); ready to implement (Wave A first). No code yet.
+**Wave:** Phase-3 (A→B→C) · **Owner agent:** _unassigned_ · **Status:** BUILT (plan owner-confirmed by Leo, 2026-07-11: all four decisions in §"Open decisions (RESOLVED)" locked) — Waves A→C merged into `develop` (Wave A #43 onwards; see the build log below) and `agent-home` is the primary UI.
 
 ## Summary
 

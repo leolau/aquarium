@@ -1,6 +1,6 @@
 # FG-33 — Vibe-coded apps: local and external
 
-**Wave:** P8 (Phase 8; phases P8-0 → P8-4 below; needs FG-07, FG-08, FG-11, FG-12, FG-13, FG-14, FG-20, FG-31 and FG-32 merged, all of which are) · **Owner agent:** _unassigned_ (design: devin:workflow) · **Status:** PLAN — not started. Twenty-one open decisions are listed for Leo/Yan in §Open decisions; Yan answered every decision except 11 and 12 (external only) on 2026-10-25 (§Decisions recorded); every phase is written so it can start once the decisions it names are answered.
+**Wave:** P8 (Phase 8; phases P8-0 → P8-4 below; needs FG-07, FG-08, FG-11, FG-12, FG-13, FG-14, FG-20, FG-31 and FG-32 merged, all of which are) · **Owner agent:** _unassigned_ (design: devin:workflow) · **Status:** P8-0–P8-2 (local apps) BUILT, #640–#659 and follow-ups (see §Progress checklist; P8-0.7 and the P8-1/P8-2 system tests still open). **P8-3–P8-4 (external hosting) not started.** Original plan status: Twenty-one open decisions are listed for Leo/Yan in §Open decisions; Yan answered every decision except 11 and 12 (external only) on 2026-10-25 (§Decisions recorded); every phase is written so it can start once the decisions it names are answered.
 
 ## Summary
 

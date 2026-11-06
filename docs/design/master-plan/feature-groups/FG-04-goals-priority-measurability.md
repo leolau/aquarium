@@ -1,6 +1,6 @@
 # FG-04 — Goals with priority + measurability/progress
 
-**Wave:** 1 · **Owner agent:** devin:49726ab9 · **Status:** In review (code + tests green; ECS system-test pending owner coordination)
+**Wave:** 1 · **Owner agent:** devin:49726ab9 · **Status:** MERGED into `develop` (#15). As of 2026-11-01: no ECS system-test record in this doc
 
 ## Summary
 Extend the existing per-session goal loop into a **prioritised, multi-goal

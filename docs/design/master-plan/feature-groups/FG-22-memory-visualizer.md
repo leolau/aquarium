@@ -1,6 +1,6 @@
 # FG-22 — Memory visualizer: a read-only window into layer 4
 
-**Wave:** B (after FG-21 P1–P4) · **Owner agent:** unassigned · **Status:** Plan — ready to implement
+**Wave:** B (after FG-21 P1–P4) · **Owner agent:** unassigned · **Status:** BUILT — V1–V4 merged into `develop` (#105 plus follow-up fixes); the user-facing copy moved to `agent-home` in FG-23
 
 ## Summary
 

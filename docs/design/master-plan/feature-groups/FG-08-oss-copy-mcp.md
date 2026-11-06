@@ -1,6 +1,6 @@
 # FG-08 — Copy OSS capability + MCP (remote & in-house)
 
-**Wave:** 2 · **Owner agent:** devin:ab45de26 · **Status:** In review (ECS system-test pending owner coordination)
+**Wave:** 2 · **Owner agent:** devin:ab45de26 · **Status:** MERGED into `develop` (#21). As of 2026-11-01: no ECS system-test record in this doc
 
 ## Summary
 Based on a goal, the agent can acquire a capability from **open-source**, in one
