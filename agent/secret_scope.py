@@ -111,6 +111,14 @@ _GLOBAL_ENV_EXACT = frozenset({
     "VIRTUAL_ENV", "PYTHONPATH", "SSL_CERT_FILE",
     # Kanban paths (per-board, not per-profile-secret)
     "HERMES_KANBAN_DB", "HERMES_KANBAN_WORKSPACES_ROOT", "HERMES_KANBAN_BOARD",
+    # The box's one GoTrue (FG-28 decision D2): accounts are box-wide, so its
+    # URL and keys are too, under every name ``members.load_admin_client``
+    # reads. A profile without its own Supabase .env must still reach it.
+    "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_ANON_KEY",
+    "SUPABASE_JWT_SECRET", "SUPABASE_SERVICE_KEY",
+    "HERMES_DASHBOARD_SUPABASE_URL",
+    "HERMES_DASHBOARD_SUPABASE_SERVICE_ROLE_KEY",
+    "HERMES_SUPABASE_SERVICE_ROLE_KEY",
 })
 _GLOBAL_ENV_PREFIXES = (
     "HERMES_KANBAN_",

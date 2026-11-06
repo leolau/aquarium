@@ -170,6 +170,24 @@ async def enrolments(
     return out
 
 
+def pick_enrolment(
+    found: List[Enrolment], hint: str = "", *, default: str = "default"
+) -> Optional[Enrolment]:
+    """The active enrolment to act in: ``hint`` → ``default`` → the first.
+
+    The FG-28 D1 landing order, for flows that must pick one profile for a
+    person (a self-service reset request mints its link there). A suspended
+    enrolment is never picked, and a hint the person is not actively enrolled
+    in is ignored rather than refused — it is routing metadata, not a grant.
+    """
+    active = [e for e in found if getattr(e.principal, "active", True)]
+    for wanted in (hint, default):
+        match = next((e for e in active if wanted and e.profile.name == wanted), None)
+        if match is not None:
+            return match
+    return active[0] if active else None
+
+
 async def administered_profiles(
     subject: str,
     *,

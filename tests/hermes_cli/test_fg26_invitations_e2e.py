@@ -458,7 +458,7 @@ async def test_only_the_token_hash_is_stored(
     )
     token = created.invitation_token or ""
     rows = await _invitation_rows(auth_stack.dsn)
-    assert bytes(rows[0]["token_hash"]) == hash_token(token)
+    assert bytes(rows[0]["token_hash"]) == hash_token(token, "default")
     assert all(token not in str(value) for value in rows[0].values())
 
 
@@ -485,7 +485,7 @@ async def test_every_invalid_token_is_refused_identically(
         await connection.execute(
             "UPDATE app_prod.invitations SET expires_at = $1 WHERE token_hash = $2",
             datetime.now(timezone.utc) - timedelta(minutes=1),
-            hash_token(expired.invitation_token or ""),
+            hash_token(expired.invitation_token or "", "default"),
         )
     finally:
         await connection.close()
@@ -693,3 +693,249 @@ async def test_reset_for_an_unknown_email_is_indistinguishable(
 ) -> None:
     """A reset form must not confirm whether an address has an account."""
     assert await service.request_password_reset(email="nobody@x.io") is None
+
+
+# --------------------------------------------------------------------------
+# FG-28 C2: links carry their profile; redeem/request run in that profile
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class _Box:
+    root: Path
+    hr: Path
+    client: object
+
+
+async def _init_profile_schema(dsn: str) -> None:
+    """Create the *current* ``HERMES_HOME`` profile's tables + its owner row."""
+    import hermes_cli.datastore as datastore
+
+    datastore._verified_schemas.clear()
+    store = get_store(
+        "supabase-app", "prod", config={"datastore": {"supabase_app": {"dsn": dsn}}}
+    )
+    connection = await store.connect()
+    try:
+        await initialize_access(connection)
+        await initialize_invitations(connection)
+        await connection.execute(
+            "INSERT INTO principals (user_id, display, role) VALUES ($1, 'Leo', "
+            "'owner') ON CONFLICT (user_id) DO NOTHING",
+            _OWNER,
+        )
+    finally:
+        await connection.close()
+
+
+@pytest.fixture
+def box(
+    auth_stack: _Auth, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[_Box]:
+    """A real two-profile box (default + ``hr``) on one database and one GoTrue.
+
+    The web server acts as the default profile, exactly the deployment where a
+    link minted in ``hr`` used to be refused as invalid.
+    """
+    import hermes_constants
+    from fastapi.testclient import TestClient
+
+    from hermes_cli import web_server
+    from hermes_cli.datastore import app_schema
+
+    root = tmp_path / "hermes-root"
+    hr = root / "profiles" / "hr"
+    hr.mkdir(parents=True)
+    config = {"datastore": {"supabase_app": {"dsn": auth_stack.dsn}}}
+    for home in (root, hr):
+        (home / "config.yaml").write_text(yaml.safe_dump(config))
+    monkeypatch.setattr(hermes_constants, "get_default_hermes_root", lambda: root)
+    # Box-wide GoTrue (D2): one set of credentials in the process environment.
+    monkeypatch.setenv("SUPABASE_URL", auth_stack.url)
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", auth_stack.service_role_key)
+    monkeypatch.setattr(web_server, "_REDEEM_THROTTLE", None)
+
+    monkeypatch.setenv("HERMES_HOME", str(root))
+    asyncio.run(_reset(auth_stack.dsn))
+
+    async def _drop_hr() -> None:
+        raw = await asyncpg.connect(auth_stack.dsn, ssl=False)
+        try:
+            await raw.execute(
+                f'DROP SCHEMA IF EXISTS "{app_schema("prod", profile="hr")}" CASCADE'
+            )
+        finally:
+            await raw.close()
+
+    asyncio.run(_drop_hr())
+    monkeypatch.setenv("HERMES_HOME", str(hr))
+    asyncio.run(_init_profile_schema(auth_stack.dsn))
+    monkeypatch.setenv("HERMES_HOME", str(root))
+    yield _Box(root=root, hr=hr, client=TestClient(web_server.app))
+
+
+async def _create_in(
+    home: Path,
+    auth: _Auth,
+    monkeypatch: pytest.MonkeyPatch,
+    email: str,
+    profile: str,
+):
+    """Create a member *as* ``home``'s console would, then act as default again."""
+    import hermes_cli.datastore as datastore
+
+    previous = str(home.parents[1]) if profile != "default" else str(home)
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    datastore._verified_schemas.clear()
+    config = {"datastore": {"supabase_app": {"dsn": auth.dsn}}}
+    service = MemberService(
+        PrincipalStore(get_store("supabase-app", "prod", config=config)),
+        GoTrueAdminClient(url=auth.url, service_role_key=auth.service_role_key),
+        config=config,
+    )
+    try:
+        return service, await service.create_member(
+            _owner(), email=email, profile=profile
+        )
+    finally:
+        monkeypatch.setenv("HERMES_HOME", previous)
+        datastore._verified_schemas.clear()
+
+
+def _redeem(box: _Box, token: str, profile: str | None = None):
+    body: dict[str, str] = {"token": token, "password": _CHOSEN}
+    if profile is not None:
+        body["profile"] = profile
+    return box.client.post("/api/auth/invitations/redeem", json=body)
+
+
+async def _rows_in(dsn: str, profile: str) -> list[dict[str, object]]:
+    from hermes_cli.datastore import app_schema
+
+    connection = await asyncpg.connect(dsn, ssl=False)
+    try:
+        rows = await connection.fetch(
+            f'SELECT * FROM "{app_schema("prod", profile=profile)}".invitations '
+            "ORDER BY created_at"
+        )
+        return [dict(row) for row in rows]
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_an_hr_link_redeems_in_hr(
+    box: _Box, auth_stack: _Auth, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, created = await _create_in(box.hr, auth_stack, monkeypatch, "hr@x.io", "hr")
+    token = created.invitation_token or ""
+    assert created.as_dict()["activation_path"] == f"/activate/hr/{token}"
+
+    response = _redeem(box, token, "hr")
+    assert response.status_code == 200, response.text
+    assert _login(auth_stack, "hr@x.io", _CHOSEN) == 200
+
+
+@pytest.mark.asyncio
+async def test_a_tampered_profile_is_the_same_neutral_400(
+    box: _Box, auth_stack: _Auth, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Renaming the profile in a link — to a real one or not — reveals nothing."""
+    _, created = await _create_in(box.hr, auth_stack, monkeypatch, "tamper@x.io", "hr")
+    token = created.invitation_token or ""
+
+    refusals = [
+        _redeem(box, token),  # the legacy shape: the default profile
+        _redeem(box, token, "default"),
+        _redeem(box, token, "no-such-profile"),
+        _redeem(box, token, "../hr"),
+        _redeem(box, "not-a-real-token", "hr"),
+    ]
+    assert {r.status_code for r in refusals} == {400}
+    assert len({r.json()["detail"] for r in refusals}) == 1
+
+    # Nothing was consumed: the genuine link still works.
+    assert _redeem(box, token, "hr").status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_a_token_presented_under_another_profile_is_refused(
+    box: _Box, auth_stack: _Auth, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A default-profile token renamed into ``hr`` matches no row there."""
+    _, created = await _create_in(
+        box.root, auth_stack, monkeypatch, "cross@x.io", "default"
+    )
+    token = created.invitation_token or ""
+    assert created.as_dict()["activation_path"] == f"/activate/{token}"
+
+    assert _redeem(box, token, "hr").status_code == 400
+    assert _redeem(box, token).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_v1_link_still_works_in_the_default_profile(
+    box: _Box, auth_stack: _Auth, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Links minted before the binding stored the bare hash; they keep working."""
+    _, created = await _create_in(
+        box.root, auth_stack, monkeypatch, "legacy@x.io", "default"
+    )
+    token = created.invitation_token or ""
+    connection = await asyncpg.connect(auth_stack.dsn, ssl=False)
+    try:
+        updated = await connection.execute(
+            "UPDATE app_prod.invitations SET token_hash = $1 WHERE token_hash = $2",
+            hash_token(token),
+            hash_token(token, "default"),
+        )
+    finally:
+        await connection.close()
+    assert updated == "UPDATE 1"
+
+    assert _redeem(box, token, "hr").status_code == 400
+    assert _redeem(box, token).status_code == 200
+    assert _login(auth_stack, "legacy@x.io", _CHOSEN) == 200
+
+
+@pytest.mark.asyncio
+async def test_a_reset_request_for_an_hr_only_person_is_minted_in_hr(
+    box: _Box, auth_stack: _Auth, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The request used to run in the acting profile and silently do nothing."""
+    from hermes_cli.identity_audit import list_identity_events
+
+    _, created = await _create_in(box.hr, auth_stack, monkeypatch, "hronly@x.io", "hr")
+    assert _redeem(box, created.invitation_token or "", "hr").status_code == 200
+
+    for hint in (None, "default"):  # a hint they are not enrolled in is ignored
+        body = {"email": "hronly@x.io"}
+        if hint:
+            body["profile"] = hint
+        response = box.client.post("/api/auth/invitations/request", json=body)
+        assert response.status_code == 200
+        assert response.json() == {"ok": True}
+
+    recovery = [r for r in await _rows_in(auth_stack.dsn, "hr") if r["kind"] == "recovery"]
+    assert len(recovery) >= 1
+    assert all(r["user_id"] == created.principal.user_id for r in recovery)
+    assert await _rows_in(auth_stack.dsn, "default") == []
+
+    # Audited where it was minted, so hr's admins see the request.
+    import hermes_cli.datastore as datastore
+
+    monkeypatch.setenv("HERMES_HOME", str(box.hr))
+    datastore._verified_schemas.clear()
+    config = {"datastore": {"supabase_app": {"dsn": auth_stack.dsn}}}
+    events = await list_identity_events(
+        store=get_store("supabase-app", "prod", config=config),
+        principal=_owner(),
+        config=config,
+    )
+    assert "user.reset_requested" in [event["action"] for event in events]
+
+    # An unknown address answers exactly the same.
+    response = box.client.post(
+        "/api/auth/invitations/request", json={"email": "nobody@x.io", "profile": "hr"}
+    )
+    assert response.json() == {"ok": True}

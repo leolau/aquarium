@@ -3985,7 +3985,7 @@ async def comms_issue_invitation(user_id: str, request: Request, _console_scope=
         "ok": True,
         "invitation": invitation.as_dict(),
         "invitation_token": token,
-        "activation_path": activation_path(token),
+        "activation_path": activation_path(token, service.profile),
     }
 
 
@@ -4249,16 +4249,36 @@ _NEUTRAL_REDEEM_DETAIL = (
 )
 
 
+def _invitation_profile_home(name: str):
+    """The home of registry profile ``name``, or ``None`` if there is none.
+
+    The profile in an activation link is routing metadata: it only chooses
+    which profile's ``invitations`` table the token is looked up in, and the
+    token's stored hash is bound to it, so a renamed link matches nothing.
+    """
+    from hermes_cli.profile_registry import get_profile_registry
+
+    for entry in get_profile_registry():
+        if entry.name == name and entry.hermes_home.is_dir():
+            return entry.hermes_home
+    return None
+
+
 @app.post("/api/auth/invitations/redeem")
 async def auth_redeem_invitation(request: Request):
     """Activate an account from an invitation token. **Unauthenticated.**
 
-    Every failure — unknown, tampered, expired, already used, revoked,
-    not enrolled, rate-limited — returns the same 400 and the same body. The
-    only distinguishable outcome is a password the policy rejects, which the
-    caller already knows (they typed it) and which does not consume the link.
+    ``profile`` (from ``/activate/<profile>/<token>``; absent = ``default``)
+    picks the profile whose ``invitations`` table is searched, inside that
+    profile's scope. Every failure — unknown or tampered profile, unknown,
+    tampered, expired, already used, revoked, not enrolled, rate-limited —
+    returns the same 400 and the same body, after the throttle has counted the
+    attempt. The only distinguishable outcome is a password the policy
+    rejects, which the caller already knows (they typed it) and which does not
+    consume the link.
     """
-    from hermes_cli.invitations import InvitationError
+    from hermes_cli.console_scope import _scoped_to
+    from hermes_cli.invitations import DEFAULT_PROFILE, InvitationError
 
     try:
         body = await request.json()
@@ -4267,16 +4287,21 @@ async def auth_redeem_invitation(request: Request):
     body = body if isinstance(body, dict) else {}
     token = str(body.get("token", "") or "")
     password = str(body.get("password", "") or "")
+    profile = str(body.get("profile", "") or "").strip() or DEFAULT_PROFILE
     client_ip = _forwarded_client_ip(request)
     if not token or not _redeem_throttle().allow(ip=client_ip, token=token):
         # Indistinguishable from a bad token on purpose: a 429 would tell an
         # attacker their guess reached a real rate limiter for a real token.
         raise HTTPException(status_code=400, detail=_NEUTRAL_REDEEM_DETAIL)
+    home = _invitation_profile_home(profile)
+    if home is None:
+        raise HTTPException(status_code=400, detail=_NEUTRAL_REDEEM_DETAIL)
     try:
-        service = _comms_user_service()
-        redeemed = await service.redeem_invitation(
-            token=token, password=password
-        )
+        with _scoped_to(home):
+            service = _comms_user_service()
+            redeemed = await service.redeem_invitation(
+                token=token, password=password
+            )
     except InvitationError as exc:
         # The password policy is the one thing worth saying out loud.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -4692,6 +4717,40 @@ def _forwarded_client_ip(request: "Request") -> str:
     return peer
 
 
+async def _request_password_reset(email: str, hint: str) -> None:
+    """Record a reset request in the profile the person is enrolled in.
+
+    Accounts are box-wide and enrolments profile-local, so the account is
+    looked up once, then its active enrolments; the request is minted in the
+    hinted profile if the person is actively enrolled there, else ``default``,
+    else their first active enrolment — inside that profile's scope, so its
+    admins see it and it is audited there. Nothing is returned: the link is
+    handed over by an admin, exactly as before.
+    """
+    from hermes_cli.console_scope import (
+        _scoped_to,
+        enrolments,
+        pick_enrolment,
+        principal_store_factory,
+    )
+    from hermes_cli.members import load_admin_client
+
+    admin = load_admin_client()
+    if admin is None:
+        return
+    account = admin.find_user_by_email(email.strip())
+    user_id = str((account or {}).get("id") or "")
+    if not user_id:
+        return
+    chosen = pick_enrolment(
+        await enrolments(user_id, store_factory=principal_store_factory()), hint
+    )
+    if chosen is None:
+        return
+    with _scoped_to(chosen.profile.hermes_home):
+        await _comms_user_service().request_password_reset(email=email)
+
+
 @app.post("/api/auth/invitations/request")
 async def auth_request_invitation(request: Request):
     """Ask an administrator for a reset link. **Unauthenticated.**
@@ -4700,7 +4759,8 @@ async def auth_request_invitation(request: Request):
     "not enrolled in this profile") are precisely the enumeration oracle a
     sign-in page must not offer. The link itself is never returned to the
     requester — it is minted for an admin to hand over — so this cannot be used
-    to take over an account.
+    to take over an account. ``profile`` (the sign-in page's ``?profile=``) is
+    a hint for which enrolment the request lands in, never a grant.
     """
     try:
         body = await request.json()
@@ -4708,11 +4768,11 @@ async def auth_request_invitation(request: Request):
         body = {}
     body = body if isinstance(body, dict) else {}
     email = str(body.get("email", "") or "")
+    hint = str(body.get("profile", "") or "").strip()
     client_ip = _forwarded_client_ip(request)
     if email and _redeem_throttle().allow(ip=client_ip, token=email):
         try:
-            service = _comms_user_service()
-            await service.request_password_reset(email=email)
+            await _request_password_reset(email, hint)
         except Exception as exc:  # noqa: BLE001 — never leak the reason
             _log.warning("password reset request failed: %s", exc)
     return {"ok": True}

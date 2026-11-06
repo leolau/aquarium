@@ -12,9 +12,10 @@ import { useAction } from "@/lib/use-action";
  * account" and "not enrolled here" are precisely the enumeration oracle a
  * sign-in page must not offer. The link itself goes to an admin, never to
  * whoever filled in this box, so submitting somebody else's address achieves
- * nothing.
+ * nothing. `profile` (the sign-in page's `?profile=`) tells the server which
+ * of the person's profiles the request should reach.
  */
-export function ResetRequestForm() {
+export function ResetRequestForm({ profile }: { profile?: string } = {}) {
   const t = useT("login");
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
@@ -28,7 +29,7 @@ export function ResetRequestForm() {
       await fetch("/api/auth/invitations/request", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify(profile ? { email, profile } : { email }),
       });
     } catch {
       // Even a transport failure must not distinguish addresses.

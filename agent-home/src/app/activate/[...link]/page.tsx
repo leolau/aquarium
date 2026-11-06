@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 
 import { ActivateForm } from "@/components/auth/ActivateForm";
 import { MobileShell } from "@/components/MobileShell";
+import { parseActivationLink } from "@/lib/auth/activation-link";
 
 /**
  * `noindex, nofollow` — the URL *is* the credential until it is redeemed, so it
@@ -18,7 +20,10 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 /**
- * FG-26 activation. **Unauthenticated on purpose**: somebody setting their
+ * FG-26 activation, at `/activate/<token>` (default profile) or
+ * `/activate/<profile>/<token>` (FG-28 C2; one catch-all route because Next
+ * refuses two differently named dynamic segments at the same level).
+ * **Unauthenticated on purpose**: somebody setting their
  * first password has no session yet, and the invitation is what authorises
  * them. The Coral launcher is hidden (`showCoral={false}`) because there is nothing else
  * they can reach yet.
@@ -31,12 +36,13 @@ export const dynamic = "force-dynamic";
 export default async function Page({
   params,
 }: {
-  params: Promise<{ token: string }>;
+  params: Promise<{ link: string[] }>;
 }) {
-  const { token } = await params;
+  const link = parseActivationLink((await params).link.map(decodeURIComponent));
+  if (!link) notFound();
   return (
     <MobileShell title="Activate your account" showCoral={false}>
-      <ActivateForm token={token} />
+      <ActivateForm token={link.token} profile={link.profile} />
     </MobileShell>
   );
 }

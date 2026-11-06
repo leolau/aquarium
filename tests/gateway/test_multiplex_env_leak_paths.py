@@ -85,9 +85,9 @@ class TestConfigEnvRefExpansion:
         app_b = self._load_datastore(b)
 
         assert app_a["dsn"].endswith("/db-a")
-        assert app_a["service_role_key"] == "srk-a"
         assert app_b["dsn"].endswith("/db-b")
-        assert app_b["service_role_key"] == "srk-b"
+        # The GoTrue keys are box-wide (FG-28 D2): one auth server per box.
+        assert app_a["service_role_key"] == app_b["service_role_key"] == "srk-process"
 
     def test_cache_is_keyed_on_the_scope_not_only_the_file(self, tmp_path, monkeypatch):
         """An unscoped load of a profile's config must not poison its turn.

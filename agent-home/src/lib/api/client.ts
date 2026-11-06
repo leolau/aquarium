@@ -1458,6 +1458,8 @@ export class HermesApiClient {
     input: {
       token: string;
       password: string;
+      /** The named profile from `/activate/<profile>/<token>`. */
+      profile?: string;
     },
     clientIp = "",
   ): Promise<{ ok: boolean }> {
@@ -1562,10 +1564,12 @@ export class HermesApiClient {
   async requestInvitation(
     email: string,
     clientIp = "",
+    /** The sign-in page's `?profile=`: where the request should land. */
+    profile = "",
   ): Promise<{ ok: boolean }> {
     return this.request("/api/auth/invitations/request", {
       method: "POST",
-      json: { email },
+      json: profile ? { email, profile } : { email },
       headers: forwardedFor(clientIp),
     });
   }

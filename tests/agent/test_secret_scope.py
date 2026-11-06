@@ -66,6 +66,25 @@ class TestMultiplexActiveFailClosed:
         # No scope, multiplex on — but HERMES_HOME is global, so no raise.
         assert ss.get_secret("HERMES_HOME") == "/opt/data"
 
+    def test_box_wide_gotrue_credentials_are_global(self, monkeypatch):
+        # FG-28 D2: one GoTrue per box, so a profile scope with no Supabase
+        # .env of its own still reaches it (activation in that profile works).
+        names = (
+            "SUPABASE_URL",
+            "SUPABASE_SERVICE_ROLE_KEY",
+            "SUPABASE_ANON_KEY",
+            "SUPABASE_JWT_SECRET",
+        )
+        for name in names:
+            monkeypatch.setenv(name, f"box-{name}")
+        ss.set_multiplex_active(True)
+        token = ss.set_secret_scope({"ANTHROPIC_API_KEY": "sk-hr"})
+        try:
+            for name in names:
+                assert ss.get_secret(name) == f"box-{name}"
+        finally:
+            ss.reset_secret_scope(token)
+
     def test_kanban_prefix_is_global(self, monkeypatch):
         monkeypatch.setenv("HERMES_KANBAN_DB", "/x/kanban.db")
         ss.set_multiplex_active(True)
