@@ -1,6 +1,6 @@
 # FG-11 — Agent communications: MCP
 
-**Wave:** 1 · **Owner agent:** devin:1e1e0865 · **Status:** In review (PR open; ECS system-test pending owner coordination)
+**Wave:** 1 · **Owner agent:** devin:1e1e0865 · **Status:** MERGED into `develop` (#17). As of 2026-11-01: no ECS system-test record in this doc
 
 ## Summary
 Standardise **agent↔agent / agent↔tool** communication on **MCP**, in both

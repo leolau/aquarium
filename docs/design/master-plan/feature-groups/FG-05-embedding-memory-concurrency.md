@@ -1,6 +1,6 @@
 # FG-05 — Embedding memory with concurrency
 
-**Wave:** 0 (foundation) · **Owner agent:** devin:21e6f504 · **Status:** In review (PR into `develop`, stacked on #9 + #12)
+**Wave:** 0 (foundation) · **Owner agent:** devin:21e6f504 · **Status:** MERGED into `develop` (#13; stacked on #9 + #12)
 
 ## Summary
 Add **semantic (embedding) memory** with **safe concurrent access** across many

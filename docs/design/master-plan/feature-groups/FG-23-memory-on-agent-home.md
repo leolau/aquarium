@@ -1,6 +1,6 @@
 # FG-23 — the memory visualizer on `agent-home` (the phone), not the dashboard
 
-**Status:** plan, implementable as written, **all decisions resolved**
+**Status:** BUILT — merged into `develop` (#111 plus follow-up fixes). Original plan status: **all decisions resolved**
 (owner-confirmed, Leo 2026-08-05 — see §9). Another agent should be able to pick
 this up cold and execute §4 → §5 in order without re-surveying the box or
 asking anything.

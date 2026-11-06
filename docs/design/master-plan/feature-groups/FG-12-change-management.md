@@ -1,6 +1,6 @@
 # FG-12 — Change management (data/config/code) + undo/redo/approve/backup
 
-**Wave:** 1 · **Owner agent:** devin:587066e0 · **Status:** In review (PR open; ECS system-test pending owner coordination)
+**Wave:** 1 · **Owner agent:** devin:587066e0 · **Status:** MERGED into `develop` (#16). As of 2026-11-01: no ECS system-test record in this doc
 
 ## Summary
 A **systematic change-management module**: every change to **data**,

@@ -1,6 +1,6 @@
 # FG-21 — Local semantic memory (layer 4), RAG, and shared recall across users
 
-**Wave:** 0 (foundation for recall) → A → B · **Owner agent:** unassigned · **Status:** Plan — implementation gated on the open decisions in §10
+**Wave:** 0 (foundation for recall) → A → B · **Owner agent:** unassigned · **Status:** P0–P4 BUILT (§8, §8.1–8.3; all §10 decisions resolved 2026-08-04). **P5 (consolidation) not started**
 
 ## Summary
 
