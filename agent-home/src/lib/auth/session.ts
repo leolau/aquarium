@@ -45,12 +45,28 @@ export const LEGACY_SESSION_COOKIE = "agent_home_session";
 const MAX_AGE_SECONDS = 12 * 60 * 60;
 
 /**
+ * Signed hint naming the profile this browser last worked in (FG-28 D1). Only a
+ * hint: login honours it only while the account is still actively enrolled
+ * there, so a stale or foreign value lands somewhere else, never as a grant.
+ */
+export const LAST_PROFILE_COOKIE = "__Host-agent_home_last_profile";
+
+/** The profile an old cookie (minted before sessions carried one) belongs to. */
+export const DEFAULT_SESSION_PROFILE = "default";
+
+const LAST_PROFILE_MAX_AGE_SECONDS = 365 * 24 * 60 * 60;
+
+/**
  * The payload stored (signed) in the session cookie.
  *  - `hermesToken`: the upstream Hermes access token replayed to `/api/*`.
- *  - `principal`: the resolved C1 principal snapshot bound into the RLS GUCs.
+ *  - `profile`: the profile this session works in (FG-28); every API client of
+ *    the request binds to it unless told otherwise.
+ *  - `principal`: the C1 principal snapshot *for that profile* (authority is
+ *    profile-local), bound into the RLS GUCs.
  */
 export interface AgentHomeSession {
   hermesToken: string;
+  profile: string;
   principal: Principal;
   /** Unix seconds when this session was minted. */
   issuedAt: number;
@@ -73,6 +89,12 @@ function sign(payload: string): string {
   return b64url(createHmac("sha256", sessionSecret()).update(payload).digest());
 }
 
+function verify(payload: string, sig: string, expected: string): boolean {
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b) && payload.length > 0;
+}
+
 /** Serialise + sign a session into the cookie value `<payload>.<sig>`. */
 export function serializeSession(session: AgentHomeSession): string {
   const payload = b64url(JSON.stringify(session));
@@ -86,10 +108,7 @@ export function deserializeSession(value: string | undefined): AgentHomeSession 
   if (dot <= 0) return null;
   const payload = value.slice(0, dot);
   const sig = value.slice(dot + 1);
-  const expected = sign(payload);
-  const a = Buffer.from(sig);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+  if (!verify(payload, sig, sign(payload))) return null;
   try {
     const parsed = JSON.parse(b64urlDecode(payload).toString("utf8"));
     if (
@@ -97,7 +116,12 @@ export function deserializeSession(value: string | undefined): AgentHomeSession 
       parsed?.principal?.user_id &&
       typeof parsed.principal.role === "string"
     ) {
-      return parsed as AgentHomeSession;
+      // Sessions minted before FG-28 carry no profile; they were all default.
+      const profile =
+        typeof parsed.profile === "string" && parsed.profile.trim()
+          ? parsed.profile.trim()
+          : DEFAULT_SESSION_PROFILE;
+      return { ...parsed, profile } as AgentHomeSession;
     }
     return null;
   } catch {
@@ -145,4 +169,44 @@ export async function clearSession(): Promise<void> {
   const store = await cookies();
   store.set(SESSION_COOKIE, "", { ...COOKIE_OPTIONS, maxAge: 0 });
   expireLegacyCookie(store);
+}
+
+/**
+ * The hint's HMAC input is domain-separated from the session's, so a signed
+ * hint can never be replayed as a session payload or the other way round.
+ */
+function signHint(payload: string): string {
+  return sign(`last-profile:${payload}`);
+}
+
+/** Serialise + sign a last-profile hint into `<payload>.<sig>`. */
+export function serializeProfileHint(profile: string): string {
+  const payload = b64url(profile);
+  return `${payload}.${signHint(payload)}`;
+}
+
+/** The profile a signed hint names, or null for a missing or tampered one. */
+export function parseProfileHint(value: string | undefined): string | null {
+  if (!value) return null;
+  const dot = value.lastIndexOf(".");
+  if (dot <= 0) return null;
+  const payload = value.slice(0, dot);
+  if (!verify(payload, value.slice(dot + 1), signHint(payload))) return null;
+  const profile = b64urlDecode(payload).toString("utf8").trim();
+  return profile || null;
+}
+
+/** The profile this browser last worked in, if its hint verifies. */
+export async function readLastProfileHint(): Promise<string | null> {
+  const store = await cookies();
+  return parseProfileHint(store.get(LAST_PROFILE_COOKIE)?.value);
+}
+
+/** Remember `profile` as this browser's landing profile for the next login. */
+export async function writeLastProfileHint(profile: string): Promise<void> {
+  const store = await cookies();
+  store.set(LAST_PROFILE_COOKIE, serializeProfileHint(profile), {
+    ...COOKIE_OPTIONS,
+    maxAge: LAST_PROFILE_MAX_AGE_SECONDS,
+  });
 }

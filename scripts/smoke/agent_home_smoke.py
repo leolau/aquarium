@@ -153,6 +153,7 @@ PAGES: Tuple[PageSpec, ...] = (
     ),
     PageSpec("/members", anon="redirect:/users", redirect="/users"),
     PageSpec("/not-available", ("NotAvailableForRole",)),
+    PageSpec("/default-profile-only", ("DefaultProfileOnly",)),
 )
 
 

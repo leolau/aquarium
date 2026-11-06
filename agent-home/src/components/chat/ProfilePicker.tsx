@@ -7,13 +7,13 @@ import type { ProfileSummary } from "@/types";
 export const DEFAULT_PROFILE = "default";
 
 /**
- * Chooses which profile answers this chat (FG-28). A profile is an independent
- * `HERMES_HOME` — its own SOUL, goal, skills, memory, credentials and
- * conversations — so this switches *which brain* replies, and with it the
- * conversation list, not merely a filter over one list.
+ * Chooses a profile (FG-28). A profile is an independent `HERMES_HOME` — its
+ * own SOUL, goal, skills, memory, credentials and conversations — so this
+ * switches *which brain* replies, and with it everything shown, not merely a
+ * filter over one list. The header's `ProfileSwitcher` wires it to the session.
  *
- * Renders nothing when the box serves a single profile: the overwhelmingly
- * common deployment should not carry a control with one option.
+ * Renders nothing with fewer than two profiles: the overwhelmingly common
+ * deployment should not carry a control with one option.
  */
 export function ProfilePicker({
   profiles,
@@ -21,6 +21,7 @@ export function ProfilePicker({
   onSelect,
   disabled = false,
   switching = false,
+  compact = false,
 }: {
   profiles: ProfileSummary[];
   selected: string;
@@ -29,6 +30,8 @@ export function ProfilePicker({
   disabled?: boolean;
   /** True while the chosen profile's conversations are still loading. */
   switching?: boolean;
+  /** Header placement: no bottom margin, no description. */
+  compact?: boolean;
 }) {
   if (profiles.length < 2) return null;
 
@@ -37,16 +40,16 @@ export function ProfilePicker({
   return (
     <div
       data-component="ProfilePicker"
-      className="mb-3 flex items-center gap-2 text-xs"
+      className={`${compact ? "" : "mb-3 "}flex items-center gap-2 text-xs`}
     >
       <label
-        htmlFor="chat-profile"
+        htmlFor="session-profile"
         className="shrink-0 text-[var(--color-muted)]"
       >
         Profile
       </label>
       <select
-        id="chat-profile"
+        id="session-profile"
         value={selected}
         disabled={disabled || switching}
         onChange={(e) => onSelect(e.target.value)}
@@ -70,7 +73,7 @@ export function ProfilePicker({
           <Spinner />
           Loading…
         </span>
-      ) : active?.description ? (
+      ) : !compact && active?.description ? (
         <span className="hidden truncate text-[var(--color-muted)] sm:block">
           {active.description}
         </span>

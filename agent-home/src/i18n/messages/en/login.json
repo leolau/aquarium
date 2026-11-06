@@ -14,5 +14,7 @@
   "resetEmailLabel": "Your email address",
   "sending": "Sending…",
   "requestLink": "Request a link",
-  "resetSent": "If that address is enrolled here, an administrator now has a link for it."
+  "resetSent": "If that address is enrolled here, an administrator now has a link for it.",
+  "suspended": "Your access to every profile you're in has been suspended. Ask an administrator to restore it.",
+  "noPrincipal": "You signed in, but you aren't a member of any profile here yet. Ask an administrator to add you."
 }

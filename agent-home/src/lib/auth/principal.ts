@@ -33,9 +33,11 @@ export async function requirePrincipal(): Promise<Principal> {
 }
 
 /**
- * A Python-API client bound to the current request's bridged token, and
- * optionally to a named profile (FG-28) so every call in that request — the
- * turn and the reads around it — addresses the same `HERMES_HOME`.
+ * A Python-API client bound to the current request's bridged token and to a
+ * profile (FG-28) so every call in that request — the turn and the reads
+ * around it — addresses the same `HERMES_HOME`. Without an explicit
+ * `profile` it is the session's profile; for `default` the client sends no
+ * `?profile=` at all, so single-profile installs are unchanged.
  */
 export async function apiClientForRequest(
   opts: { profile?: string } = {},
@@ -43,19 +45,21 @@ export async function apiClientForRequest(
   const session = await readSession();
   return new HermesApiClient({
     hermesToken: session?.hermesToken,
-    profile: opts.profile,
+    profile: opts.profile ?? session?.profile,
   });
 }
 
 /**
  * Resolve a C1 principal from a freshly-obtained upstream Hermes token by
- * asking the Python API `whoami` (the authority on identity). Returns null
- * when the token doesn't map to an enrolled principal.
+ * asking the Python API `whoami` (the authority on identity) in `profile`,
+ * where the role is re-derived from that profile's own `principals`. Returns
+ * null when the token doesn't map to an enrolled principal.
  */
 export async function resolvePrincipalFromToken(
   hermesToken: string,
+  profile?: string,
 ): Promise<Principal | null> {
-  const client = new HermesApiClient({ hermesToken });
+  const client = new HermesApiClient({ hermesToken, profile });
   const res = await client.whoami();
   return res.configured ? res.principal : null;
 }
@@ -78,9 +82,10 @@ export type PrincipalResolution =
  */
 export async function resolvePrincipalOrStatus(
   hermesToken: string,
+  profile?: string,
 ): Promise<PrincipalResolution> {
   try {
-    const principal = await resolvePrincipalFromToken(hermesToken);
+    const principal = await resolvePrincipalFromToken(hermesToken, profile);
     return principal ? { kind: "principal", principal } : { kind: "none" };
   } catch (err) {
     if (err instanceof HermesApiError && err.status === 403) {

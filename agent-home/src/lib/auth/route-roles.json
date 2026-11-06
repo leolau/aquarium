@@ -198,6 +198,7 @@
   "POST /api/seminar/survey/submit": "public",
   "POST /api/session/language": "public",
   "POST /api/session/login": "public",
+  "POST /api/session/profile": "signed-in",
   "POST /api/session/logout": "public",
   "GET /api/settings/apps/limits": "admin",
   "PUT /api/settings/apps/limits": "admin",

@@ -3,14 +3,16 @@ import type { ReactNode } from "react";
 import { AppMcpBridge } from "@/components/app-mcp/AppMcpBridge";
 import { CoralHost } from "@/components/coral/CoralHost";
 import { LeadChatHost } from "@/components/coral/LeadChatHost";
+import { ProfileSwitcher } from "@/components/ProfileSwitcher";
 import { ActivityStrip } from "@/components/ui/ActivityStrip";
 import { StatusStrip } from "@/components/ui/StatusStrip";
 import { getPrincipal } from "@/lib/auth/principal";
 import { readSession } from "@/lib/auth/session";
 import { HermesApiClient } from "@/lib/api/client";
+import { activeEnrolments } from "@/lib/api/my-profiles";
 import { storageConfigured } from "@/lib/env";
 import { getHiddenApps } from "@/lib/nav/hidden-apps";
-import type { TodosFacets } from "@/types";
+import type { ProfileSummary, TodosFacets } from "@/types";
 
 // Cache the facets call for 30s so every page render doesn't hit the backend
 // for a badge count.  The hermesToken argument becomes part of the cache
@@ -21,14 +23,25 @@ import type { TodosFacets } from "@/types";
 import { unstable_cache } from "next/cache";
 
 const getCachedFacets = unstable_cache(
-  async (hermesToken: string) => {
-    const client = new HermesApiClient({ hermesToken });
+  // unstable_cache keys on the arguments, so each profile has its own count.
+  async (hermesToken: string, profile: string) => {
+    const client = new HermesApiClient({ hermesToken, profile });
     return client.todosFacets();
   },
   ["todos-facets-badge"],
   // The badge is decorative — a 2-minute-old count is fine, and it cuts
   // hits on the facets endpoint (the per-render backend hotspot).
   { revalidate: 120 },
+);
+
+// The header switcher's options (FG-28): the account's active enrolments.
+// Cached per token like the badge; a stale list only offers a choice the
+// switch endpoint re-checks against the target profile.
+const getCachedEnrolments = unstable_cache(
+  async (hermesToken: string) =>
+    activeEnrolments(await new HermesApiClient({ hermesToken }).myProfiles()),
+  ["my-profiles-switcher"],
+  { revalidate: 60 },
 );
 
 /**
@@ -73,15 +86,22 @@ export async function MobileShell({
   // the token makes each principal's cache entry distinct.
   let badgeCounts: Record<string, number> = {};
   let hiddenApps: string[] = [];
+  let enrolments: ProfileSummary[] = [];
+  let sessionProfile = "default";
   if (showCoral) {
     try {
       const principal = await getPrincipal();
       if (principal) {
         const session = await readSession();
         hiddenApps = await getHiddenApps(principal, session?.hermesToken);
+        sessionProfile = session?.profile ?? sessionProfile;
+        if (session?.hermesToken) {
+          enrolments = await getCachedEnrolments(session.hermesToken).catch(() => []);
+        }
         if (session?.hermesToken) {
           const facets: TodosFacets = await getCachedFacets(
             session.hermesToken,
+            sessionProfile,
           );
           const openCount =
             facets.stages.find((s) => s.value === "open")?.count ?? 0;
@@ -106,8 +126,11 @@ export async function MobileShell({
             <h1 className="text-base font-semibold tracking-tight lg:text-lg">
               {title}
             </h1>
-            {actions ? (
-              <div className="flex shrink-0 items-center gap-2">{actions}</div>
+            {enrolments.length > 1 || actions ? (
+              <div className="flex min-w-0 items-center gap-2">
+                <ProfileSwitcher profiles={enrolments} current={sessionProfile} />
+                {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
+              </div>
             ) : null}
           </div>
         </header>

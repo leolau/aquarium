@@ -5,7 +5,8 @@
  *
  * Settings → Menu: pages and BFF routes of an app hidden from the caller's
  * role are refused here — pages render `/not-available`, APIs answer 403
- * (mapping: `lib/nav/menu-access.ts`).
+ * (mapping: `lib/nav/menu-access.ts`). A session in a non-default profile
+ * sees only the pages that honour it (`lib/nav/profile-gate.ts`, FG-28).
  *
  * Upload routes (`BODY_ROUTES` in `lib/http/body-route-guard.ts`) are not
  * matched: running middleware on a streaming request body corrupts it in
@@ -16,6 +17,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { guardAgentHomeRequest } from "@/lib/apps/guard";
 import { notAvailableForRole, roleBlockedApp } from "@/lib/http/body-route-guard";
 import { NOT_AVAILABLE_PATH } from "@/lib/nav/menu-access";
+import { DEFAULT_PROFILE_ONLY_PATH, gatedToDefaultProfile } from "@/lib/nav/profile-gate";
 
 async function roleGate(request: NextRequest): Promise<NextResponse | null> {
   const blocked = await roleBlockedApp(request.nextUrl.pathname, request.cookies);
@@ -26,12 +28,32 @@ async function roleGate(request: NextRequest): Promise<NextResponse | null> {
   );
 }
 
+/**
+ * FG-28 B3: a session working in a non-default profile gets the "default
+ * profile only" notice in place of a whole-box page (`lib/nav/profile-gate.ts`).
+ */
+async function profileGate(request: NextRequest): Promise<NextResponse | null> {
+  const { pathname } = request.nextUrl;
+  if (!gatedToDefaultProfile(pathname, "any")) return null;
+  const { deserializeSession, sessionCookieValue } = await import("@/lib/auth/session");
+  let session;
+  try {
+    session = deserializeSession(sessionCookieValue(request.cookies));
+  } catch {
+    return null;
+  }
+  if (!session || !gatedToDefaultProfile(pathname, session.profile)) return null;
+  return NextResponse.rewrite(
+    new URL(`${DEFAULT_PROFILE_ONLY_PATH}?from=${encodeURIComponent(pathname)}`, request.url),
+  );
+}
+
 export async function middleware(request: NextRequest): Promise<NextResponse> {
   const verdict = guardAgentHomeRequest(request.method, request.nextUrl.pathname, request.headers);
   if (!verdict.ok) {
     return NextResponse.json({ error: "forbidden", detail: verdict.reason }, { status: 403 });
   }
-  return (await roleGate(request)) ?? NextResponse.next();
+  return (await profileGate(request)) ?? (await roleGate(request)) ?? NextResponse.next();
 }
 
 export const config = {

@@ -18,7 +18,14 @@ export interface ProviderOption {
  * `agent-home` `/api/session/login` route, which authenticates against the
  * Python `dashboard_auth` provider and mints the bridge session.
  */
-export function LoginForm({ providers }: { providers: ProviderOption[] }) {
+export function LoginForm({
+  providers,
+  profile,
+}: {
+  providers: ProviderOption[];
+  /** `/login?profile=`: the profile to land in, if the account is enrolled there. */
+  profile?: string;
+}) {
   const t = useT("login");
   const router = useRouter();
   const passwordProviders = providers.filter((p) => p.supports_password);
@@ -42,14 +49,19 @@ export function LoginForm({ providers }: { providers: ProviderOption[] }) {
       const res = await fetch("/api/session/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(
-          needsCode ? { provider, username, password, code } : { provider, username, password },
-        ),
+        body: JSON.stringify({
+          provider,
+          username,
+          password,
+          ...(needsCode ? { code } : {}),
+          ...(profile ? { profile } : {}),
+        }),
       });
       const body = (await res.json().catch(() => null)) as {
         detail?: string;
         error?: string;
         two_factor_required?: boolean;
+        profile?: string;
       } | null;
       if (res.ok && body?.two_factor_required) {
         setNeedsCode(true);
@@ -57,12 +69,22 @@ export function LoginForm({ providers }: { providers: ProviderOption[] }) {
         return;
       }
       if (res.ok) {
-        router.replace("/");
+        // Outside the default profile most pages still read only the default
+        // one (FG-28 B4), so a login there lands in chat, which follows it.
+        router.replace(body?.profile && body.profile !== "default" ? "/chat" : "/");
         router.refresh();
         return;
       }
       if (body?.error === "invalid_code") {
         setError(ta("codeWrong"));
+        return;
+      }
+      if (body?.error === "suspended") {
+        setError(t("suspended"));
+        return;
+      }
+      if (body?.error === "no_principal") {
+        setError(t("noPrincipal"));
         return;
       }
       if (body?.error === "too_many_attempts") {

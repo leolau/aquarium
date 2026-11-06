@@ -15,10 +15,17 @@ vi.mock("next/headers", () => ({
   })),
 }));
 
+import { createHmac } from "node:crypto";
+
 import {
   clearSession,
   deserializeSession,
+  LAST_PROFILE_COOKIE,
   LEGACY_SESSION_COOKIE,
+  parseProfileHint,
+  readLastProfileHint,
+  serializeProfileHint,
+  writeLastProfileHint,
   readSession,
   serializeSession,
   SESSION_COOKIE,
@@ -37,6 +44,7 @@ const PRINCIPAL: Principal = {
 
 const SESSION: AgentHomeSession = {
   hermesToken: "upstream-token-xyz",
+  profile: "hr",
   principal: PRINCIPAL,
   issuedAt: 1_700_000_000,
 };
@@ -119,5 +127,71 @@ describe("agent-home session cookie name (__Host- prefix, FG-33 P8-2 2.12)", () 
     await clearSession();
     expect(jar.size).toBe(0);
     expect(await readSession()).toBeNull();
+  });
+});
+
+/** Sign `payload` exactly as a pre-FG-28 deploy did (same secret, same HMAC). */
+function oldCookie(payload: object): string {
+  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const sig = createHmac("sha256", "test-secret-for-hmac").update(body).digest("base64url");
+  return `${body}.${sig}`;
+}
+
+describe("session profile (FG-28)", () => {
+  beforeAll(() => {
+    process.env.AGENT_HOME_SESSION_SECRET = "test-secret-for-hmac";
+  });
+
+  it("reads a cookie minted before sessions carried a profile as default", () => {
+    // A deploy must log nobody out: every session that existed then was default's.
+    const { profile: _drop, ...legacy } = SESSION;
+    void _drop;
+    const parsed = deserializeSession(oldCookie(legacy));
+    expect(parsed).toEqual({ ...legacy, profile: "default" });
+  });
+
+  it("carries the profile through a round trip", () => {
+    expect(deserializeSession(serializeSession(SESSION))?.profile).toBe("hr");
+  });
+});
+
+describe("last-profile hint cookie (FG-28 D1)", () => {
+  beforeAll(() => {
+    process.env.AGENT_HOME_SESSION_SECRET = "test-secret-for-hmac";
+  });
+  beforeEach(() => {
+    jar.clear();
+    sets.length = 0;
+  });
+
+  it("round-trips through an HttpOnly __Host- cookie that outlives the session", async () => {
+    await writeLastProfileHint("hr");
+    expect(await readLastProfileHint()).toBe("hr");
+    const set = sets.find((c) => c.name === LAST_PROFILE_COOKIE)!;
+    expect(LAST_PROFILE_COOKIE.startsWith("__Host-")).toBe(true);
+    expect(set.options).toMatchObject({ httpOnly: true, secure: true, path: "/" });
+    expect(set.options.maxAge as number).toBeGreaterThan(30 * 24 * 60 * 60);
+  });
+
+  it("ignores a tampered or forged hint", () => {
+    const good = serializeProfileHint("hr");
+    const [, sig] = good.split(".");
+    const forged = `${Buffer.from("finance").toString("base64url")}.${sig}`;
+    expect(parseProfileHint(forged)).toBeNull();
+    expect(parseProfileHint("aHI")).toBeNull();
+    expect(parseProfileHint(undefined)).toBeNull();
+  });
+
+  it("cannot be swapped with a session cookie in either direction", () => {
+    expect(parseProfileHint(serializeSession(SESSION))).toBeNull();
+    expect(deserializeSession(serializeProfileHint(JSON.stringify(SESSION)))).toBeNull();
+  });
+
+  it("survives logout, so the next login lands where the person left off", async () => {
+    await writeSession(SESSION);
+    await writeLastProfileHint("hr");
+    await clearSession();
+    expect(await readSession()).toBeNull();
+    expect(await readLastProfileHint()).toBe("hr");
   });
 });
