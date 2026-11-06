@@ -224,7 +224,7 @@ export function TaskView({
           {phase === "failed" ? (
             <NeedsCard
               title="This task stopped"
-              body={latest?.outcome || draft?.detail || (draft?.launch?.status === "failed" ? draft.launch.detail : "Something went wrong.")}
+              body={latest?.error || latest?.summary || draft?.detail || (draft?.launch?.status === "failed" ? draft.launch.detail : "Something went wrong.")}
             >
               {canAct ? (
                 <button
@@ -272,7 +272,9 @@ export function TaskView({
               </a>
             </NeedsCard>
           ) : null}
-          <TaskBoardNeeds project={project} board={board} callerUserId={callerUserId} canLead={canLead} />
+          {phase === "running" || phase === "waiting" ? (
+            <TaskBoardNeeds project={project} board={board} callerUserId={callerUserId} canLead={canLead} />
+          ) : null}
           {start.error || stop.error || cont.error ? (
             <p role="alert" className="text-xs text-red-400">
               {start.error || stop.error || cont.error}
@@ -388,7 +390,7 @@ function TaskDetails({ project, onOpenProject }: { project: ProjectDetail; onOpe
           {starter} · {timeLabel(project.created_at, "ago")}
         </dd>
         <dt className="text-[var(--color-muted)]">Profile</dt>
-        <dd>{project.host_profile ?? "—"}</dd>
+        <dd>{project.profiles.find((pr) => pr.role === "host")?.profile ?? project.host_profile ?? "—"}</dd>
         <dt className="text-[var(--color-muted)]">Check in</dt>
         <dd>{checkInLabel(project.autonomy)}</dd>
         <dt className="text-[var(--color-muted)]">Cost</dt>
@@ -421,6 +423,7 @@ function TaskResult({
   const files = useProjectArtifacts(project.slug, outputs);
   const opener = useFileRefOpener();
   const again = useProjectAction();
+  const acceptAll = useProjectAction<AcceptEnvelope>();
   const repeat = useProjectAction();
   const scheduleAction = useProjectAction();
   const [repeatOpen, setRepeatOpen] = useState(false);
@@ -435,6 +438,16 @@ function TaskResult({
     const { deliveries: _ignored, ...rest } = row;
     void _ignored;
     setOutputs((prev) => prev.map((o) => (o.id === row.id ? { ...o, ...rest } : o)));
+  };
+
+  const waitingOnYou = outputs.filter((o) => o.status === "delivered");
+  const acceptResult = async () => {
+    for (const output of waitingOnYou) {
+      await acceptAll.run(`${slugPath}/outputs/${encodeURIComponent(output.id)}/accept`, {
+        skipRefresh: true,
+        onSuccess: (data) => onAccepted(output.id, data),
+      });
+    }
   };
 
   const makeRepeatable = async () => {
@@ -457,7 +470,7 @@ function TaskResult({
   return (
     <section data-component="TaskResult" aria-label="Result" className="flex flex-col gap-3">
       <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-bl-sm border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm">
-        {latest?.outcome || "Done. The result is below."}
+        {latest?.summary || "Done. The result is below."}
       </div>
       {shown.map((output) => (
         <DeliverableCard
@@ -477,6 +490,11 @@ function TaskResult({
       ))}
       {canAct ? (
         <div data-component="TaskResultActions" className="flex flex-wrap items-center gap-2">
+          {waitingOnYou.length > 0 ? (
+            <button type="button" disabled={acceptAll.busy} onClick={() => void acceptResult()} className={PRIMARY}>
+              {acceptAll.busy ? "Accepting…" : "✓ Accept result"}
+            </button>
+          ) : null}
           <button type="button" onClick={() => onChangeRequest()} className={BTN}>
             Ask for changes
           </button>
@@ -515,9 +533,9 @@ function TaskResult({
           <span className="text-[var(--color-muted)]">It becomes a repeating project and moves to Project mode.</span>
         </form>
       ) : null}
-      {again.error || repeat.error || scheduleAction.error ? (
+      {again.error || acceptAll.error || repeat.error || scheduleAction.error ? (
         <p role="alert" className="text-xs text-red-400">
-          {again.error || repeat.error || scheduleAction.error}
+          {again.error || acceptAll.error || repeat.error || scheduleAction.error}
         </p>
       ) : null}
       <details data-component="TaskHistory" className={`${CARD} text-sm`}>

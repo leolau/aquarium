@@ -81,3 +81,9 @@ describe("taskLists", () => {
     expect(lists.needsYou).toHaveLength(1);
   });
 });
+
+describe("plan check", () => {
+  it("lists a task waiting for its plan to be checked under Needs you", () => {
+    expect(taskBucket(item({ plan_pending: true }))).toBe("needs_you");
+  });
+});

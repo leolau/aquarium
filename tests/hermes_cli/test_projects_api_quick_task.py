@@ -186,3 +186,28 @@ def test_only_a_lead_carries_a_task_on(env):
     state["actor"] = MEMBER_P
     resp = client.post(f"/api/registry/projects/{slug}/quick-task/start", json={})
     assert resp.status_code == 403
+
+
+def test_list_marks_task_state_for_task_mode(env):
+    client, _state = env
+    running = _start(client).json()["slug"]
+    paused = _start(client, check_plan_first=True).json()["slug"]
+    items = {i["slug"]: i for i in client.get("/api/registry/projects").json()["items"]}
+    assert items[running]["latest_run"] == {"run_no": 1, "status": "running"}
+    assert items[running]["plan_pending"] is False
+    assert items[paused]["latest_run"] is None
+    assert items[paused]["plan_pending"] is True
+
+
+def test_detail_runs_carry_the_run_write_up(env):
+    client, _state = env
+    created = _start(client).json()
+    with projects_db.connect_closing() as conn:
+        run = projects_db.list_project_runs(conn, created["id"], limit=1)[0]
+        projects_db.update_project_run(
+            conn, run["id"], status="failed", error="The page returned 404.",
+            summary="Stopped at step 1.",
+        )
+    runs = _detail(client, created["slug"])["runs"]
+    assert runs[0]["error"] == "The page returned 404."
+    assert runs[0]["summary"] == "Stopped at step 1."

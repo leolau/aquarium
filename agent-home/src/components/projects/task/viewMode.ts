@@ -78,6 +78,7 @@ export function taskBucket(item: ProjectListItem): TaskBucket {
   }
   if (item.status === "done") return "done";
   if (
+    item.plan_pending === true ||
     run === "waiting" ||
     run === "blocked" ||
     item.health !== "ok" ||

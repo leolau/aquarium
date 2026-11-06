@@ -531,6 +531,12 @@ def _derived_score(conn, project_id: str) -> Optional[dict]:
     return {"mean": round(sum(scored) / len(scored), 1), "runs": len(scored)}
 
 
+def _plan_awaits_approval(conn, project_id: str) -> bool:
+    """A drafted plan revision exists but none is active yet."""
+    revs = projects_db.list_playbook_revs(conn, project_id)
+    return bool(revs) and not any(r.get("active") for r in revs)
+
+
 def _runs_brief(conn, project_id: str, *, limit: int = 5) -> list[dict]:
     """The last N runs as one-line rows (§12 detail). Cost stays fail-open
     and lives on the run-detail read, not here.
@@ -557,6 +563,8 @@ def _runs_brief(conn, project_id: str, *, limit: int = 5) -> list[dict]:
             "ended_at": r.get("ended_at"),
             "duration_seconds": duration,
             "outcome": r.get("outcome"),
+            "summary": r.get("summary"),
+            "error": r.get("error"),
             "score_user": r.get("score_user"),
         }
         divergent = _divergent_self(r)
@@ -954,6 +962,12 @@ def _list_sync(
                             {"run_no": latest[0]["run_no"], "status": latest[0]["status"]}
                             if latest
                             else None
+                        ),
+                        # A task paused for "Let me check the plan first".
+                        "plan_pending": (
+                            p.cadence == "one_off"
+                            and not latest
+                            and _plan_awaits_approval(conn, p.id)
                         ),
                         **_sort_extra(p, sorted_by, sort_values),
                     },

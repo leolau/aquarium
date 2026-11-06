@@ -1761,6 +1761,8 @@ export type ProjectListItem = Project & {
   health: ProjectHealth;
   /** The newest run's number and status; null before the first run. */
   latest_run?: { run_no: number; status: ProjectRunStatus } | null;
+  /** A one-off whose drafted plan waits for approval ("Let me check the plan first"). */
+  plan_pending?: boolean;
   /** Only when the list is sorted by duration or tokens. */
   usage?: {
     run_seconds?: number | null;
@@ -1868,6 +1870,9 @@ export interface ProjectRunBrief {
   ended_at: number | null;
   duration_seconds: number | null;
   outcome: string | null;
+  /** The run's own short write-up, once it ends. */
+  summary?: string | null;
+  error?: string | null;
   score_user: number | null;
   /**
    * §8.2: present only when it diverges from `score_user` by ≥2 —
