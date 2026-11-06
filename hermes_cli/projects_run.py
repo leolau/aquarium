@@ -553,6 +553,25 @@ def host_profile_name(pconn, project_id: str) -> Optional[str]:
     return profiles[0]["profile"] if profiles else None
 
 
+def check_step_assignees(pconn, project: projects_db.Project, steps: Sequence[dict]) -> None:
+    """Raise ``ValueError`` when a card step names a profile the project
+    does not have — a bad playbook stalls visibly instead of running under
+    a surprise profile (§7.1). Checked before any card is written."""
+    profile_names = {
+        p["profile"] for p in projects_db.get_project_profiles(pconn, project.id)
+    }
+    host = host_profile_name(pconn, project.id)
+    for step in steps:
+        if step.get("mode") == "inline":
+            continue
+        assignee = step.get("assignee") or host
+        if assignee and profile_names and assignee not in profile_names:
+            raise ValueError(
+                f"step {step['key']!r}: assignee {assignee!r} is not one of "
+                f"the project's profiles {sorted(profile_names)}"
+            )
+
+
 def instantiate_run_cards(
     bconn,
     pconn,
@@ -577,8 +596,7 @@ def instantiate_run_cards(
     """
     card_ids: Dict[str, str] = {}
     inline_steps: List[dict] = []
-    profiles = projects_db.get_project_profiles(pconn, project.id)
-    profile_names = {p["profile"] for p in profiles}
+    check_step_assignees(pconn, project, steps)
     host = host_profile_name(pconn, project.id)
 
     for step in steps:
@@ -586,13 +604,6 @@ def instantiate_run_cards(
             inline_steps.append(step)
             continue
         assignee = step.get("assignee") or host
-        if assignee and profile_names and assignee not in profile_names:
-            # A bad playbook stalls visibly instead of running under a
-            # surprise profile (§7.1).
-            raise ValueError(
-                f"step {step['key']!r}: assignee {assignee!r} is not one of "
-                f"the project's profiles {sorted(profile_names)}"
-            )
         body = step.get("body") or ""
         tid = kanban_db.create_task(
             bconn,
@@ -706,11 +717,13 @@ def promote_run_cards(
         parked = {row["id"] for row in rows if kanban_db.is_block_loop_parked(row)}
     else:
         parked = set()
-    status_by_key = {
-        key_of[tid]: status
-        for tid, status in status_by_task.items()
-        if key_of.get(tid)
-    }
+    # A step key can have a superseded (archived) card next to the live one
+    # after an automatic re-plan; the live card's status is the step's.
+    status_by_key: Dict[str, str] = {}
+    for tid, status in status_by_task.items():
+        key = key_of.get(tid)
+        if key and (status != "archived" or key not in status_by_key):
+            status_by_key[key] = status
 
     def _deps_satisfied(step_key: str) -> bool:
         step = by_key.get(step_key)
@@ -1612,11 +1625,18 @@ def notify_waiting_on_you(
 
 
 PARKED_EVENT = "block_loop_parked"
-REPLAN_EVENTS = ("replan_requested", "replan_proposed", "replan_failed")
+REPLAN_EVENTS = (
+    "replan_requested", "replan_proposed", "replan_failed",
+    "replan_activated", "replan_held",
+)
 _REPLAN_STATUS = {
     "replan_requested": "drafting",
     "replan_proposed": "proposed",
     "replan_failed": "failed",
+    # Autonomous projects only: the revision was activated and the run moved
+    # onto it, or it was kept for a person (it repeats the stuck step).
+    "replan_activated": "activated",
+    "replan_held": "held",
 }
 
 
@@ -1639,13 +1659,15 @@ def _parking(bconn, task_id: str):
 def parked_replan_state(bconn, task_id: str) -> dict:
     """Where the re-plan for a parked card's current parking stands:
     ``pending`` (the sweep has not asked yet), ``drafting``, ``proposed``
-    (with the revision number) or ``failed`` (with why)."""
+    (with the revision number), ``failed`` (with why), and for autonomous
+    projects ``activated`` (the run moved onto it) or ``held`` (kept for a
+    person, with why)."""
     parking_id, _ = _parking(bconn, task_id)
     event = kanban_db.latest_event(bconn, task_id, REPLAN_EVENTS)
     if not _for_parking(event, parking_id):
         return {"status": "pending"}
     state = {"status": _REPLAN_STATUS[event.kind]}
-    for key in ("rev", "detail"):
+    for key in ("rev", "detail", "run_no"):
         if event.payload.get(key) is not None:
             state[key] = event.payload[key]
     return state
@@ -1708,8 +1730,9 @@ def handle_parked_cards(
     With ``replan`` (the reconcile sweep passes
     ``projects_api.start_replan_draft``), also asks the planner — once per
     parking — for a revised plan that routes around the stuck step. The
-    revision is saved inactive like every agent draft (§7.2), so it waits
-    in the Plan panel for a lead to activate it in every autonomy mode.
+    revision is saved inactive like every agent draft (§7.2): in manual and
+    supervised projects it waits in the Plan panel for a lead; an autonomous
+    project activates it and moves the run onto it (:func:`adopt_replan`).
     ``replan`` returns False while another draft is running (tried again
     next sweep). Returns the task ids newly marked parked. Never raises.
     """
@@ -1734,13 +1757,18 @@ def handle_parked_cards(
             count = int(task.block_recurrences or 0)
             parked_event = kanban_db.latest_event(bconn, task_id, [PARKED_EVENT])
             if not _for_parking(parked_event, parking_id):
+                follow = (
+                    "it switches to it automatically unless it repeats this step"
+                    if (project.autonomy or "supervised") == "autonomous"
+                    else "review it in the Plan panel"
+                )
                 kanban_db.add_comment(
                     bconn, task_id, "projects",
                     f"Parked after {count} blocks for the same reason — "
                     "it will not be restarted automatically. Re-planning: the "
                     "planner is drafting a revised plan that finds another way "
-                    "to continue (review it in the Plan panel). To try this "
-                    "card again as it is, answer it and re-run it.",
+                    f"to continue ({follow}). To try this card again as it is, "
+                    "answer it and re-run it.",
                 )
                 kanban_db.append_event(
                     bconn, task_id, PARKED_EVENT,
@@ -1767,12 +1795,19 @@ def handle_parked_cards(
                 )
 
             def _saved(rev: int, task_id=task_id, parking_id=parking_id) -> None:
+                autonomous = (project.autonomy or "supervised") == "autonomous"
                 _record_replan_outcome(
                     project, task_id, "replan_proposed",
                     {"parking": parking_id, "rev": rev},
-                    f"Re-plan proposed as plan revision {rev} — review "
-                    "and activate it in the Plan panel.",
+                    f"Re-plan proposed as plan revision {rev}"
+                    + ("." if autonomous else
+                       " — review and activate it in the Plan panel."),
                 )
+                if autonomous:
+                    adopt_replan(
+                        project.id, run["id"], task_id,
+                        parking_id=parking_id, rev=rev,
+                    )
 
             def _failed(detail: str, task_id=task_id, parking_id=parking_id) -> None:
                 _record_replan_outcome(
@@ -1803,6 +1838,225 @@ def handle_parked_cards(
                 "projects: could not handle parked card %s", task_id, exc_info=True
             )
     return marked
+
+
+def _step_signature(step: dict, host: Optional[str]) -> tuple:
+    """What makes a step the same piece of work, whatever its key."""
+    def _text(value) -> str:
+        return " ".join(str(value or "").split()).casefold()
+
+    return (
+        _text(step.get("title")),
+        _text(step.get("body")),
+        step.get("assignee") or host,
+        tuple(parse_csv_field(step.get("toolsets"))),
+        "inline" if step.get("mode") == "inline" else "card",
+    )
+
+
+def _replan_refusal(pconn, bconn, *, project, run, task, playbook) -> Optional[str]:
+    """Why an autonomous project must leave this re-plan to a person, or
+    None when it can be activated and the run moved onto it."""
+    if project.archived:
+        return "the project is archived"
+    if run is None or run.get("status") != "running":
+        return "the run is no longer running"
+    if task is None or not kanban_db.is_block_loop_parked(task):
+        return "the card is no longer parked"
+    steps = (playbook or {}).get("steps") or []
+    if not steps:
+        return "the revised plan has no steps"
+    rc = projects_db.get_run_card_by_task(pconn, task.id) or {}
+    pinned = projects_db.get_playbook(pconn, project.id, rev=run.get("playbook_rev"))
+    stuck = next(
+        (s for s in (pinned or {}).get("steps") or []
+         if s.get("key") == rc.get("step_key")),
+        None,
+    )
+    host = host_profile_name(pconn, project.id)
+    if stuck is not None:
+        sig = _step_signature(stuck, host)
+        if any(_step_signature(s, host) == sig for s in steps):
+            return f"it still contains the stuck step \"{task.title}\" unchanged"
+    try:
+        check_step_assignees(pconn, project, steps)
+    except ValueError as exc:
+        return str(exc)
+    return None
+
+
+def _card_toolsets(pconn, project: projects_db.Project, steps: Sequence[dict]) -> Dict[str, List[str]]:
+    """Per-card tool surfaces, resolved the way :func:`start_run` does."""
+    host = host_profile_name(pconn, project.id)
+    enabled = _enabled_toolsets_for_profile(host)
+    requested = parse_csv_field(project.toolsets)
+    out: Dict[str, List[str]] = {}
+    for step in steps:
+        if step.get("mode") == "inline":
+            continue
+        stamped, _dropped = resolve_card_toolsets(
+            parse_csv_field(step.get("toolsets")) or requested, enabled
+        )
+        if stamped is not None:
+            out[step["key"]] = stamped
+    return out
+
+
+def move_run_onto_revision(
+    pconn, bconn, *, project: projects_db.Project, run: dict, playbook: dict,
+    superseded_note: str,
+) -> dict:
+    """Carry an open run onto ``playbook`` (a newly activated revision).
+
+    Work already done — or in a worker's hands — stays and counts for its
+    step key. Every other card of the old plan is superseded: archived with
+    a ``superseded_by_replan`` event and a comment, never re-run. The new
+    plan's remaining card steps become cards of the same run (wired to the
+    kept cards they depend on), the run is re-pinned to the revision and
+    the ordinary refill promotes them. Inline steps are not started here.
+    """
+    rev = playbook["rev"]
+    kept: Dict[str, str] = {}
+    superseded: List[str] = []
+    for rc in projects_db.get_run_cards(pconn, run["id"]):
+        task = kanban_db.get_task(bconn, rc["task_id"])
+        if task is None or task.status == "archived":
+            continue
+        if task.status in ("done", "running", "ready"):
+            if rc.get("step_key"):
+                if task.status == "done" or rc["step_key"] not in kept:
+                    kept[rc["step_key"]] = task.id
+            continue
+        superseded.append(task.id)
+    for task_id in superseded:
+        if kanban_db.archive_task(bconn, task_id):
+            kanban_db.append_event(
+                bconn, task_id, "superseded_by_replan",
+                {"rev": rev, "run_no": run.get("run_no")},
+            )
+            kanban_db.add_comment(bconn, task_id, "projects", superseded_note)
+
+    new_steps = [
+        s for s in playbook.get("steps") or []
+        if s.get("mode") != "inline" and s["key"] not in kept
+    ]
+    created = instantiate_run_cards(
+        bconn, pconn, project=project, run_id=run["id"], run_no=run["run_no"],
+        steps=new_steps, created_by=run.get("triggered_by") or "projects",
+        card_toolsets=_card_toolsets(pconn, project, new_steps),
+    )
+    for step in new_steps:
+        child = created["cards"].get(step["key"])
+        for dep in step.get("depends_on") or []:
+            if child and dep in kept:
+                kanban_db.link_tasks(bconn, parent_id=kept[dep], child_id=child)
+    projects_db.repin_run_playbook(pconn, run["id"], rev)
+    fresh = projects_db.get_project_run_by_id(pconn, run["id"]) or run
+    promoted = refill_run_cards(pconn, bconn, project=project, run=fresh)
+    return {
+        "added": list(created["cards"].values()),
+        "superseded": superseded,
+        "promoted": promoted,
+    }
+
+
+def adopt_replan(
+    project_id: str, run_id: str, task_id: str, *, parking_id: int, rev: int,
+) -> Optional[str]:
+    """An autonomous project's follow-through on a parked card's re-plan.
+
+    Called once the revision is saved. At most once per parking: activates
+    it through the Plan panel's own path (``projects_db.activate_playbook_rev``)
+    and moves the run onto it (:func:`move_run_onto_revision`); the parked
+    card is superseded, not re-run. When the revision would just repeat the
+    stuck step unchanged — or anything else makes it unsafe — it is left
+    inactive for a person instead (``replan_held``). Returns the event
+    recorded (``"replan_activated"`` / ``"replan_held"``) or None. Never
+    raises.
+    """
+    try:
+        with projects_db.connect_closing() as pconn:
+            project = projects_db.get_project(pconn, project_id)
+            if project is None or (project.autonomy or "supervised") != "autonomous":
+                return None
+            run = projects_db.get_project_run_by_id(pconn, run_id)
+            with kanban_db.connect_closing(board=project.board_slug or None) as bconn:
+                if _for_parking(
+                    kanban_db.latest_event(
+                        bconn, task_id, ["replan_activated", "replan_held"]
+                    ),
+                    parking_id,
+                ):
+                    return None
+                task = kanban_db.get_task(bconn, task_id)
+                playbook = projects_db.get_playbook(pconn, project.id, rev=rev)
+                refusal = _replan_refusal(
+                    pconn, bconn, project=project, run=run, task=task,
+                    playbook=playbook,
+                )
+                if refusal:
+                    kanban_db.append_event(
+                        bconn, task_id, "replan_held",
+                        {"parking": parking_id, "rev": rev, "detail": refusal},
+                    )
+                    kanban_db.add_comment(
+                        bconn, task_id, "projects",
+                        f"Plan revision {rev} was not activated automatically: "
+                        f"{refusal}. Review it in the Plan panel, or answer "
+                        "this card and re-run it.",
+                    )
+                    return "replan_held"
+                title = task.title or task_id
+                projects_db.activate_playbook_rev(
+                    pconn, project.id, rev,
+                    note=(
+                        f"activated automatically: re-plan after \"{title}\" "
+                        f"parked in run {run.get('run_no')}"
+                    ),
+                )
+                moved = move_run_onto_revision(
+                    pconn, bconn, project=project, run=run, playbook=playbook,
+                    superseded_note=(
+                        f"Superseded by plan revision {rev} (re-planned "
+                        f"automatically after \"{title}\" parked). This card "
+                        "will not be re-run."
+                    ),
+                )
+                kanban_db.append_event(
+                    bconn, task_id, "replan_activated",
+                    {"parking": parking_id, "rev": rev,
+                     "run_no": run.get("run_no"), "added": moved["added"]},
+                )
+                kanban_db.add_comment(
+                    bconn, task_id, "projects",
+                    f"Re-planned automatically after \"{title}\" parked: plan "
+                    f"revision {rev} is now active and run {run.get('run_no')} "
+                    f"continues on it ({len(moved['added'])} new step(s)).",
+                )
+                return "replan_activated"
+    except Exception:  # noqa: BLE001 — the inactive revision still stands
+        log.warning(
+            "projects: could not auto-activate re-plan rev %s for %s",
+            rev, task_id, exc_info=True,
+        )
+        return None
+
+
+def run_replans(bconn, task_ids: Sequence[str]) -> List[dict]:
+    """The automatic re-plans this run's cards caused, for the run page and
+    Task mode: ``[{task_id, title, rev}]``."""
+    out: List[dict] = []
+    for task_id in task_ids:
+        event = kanban_db.latest_event(bconn, task_id, REPLAN_EVENTS)
+        if event is None or event.kind != "replan_activated":
+            continue
+        task = kanban_db.get_task(bconn, task_id)
+        out.append({
+            "task_id": task_id,
+            "title": task.title if task else None,
+            "rev": (event.payload or {}).get("rev"),
+        })
+    return out
 
 
 def notify_if_awaiting_checkpoint(

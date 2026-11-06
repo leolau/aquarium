@@ -166,17 +166,26 @@ describe("liveState", () => {
             block_kind: "needs_input",
             reason: null,
             parked: true,
-            block_recurrences: 2,
+            block_recurrences: 3,
             replan: { status: "drafting" },
           },
         ],
       }),
     });
     expect(s.kind).toBe("needs_you");
-    expect(s.nextForYou).toContain("parked after 2 blocks — re-planning");
+    expect(s.nextForYou).toContain("parked after 3 blocks — re-planning");
     expect(
-      parkedText({ block_recurrences: 2, replan: { status: "proposed", rev: 4 } }),
+      parkedText({ block_recurrences: 3, replan: { status: "proposed", rev: 4 } }),
     ).toContain("revision 4");
+    expect(
+      parkedText({
+        block_recurrences: 3,
+        replan: { status: "held", rev: 4, detail: "it still contains the stuck step unchanged" },
+      }),
+    ).toContain("not activated automatically: it still contains the stuck step unchanged");
+    expect(
+      parkedText({ block_recurrences: 3, replan: { status: "activated", rev: 4 } }),
+    ).toContain("re-planned automatically (plan revision 4)");
   });
 
   it("is Stalled on the server's stall signal, and says what to unstick", () => {

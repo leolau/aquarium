@@ -57,9 +57,10 @@ export type LivePrimary =
   | { kind: "start" };
 
 /**
- * A block-loop-parked card's state, e.g. "parked after 2 blocks —
+ * A block-loop-parked card's state, e.g. "parked after 3 blocks —
  * re-planning". The card is never restarted automatically; the server
- * drafts a revised plan once per parking.
+ * drafts a revised plan once per parking (an autonomous project then
+ * activates it unless it repeats the stuck step).
  */
 export function parkedText(wait: {
   block_recurrences?: number;
@@ -70,6 +71,12 @@ export function parkedText(wait: {
   const replan = wait.replan;
   if (replan?.status === "proposed") {
     return `${head} — a revised plan${replan.rev ? ` (revision ${replan.rev})` : ""} is ready for review in the Plan panel`;
+  }
+  if (replan?.status === "held") {
+    return `${head} — a revised plan${replan.rev ? ` (revision ${replan.rev})` : ""} is waiting for your review${replan.detail ? ` (not activated automatically: ${replan.detail})` : ""}`;
+  }
+  if (replan?.status === "activated") {
+    return `${head} — re-planned automatically${replan.rev ? ` (plan revision ${replan.rev})` : ""}`;
   }
   if (replan?.status === "failed") return `${head} — the re-plan failed`;
   return `${head} — re-planning`;

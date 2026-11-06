@@ -1038,10 +1038,10 @@ def test_resume_re_promotes_a_checkpoint_successor_stuck_in_triage(stores):
             out = projects_run.continue_run(conn, bconn, project=fresh, run=run)
     assert send_id in out["promoted"]  # checkpoint passed, "send" released
 
-    # Simulate "send" getting bounced to triage by the loop breaker (two
-    # same-cause blocks) after its checkpoint already passed.
+    # Simulate "send" getting bounced to triage by the loop breaker
+    # (same-cause blocks up to the limit) after its checkpoint already passed.
     with kanban_db.connect_closing() as bconn:
-        for _ in range(2):
+        for _ in range(kanban_db.BLOCK_RECURRENCE_LIMIT):
             bconn.execute(
                 "UPDATE tasks SET status = 'running' WHERE id = ?", (send_id,)
             )

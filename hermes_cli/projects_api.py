@@ -2833,8 +2833,11 @@ def _card_payload(bconn, project: projects_db.Project, task_id: str, *, principa
             bconn, [task_id]
         ).get(task_id, [])
     payload["parked"] = kanban_db.is_block_loop_parked(task)
-    if payload["parked"]:
-        payload["replan"] = projects_run.parked_replan_state(bconn, task_id)
+    if payload["parked"] or task.status == "archived":
+        replan = projects_run.parked_replan_state(bconn, task_id)
+        # A card an automatic re-plan superseded says so after it is archived.
+        if payload["parked"] or replan["status"] == "activated":
+            payload["replan"] = replan
     payload["model_calls"] = _card_model_calls(bconn, task)
     return payload
 
@@ -4112,6 +4115,9 @@ def _run_payload(
         else []
     )
     payload["waiting_on_you"] = waiting
+    payload["replanned"] = projects_run.run_replans(
+        bconn, [c["task_id"] for c in cards]
+    )
     payload["stalled"] = not waiting and _run_stalled(run, cards, blocked)
     checkpoint_wait = _checkpoint_wait_payload(conn, bconn, project, run, cards)
     payload["awaiting_continue"] = checkpoint_wait is not None
