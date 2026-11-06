@@ -447,6 +447,13 @@ export function RunView({
         text: "This run finished. Review what it delivered below, then score it.",
       };
     }
+    const replanned = run.replanned?.[run.replanned.length - 1];
+    if (live && replanned && run.status === "running") {
+      return {
+        tone: "ok",
+        text: `Re-planned automatically after "${replanned.title ?? replanned.task_id}" parked — this run continues on plan revision ${replanned.rev ?? "?"}.`,
+      };
+    }
     if (live) {
       return {
         tone: "ok",

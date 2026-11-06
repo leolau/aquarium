@@ -272,6 +272,16 @@ export function TaskView({
           ) : null}
         </section>
 
+        {runDetail?.replanned?.map((r) => (
+          <p
+            key={r.task_id}
+            data-component="TaskReplanned"
+            className="rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs"
+          >
+            Re-planned automatically after “{r.title ?? r.task_id}” parked — the run continues on plan revision {r.rev ?? "?"}.
+          </p>
+        ))}
+
         {project.runs.length > 0 ? <TaskSummaryBar project={project} run={runDetail} /> : null}
 
         {phase === "done" ? (

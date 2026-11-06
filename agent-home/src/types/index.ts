@@ -1922,15 +1922,24 @@ export interface ProjectRunBlockedTask {
   error: string | null;
 }
 
-/** A card in the run's dependency tree that only a person can clear. */
-/** Where the re-plan for a block-loop-parked card stands. */
+/** Where the re-plan for a block-loop-parked card stands. `activated`
+ * (autonomous projects): the revision is live and the run moved onto it;
+ * `held`: it was kept for a person (`detail` says why). */
 export interface ProjectParkedReplan {
-  status: "pending" | "drafting" | "proposed" | "failed";
+  status: "pending" | "drafting" | "proposed" | "failed" | "activated" | "held";
   /** The proposed plan revision, once saved. */
   rev?: number;
   detail?: string;
 }
 
+/** An automatic re-plan this run made after one of its cards parked. */
+export interface ProjectRunReplan {
+  task_id: string;
+  title: string | null;
+  rev: number | null;
+}
+
+/** A card in the run's dependency tree that only a person can clear. */
 export interface ProjectRunHumanWait {
   task_id: string;
   title: string | null;
@@ -1993,6 +2002,8 @@ export interface ProjectRun {
    * runs are skipped until these are answered.
    */
   waiting_on_you?: ProjectRunHumanWait[];
+  /** Automatic re-plans (autonomous projects) this run continued on. */
+  replanned?: ProjectRunReplan[];
   cost?: number | null;
   cost_recorded?: boolean;
   duration_seconds?: number;
