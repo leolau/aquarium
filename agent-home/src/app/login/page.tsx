@@ -33,14 +33,16 @@ export default async function LoginPage({
     }
   }
 
+  const profile = (await searchParams).profile?.trim() || undefined;
+
   return (
     <MobileShell title={t("title")} showCoral={false} actions={<LanguageSwitch />}>
       <p className="mb-6 text-sm text-[var(--color-muted)]">{t("intro")}</p>
-      <LoginForm providers={providers} profile={(await searchParams).profile?.trim() || undefined} />
+      <LoginForm providers={providers} profile={profile} />
       {/* Self-service recovery: a locked-out user cannot sign in to ask, and
        * nobody hands out temporary passwords by hand any more. */}
       <div className="mt-4">
-        <ResetRequestForm />
+        <ResetRequestForm profile={profile} />
       </div>
     </MobileShell>
   );

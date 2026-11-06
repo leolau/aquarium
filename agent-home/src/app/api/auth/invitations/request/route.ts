@@ -7,7 +7,9 @@
  * enrolled in this profile" are exactly the enumeration oracle a sign-in page
  * must not offer, and the link itself is never returned to the requester — it
  * is minted for an admin to hand over — so this cannot be turned into a
- * takeover of somebody else's account.
+ * takeover of somebody else's account. `profile` (the sign-in page's
+ * `?profile=`) is forwarded as a hint for which of the person's enrolments
+ * the request lands in.
  */
 import { NextResponse } from "next/server";
 
@@ -16,6 +18,7 @@ import { callerIp } from "@/lib/api/callerIp";
 
 interface RequestBody {
   email?: unknown;
+  profile?: unknown;
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -26,9 +29,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     body = {};
   }
   const email = typeof body.email === "string" ? body.email.trim() : "";
+  const profile = typeof body.profile === "string" ? body.profile.trim() : "";
   if (email) {
     try {
-      await new HermesApiClient().requestInvitation(email, callerIp(request));
+      await new HermesApiClient().requestInvitation(email, callerIp(request), profile);
     } catch {
       // Deliberately swallowed: an error here would distinguish an address the
       // box knows from one it does not.

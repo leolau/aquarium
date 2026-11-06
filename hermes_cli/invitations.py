@@ -21,6 +21,11 @@ What that costs, and how it is paid for here:
 * Verification is a hash lookup plus :func:`hmac.compare_digest` on the stored
   digest, so a token that collides on the index still has to match in constant
   time.
+* The stored hash is **bound to the profile** the token was minted in
+  (:func:`hash_token`, ``v2:<profile>:<token>``), and the link names that
+  profile (:func:`activation_path`). The name only routes the lookup; a link
+  presented under another profile's name matches no row there. Bare v1 hashes
+  from before the binding are honoured in the default profile only.
 * Every lookup failure returns ``None``. The caller cannot distinguish
   "unknown", "expired", "used" or "revoked", which is what keeps the
   unauthenticated redeem endpoint from being an existence oracle.
@@ -184,20 +189,52 @@ def mint_token() -> str:
     return secrets.token_urlsafe(TOKEN_BYTES)
 
 
-def activation_path(token: str) -> str:
-    """Return the relative activation path for ``token``.
+#: The profile a legacy ``/activate/<token>`` link (and a v1 hash) belongs to.
+DEFAULT_PROFILE = "default"
+
+
+def activation_path(token: str, profile: str | None = None) -> str:
+    """Return the relative activation path for ``token`` minted in ``profile``.
 
     Relative on purpose: the absolute link is composed by the surface that
     knows its own public origin (the ``agent-home`` BFF, from the request), so
     the Python layer needs no configured public URL and cannot mint a link
     pointing at the wrong host.
+
+    A named profile travels in the path (``/activate/<profile>/<token>``) so
+    redemption runs in the profile whose ``invitations`` table holds the row;
+    the default profile keeps the legacy ``/activate/<token>`` shape. The
+    profile is routing metadata, not a grant: the stored hash binds the token
+    to it (:func:`hash_token`), so a link presented under another name fails.
     """
+    name = (profile or "").strip()
+    if name and name != DEFAULT_PROFILE:
+        return f"/activate/{name}/{token}"
     return f"/activate/{token}"
 
 
-def hash_token(token: str) -> bytes:
-    """Return the SHA-256 digest stored in place of ``token``."""
-    return hashlib.sha256(token.encode("utf-8")).digest()
+def hash_token(token: str, profile: str | None = None) -> bytes:
+    """Return the SHA-256 digest stored in place of ``token``.
+
+    With ``profile`` this is the v2 digest, ``sha256("v2:<profile>:<token>")``,
+    which binds the token to the profile it was minted in. Without it, the v1
+    digest of the bare token — what links minted before the binding stored,
+    still honoured in the default profile until they expire.
+    """
+    material = token if profile is None else f"v2:{profile}:{token}"
+    return hashlib.sha256(material.encode("utf-8")).digest()
+
+
+def token_digests(token: str, profile: str) -> tuple[bytes, ...]:
+    """Every digest under which ``token`` may be stored in ``profile``.
+
+    The v2 digest for ``profile``, plus the legacy v1 digest in the default
+    profile only (where every pre-binding link was minted).
+    """
+    digests = (hash_token(token, profile),)
+    if profile == DEFAULT_PROFILE:
+        digests += (hash_token(token),)
+    return digests
 
 
 def invitation_ttl_seconds(
@@ -364,9 +401,13 @@ class InvitationStore:
         store: "SupabaseAppStore",
         *,
         config: Mapping[str, object] | None = None,
+        profile: str = DEFAULT_PROFILE,
     ) -> None:
         self._store = store
         self._config = config or {}
+        #: The profile whose schema ``store`` reaches; new tokens are bound to
+        #: it and lookups accept only digests bound to it.
+        self.profile = profile or DEFAULT_PROFILE
 
     async def mint(
         self,
@@ -407,7 +448,7 @@ class InvitationStore:
                     """,
                     user_id,
                     kind,
-                    hash_token(token),
+                    hash_token(token, self.profile),
                     float(ttl),
                     created_by,
                 )
@@ -484,7 +525,7 @@ class InvitationStore:
         render a set-password form or the neutral "no longer valid" card. Every
         failure — unknown, tampered, expired, used, revoked — is ``None``.
         """
-        digest = hash_token(token or "")
+        digests = token_digests(token or "", self.profile)
         own = connection is None
         conn = connection or await self._store.connect()
         try:
@@ -496,14 +537,14 @@ class InvitationStore:
                     SELECT id, user_id, kind, token_hash, expires_at, used_at,
                            revoked_at, created_by, created_at
                     FROM invitations
-                    WHERE token_hash = $1
+                    WHERE token_hash = ANY($1::bytea[])
                       AND used_at IS NULL
                       AND revoked_at IS NULL
                       AND expires_at > NOW()
                     """,
-                    digest,
+                    list(digests),
                 )
-            if row is None or not _digest_matches(row["token_hash"], digest):
+            if row is None or not _digest_matches(row["token_hash"], digests):
                 return None
             return Invitation.from_row(row)
         finally:
@@ -524,7 +565,7 @@ class InvitationStore:
         calls :meth:`release` if it fails, so a GoTrue outage does not consume
         somebody's only link.
         """
-        digest = hash_token(token or "")
+        digests = token_digests(token or "", self.profile)
         own = connection is None
         conn = connection or await self._store.connect()
         try:
@@ -534,16 +575,16 @@ class InvitationStore:
                 row = await conn.fetchrow(
                     """
                     UPDATE invitations SET used_at = NOW()
-                    WHERE token_hash = $1
+                    WHERE token_hash = ANY($1::bytea[])
                       AND used_at IS NULL
                       AND revoked_at IS NULL
                       AND expires_at > NOW()
                     RETURNING id, user_id, kind, token_hash, expires_at,
                               used_at, revoked_at, created_by, created_at
                     """,
-                    digest,
+                    list(digests),
                 )
-            if row is None or not _digest_matches(row["token_hash"], digest):
+            if row is None or not _digest_matches(row["token_hash"], digests):
                 return None
             return Invitation.from_row(row)
         finally:
@@ -599,11 +640,12 @@ async def _bind_redeem(connection: "asyncpg.Connection") -> None:
     )
 
 
-def _digest_matches(stored: object, digest: bytes) -> bool:
-    """Constant-time comparison of the stored digest against ``digest``."""
+def _digest_matches(stored: object, digests: tuple[bytes, ...]) -> bool:
+    """Constant-time comparison of the stored digest against each candidate."""
     if not isinstance(stored, (bytes, bytearray, memoryview)):
         return False
-    return hmac.compare_digest(bytes(stored), digest)
+    value = bytes(stored)
+    return any([hmac.compare_digest(value, digest) for digest in digests])
 
 
 def _as_dt(value: object) -> datetime:

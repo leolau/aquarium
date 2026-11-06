@@ -8,7 +8,9 @@
  * because upstream returns an *identical* neutral 400 for every failure mode
  * (unknown, tampered, expired, already used, revoked, rate-limited), and any
  * local pre-check here would leak the distinction the neutrality is protecting.
- * The token is never logged.
+ * The token is never logged. `profile` (from `/activate/<profile>/<token>`)
+ * is forwarded as-is; upstream validates it and answers the same neutral 400
+ * for an unknown one.
  */
 import { NextResponse } from "next/server";
 
@@ -18,6 +20,7 @@ import { callerIp } from "@/lib/api/callerIp";
 interface RedeemBody {
   token?: unknown;
   password?: unknown;
+  profile?: unknown;
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -29,10 +32,11 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
   const token = typeof body.token === "string" ? body.token : "";
   const password = typeof body.password === "string" ? body.password : "";
+  const profile = typeof body.profile === "string" ? body.profile.trim() : "";
   try {
     return NextResponse.json(
       await new HermesApiClient().redeemInvitation(
-        { token, password },
+        { token, password, ...(profile ? { profile } : {}) },
         callerIp(request),
       ),
     );

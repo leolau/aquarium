@@ -89,10 +89,11 @@ def _print_activation_link(token: str, *, expires_at: str) -> None:
     to a broken one.
     """
     print(f"Activation link (valid until {expires_at}, single use):")
-    print(f"  {activation_path(token)}")
+    path = activation_path(token, administered_profile())
+    print(f"  {path}")
     print(
         "Prefix it with your agent-home origin, e.g. "
-        f"https://<your-agent-home>{activation_path(token)}"
+        f"https://<your-agent-home>{path}"
     )
 
 

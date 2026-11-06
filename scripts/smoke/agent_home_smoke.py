@@ -101,6 +101,7 @@ PAGES: Tuple[PageSpec, ...] = (
     PageSpec("/login", anon="public", anon_markers=("LoginForm",), redirect="/", quick=True),
     PageSpec("/setup", ("SetupChecking",), shell=False, anon="public", anon_markers=("SetupChecking",)),
     PageSpec("/activate/smoke-bogus-token", ("ActivateForm",), shell=False, anon="public", anon_markers=("ActivateForm",)),
+    PageSpec("/activate/default/smoke-bogus-token", ("ActivateForm",), shell=False, anon="public", anon_markers=("ActivateForm",)),
     PageSpec("/survey/smoke-bogus-token", ("SurveyLinkInvalid",), shell=False, anon="public", anon_markers=("SurveyLinkInvalid",)),
     PageSpec("/fb/smoke-bogus-token"),
     PageSpec("/onboarding", ("OnboardingWizard",)),

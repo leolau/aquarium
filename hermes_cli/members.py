@@ -299,6 +299,8 @@ class CreatedMember:
     enrolled_existing: bool
     invitation: Invitation | None = None
     invitation_token: str | None = None
+    #: The profile the invitation was minted in; its link names it.
+    profile: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -315,7 +317,7 @@ class CreatedMember:
             ),
             "invitation_token": self.invitation_token,
             "activation_path": (
-                activation_path(self.invitation_token)
+                activation_path(self.invitation_token, self.profile)
                 if self.invitation_token
                 else None
             ),
@@ -336,6 +338,7 @@ class ImportRow:
     #: Present only on an applied row that created an account, and only in the
     #: response the importer receives. Never persisted or logged.
     invitation_token: str | None = None
+    profile: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -347,7 +350,7 @@ class ImportRow:
             "user_id": self.user_id,
             "error": self.error,
             "activation_path": (
-                activation_path(self.invitation_token)
+                activation_path(self.invitation_token, self.profile)
                 if self.invitation_token
                 else None
             ),
@@ -776,9 +779,14 @@ class MemberService:
         """
         if self._invitations is None:
             self._invitations = InvitationStore(
-                self._store.app_store, config=self._config
+                self._store.app_store, config=self._config, profile=self.profile
             )
         return self._invitations
+
+    @property
+    def profile(self) -> str:
+        """The profile this service administers — the one its links carry."""
+        return administered_profile()
 
     # -- reads ---------------------------------------------------------------
 
@@ -993,6 +1001,7 @@ class MemberService:
             enrolled_existing=False,
             invitation=minted.invitation,
             invitation_token=minted.token,
+            profile=self.profile,
         )
 
     async def import_members(
@@ -1045,6 +1054,7 @@ class MemberService:
                     ),
                     user_id=created.principal.user_id,
                     invitation_token=created.invitation_token,
+                    profile=created.profile,
                 )
             )
         return ImportOutcome(dry_run=dry_run, rows=tuple(results))

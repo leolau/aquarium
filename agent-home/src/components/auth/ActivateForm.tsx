@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { errorMessage, sendJson } from "@/components/users/api";
+import { loginPathAfterActivation } from "@/lib/auth/activation-link";
 import { useAction } from "@/lib/use-action";
 
 /** Mirrors the server-side minimum; the server is still the authority. */
@@ -20,8 +21,12 @@ const MIN_PASSWORD_LENGTH = 12;
  * revoked or rate-limited token. Distinguishing them would turn this form into
  * an oracle for guessing valid tokens, so this component adds no diagnosis of
  * its own beyond the local length check.
+ *
+ * `profile` is the named profile from `/activate/<profile>/<token>`; it is
+ * posted with the token (the server looks the token up only there) and the
+ * "Sign in" step lands in it.
  */
-export function ActivateForm({ token }: { token: string }) {
+export function ActivateForm({ token, profile }: { token: string; profile?: string }) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -41,7 +46,11 @@ export function ActivateForm({ token }: { token: string }) {
     }
     setBusy(true);
     try {
-      await sendJson("/api/auth/invitations/redeem", "POST", { token, password });
+      await sendJson("/api/auth/invitations/redeem", "POST", {
+        token,
+        password,
+        ...(profile ? { profile } : {}),
+      });
       setDone(true);
     } catch (err) {
       setError(errorMessage(err, "This link cannot be used."));
@@ -60,7 +69,7 @@ export function ActivateForm({ token }: { token: string }) {
       >
         <p>Your password is set and your account is open.</p>
         <a
-          href="/login"
+          href={loginPathAfterActivation(profile)}
           className="mt-3 inline-block rounded-lg bg-[var(--color-accent)] px-3 py-2 text-sm font-medium text-[var(--color-accent-fg)]"
         >
           Sign in
