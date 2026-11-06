@@ -58,6 +58,25 @@ function stepsToPayload(drafts: StepDraft[]): PlaybookStep[] {
   }));
 }
 
+/**
+ * Inactive revisions split by where they sit relative to the active one.
+ * Only a revision written *after* the active plan is a pending proposal;
+ * an older one is history (it was superseded, or never picked), so it must
+ * not reappear as "awaiting a decision" every time another rev is activated.
+ */
+export function splitRevisions(playbook: ProjectPlaybookResponse | null): {
+  proposed: PlaybookRev[];
+  earlier: PlaybookRev[];
+} {
+  const inactive = (playbook?.revisions ?? []).filter((rev) => !rev.active);
+  const activeRev = playbook?.active?.rev;
+  if (activeRev == null) return { proposed: inactive, earlier: [] };
+  return {
+    proposed: inactive.filter((rev) => rev.rev > activeRev),
+    earlier: inactive.filter((rev) => rev.rev < activeRev),
+  };
+}
+
 function draftsFromRev(rev: PlaybookRev | null): StepDraft[] {
   const steps = rev?.steps ?? [];
   if (steps.length === 0) return [{ ...EMPTY_STEP }];
@@ -99,7 +118,7 @@ export function PlanPanel({
   const timeLabel = useTimeLabel();
   const { refresh } = useRefresh();
   const active = playbook?.active ?? null;
-  const proposed = (playbook?.revisions ?? []).filter((rev) => !rev.active);
+  const { proposed, earlier } = splitRevisions(playbook);
 
   const [editing, setEditing] = useState(false);
   const [body, setBody] = useState("");
@@ -110,6 +129,7 @@ export function PlanPanel({
   const [error, setError] = useState<string | null>(null);
   const [drafting, setDrafting] = useState(false);
   const [draftNotice, setDraftNotice] = useState<string | null>(null);
+  const [activatedRev, setActivatedRev] = useState<number | null>(null);
   // A proposed revision is a pending decision — the only moves are
   // Activate or Discard. Starting another draft/write on top of it would
   // just stack more undecided revisions.
@@ -179,6 +199,7 @@ export function PlanPanel({
   }, [archived, unavailable, slugPath, drafting, settleDraft]);
 
   const draftWithAgent = () => {
+    setActivatedRev(null);
     setError(null);
     setDraftNotice(null);
     void draftAction.run(`${slugPath}/playbook/draft`, {
@@ -189,6 +210,7 @@ export function PlanPanel({
   };
 
   const openEditor = (from: PlaybookRev | null) => {
+    setActivatedRev(null);
     setBody(from?.body ?? "");
     setSteps(draftsFromRev(from));
     setError(null);
@@ -279,6 +301,16 @@ export function PlanPanel({
               The agent is reading the brief and drafting steps — usually under
               a minute. It will appear below as a proposed revision; you can
               leave this page, the draft continues on the server.
+            </p>
+          ) : null}
+
+          {activatedRev != null && active?.rev === activatedRev ? (
+            <p
+              data-component="PlanActivatedNotice"
+              role="status"
+              className="mt-2 text-sm text-[var(--color-accent)]"
+            >
+              Revision {activatedRev} is now the active plan — the next run uses it.
             </p>
           ) : null}
 
@@ -505,48 +537,38 @@ export function PlanPanel({
               </h3>
               <ul className="mt-1.5 flex flex-col gap-2">
                 {proposed.map((rev) => (
-                  <li
+                  <RevisionRow
                     key={rev.rev}
-                    className="rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm"
-                  >
-                    {rev.body ? (
-                      <p className="whitespace-pre-wrap">{rev.body}</p>
-                    ) : null}
-                    {(rev.steps ?? []).length > 0 ? (
-                      <ol className="mt-1 flex flex-col gap-0.5 text-xs">
-                        {(rev.steps ?? []).map((step, index) => (
-                          <li key={step.key}>
-                            {index + 1}. {step.title}
-                            {step.assignee ? ` → ${step.assignee}` : ""}
-                            {step.checkpoint ? " · checkpoint" : ""}
-                          </li>
-                        ))}
-                      </ol>
-                    ) : (
-                      <p className="text-[var(--color-muted)]">no steps</p>
-                    )}
-                    <div className="mt-1.5 flex items-center gap-2">
-                      <p className="min-w-0 flex-1 text-xs text-[var(--color-muted)]">
-                        revision {rev.rev}
-                        {rev.note ? ` · ${rev.note}` : ""}
-                        {rev.created_by ? ` · by ${rev.created_by}` : ""}
-                      </p>
-                      {!archived && canActivate ? (
-                        <>
-                          <DiscardRevision slug={slug} rev={rev.rev} />
-                          <ActivateRevision slug={slug} rev={rev.rev} />
-                        </>
-                      ) : null}
-                      {!archived && !canActivate ? (
-                        <span className="text-xs text-[var(--color-muted)]">
-                          a lead activates or discards
-                        </span>
-                      ) : null}
-                    </div>
-                  </li>
+                    slug={slug}
+                    rev={rev}
+                    canActivate={canActivate}
+                    archived={archived}
+                    onActivated={setActivatedRev}
+                  />
                 ))}
               </ul>
             </div>
+          ) : null}
+
+          {earlier.length > 0 && !editing ? (
+            <details className="mt-3" data-component="EarlierRevisions">
+              <summary className="cursor-pointer text-xs font-medium text-[var(--color-muted)]">
+                Earlier revisions ({earlier.length}) — not in use
+              </summary>
+              <ul className="mt-1.5 flex flex-col gap-2">
+                {earlier.map((rev) => (
+                  <RevisionRow
+                    key={rev.rev}
+                    slug={slug}
+                    rev={rev}
+                    canActivate={canActivate}
+                    archived={archived}
+                    onActivated={setActivatedRev}
+                    activateLabel="Switch back to this"
+                  />
+                ))}
+              </ul>
+            </details>
           ) : null}
 
           {error ? (
@@ -559,6 +581,68 @@ export function PlanPanel({
         </>
       )}
     </section>
+  );
+}
+
+/**
+ * One inactive revision: its prose, steps and provenance, with the lead's
+ * Discard + Activate (members see who decides instead).
+ */
+function RevisionRow({
+  slug,
+  rev,
+  canActivate,
+  archived,
+  onActivated,
+  activateLabel = "Activate",
+}: {
+  slug: string;
+  rev: PlaybookRev;
+  canActivate: boolean;
+  archived: boolean;
+  onActivated: (rev: number) => void;
+  activateLabel?: string;
+}) {
+  return (
+    <li className="rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm">
+      {rev.body ? <p className="whitespace-pre-wrap">{rev.body}</p> : null}
+      {(rev.steps ?? []).length > 0 ? (
+        <ol className="mt-1 flex flex-col gap-0.5 text-xs">
+          {(rev.steps ?? []).map((step, index) => (
+            <li key={step.key}>
+              {index + 1}. {step.title}
+              {step.assignee ? ` → ${step.assignee}` : ""}
+              {step.checkpoint ? " · checkpoint" : ""}
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="text-[var(--color-muted)]">no steps</p>
+      )}
+      <div className="mt-1.5 flex items-center gap-2">
+        <p className="min-w-0 flex-1 text-xs text-[var(--color-muted)]">
+          revision {rev.rev}
+          {rev.note ? ` · ${rev.note}` : ""}
+          {rev.created_by ? ` · by ${rev.created_by}` : ""}
+        </p>
+        {!archived && canActivate ? (
+          <>
+            <DiscardRevision slug={slug} rev={rev.rev} />
+            <ActivateRevision
+              slug={slug}
+              rev={rev.rev}
+              label={activateLabel}
+              onActivated={onActivated}
+            />
+          </>
+        ) : null}
+        {!archived && !canActivate ? (
+          <span className="text-xs text-[var(--color-muted)]">
+            a lead activates or discards
+          </span>
+        ) : null}
+      </div>
+    </li>
   );
 }
 
@@ -597,7 +681,17 @@ function DiscardRevision({ slug, rev }: { slug: string; rev: number }) {
  * A lead's Activate on one proposed revision — its own lock, so activating
  * one revision never leaves another row looking idle mid-write.
  */
-function ActivateRevision({ slug, rev }: { slug: string; rev: number }) {
+function ActivateRevision({
+  slug,
+  rev,
+  label,
+  onActivated,
+}: {
+  slug: string;
+  rev: number;
+  label: string;
+  onActivated: (rev: number) => void;
+}) {
   const action = useProjectAction();
   return (
     <>
@@ -608,12 +702,12 @@ function ActivateRevision({ slug, rev }: { slug: string; rev: number }) {
         onClick={() =>
           void action.run(
             `/api/projects/${encodeURIComponent(slug)}/playbook/${rev}/activate`,
-            { body: {} },
+            { body: {}, onSuccess: () => onActivated(rev) },
           )
         }
         className="rounded-lg bg-[var(--color-accent)] px-2.5 py-1 text-xs font-medium text-[var(--color-accent-fg)] disabled:opacity-50"
       >
-        Activate
+        {label}
       </ActionButton>
       <ActionError
         action={action}

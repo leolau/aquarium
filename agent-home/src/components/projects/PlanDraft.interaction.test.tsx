@@ -225,3 +225,73 @@ describe("PlanPanel — a proposed revision is the pending decision", () => {
     expect(router.refresh).not.toHaveBeenCalled();
   });
 });
+
+describe("PlanPanel — a superseded revision is history, not a pending decision", () => {
+  const REV = (rev: number, active: 0 | 1, body: string) => ({
+    project_id: "prj_1",
+    rev,
+    body,
+    steps: [{ key: `s${rev}`, title: `Step of rev ${rev}` }],
+    active,
+    created_by: "leo",
+    created_at: rev,
+    activated_at: active ? 10 : null,
+    note: "drafted by the agent",
+  });
+
+  it("keeps an older inactive revision out of the proposals and leaves Draft/Revise open", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(jsonResponse(200, { status: "idle" }))),
+    );
+    const { container, getByText, queryByText } = render(
+      <PlanPanel
+        {...PROPS}
+        playbook={{ active: REV(2, 1, "Second plan."), revisions: [REV(2, 1, "Second plan."), REV(1, 0, "First plan.")] }}
+      />,
+    );
+    expect(container.querySelector('[data-component="ProposedRevisions"]')).toBeNull();
+    expect(queryByText(/awaiting a decision/)).toBeNull();
+    const earlier = container.querySelector('[data-component="EarlierRevisions"]');
+    expect(earlier?.textContent).toContain("Earlier revisions (1)");
+    expect(earlier?.textContent).toContain("First plan.");
+    expect(getByText("Switch back to this")).toBeTruthy();
+    expect((getByText("Draft with the agent") as HTMLButtonElement).disabled).toBe(false);
+    expect((getByText("Revise") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("confirms the activation once the refreshed plan shows the new revision active", async () => {
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (init?.method === "POST" && url.endsWith("/playbook/3/activate")) {
+        return Promise.resolve(jsonResponse(200, { rev: 3, active: true, by: "leo" }));
+      }
+      return Promise.resolve(jsonResponse(200, { status: "idle" }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const before = {
+      active: REV(2, 1, "Second plan."),
+      revisions: [REV(3, 0, "Third plan."), REV(2, 1, "Second plan.")],
+    };
+    const { container, getByText, findByText, rerender } = render(
+      <PlanPanel {...PROPS} playbook={before} />,
+    );
+    expect(container.querySelector('[data-component="ProposedRevisions"]')).toBeTruthy();
+    fireEvent.click(getByText("Activate"));
+    await vi.waitFor(() => expect(router.refresh).toHaveBeenCalled());
+
+    rerender(
+      <PlanPanel
+        {...PROPS}
+        playbook={{
+          active: REV(3, 1, "Third plan."),
+          revisions: [REV(3, 1, "Third plan."), REV(2, 0, "Second plan.")],
+        }}
+      />,
+    );
+    await findByText(/Revision 3 is now the active plan/);
+    expect(container.querySelector('[data-component="ProposedRevisions"]')).toBeNull();
+    expect(container.querySelector('[data-component="EarlierRevisions"]')?.textContent).toContain(
+      "Second plan.",
+    );
+  });
+});
