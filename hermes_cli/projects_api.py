@@ -566,6 +566,7 @@ def _runs_brief(conn, project_id: str, *, limit: int = 5) -> list[dict]:
             "summary": r.get("summary"),
             "error": r.get("error"),
             "score_user": r.get("score_user"),
+            "auto_approve": bool(r.get("auto_approve")),
         }
         divergent = _divergent_self(r)
         if divergent is not None:
@@ -1250,7 +1251,9 @@ def _derive_task_brief(request_text: str) -> dict:
 
 def _launch_task_sync(project_id: str, rev: Optional[int], principal) -> dict:
     """Activate ``rev`` (when given), make the project active and start run 1
-    — the three steps a lead takes by hand in Project mode."""
+    — the three steps a lead takes by hand in Project mode. Pressing Start
+    also approves the run's cards (``auto_approve``), so the task runs
+    without a second "Approve all"."""
     with projects_db.connect_closing() as conn:
         if rev is not None:
             if not projects_db.activate_playbook_rev(
@@ -1268,6 +1271,7 @@ def _launch_task_sync(project_id: str, rev: Optional[int], principal) -> dict:
                 project=project,
                 trigger="manual",
                 triggered_by=principal.user_id,
+                auto_approve=True,
             )
 
 

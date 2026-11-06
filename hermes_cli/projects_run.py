@@ -1035,8 +1035,15 @@ def start_run(
     playbook_rev: Optional[int] = None,
     spawn_inline: Optional[Callable] = None,
     cost_reader: Optional[Callable] = None,
+    auto_approve: bool = False,
 ) -> Dict[str, Any]:
     """Open a run and bring up its cards + guidance (§6 pipeline).
+
+    ``auto_approve`` (Task mode's Start) records that the person approved
+    every card of the run by starting it. Cards the concurrency cap keeps
+    in triage are then queued, not waiting on anyone: ``refill_run_cards``
+    releases them as slots free. ``manual`` autonomy ("Every step") still
+    asks per card, and checkpoint holds still wait for Continue.
 
     The run pins its ``playbook_rev`` (§7.2), compiles the guidance block
     once (§5.1), instantiates the playbook onto the board, promotes per
@@ -1085,6 +1092,7 @@ def start_run(
         triggered_by=triggered_by,
         profile=host,
         playbook_rev=playbook["rev"],
+        auto_approve=auto_approve and (project.autonomy or "supervised") != "manual",
     )
 
     # §6 + C8: the run binds a REAL trace so its cost is readable through

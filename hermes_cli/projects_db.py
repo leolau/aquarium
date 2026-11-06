@@ -303,6 +303,7 @@ CREATE TABLE IF NOT EXISTS project_runs (
     scored_by     TEXT,
     scored_at     INTEGER,
     error         TEXT,
+    auto_approve  INTEGER NOT NULL DEFAULT 0,  -- Task mode: Start approved every card
     UNIQUE (project_id, run_no)
 );
 CREATE INDEX IF NOT EXISTS idx_project_runs_recent
@@ -530,6 +531,14 @@ _DIRECTIVE_COLUMN_MIGRATIONS: tuple[tuple[str, str], ...] = (
 )
 
 
+# Columns added to `project_runs` later. `auto_approve` marks a run whose
+# Start already approved every card (Task mode): cards still waiting in
+# triage are queued for a slot, not waiting on a person.
+_RUN_COLUMN_MIGRATIONS: tuple[tuple[str, str], ...] = (
+    ("auto_approve", "auto_approve INTEGER NOT NULL DEFAULT 0"),
+)
+
+
 def _migrate_add_optional_columns(conn: sqlite3.Connection) -> None:
     """Add columns introduced after v1 to legacy DBs (safe on every open)."""
     cols = {row["name"] for row in conn.execute("PRAGMA table_info(projects)")}
@@ -542,6 +551,10 @@ def _migrate_add_optional_columns(conn: sqlite3.Connection) -> None:
     for col, ddl in _DIRECTIVE_COLUMN_MIGRATIONS:
         if col not in dcols:
             _add_column_if_missing(conn, "project_directives", col, ddl)
+    rcols = {row["name"] for row in conn.execute("PRAGMA table_info(project_runs)")}
+    for col, ddl in _RUN_COLUMN_MIGRATIONS:
+        if col not in rcols:
+            _add_column_if_missing(conn, "project_runs", col, ddl)
     # Created here, not in SCHEMA_SQL: a legacy DB only has the column once
     # the ADD COLUMN above has run.
     conn.execute(
@@ -2809,6 +2822,7 @@ def open_project_run(
     profile: str,
     playbook_rev: Optional[int] = None,
     trace_id: Optional[str] = None,
+    auto_approve: bool = False,
 ) -> dict:
     """Open the run row: ``run_no = max+1``, status ``running`` (§6).
 
@@ -2833,10 +2847,11 @@ def open_project_run(
         conn.execute(
             """INSERT INTO project_runs
                (id, project_id, run_no, trigger, triggered_by, profile,
-                playbook_rev, status, started_at, trace_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)""",
+                playbook_rev, status, started_at, trace_id, auto_approve)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)""",
             (rid, project_id, run_no, trigger, triggered_by,
-             str(profile).strip(), playbook_rev, _now(), trace_id),
+             str(profile).strip(), playbook_rev, _now(), trace_id,
+             1 if auto_approve else 0),
         )
     return get_project_run_by_id(conn, rid)
 
