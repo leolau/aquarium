@@ -1923,12 +1923,25 @@ export interface ProjectRunBlockedTask {
 }
 
 /** A card in the run's dependency tree that only a person can clear. */
+/** Where the re-plan for a block-loop-parked card stands. */
+export interface ProjectParkedReplan {
+  status: "pending" | "drafting" | "proposed" | "failed";
+  /** The proposed plan revision, once saved. */
+  rev?: number;
+  detail?: string;
+}
+
 export interface ProjectRunHumanWait {
   task_id: string;
   title: string | null;
   block_kind: string;
   /** The card's latest note — what it is asking for. */
   reason: string | null;
+  /** Parked by the unblock-loop breaker: re-blocked for the same cause
+   * until it stopped being retried automatically. */
+  parked?: boolean;
+  block_recurrences?: number;
+  replan?: ProjectParkedReplan;
 }
 
 /**
@@ -2294,6 +2307,10 @@ export interface ProjectCardDetail extends ProjectBoardTask {
   worker_log_tail?: string | null;
   /** Provider-call stats for this card's workers; null when none recorded. */
   model_calls?: CardModelCalls | null;
+  /** Parked by the unblock-loop breaker (in triage, never auto-restarted). */
+  parked?: boolean;
+  block_recurrences?: number;
+  replan?: ProjectParkedReplan;
 }
 
 export interface CardCallStats {

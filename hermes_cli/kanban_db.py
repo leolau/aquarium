@@ -5666,6 +5666,97 @@ def specify_triage_task(
     return True
 
 
+def is_block_loop_parked(task: Any) -> bool:
+    """A card the unblock-loop breaker parked in ``triage``.
+
+    ``block_task`` routes a card to ``triage`` once it re-blocks for the
+    same cause :data:`BLOCK_RECURRENCE_LIMIT` times, keeping the counter on
+    the row; a card that reached ``triage`` any other way (a fresh project
+    run card, a human-created card) carries ``block_recurrences == 0``.
+    Accepts a :class:`Task` or a ``tasks`` row.
+    """
+    if task is None:
+        return False
+    if isinstance(task, sqlite3.Row):
+        keys = task.keys()
+        status = task["status"]
+        recurrences = task["block_recurrences"] if "block_recurrences" in keys else 0
+    else:
+        status = getattr(task, "status", None)
+        recurrences = getattr(task, "block_recurrences", 0)
+    return status == "triage" and int(recurrences or 0) >= BLOCK_RECURRENCE_LIMIT
+
+
+def latest_event(
+    conn: sqlite3.Connection, task_id: str, kinds: Iterable[str],
+) -> Optional[Event]:
+    """The newest event of one of ``kinds`` on ``task_id``, or ``None``."""
+    kinds = list(kinds)
+    if not kinds:
+        return None
+    placeholders = ",".join("?" for _ in kinds)
+    row = conn.execute(
+        f"SELECT * FROM task_events WHERE task_id = ? AND kind IN ({placeholders}) "
+        "ORDER BY id DESC LIMIT 1",
+        (task_id, *kinds),
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        payload = json.loads(row["payload"]) if row["payload"] else None
+    except Exception:
+        payload = None
+    return Event(
+        id=row["id"], task_id=row["task_id"], kind=row["kind"],
+        payload=payload, created_at=row["created_at"],
+        run_id=row["run_id"] if "run_id" in row.keys() else None,
+    )
+
+
+def append_event(
+    conn: sqlite3.Connection,
+    task_id: str,
+    kind: str,
+    payload: Optional[dict] = None,
+) -> None:
+    """Record an event on ``task_id`` in its own write txn (for callers
+    outside ``kanban_db`` — Projects marks what it did about a card)."""
+    with write_txn(conn):
+        _append_event(conn, task_id, kind, payload)
+
+
+def release_parked_task(
+    conn: sqlite3.Connection, task_id: str, *, actor: str,
+) -> bool:
+    """A person re-queues a card the unblock-loop breaker parked.
+
+    ``triage`` → ``todo`` (then the usual ready pass), and the loop counter
+    and block kind are cleared: someone looked at it and chose to try again,
+    so the next same-cause block starts a fresh count instead of parking the
+    card on its first re-block. Only for an explicit human act — automatic
+    promotion must leave a parked card alone (it is waiting on a decision).
+    Returns False when the card is not parked.
+    """
+    with write_txn(conn):
+        row = conn.execute(
+            "SELECT status, block_recurrences FROM tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+        if not is_block_loop_parked(row):
+            return False
+        cur = conn.execute(
+            "UPDATE tasks SET status = 'todo', block_kind = NULL, "
+            "block_recurrences = 0, retry_at = NULL "
+            "WHERE id = ? AND status = 'triage'",
+            (task_id,),
+        )
+        if cur.rowcount != 1:
+            return False
+        _append_event(conn, task_id, "block_loop_released", {"actor": actor})
+    recompute_ready(conn)
+    return True
+
+
 def decompose_triage_task(
     conn: sqlite3.Connection,
     task_id: str,

@@ -223,6 +223,9 @@ async def approve_cards(request: Request) -> dict[str, Any]:
 async def unblock_card(request: Request, task_id: str) -> dict[str, Any]:
     """Blocked → ready (or todo while a parent is open), ``{reason?}``.
 
+    Also re-runs a card the unblock-loop breaker parked in ``triage``
+    (:func:`kanban_db.release_parked_task` — clears its loop counter).
+
     The reason is posted to the card's comment thread *before* the move,
     so the worker the dispatcher spawns next reads it.
     """
@@ -244,11 +247,17 @@ async def unblock_card(request: Request, task_id: str) -> dict[str, Any]:
             task = kanban_db.get_task(bconn, task_id)
             if task is None or getattr(task, "project_id", None) != project.id:
                 raise KeyError(task_id)
-            if task.status != "blocked":
+            parked = kanban_db.is_block_loop_parked(task)
+            if task.status != "blocked" and not parked:
                 raise ValueError("the card is not blocked")
             if reason:
                 kanban_db.add_comment(bconn, task_id, actor, reason)
-            if not kanban_db.unblock_task(bconn, task_id):
+            if parked:
+                # Parked by the unblock-loop breaker: a person re-running it
+                # also clears the loop counter, so promotion works again.
+                if not kanban_db.release_parked_task(bconn, task_id, actor=actor):
+                    raise ValueError("the card is not parked any more")
+            elif not kanban_db.unblock_task(bconn, task_id):
                 raise ValueError("the card is not blocked")
             return kanban_view.task_dict(kanban_db.get_task(bconn, task_id))
 

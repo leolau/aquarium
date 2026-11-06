@@ -17,6 +17,7 @@ import {
   elapsedLabel,
   lastLines,
   liveState,
+  parkedText,
   progressSegments,
   silenceLevel,
   startedAgo,
@@ -153,6 +154,29 @@ describe("liveState", () => {
     });
     expect(s.kind).toBe("needs_you");
     expect(s.nextForYou).toContain("Connect Folder Bridge");
+  });
+
+  it("says a block-loop-parked card is re-planning and needs you, not running", () => {
+    const s = liveState(PROJECT(), BOARD(CARD({ status: "triage" })), {
+      run: RUN({
+        waiting_on_you: [
+          {
+            task_id: "g",
+            title: "Get the supplier price",
+            block_kind: "needs_input",
+            reason: null,
+            parked: true,
+            block_recurrences: 2,
+            replan: { status: "drafting" },
+          },
+        ],
+      }),
+    });
+    expect(s.kind).toBe("needs_you");
+    expect(s.nextForYou).toContain("parked after 2 blocks — re-planning");
+    expect(
+      parkedText({ block_recurrences: 2, replan: { status: "proposed", rev: 4 } }),
+    ).toContain("revision 4");
   });
 
   it("is Stalled on the server's stall signal, and says what to unstick", () => {

@@ -222,3 +222,35 @@ describe("CardDetailView — re-run a blocked card", () => {
     expect(view.queryByText("Edit card")).toBeNull();
   });
 });
+
+describe("CardDetailView — re-run a block-loop-parked card", () => {
+  const parked = () =>
+    card({
+      status: "triage",
+      parked: true,
+      block_recurrences: 2,
+      replan: { status: "drafting" },
+    });
+
+  it("says it is parked and re-planning, and offers Re-run instead of Stop", () => {
+    const view = render(<CardDetailView slug="tender" card={parked()} />);
+    expect(view.getByText(/Parked after 2 blocks — re-planning/)).toBeTruthy();
+    expect(view.getByText("Re-run card")).toBeTruthy();
+    expect(view.queryByText("Stop")).toBeNull();
+  });
+
+  it("Re-run posts to the same unblock route", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(json(200, { ...parked(), status: "ready", parked: false }));
+    vi.stubGlobal("fetch", fetchMock);
+    const view = render(<CardDetailView slug="tender" card={parked()} />);
+    await act(async () => {
+      fireEvent.click(view.getByText("Re-run card"));
+    });
+    expect(calls(fetchMock)[0]).toEqual({ url: UNBLOCK, method: "POST", body: {} });
+    await waitFor(() =>
+      expect(view.container.querySelector('[data-component="CardParked"]')).toBeNull(),
+    );
+  });
+});

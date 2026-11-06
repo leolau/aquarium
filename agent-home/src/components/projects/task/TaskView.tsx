@@ -129,6 +129,9 @@ export function TaskView({
   useRunLive(project.slug, open?.run_no ?? 0, open ? open.status : "done", setStreamedRun);
   const runDetail = streamedRun && open && streamedRun.run_no === open.run_no ? streamedRun : null;
   const live = liveState(project, board, { run: runDetail });
+  // A run still "running" on paper but held on the person (a parked or
+  // human-only card, a checkpoint) reads as Needs you, not Running.
+  const statusPhase: TaskPhase = phase === "running" && live.kind === "needs_you" ? "waiting" : phase;
   const stepStates = planStepStates(
     plan?.steps?.map((s) => s.key) ?? [],
     phase,
@@ -151,12 +154,12 @@ export function TaskView({
   const request = project.description || project.goal || project.name;
 
   return (
-    <div data-component="TaskView" data-phase={phase} className="grid gap-3 lg:grid-cols-[1fr_16rem]">
+    <div data-component="TaskView" data-phase={statusPhase} className="grid gap-3 lg:grid-cols-[1fr_16rem]">
       <div className="flex min-w-0 flex-col gap-3">
         <header data-component="TaskHeader" className={`${CARD} flex items-center gap-2`}>
           <h1 className="min-w-0 flex-1 truncate text-lg font-semibold">{project.name}</h1>
-          <span data-component="TaskStatus" className={`text-xs font-medium ${PHASE_TONE[phase]}`}>
-            ● {PHASE_LABEL[phase]}
+          <span data-component="TaskStatus" className={`text-xs font-medium ${PHASE_TONE[statusPhase]}`}>
+            ● {PHASE_LABEL[statusPhase]}
           </span>
           {open && canAct ? (
             <button

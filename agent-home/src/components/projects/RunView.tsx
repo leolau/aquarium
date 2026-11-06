@@ -11,6 +11,7 @@ import { useProjectAction } from "@/components/projects/useProjectAction";
 import {
   durationLabel,
 } from "@/components/projects/format";
+import { parkedText } from "@/components/projects/live/liveState";
 import { unwrapRunEnvelope } from "@/components/projects/envelopes";
 import { useRunLive } from "@/components/projects/useRunLive";
 import { useRunActivity } from "@/components/projects/useRunActivity";
@@ -414,7 +415,9 @@ export function RunView({
     if (humanWait) {
       return {
         tone: "action",
-        text: `"${humanWait.title ?? humanWait.task_id}" is waiting on you. This run continues once you answer or unblock it; scheduled runs are skipped until then.`,
+        text: humanWait.parked
+          ? `"${humanWait.title ?? humanWait.task_id}" was ${parkedText(humanWait)}. It won't be restarted automatically — review the revised plan, or answer the card and re-run it.`
+          : `"${humanWait.title ?? humanWait.task_id}" is waiting on you. This run continues once you answer or unblock it; scheduled runs are skipped until then.`,
         detail: humanWait.reason ?? undefined,
         href: `/projects/${encodeURIComponent(slug)}/cards/${encodeURIComponent(humanWait.task_id)}`,
         hrefLabel: "Open the card",

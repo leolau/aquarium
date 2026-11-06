@@ -7,6 +7,7 @@ import type {
   ProjectBoardTask,
   ProjectBoardView,
   ProjectDetail,
+  ProjectParkedReplan,
   ProjectRun,
   ProjectRunBrief,
 } from "@/types";
@@ -54,6 +55,25 @@ export type LivePrimary =
   | { kind: "continue"; runNo: number }
   | { kind: "close"; runNo: number }
   | { kind: "start" };
+
+/**
+ * A block-loop-parked card's state, e.g. "parked after 2 blocks —
+ * re-planning". The card is never restarted automatically; the server
+ * drafts a revised plan once per parking.
+ */
+export function parkedText(wait: {
+  block_recurrences?: number;
+  replan?: ProjectParkedReplan;
+}): string {
+  const n = wait.block_recurrences;
+  const head = n ? `parked after ${n} blocks` : "parked after repeated blocks";
+  const replan = wait.replan;
+  if (replan?.status === "proposed") {
+    return `${head} — a revised plan${replan.rev ? ` (revision ${replan.rev})` : ""} is ready for review in the Plan panel`;
+  }
+  if (replan?.status === "failed") return `${head} — the re-plan failed`;
+  return `${head} — re-planning`;
+}
 
 export interface LiveState {
   kind: LiveStateKind;
@@ -245,7 +265,9 @@ export function liveState(
   if (humanWait && !busy) {
     return make(
       "needs_you",
-      `answer “${humanWait.title ?? humanWait.task_id}” so run ${open.run_no} can continue.`,
+      humanWait.parked
+        ? `“${humanWait.title ?? humanWait.task_id}” was ${parkedText(humanWait)}. Review the revised plan, or answer the card and re-run it.`
+        : `answer “${humanWait.title ?? humanWait.task_id}” so run ${open.run_no} can continue.`,
       { kind: "stop_all", runNo: open.run_no },
       true,
     );
