@@ -248,6 +248,9 @@ SIGNED_IN = {
     # projects_api: project membership and project role checked per project
     "GET /api/registry/projects",
     "POST /api/registry/projects",
+    # Task mode: create + plan + start, under the same create/activate gates
+    "POST /api/registry/projects/quick-task",
+    "POST /api/registry/projects/{slug}/quick-task/start",
     "GET /api/registry/projects/doctor",
     "GET /api/registry/projects/running-cards",
     "GET /api/registry/projects/pinned-models",

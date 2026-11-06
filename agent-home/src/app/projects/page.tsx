@@ -1,5 +1,10 @@
 import { MobileShell } from "@/components/MobileShell";
 import { ProjectsList } from "@/components/projects/ProjectsList";
+import { ProjectsModeView } from "@/components/projects/task/ProjectsModeView";
+import {
+  projectViewContext,
+  type ViewContext,
+} from "@/components/projects/task/viewModeServer";
 import {
   filtersFromParams,
   filtersToParams,
@@ -28,10 +33,16 @@ export default async function Page({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requirePrincipal();
+  const principal = await requirePrincipal();
   const raw = await searchParams;
+  const client = await apiClientForRequest();
+  const view = await projectViewContext(client, raw.view);
+  if (view.mode === "task") {
+    return <TaskModePage view={view} canStart={principal.role !== "viewer"} />;
+  }
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(raw)) {
+    if (key === "view") continue;
     if (value !== undefined) {
       params.set(key, Array.isArray(value) ? value[0] : value);
     }
@@ -45,7 +56,6 @@ export default async function Page({
   // view preference and never reaches the upstream query.
   const state = filtersFromParams(params);
   try {
-    const client = await apiClientForRequest();
     const query = filtersToParams(state);
     const [projectsPage, categoriesRes] = await Promise.all([
       client.projects({
@@ -78,10 +88,52 @@ export default async function Page({
           Couldn&apos;t load your projects ({error}).
         </div>
       ) : (
-        <ProjectsList
-          initial={projects}
-          categories={categories}
-          initialFilters={state}
+        <ProjectsModeView mode="project" device={view.device}>
+          <ProjectsList
+            initial={projects}
+            categories={categories}
+            initialFilters={state}
+          />
+        </ProjectsModeView>
+      )}
+    </MobileShell>
+  );
+}
+
+/**
+ * Projects in Task mode: every project the caller may read (the list route
+ * enforces visibility), of which the home keeps the one-off ones.
+ */
+async function TaskModePage({ view, canStart }: { view: ViewContext; canStart: boolean }) {
+  const client = await apiClientForRequest();
+  const [projectsPage, profilesRes] = await Promise.all([
+    client
+      .projects({ limit: 200 })
+      .then((page) => ({ page, error: null as string | null }))
+      .catch((err: unknown) => ({
+        page: EMPTY_PROJECTS,
+        error: err instanceof Error ? err.message : "Failed to load your tasks",
+      })),
+    canStart ? client.profiles().catch(() => ({ profiles: [] })) : Promise.resolve({ profiles: [] }),
+  ]);
+  const { error } = projectsPage;
+  const items = projectsPage.page.items;
+  const profiles = profilesRes.profiles;
+  const defaultProfile = profiles.find((p) => p.is_default)?.name ?? profiles[0]?.name ?? "default";
+  return (
+    <MobileShell title="Projects">
+      {error ? (
+        <div
+          data-component="ProjectsPageError"
+          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
+        >
+          Couldn&apos;t load your tasks ({error}).
+        </div>
+      ) : (
+        <ProjectsModeView
+          mode="task"
+          device={view.device}
+          task={{ items, profiles, defaultProfile, canStart }}
         />
       )}
     </MobileShell>

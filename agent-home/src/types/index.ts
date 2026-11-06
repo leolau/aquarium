@@ -1759,6 +1759,10 @@ export type ProjectListItem = Project & {
   output_rollup?: ProjectOutputRollup;
   member_count: number;
   health: ProjectHealth;
+  /** The newest run's number and status; null before the first run. */
+  latest_run?: { run_no: number; status: ProjectRunStatus } | null;
+  /** A one-off whose drafted plan waits for approval ("Let me check the plan first"). */
+  plan_pending?: boolean;
   /** Only when the list is sorted by duration or tokens. */
   usage?: {
     run_seconds?: number | null;
@@ -1866,6 +1870,9 @@ export interface ProjectRunBrief {
   ended_at: number | null;
   duration_seconds: number | null;
   outcome: string | null;
+  /** The run's own short write-up, once it ends. */
+  summary?: string | null;
+  error?: string | null;
   score_user: number | null;
   /**
    * §8.2: present only when it diverges from `score_user` by ≥2 —
@@ -2018,6 +2025,8 @@ export interface ProjectPlaybookDraftState {
   /** The proposed (inactive) revision saved when `status === "done"`. */
   rev?: number;
   detail?: string;
+  /** Task mode only: how activating the plan and starting run 1 went. */
+  launch?: { status: "started"; run_no: number | null } | { status: "failed"; detail: string };
 }
 
 /** Standing instruction or feedback (§5) — durable, compiled into future runs. */
@@ -2302,6 +2311,27 @@ export interface ProjectBoardView {
   latest_event_id?: number | null;
   now?: number;
 }
+
+/** The two views of Projects and the device classes a choice is kept for. */
+export type ProjectViewMode = "task" | "project";
+export type ViewDevice = "desktop" | "phone";
+
+/** Task mode's Start task: one request, a profile and the check-in level. */
+export interface QuickTaskPayload {
+  request: string;
+  host_profile: string;
+  autonomy: ProjectAutonomy;
+  check_plan_first?: boolean;
+}
+
+export type QuickTaskResponse = Project & {
+  draft: ProjectPlaybookDraftState;
+  check_plan_first: boolean;
+};
+
+export type QuickTaskStartResponse =
+  | { status: "drafting"; draft: ProjectPlaybookDraftState }
+  | { status: "started"; run: ProjectRun };
 
 /** Creating a project — the §2.2 mandatory four plus the optional rest. */
 export interface CreateProjectPayload {
