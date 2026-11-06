@@ -21,6 +21,8 @@ from typing import Any, Iterable, Optional
 
 from fastapi import Depends, HTTPException, Request
 
+from hermes_cli.profile_route_scope import ProfileScope, require_profile_scope
+
 ADMIN_ROLES = ("owner", "admin")
 ADMIN_DENIED = "Only the owner or an admin can change this setting."
 OWNER_DENIED = "Only the owner can do this."
@@ -38,15 +40,24 @@ def role_dependency(role: str, denied: str):
     if role not in ("admin", "owner"):
         raise ValueError(f"unknown role {role!r}")
 
-    async def _require(request: Request) -> None:
+    async def _require(
+        request: Request,
+        target: Optional[ProfileScope] = Depends(require_profile_scope),
+    ) -> None:
         from hermes_cli import web_server as ws
 
         if not ws._comms_session_subject(request):
             return
-        try:
-            principal = await ws._comms_resolve_principal(request)
-        except ws._CommsNotConfigured:
-            return
+        if isinstance(target, ProfileScope) and target.principal is not None:
+            # ``?profile=`` names another profile: the role that counts is the
+            # caller's role there (FG-28 B4), already re-resolved and refused
+            # if absent or suspended by ``require_profile_scope``.
+            principal = target.principal
+        else:
+            try:
+                principal = await ws._comms_resolve_principal(request)
+            except ws._CommsNotConfigured:
+                return
         if not _role_allows(principal, role):
             raise HTTPException(status_code=403, detail=denied)
 

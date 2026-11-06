@@ -49,10 +49,8 @@ _LEGACY_RESOLVER = "_comms_resolve_principal"
 #: the console tomorrow is covered without anyone remembering to add it here.
 #:
 #: The rest of ``/api/comms`` (goals, traces, changes, notifications, memory)
-#: serves the *acting* profile and ignores ``?profile=``; making those
-#: cross-profile is an open FG-28 item, and until it lands the switcher must not
-#: append the parameter to them — silently serving the acting profile's rows
-#: under another profile's name is the failure mode there.
+#: is routed by the app-wide ``require_profile_scope`` (FG-28 B4), asserted in
+#: ``test_fg28_profile_route_scope.py``.
 _CONSOLE_PREFIXES = (
     "/api/comms/members",
     "/api/comms/directory",
