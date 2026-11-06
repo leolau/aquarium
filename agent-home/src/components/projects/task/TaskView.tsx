@@ -158,49 +158,6 @@ export function TaskView({
           {request}
         </div>
 
-        {phase === "done" ? (
-          <TaskResult
-            project={project}
-            canAct={canAct}
-            onChangeRequest={openChange}
-            onOpenProject={onOpenProject}
-            callerUserId={callerUserId}
-            isInstanceAdmin={isInstanceAdmin}
-          />
-        ) : (
-          <section data-component="TaskPlan" aria-label="Plan" className={CARD}>
-            <h2 className="mb-2 text-sm font-semibold">Plan</h2>
-            {plan?.steps && plan.steps.length > 0 ? (
-              <ol className="flex flex-col gap-1.5 text-sm">
-                {plan.steps.map((step, i) => {
-                  const state = stepState(i, live.done, phase);
-                  return (
-                    <li key={step.key} data-step={state} className="flex items-start gap-2">
-                      <span aria-hidden className="w-4 shrink-0 text-center">
-                        {state === "done" ? "✓" : state === "current" ? "◐" : "○"}
-                      </span>
-                      <span className={state === "todo" ? "text-[var(--color-muted)]" : undefined}>
-                        {step.title}
-                        {state === "current" ? (
-                          <span data-component="TaskLiveLine" className="block text-xs text-sky-400">
-                            {live.label}
-                          </span>
-                        ) : null}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ol>
-            ) : (
-              <p className="text-sm text-[var(--color-muted)]">
-                {phase === "failed" ? "The agent couldn't write a plan." : "The agent is writing the plan…"}
-              </p>
-            )}
-          </section>
-        )}
-
-        {open ? <LiveStatusBar project={project} board={board} /> : null}
-
         <section data-component="TaskNeedsYou" aria-label="Needs you" className="flex flex-col gap-2">
           {phase === "plan_review" && plan ? (
             <NeedsCard title="Check the plan" body="The agent wrote a plan. Approve it to start, or tell the agent what to change.">
@@ -272,7 +229,7 @@ export function TaskView({
               </a>
             </NeedsCard>
           ) : null}
-          {phase === "running" || phase === "waiting" ? (
+          {phase === "running" ? (
             <TaskBoardNeeds project={project} board={board} callerUserId={callerUserId} canLead={canLead} />
           ) : null}
           {start.error || stop.error || cont.error ? (
@@ -281,6 +238,50 @@ export function TaskView({
             </p>
           ) : null}
         </section>
+
+        {phase === "done" ? (
+          <TaskResult
+            project={project}
+            canAct={canAct}
+            onChangeRequest={openChange}
+            onOpenProject={onOpenProject}
+            callerUserId={callerUserId}
+            isInstanceAdmin={isInstanceAdmin}
+          />
+        ) : (
+          <section data-component="TaskPlan" aria-label="Plan" className={CARD}>
+            <h2 className="mb-2 text-sm font-semibold">Plan</h2>
+            {plan?.steps && plan.steps.length > 0 ? (
+              <ol className="flex flex-col gap-1.5 text-sm">
+                {plan.steps.map((step, i) => {
+                  const state = stepState(i, live.done, phase);
+                  return (
+                    <li key={step.key} data-step={state} className="flex items-start gap-2">
+                      <span aria-hidden className="w-4 shrink-0 text-center">
+                        {state === "done" ? "✓" : state === "current" ? "◐" : "○"}
+                      </span>
+                      <span className={state === "todo" ? "text-[var(--color-muted)]" : undefined}>
+                        {step.title}
+                        {state === "current" ? (
+                          <span data-component="TaskLiveLine" className="block text-xs text-sky-400">
+                            {live.label}
+                          </span>
+                        ) : null}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ol>
+            ) : (
+              <p className="text-sm text-[var(--color-muted)]">
+                {phase === "failed" ? "The agent couldn't write a plan." : "The agent is writing the plan…"}
+              </p>
+            )}
+          </section>
+        )}
+
+        {open && open.status !== "waiting" ? <LiveStatusBar project={project} board={board} /> : null}
+
 
         {!project.archived ? (
           <AskOrChangeBox project={project} onChangeRequest={openChange} />
@@ -472,6 +473,7 @@ function TaskResult({
       <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-bl-sm border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm">
         {latest?.summary || "Done. The result is below."}
       </div>
+      <ul className="flex flex-col gap-3">
       {shown.map((output) => (
         <DeliverableCard
           key={output.id}
@@ -488,6 +490,7 @@ function TaskResult({
           resolving={opener.resolving}
         />
       ))}
+      </ul>
       {canAct ? (
         <div data-component="TaskResultActions" className="flex flex-wrap items-center gap-2">
           {waitingOnYou.length > 0 ? (

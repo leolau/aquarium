@@ -211,7 +211,7 @@ function AskBox({
         submit();
       }}
       className={`${SECTION} flex flex-col gap-2 ${
-        pinned ? "sticky bottom-0 z-10 shadow-[0_-8px_16px_rgba(0,0,0,0.25)]" : ""
+        pinned ? "sticky bottom-2 z-10 gap-1.5 shadow-[0_-8px_16px_rgba(0,0,0,0.25)]" : ""
       }`}
     >
       <label className="sr-only" htmlFor="task-ask">
@@ -224,11 +224,11 @@ function AskBox({
         onKeyDown={(e) => {
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit();
         }}
-        rows={pinned ? 2 : 3}
+        rows={pinned ? 1 : 3}
         placeholder="What should the agent do?"
         className="w-full resize-none rounded-xl border border-[var(--color-border)] bg-transparent p-2 text-sm"
       />
-      {!pinned || !request ? (
+      {!pinned ? (
         <div data-component="TaskSuggestions" className="flex flex-wrap gap-1.5">
           {SUGGESTIONS.map((s) => (
             <button
@@ -287,7 +287,7 @@ function AskBox({
           </select>
         </label>
         <label className="flex items-center gap-1">
-          <span className="text-[var(--color-muted)]">Check in with me</span>
+          <span className="text-[var(--color-muted)]">{pinned ? "Check in" : "Check in with me"}</span>
           <select
             value={autonomy}
             onChange={(e) => setAutonomy(e.target.value as ProjectAutonomy)}
@@ -300,7 +300,7 @@ function AskBox({
             ))}
           </select>
         </label>
-        <label className="flex items-center gap-1">
+        <label className={`flex items-center gap-1 ${pinned ? "basis-full" : ""}`}>
           <input type="checkbox" checked={checkPlan} onChange={(e) => setCheckPlan(e.target.checked)} />
           Let me check the plan first
         </label>
