@@ -236,6 +236,7 @@ async def require_profile_scope(conn: HTTPConnection):
         return
     from hermes_cli.console_scope import _scoped_to
 
+    note_acting_profile(conn)
     with _scoped_to(entry.hermes_home):
         yield ProfileScope(entry, principal)
 
@@ -263,3 +264,14 @@ async def _target_principal(conn: HTTPConnection, entry: Any) -> Optional[Any]:
             status_code=403,
             detail=f"profile {entry.name!r} cannot verify who you are there: {exc}",
         ) from exc
+
+
+def note_acting_profile(conn: HTTPConnection) -> None:
+    """Remember the profile this process acts as, before a scope switch.
+
+    Inside the target's scope ``administered_profile()`` names the *target*;
+    a cross-profile audit row needs both ends.
+    """
+    from hermes_cli.members import administered_profile
+
+    conn.state.acting_profile = administered_profile()

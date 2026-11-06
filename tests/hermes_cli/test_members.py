@@ -515,6 +515,8 @@ def audit_events() -> Any:
         user_id: str,
         payload: Any = None,
         config: Any = None,
+        acting_profile: Any = None,
+        target_profile: Any = None,
     ) -> None:
         events.append(
             {
@@ -522,6 +524,8 @@ def audit_events() -> Any:
                 "action": action,
                 "user_id": user_id,
                 "payload": dict(payload or {}),
+                "acting_profile": acting_profile,
+                "target_profile": target_profile,
             }
         )
 

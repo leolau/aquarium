@@ -236,7 +236,7 @@ def box(tmp_path, monkeypatch):
 
     monkeypatch.setattr(web_server, "_comms_resolve_principal", resolve_principal)
     monkeypatch.setattr(
-        web_server, "_comms_user_service", lambda actor=None: _Service()
+        web_server, "_comms_user_service", lambda actor=None, **_scope: _Service()
     )
     monkeypatch.setattr(web_server, "_agent_home_trace", agent_home_trace)
     monkeypatch.setattr(session_chat, "run_session_turn_sync", fake_turn)
