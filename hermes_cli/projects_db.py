@@ -2971,6 +2971,19 @@ def update_project_run(
     return cur.rowcount > 0
 
 
+def repin_run_playbook(conn: sqlite3.Connection, run_id: str, rev: int) -> bool:
+    """Move an open run onto another plan revision — only the automatic
+    re-plan of a parked card does this (``projects_run.adopt_replan``); a
+    lead activating a revision leaves mid-flight runs on their pinned rev."""
+    with write_txn(conn):
+        cur = conn.execute(
+            "UPDATE project_runs SET playbook_rev = ? "
+            "WHERE id = ? AND status = 'running'",
+            (rev, run_id),
+        )
+    return cur.rowcount > 0
+
+
 def close_project_run(
     conn: sqlite3.Connection,
     run_id: str,

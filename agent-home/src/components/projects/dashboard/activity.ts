@@ -48,6 +48,13 @@ const SENTENCE: Record<string, { verb: (title: string) => string; tone: Activity
   stale: { verb: (t) => `${t} went quiet`, tone: "bad" },
   auto_retry: { verb: (t) => `${t} is being retried`, tone: "now" },
   block_loop_detected: { verb: (t) => `${t} keeps getting blocked`, tone: "bad" },
+  block_loop_parked: { verb: (t) => `${t} was parked after repeated blocks`, tone: "bad" },
+  block_loop_released: { verb: (t) => `${t} was re-run by a person`, tone: "ok" },
+  replan_proposed: { verb: (t) => `A revised plan was drafted after ${t} parked`, tone: "change" },
+  replan_activated: { verb: (t) => `Re-planned automatically after ${t} parked`, tone: "change" },
+  replan_held: { verb: (t) => `A revised plan after ${t} parked waits for review`, tone: "bad" },
+  replan_failed: { verb: (t) => `Re-planning after ${t} parked failed`, tone: "bad" },
+  superseded_by_replan: { verb: (t) => `${t} was superseded by a revised plan`, tone: "muted" },
   completion_blocked_hallucination: {
     verb: (t) => `${t} was not accepted as done (references didn't check out)`,
     tone: "bad",

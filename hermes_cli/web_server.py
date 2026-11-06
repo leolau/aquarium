@@ -3596,8 +3596,18 @@ async def require_console_scope(request: "Request"):
         raise HTTPException(
             status_code=403, detail=f"unknown target profile: {target!r}"
         )
+    from hermes_cli.profile_route_scope import note_acting_profile
+
+    note_acting_profile(request)
     with _scoped_to(entry.hermes_home):
         yield entry
+
+
+def _request_acting_profile(request) -> Optional[str]:
+    """The acting profile noted for a request scoped elsewhere, else ``None``."""
+    if request is None:
+        return None
+    return getattr(request.state, "acting_profile", None)
 
 
 class _EnrolmentStore:
@@ -3752,11 +3762,13 @@ async def put_my_preferences(body: UserPreferencesUpdate, request: Request):
         "project_view_mode": get_project_view_modes(user_id),
     }
 
-def _comms_user_service(actor=None):
+def _comms_user_service(actor=None, *, acting_profile: Optional[str] = None):
     """Build a :class:`MemberService` over this profile's store + GoTrue.
 
     Raises 503 when user management isn't configured (no service-role key or
     url), which is a deployment state the console renders rather than an error.
+    ``acting_profile`` is the profile the process acts as when the call runs
+    in another profile's scope; the audit names both (``None``: unscoped).
     """
     from hermes_cli.access import PrincipalStore
     from hermes_cli.members import MemberService, load_admin_client
@@ -3769,7 +3781,10 @@ def _comms_user_service(actor=None):
         )
     config = load_config() or {}
     return MemberService(
-        PrincipalStore(_comms_app_store()), admin, config=config
+        PrincipalStore(_comms_app_store()),
+        admin,
+        config=config,
+        acting_profile=acting_profile,
     )
 
 
@@ -3838,7 +3853,9 @@ async def _comms_member_service(request: "Request"):
         require_member_admin(actor)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-    return actor, _comms_user_service(actor)
+    return actor, _comms_user_service(
+        actor, acting_profile=_request_acting_profile(request)
+    )
 
 
 def _comms_member_error(exc: Exception) -> "HTTPException":
@@ -4351,9 +4368,10 @@ async def auth_redeem_invitation(request: Request):
     home = _invitation_profile_home(profile)
     if home is None:
         raise HTTPException(status_code=400, detail=_NEUTRAL_REDEEM_DETAIL)
+    acting = _comms_administered_profile()
     try:
         with _scoped_to(home):
-            service = _comms_user_service()
+            service = _comms_user_service(acting_profile=acting)
             redeemed = await service.redeem_invitation(
                 token=token, password=password
             )
@@ -4802,8 +4820,11 @@ async def _request_password_reset(email: str, hint: str) -> None:
     )
     if chosen is None:
         return
+    acting = _comms_administered_profile()
     with _scoped_to(chosen.profile.hermes_home):
-        await _comms_user_service().request_password_reset(email=email)
+        await _comms_user_service(acting_profile=acting).request_password_reset(
+            email=email
+        )
 
 
 @app.post("/api/auth/invitations/request")
