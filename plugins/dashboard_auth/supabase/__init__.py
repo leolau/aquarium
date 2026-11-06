@@ -423,8 +423,10 @@ def _resolve(cfg_section: dict, cfg_key: str, *env_names: str) -> str:
     already exports the bare ``SUPABASE_*`` names needs no duplicate
     ``HERMES_``-prefixed vars, then falls back to config.yaml.
     """
+    from agent.secret_scope import get_secret
+
     for env_name in env_names:
-        env = os.environ.get(env_name, "").strip()
+        env = (get_secret(env_name) or "").strip()
         if env:
             return env
     return str(cfg_section.get(cfg_key, "") or "").strip()

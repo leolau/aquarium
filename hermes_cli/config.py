@@ -1953,6 +1953,13 @@ DEFAULT_CONFIG = {
         },
     },
 
+    # Deployment email poller (custom/email/email_poller.py). ``config_path``
+    # is its JSON account list, edited by Settings -> Email accounts; blank
+    # means /opt/data/email-messages/config.json. Box-wide, not per profile.
+    "email_poller": {
+        "config_path": "",
+    },
+
     # Web dashboard settings
     "dashboard": {
         "theme": "default",  # Dashboard visual theme: "default", "midnight", "ember", "mono", "cyberpunk", "rose"
@@ -1971,6 +1978,12 @@ DEFAULT_CONFIG = {
         # Set this to True to re-enable the surfaces with the understanding
         # that the numbers are a local lower-bound estimate, not billing.
         "show_token_analytics": False,
+        # FG-28: fail-closed credential reads in the dashboard process. On a
+        # box with more than one profile this is armed automatically; true
+        # forces it on. Then a credential read under another profile's home
+        # outside its secret scope raises instead of serving this profile's
+        # environment. Mirrors gateway.multiplex_profiles.
+        "multiplex_profiles": False,
         # OAuth gate configuration (engaged when ``--host`` is set and
         # ``--insecure`` is not). The bundled Nous Portal plugin reads
         # both keys at startup; they are the canonical surface for these
@@ -7494,10 +7507,9 @@ def get_env_value_prefer_dotenv(key: str) -> Optional[str]:
         return val
     try:
         from agent.secret_scope import get_secret as _get_secret
-
-        return _get_secret(key)
-    except Exception:
+    except ImportError:
         return os.environ.get(key)
+    return _get_secret(key)
 
 
 # =============================================================================

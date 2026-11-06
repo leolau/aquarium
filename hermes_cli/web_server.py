@@ -210,8 +210,61 @@ def _resolve_restart_drain_timeout() -> float:
         return DEFAULT_GATEWAY_RESTART_DRAIN_TIMEOUT
 
 
+def _dashboard_serves_many_profiles(cfg: Dict[str, Any]) -> bool:
+    """Whether this dashboard serves more than its own profile (FG-28 D-1).
+
+    True when ``dashboard.multiplex_profiles`` is on, or when the box has more
+    than one profile — the console and chat routes then enter other profiles'
+    scopes inside this one process.
+    """
+    flag = cfg_get(cfg, "dashboard", "multiplex_profiles", default=False)
+    if isinstance(flag, str):
+        flag = flag.strip().lower() in ("1", "true", "yes", "on")
+    if flag:
+        return True
+    from hermes_cli.profiles import profiles_to_serve
+
+    try:
+        return len(profiles_to_serve(multiplex=True)) > 1
+    except Exception:
+        _log.warning("could not list profiles; secret isolation stays off", exc_info=True)
+        return False
+
+
+@contextmanager
+def _dashboard_secret_isolation(cfg: Dict[str, Any]):
+    """Arm fail-closed ``get_secret`` for a multi-profile dashboard.
+
+    The process environment holds only this dashboard's own profile's
+    credentials, so a read under that profile's home still resolves from it;
+    a read under another profile's home outside its secret scope raises
+    ``UnscopedSecretError`` instead of serving this profile's value. A
+    single-profile dashboard is left untouched.
+    """
+    from agent import secret_scope
+
+    if not _dashboard_serves_many_profiles(cfg):
+        yield False
+        return
+    was_active = secret_scope.is_multiplex_active()
+    secret_scope.set_environ_home(get_hermes_home())
+    secret_scope.set_multiplex_active(True)
+    try:
+        yield True
+    finally:
+        secret_scope.set_multiplex_active(was_active)
+        secret_scope.set_environ_home(None)
+
+
 @asynccontextmanager
 async def _lifespan(app: "FastAPI"):
+    with _dashboard_secret_isolation(load_config() or {}):
+        async with _lifespan_services(app):
+            yield
+
+
+@asynccontextmanager
+async def _lifespan_services(app: "FastAPI"):
     app.state.event_channels = {}  # dict[str, set]
     app.state.event_lock = asyncio.Lock()
     app.state.pty_active_session_files = {}  # dict[str, Path]
@@ -872,6 +925,8 @@ _CATEGORY_MERGE: Dict[str, str] = {
     # field — fold it into the agent tab rather than spawning a one-field
     # orphan category.
     "computer_use": "agent",
+    # `email_poller.config_path` is the only email_poller field.
+    "email_poller": "general",
 }
 
 # Display order for tabs — unlisted categories sort alphabetically after these.
@@ -6151,7 +6206,9 @@ async def get_elevenlabs_voices():
     The desktop UI uses this for the ``tts.elevenlabs.voice_id`` dropdown.
     Only non-secret voice metadata is returned; the API key stays server-side.
     """
-    api_key = (load_env().get("ELEVENLABS_API_KEY") or os.environ.get("ELEVENLABS_API_KEY") or "").strip()
+    from agent.secret_scope import get_secret
+
+    api_key = (load_env().get("ELEVENLABS_API_KEY") or get_secret("ELEVENLABS_API_KEY") or "").strip()
     if not api_key:
         return {"available": False, "voices": []}
 
@@ -11780,14 +11837,14 @@ async def suggest_session_tags(
 
 async def _llm_tag_suggest(prompt: str) -> list:
     """Call a lightweight LLM (DeepSeek if available) for tag suggestions."""
-    import os
-    from hermes_state import SessionDB
+    from agent.secret_scope import get_secret
 
-    api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
-    base_url = "https://api.deepseek.com/v1" if os.environ.get("DEEPSEEK_API_KEY") else (
-        os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    deepseek_key = get_secret("DEEPSEEK_API_KEY")
+    api_key = deepseek_key or get_secret("OPENAI_API_KEY", "")
+    base_url = "https://api.deepseek.com/v1" if deepseek_key else (
+        get_secret("OPENAI_BASE_URL") or "https://api.openai.com/v1"
     )
-    model = "deepseek-chat" if os.environ.get("DEEPSEEK_API_KEY") else "gpt-4o-mini"
+    model = "deepseek-chat" if deepseek_key else "gpt-4o-mini"
     if not api_key:
         return []
 
@@ -16369,10 +16426,12 @@ def _profile_scope(profile: Optional[str]):
     from tools import skill_manager_tool as _skill_mgr
 
     token = None
+    secret_token = None
     if not requested or requested.lower() == "current":
         profile_dir = get_hermes_home()
     else:
         profile_dir = _resolve_profile_dir(requested)
+        secret_token = _enter_profile_secrets(profile_dir)
         token = set_hermes_home_override(str(profile_dir))
 
     with _SKILLS_PROFILE_LOCK:
@@ -16391,8 +16450,30 @@ def _profile_scope(profile: Optional[str]):
             _skills_tool.SKILLS_DIR = old_skills_dir
             _skill_mgr.HERMES_HOME = old_mgr_home
             _skill_mgr.SKILLS_DIR = old_mgr_skills_dir
+            _reset_profile_secrets(secret_token)
             if token is not None:
                 reset_hermes_home_override(token)
+
+
+def _enter_profile_secrets(profile_dir: Path):
+    """Install ``profile_dir``'s ``.env`` as the secret scope; returns the token.
+
+    Paired with a HERMES_HOME switch (call it first) so ``get_secret`` resolves
+    that profile's credentials, not the dashboard's own environment. The
+    dashboard's own profile keeps reading its environment: returns None.
+    """
+    from agent.secret_scope import build_profile_secret_scope, set_secret_scope
+
+    if Path(profile_dir).resolve() == Path(get_hermes_home()).resolve():
+        return None
+    return set_secret_scope(build_profile_secret_scope(profile_dir))
+
+
+def _reset_profile_secrets(token) -> None:
+    from agent.secret_scope import reset_secret_scope
+
+    if token is not None:
+        reset_secret_scope(token)
 
 
 @contextmanager
@@ -16422,10 +16503,12 @@ def _config_profile_scope(profile: Optional[str]):
     )
 
     profile_dir = _resolve_profile_dir(requested)
+    secret_token = _enter_profile_secrets(profile_dir)
     token = set_hermes_home_override(str(profile_dir))
     try:
         yield profile_dir
     finally:
+        _reset_profile_secrets(secret_token)
         reset_hermes_home_override(token)
 
 

@@ -40,7 +40,15 @@ _GMAIL_DEFAULTS: Dict[str, Any] = {
 
 
 def _config_path() -> Path:
-    return Path(os.environ.get("EMAIL_CONFIG_PATH") or DEFAULT_CONFIG_PATH)
+    """The poller's account list: config.yaml ``email_poller.config_path``.
+
+    ``EMAIL_CONFIG_PATH`` is still honoured after it — it is the poller
+    process's own setting, so a box that exports it keeps both in agreement.
+    """
+    from hermes_cli.config import cfg_get, load_config
+
+    configured = str(cfg_get(load_config(), "email_poller", "config_path", default="") or "").strip()
+    return Path(configured or os.environ.get("EMAIL_CONFIG_PATH") or DEFAULT_CONFIG_PATH)
 
 
 def _load_config() -> Optional[dict]:
