@@ -20,15 +20,22 @@ export const ASSIGNABLE_ROLES: readonly Role[] = ["admin", "member", "viewer"] a
  * An email that already has an account is the *normal* case when somebody joins
  * a second profile: it enrols them and mints no link, because they already have
  * a password.
+ *
+ * FG-28 C4: the target is picked from `profiles`, the caller's administered
+ * profiles, and starts on the one being viewed. The picker is a routing hint,
+ * never a grant: Python re-derives the caller's role in the target.
  */
 export function CreateUserForm({
   profile,
+  profiles = [],
   busy,
   disabled,
   onCreate,
 }: {
-  /** The profile this console administers; the only accepted value in FG-26. */
+  /** The profile being viewed — the target until another is picked. */
   profile: string;
+  /** The profiles the caller administers; a picker appears for two or more. */
+  profiles?: string[];
   busy: boolean;
   disabled: boolean;
   onCreate: (input: {
@@ -42,6 +49,7 @@ export function CreateUserForm({
   const [display, setDisplay] = useState("");
   const [role, setRole] = useState<Role>("member");
   const [target, setTarget] = useState(profile);
+  const options = targetOptions(profile, profiles);
 
   async function submit(evt: FormEvent) {
     evt.preventDefault();
@@ -93,25 +101,34 @@ export function CreateUserForm({
           ))}
         </select>
       </label>
-      <label className="flex items-center justify-between gap-2 text-sm">
-        <span className="text-[var(--color-muted)]">Profile</span>
-        <select
-          required
-          name="profile"
-          aria-label="Profile"
-          value={target}
-          onChange={(e) => setTarget(e.target.value)}
-          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
-        >
-          <option value={profile}>{profile}</option>
-        </select>
-      </label>
+      {options.length > 1 ? (
+        <label className="flex items-center justify-between gap-2 text-sm">
+          <span className="text-[var(--color-muted)]">Profile</span>
+          <select
+            required
+            name="profile"
+            aria-label="Profile"
+            value={target}
+            disabled={busy}
+            onChange={(e) => setTarget(e.target.value)}
+            className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
+          >
+            {options.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
       <p className="text-xs text-[var(--color-muted)]">
-        This console administers the <code>{profile}</code> profile only.
-        Enrolling into another profile needs that profile&apos;s console until
-        FG-28 lands. New accounts start locked and are opened by the activation
-        link this returns; somebody who already has an account keeps their
-        password.
+        {options.length > 1 ? null : (
+          <>
+            Creating in <code>{target}</code>.{" "}
+          </>
+        )}
+        New accounts start locked and are opened by the activation link this
+        returns; somebody who already has an account keeps their password.
       </p>
       <button
         type="submit"
@@ -122,4 +139,12 @@ export function CreateUserForm({
       </button>
     </form>
   );
+}
+
+/**
+ * The profiles the form may target: the administered ones, the viewed one
+ * first if the list somehow lacks it (Python still decides either way).
+ */
+export function targetOptions(profile: string, profiles: string[]): string[] {
+  return profiles.includes(profile) ? profiles : [profile, ...profiles];
 }

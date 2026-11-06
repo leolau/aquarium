@@ -434,3 +434,141 @@ def test_an_account_level_refusal_is_a_403_with_its_reason() -> None:
         mapped = ws._comms_member_error(exc)
         assert mapped.status_code == 403
         assert mapped.detail == str(exc)
+
+
+# -- the create-user / CSV-import picker is not a grant (FG-28 C4) -----------
+
+
+@pytest.fixture
+def picker_box(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A real hermes root with ``default`` and ``profiles/hr`` homes.
+
+    Each profile has its own ``principals`` (fakes, keyed by home) and its own
+    invitations; GoTrue is one box-wide fake. The console resolver and the
+    member service are the real ones, so the profile a create lands in and the
+    profile its link names are decided by the scope, not by the test.
+    """
+    import hermes_constants
+    from hermes_cli import console_scope
+    from hermes_cli.members import MemberService
+    from tests.hermes_cli.test_members import _FakeAdmin, _FakeInvitations, _FakeStore
+
+    root = tmp_path / "hermes-root"
+    hr_home = root / "profiles" / "hr"
+    hr_home.mkdir(parents=True)
+    monkeypatch.setattr(hermes_constants, "get_default_hermes_root", lambda: root)
+    monkeypatch.setenv("HERMES_HOME", str(root))
+    entries = [_entry("default", root), _entry("hr", hr_home)]
+    monkeypatch.setattr(
+        "hermes_cli.profile_registry.get_profile_registry", lambda **kw: entries
+    )
+    monkeypatch.setattr(console_scope, "get_profile_registry", lambda **kw: entries)
+
+    stores = {root: _FakeStore(), hr_home: _FakeStore()}
+    invitations = {root: _FakeInvitations(), hr_home: _FakeInvitations()}
+    stores[root].principals["default-admin"] = Principal("default-admin", "", "admin")
+    stores[hr_home].principals["hr-admin"] = Principal("hr-admin", "", "admin")
+    stores[hr_home].principals["hr-member"] = Principal("hr-member", "", "member")
+    # Admin in default, nothing in hr: the role that counts is hr's own.
+    stores[root].principals["default-only"] = Principal("default-only", "", "admin")
+    admin = _FakeAdmin()
+
+    def _home() -> Path:
+        from hermes_constants import get_hermes_home
+
+        return Path(str(get_hermes_home()))
+
+    real_resolve = console_scope.resolve_console_principal
+
+    async def _resolve(subject, target, *, store_factory, registry=None):
+        return await real_resolve(
+            subject, target, store_factory=lambda home: stores[home], registry=entries
+        )
+
+    async def _legacy(request, *, allow_as=False):
+        return await stores[_home()].get(request._subject)
+
+    async def _no_audit(**kwargs):
+        return None
+
+    monkeypatch.setattr(console_scope, "resolve_console_principal", _resolve)
+    monkeypatch.setattr(ws, "_comms_session_subject", lambda request: request._subject)
+    monkeypatch.setattr(ws, "_comms_resolve_principal", _legacy)
+    monkeypatch.setattr("hermes_cli.identity_audit.record_identity_event", _no_audit)
+    monkeypatch.setattr(
+        ws,
+        "_comms_user_service",
+        lambda actor=None: MemberService(
+            stores[_home()],
+            admin,
+            invitations=invitations[_home()],
+            store_factory=lambda home: stores[home],
+            registry=entries,
+        ),
+    )
+    return SimpleNamespace(root=root, hr=hr_home, stores=stores, admin=admin)
+
+
+async def _post_in_scope(handler, request: _JsonReq):
+    agen = ws.require_console_scope(request)
+    await agen.__anext__()
+    try:
+        return await handler(request)
+    finally:
+        with pytest.raises(StopAsyncIteration):
+            await agen.__anext__()
+
+
+_PICKER_ROUTES = {
+    "create": (
+        ws.comms_create_member,
+        {"email": "new@x.io", "profile": "hr", "role": "member"},
+    ),
+    "import": (
+        ws.comms_import_members,
+        {"csv": "new@x.io,New,member", "profile": "hr", "dry_run": False},
+    ),
+}
+
+
+@pytest.mark.parametrize("route", sorted(_PICKER_ROUTES))
+@pytest.mark.parametrize("subject", ["hr-member", "default-only", "stranger"])
+def test_naming_hr_grants_nothing_without_admin_authority_in_hr(
+    picker_box, route, subject
+) -> None:
+    from fastapi import HTTPException
+
+    handler, body = _PICKER_ROUTES[route]
+    with pytest.raises(HTTPException) as excinfo:
+        asyncio.run(_post_in_scope(handler, _JsonReq("hr", subject=subject, body=body)))
+    assert excinfo.value.status_code == 403
+    assert picker_box.admin.created == []
+    assert set(picker_box.stores[picker_box.hr].principals) == {"hr-admin", "hr-member"}
+
+
+@pytest.mark.parametrize("route", sorted(_PICKER_ROUTES))
+def test_an_hr_admin_creates_in_hr_and_the_link_names_hr(picker_box, route) -> None:
+    handler, body = _PICKER_ROUTES[route]
+    out = asyncio.run(_post_in_scope(handler, _JsonReq("hr", subject="hr-admin", body=body)))
+
+    [account] = picker_box.admin.created
+    assert account["id"] in picker_box.stores[picker_box.hr].principals
+    assert account["id"] not in picker_box.stores[picker_box.root].principals
+    path = out["activation_path"] if route == "create" else out["rows"][0]["activation_path"]
+    assert path.startswith("/activate/hr/")
+
+
+@pytest.mark.parametrize("route", sorted(_PICKER_ROUTES))
+def test_a_body_profile_without_the_query_is_refused_before_any_account(
+    picker_box, route
+) -> None:
+    """``profile=hr`` in the body alone runs in default's scope: a mismatch."""
+    from fastapi import HTTPException
+
+    handler, body = _PICKER_ROUTES[route]
+    with pytest.raises(HTTPException) as excinfo:
+        asyncio.run(
+            _post_in_scope(handler, _JsonReq("", subject="default-admin", body=body))
+        )
+    assert excinfo.value.status_code == 409
+    assert picker_box.admin.created == []
