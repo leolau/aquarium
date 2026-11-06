@@ -677,7 +677,7 @@ async def test_a_foreign_profile_is_refused_before_any_account_exists(
         await service.create_member(
             _owner(), email="elsewhere@x.io", profile="maintenance", role="member"
         )
-    assert "FG-28" in str(excinfo.value)
+    assert "?profile=maintenance" in str(excinfo.value)
     assert admin.find_user_by_email("elsewhere@x.io") is None
     assert await _invitation_rows(auth_stack.dsn) == []
 

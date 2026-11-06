@@ -308,14 +308,17 @@ async def test_two_profiles_on_one_database_have_disjoint_rosters(
 async def test_a_second_profile_cannot_be_enrolled_into_from_this_console(
     postgres_dsn: str, hermes_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """FG-27's guard is what makes cross-profile assignment FG-28's problem."""
+    """A console scoped to one profile cannot enrol into another (FG-27's guard).
+
+    FG-28 routes cross-profile creates through ``?profile=``; the refusal says so.
+    """
     await _reset(postgres_dsn)
     admin = _StubAdmin()
     default = await _console(hermes_root, "default", postgres_dsn, admin, monkeypatch)
 
     with pytest.raises(MemberError) as excinfo:
         await default.create_member(_owner(), email="nope@x.io", profile="maintenance")
-    assert "FG-28" in str(excinfo.value)
+    assert "?profile=maintenance" in str(excinfo.value)
     assert admin.accounts == {}
 
 
