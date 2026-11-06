@@ -49,6 +49,27 @@ class _PrincipalLike(Protocol):
 StoreFactory = Callable[[Path], "_PrincipalLike"]
 
 
+def principal_store_factory() -> StoreFactory:
+    """The production :data:`StoreFactory`: the scoped profile's ``principals``.
+
+    Resolves the app store at call time, so it is always the profile
+    :func:`_scoped_to` has entered rather than the one that built the factory —
+    the same seam ``_comms_console_actor`` uses, shared so account-level verbs
+    outside ``web_server`` (``MemberService``, the CLI) read the same rows.
+    """
+
+    def _factory(_profile_home: Path) -> "_PrincipalLike":
+        from hermes_cli.access import PrincipalStore
+        from hermes_cli.config import load_config_readonly
+        from hermes_cli.datastore import get_store
+
+        return PrincipalStore(
+            get_store("supabase-app", "prod", config=load_config_readonly() or {})
+        )
+
+    return _factory
+
+
 class ProfileScopeError(Exception):
     """A console request named a profile it cannot be scoped to.
 
@@ -73,11 +94,12 @@ class AccountLevelPermissionError(Exception):
     profile the target is enrolled in**, so per-profile admin authority is
     not enough: the actor must be an ``owner``, or the target must be enrolled
     *solely* in profiles the actor administers (FG-28 item 8). This guard is
-    the single sanctioned seam those verbs must pass; the GoTrue admin
-    primitives behind it (``set_banned`` / ``delete_user`` / ``set_password``)
-    have no admin-route caller today, so absence — not a check — is what
-    keeps them unreachable, and this guard is what keeps that absence
-    load-bearing the day one is wired.
+    the single sanctioned seam those verbs must pass. Its first caller is
+    ``MemberService.issue_invitation`` (an activation link sets the box-wide
+    password when redeemed); ``tests/hermes_cli/test_fg28_console_routes.py``
+    asserts that no other route reaches a GoTrue account primitive
+    (``set_banned`` / ``delete_user`` / ``set_password`` /
+    ``activate_with_password``) without it, outside a self-service allowlist.
     """
 
 
