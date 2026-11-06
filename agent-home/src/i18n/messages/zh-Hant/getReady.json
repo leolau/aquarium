@@ -105,6 +105,7 @@
   "people.loadFailed": "未能載入每位用戶的連接。",
   "people.reminderNote": "暫時未有提醒訊息。如要提醒某人，請到「用戶」為他建立新的邀請連結。",
   "people.openUsers": "打開用戶",
+  "invite.otherProfile": "要邀請到你管理的另一個設定檔?請在用戶頁面選擇。",
   "conn.google": "Google",
   "conn.whatsapp": "WhatsApp",
   "conn.telegram": "Telegram",

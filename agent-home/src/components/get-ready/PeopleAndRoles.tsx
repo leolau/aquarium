@@ -8,6 +8,7 @@ import { useT, type T } from "@/components/get-ready/i18n";
 import { CreateUserForm } from "@/components/users/CreateUserForm";
 import { InvitationLink } from "@/components/users/InvitationLink";
 import { errorMessage, sendJson } from "@/components/users/api";
+import { withProfileQuery } from "@/lib/profile";
 import type {
   GetReadyConnectionCell,
   GetReadyPeopleResponse,
@@ -53,7 +54,11 @@ export function PeopleAndRoles({
     setBusy(true);
     setNotice(null);
     try {
-      const resp = await sendJson<MemberCreateResponse>("/api/comms/members", "POST", input);
+      const resp = await sendJson<MemberCreateResponse>(
+        withProfileQuery("/api/comms/members", profile),
+        "POST",
+        { ...input, profile },
+      );
       if (resp.activation_path) {
         setLink({
           label: input.email,
@@ -116,6 +121,12 @@ export function PeopleAndRoles({
       <section className="space-y-2">
         <h3 className="text-sm font-semibold">{t("invite.heading")}</h3>
         <CreateUserForm profile={profile} busy={busy} disabled={busy} onCreate={invite} />
+        <p className="text-xs text-[var(--color-muted)]">
+          {t("invite.otherProfile")}{" "}
+          <Link href={withProfileQuery("/users", profile)} className="text-[var(--color-accent)] underline">
+            {t("people.openUsers")}
+          </Link>
+        </p>
         {link ? (
           <InvitationLink
             label={link.label}
@@ -195,7 +206,7 @@ export function PeopleAndRoles({
             </ul>
             <p className="text-xs text-[var(--color-muted)]">
               {t("people.reminderNote")}{" "}
-              <Link href="/users" className="text-[var(--color-accent)] underline">
+              <Link href={withProfileQuery("/users", profile)} className="text-[var(--color-accent)] underline">
                 {t("people.openUsers")}
               </Link>
             </p>

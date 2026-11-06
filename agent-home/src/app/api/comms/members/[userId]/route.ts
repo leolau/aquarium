@@ -18,7 +18,7 @@ export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ userId: string }> },
 ): Promise<NextResponse> {
-  const gate = await requireMemberOwner();
+  const gate = await requireMemberOwner(undefined, request);
   if ("response" in gate) return gate.response;
   const { userId } = await params;
   const search = new URL(request.url).searchParams;

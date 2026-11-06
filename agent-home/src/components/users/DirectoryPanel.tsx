@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { withProfileQuery } from "@/lib/profile";
 import type { DirectoryEntry, DirectoryResponse } from "@/types";
 
 /**
@@ -15,9 +16,12 @@ import type { DirectoryEntry, DirectoryResponse } from "@/types";
  */
 export function DirectoryPanel({
   initial,
+  profile,
   searchable = true,
 }: {
   initial: DirectoryResponse;
+  /** The profile whose directory this is; absent → the session's. */
+  profile?: string;
   searchable?: boolean;
 }) {
   const [entries, setEntries] = useState<DirectoryEntry[]>(initial.entries);
@@ -30,7 +34,8 @@ export function DirectoryPanel({
     try {
       const params = new URLSearchParams();
       if (next.trim()) params.set("q", next.trim());
-      const res = await fetch(`/api/comms/directory?${params.toString()}`, {
+      const path = `/api/comms/directory?${params.toString()}`;
+      const res = await fetch(profile ? withProfileQuery(path, profile) : path, {
         cache: "no-store",
       });
       if (res.ok) setEntries(((await res.json()) as DirectoryResponse).entries);

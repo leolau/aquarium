@@ -22,6 +22,8 @@ export function ProfilePicker({
   disabled = false,
   switching = false,
   compact = false,
+  id = "session-profile",
+  label = "Profile",
 }: {
   profiles: ProfileSummary[];
   selected: string;
@@ -32,6 +34,9 @@ export function ProfilePicker({
   switching?: boolean;
   /** Header placement: no bottom margin, no description. */
   compact?: boolean;
+  /** The select's id — distinct when two pickers share a page. */
+  id?: string;
+  label?: string;
 }) {
   if (profiles.length < 2) return null;
 
@@ -43,13 +48,13 @@ export function ProfilePicker({
       className={`${compact ? "" : "mb-3 "}flex items-center gap-2 text-xs`}
     >
       <label
-        htmlFor="session-profile"
+        htmlFor={id}
         className="shrink-0 text-[var(--color-muted)]"
       >
-        Profile
+        {label}
       </label>
       <select
-        id="session-profile"
+        id={id}
         value={selected}
         disabled={disabled || switching}
         onChange={(e) => onSelect(e.target.value)}

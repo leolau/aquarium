@@ -11,7 +11,7 @@ import { NextResponse } from "next/server";
 import { forwardMemberError, requireMemberAdmin } from "@/lib/api/member-bff";
 
 export async function GET(request: Request): Promise<NextResponse> {
-  const gate = await requireMemberAdmin();
+  const gate = await requireMemberAdmin(request);
   if ("response" in gate) return gate.response;
   const raw = Number.parseInt(
     new URL(request.url).searchParams.get("limit") ?? "",
