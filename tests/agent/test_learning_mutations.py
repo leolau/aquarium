@@ -126,3 +126,70 @@ def test_memory_writes_match_memory_tool_format(home):
 
     assert entries == ["alpha rewritten", "beta note"]
     assert path.read_text(encoding="utf-8") == ENTRY_DELIMITER.join(entries)
+
+
+# ── FG-24: the viewer's own files + the shared block, never anyone else's ───
+
+
+@pytest.fixture
+def fg24_home(home):
+    from tools.memory_tool import get_memory_dir, get_person_memory_dir
+
+    (get_memory_dir("alice")).mkdir(parents=True, exist_ok=True)
+    (get_memory_dir("alice") / "MEMORY.md").write_text("alice note", encoding="utf-8")
+    (get_person_memory_dir("alice")).mkdir(parents=True, exist_ok=True)
+    (get_person_memory_dir("alice") / "USER.md").write_text("alice is concise", encoding="utf-8")
+    (get_memory_dir("bob")).mkdir(parents=True, exist_ok=True)
+    (get_memory_dir("bob") / "MEMORY.md").write_text("bob secret", encoding="utf-8")
+    return home
+
+
+def _cards(principal):
+    from agent.learning_graph import _memory_cards
+
+    return _memory_cards(principal)
+
+
+def test_principal_sees_shared_then_own_files_only(fg24_home):
+    cards = _cards(("alice", "member"))
+    assert [(c["source"], c["body"]) for c in cards] == [
+        ("shared", "alpha note\nline two"),
+        ("shared", "beta note"),
+        ("memory", "alice note"),
+        ("profile", "alice is concise"),
+    ]
+    assert not any("bob" in c["body"] for c in cards)
+    assert [c["editable"] for c in cards] == [False, False, True, True]
+
+
+def test_member_edits_own_notes_not_shared(fg24_home):
+    from tools.memory_tool import get_memory_dir
+
+    me = ("alice", "member")
+    assert lm.node_detail("memory:memory:2", me)["content"] == "alice note"
+    assert lm.edit_node("memory:memory:2", "alice rewritten", me)["ok"]
+    assert (get_memory_dir("alice") / "MEMORY.md").read_text(encoding="utf-8") == "alice rewritten"
+
+    refused = lm.edit_node("memory:shared:0", "hijack", me)
+    assert not refused["ok"] and "owner or an admin" in refused["message"]
+    assert not lm.delete_node("memory:shared:1", me)["ok"]
+    assert "alpha note" in (fg24_home / "memories" / "MEMORY.md").read_text(encoding="utf-8")
+
+
+def test_admin_may_edit_shared(fg24_home):
+    assert lm.edit_node("memory:shared:1", "beta rewritten", ("alice", "admin"))["ok"]
+    assert "beta rewritten" in (fg24_home / "memories" / "MEMORY.md").read_text(encoding="utf-8")
+
+
+def test_unresolved_viewer_sees_shared_read_only(fg24_home):
+    unresolved = (None, None, True)
+    cards = _cards(unresolved)
+    assert {c["source"] for c in cards} == {"shared"}
+    assert not any(c["editable"] for c in cards)
+    assert not lm.delete_node("memory:shared:0", unresolved)["ok"]
+
+
+def test_no_principal_keeps_pre_fg24_layout(fg24_home):
+    cards = _cards((None, None, False))
+    assert [c["source"] for c in cards] == ["memory", "memory", "profile"]
+    assert all(c["editable"] for c in cards)

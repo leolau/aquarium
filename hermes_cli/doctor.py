@@ -671,6 +671,35 @@ def managed_scope_check() -> None:
         check_info(f"managed dir set via HERMES_MANAGED_DIR={managed_dir}")
 
 
+def _curated_tier(directory: Path, filename: str) -> tuple[int, int]:
+    """(people, chars) across ``directory/<user_id>/filename`` (FG-24 tiers)."""
+    people = chars = 0
+    try:
+        entries = sorted(directory.iterdir()) if directory.is_dir() else []
+    except OSError:
+        entries = []
+    for entry in entries:
+        path = entry / filename
+        if entry.is_dir() and path.is_file():
+            people += 1
+            try:
+                chars += len(path.read_text(encoding="utf-8").strip())
+            except OSError:
+                pass
+    return people, chars
+
+
+def _check_per_principal_memory(hermes_home: Path) -> None:
+    """Report FG-24's per-person curated memory beside the shared files."""
+    people, chars = _curated_tier(hermes_home / "memories" / "users", "MEMORY.md")
+    if people:
+        check_ok(f"Per-user notes in this profile: {people} people ({chars} chars) under memories/users/")
+    root = hermes_home.parent.parent if hermes_home.parent.name == "profiles" else hermes_home
+    people, chars = _curated_tier(root / "persons", "USER.md")
+    if people:
+        check_ok(f"Person profiles (shared across profiles): {people} people ({chars} chars) under persons/")
+
+
 def run_doctor(args):
     """Run diagnostic checks."""
     should_fix = getattr(args, 'fix', False)
@@ -1374,6 +1403,7 @@ def run_doctor(args):
             check_ok(f"USER.md exists ({size} chars)")
         else:
             check_info("USER.md not created yet (will be created when the agent first writes a memory)")
+        _check_per_principal_memory(hermes_home)
     else:
         check_warn(f"{_DHH}/memories/ not found", "(will be created on first use)")
         if should_fix:

@@ -1474,3 +1474,18 @@ def test_npm_audit_fix_hint_avoids_crashing_workspace_flag(monkeypatch, tmp_path
     assert "build-time tooling" in out
     assert "known npm bug" in out
     assert "lockfile bump" in out
+
+
+def test_doctor_reports_fg24_per_person_memory(tmp_path, capsys):
+    home = tmp_path / "home"
+    for uid, text in (("alice", "a note"), ("bob", "bob's note")):
+        (home / "memories" / "users" / uid).mkdir(parents=True)
+        (home / "memories" / "users" / uid / "MEMORY.md").write_text(text, encoding="utf-8")
+    (home / "persons" / "alice").mkdir(parents=True)
+    (home / "persons" / "alice" / "USER.md").write_text("concise", encoding="utf-8")
+
+    doctor_mod._check_per_principal_memory(home)
+    out = capsys.readouterr().out
+
+    assert "2 people (16 chars) under memories/users/" in out
+    assert "1 people (7 chars) under persons/" in out

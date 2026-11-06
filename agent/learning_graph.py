@@ -2,7 +2,9 @@
 
 This graph is intentionally scoped to what a user actually learns over time:
 - non-base, learned/profile skills (agent-created or used),
-- memory chunks from ``MEMORY.md`` / ``USER.md`` as first-class nodes.
+- memory chunks from the curated files as first-class nodes. Under FG-24 that
+  is the profile's shared ``MEMORY.md`` plus the viewer's *own* participation
+  notes and person profile — never another person's (see ``memory_sources``).
 
 Skill links come from declared ``related_skills``. Memory-to-skill links are
 derived from lexical overlap so the graph can answer "which learned skills are
@@ -190,16 +192,84 @@ def density_stats(nodes: dict[str, SkillNode], edges: list[tuple[str, str]]) -> 
     }
 
 
-def _memory_cards() -> list[dict[str, Any]]:
+@dataclass(frozen=True)
+class MemorySource:
+    """One curated file the Journey view shows, and whether the viewer may edit it."""
+
+    source: str  # "shared" | "memory" | "profile"
+    path: Path
+    editable: bool
+
+
+#: ``(user_id, role)`` of the person viewing the Journey, or the resolved
+#: ``(user_id, role, ambiguous)`` from ``resolve_viewer``; ``None`` = resolve locally.
+JourneyPrincipal = Optional[tuple]
+
+
+def _local_principal() -> tuple[Optional[str], Optional[str], bool]:
+    """``(user_id, role, ambiguous)`` for a channel-less viewer (CLI, TUI, desktop).
+
+    Same ladder as the agent's own memory (``hermes_cli.principal_binding``),
+    without asking: a graph render must never block on a prompt.
+    """
+    try:
+        from hermes_cli.principal_binding import resolve_local_principal
+
+        res = resolve_local_principal(ask=None)
+    except Exception:
+        return None, None, False
+    if res.binding is None:
+        return None, None, res.ambiguous
+    return res.binding.user_id, res.binding.role, False
+
+
+def resolve_viewer(principal: JourneyPrincipal = None) -> tuple[Optional[str], Optional[str], bool]:
+    """Pin the viewer once, so one request resolves the local principal once."""
+    if principal is None:
+        return _local_principal()
+    if len(principal) == 3:
+        return principal  # type: ignore[return-value]
+    user_id, role = principal
+    return user_id, role, False
+
+
+def memory_sources(principal: JourneyPrincipal = None) -> list[MemorySource]:
+    """The curated files this viewer sees, in card order (FG-24 layout).
+
+    - No principal (single-user box): the two pre-FG-24 files, unchanged.
+    - Several people enrolled and none resolved: the shared block only,
+      read-only — there is no memory that is provably this viewer's.
+    - A principal: the profile's shared notes (editable by owner/admin only),
+      then their own participation notes and person profile. Other people's
+      files are never listed.
+    """
+    from tools.memory_tool import SHARED_WRITE_ROLES, get_memory_dir, get_person_memory_dir
+
+    base = get_hermes_home() / "memories"
+    user_id, role, ambiguous = resolve_viewer(principal)
+    if not user_id:
+        if ambiguous:
+            return [MemorySource("shared", base / "MEMORY.md", False)]
+        return [
+            MemorySource("memory", base / "MEMORY.md", True),
+            MemorySource("profile", base / "USER.md", True),
+        ]
+    return [
+        MemorySource("shared", base / "MEMORY.md", role in SHARED_WRITE_ROLES),
+        MemorySource("memory", get_memory_dir(user_id) / "MEMORY.md", True),
+        MemorySource("profile", get_person_memory_dir(user_id) / "USER.md", True),
+    ]
+
+
+def _memory_cards(principal: JourneyPrincipal = None) -> list[dict[str, Any]]:
     """Freeform memory as readable cards.
 
-    ``MEMORY.md`` / ``USER.md`` are prose split on bare ``§`` separators; each
-    chunk becomes one card. Every chunk is surfaced — the graph shows everything.
+    Each curated file is prose split on bare ``§`` separators; each chunk
+    becomes one card, in ``memory_sources`` order.
     """
-    base = get_hermes_home() / "memories"
     cards: list[dict[str, Any]] = []
-    for fname, source in (("MEMORY.md", "memory"), ("USER.md", "profile")):
-        path = base / fname
+    for src in memory_sources(principal):
+        path = src.path
         try:
             text = path.read_text(encoding="utf-8").strip()
             file_ts = _to_int_ts(path.stat().st_mtime)
@@ -211,7 +281,8 @@ def _memory_cards() -> list[dict[str, Any]]:
             first = chunk.splitlines()[0].strip().lstrip("# ").strip()
             cards.append(
                 {
-                    "source": source,
+                    "source": src.source,
+                    "editable": src.editable,
                     "timestamp": file_ts + chunk_idx if file_ts is not None else None,
                     "title": (first[:80] + "…") if len(first) > 80 else first,
                     "body": chunk[:1200],
@@ -251,7 +322,7 @@ def _skill_roots() -> list[tuple[str, Path]]:
     return [("base", repo / "skills"), ("profile", home_skills)]
 
 
-def build_learning_graph() -> dict[str, Any]:
+def build_learning_graph(principal: JourneyPrincipal = None) -> dict[str, Any]:
     """Full payload for the desktop learning panel.
 
     Focus on what is profile-learned and actionable:
@@ -259,6 +330,7 @@ def build_learning_graph() -> dict[str, Any]:
       (agent-created or used),
     - memory chunks as first-class graph nodes connected to those learned skills.
     """
+    principal = resolve_viewer(principal)
     all_skills = build_skill_nodes(_skill_roots())
     learned_skills = {
         name: node
@@ -266,7 +338,7 @@ def build_learning_graph() -> dict[str, Any]:
         if node.source != "base" and (node.created_by == "agent" or node.use_count > 0)
     }
     skill_edges = build_edges(learned_skills)
-    memory_cards = _memory_cards()
+    memory_cards = _memory_cards(principal)
     memory_edges = _memory_skill_edges(memory_cards, list(learned_skills.values()))
 
     edges = skill_edges + memory_edges
@@ -297,6 +369,7 @@ def build_learning_graph() -> dict[str, Any]:
                 "label": card["title"],
                 "kind": "memory",
                 "memorySource": card["source"],
+                "editable": card["editable"],
                 "timestamp": card.get("timestamp"),
                 "category": "memory",
                 "useCount": 0,

@@ -3,10 +3,12 @@
 The journey graph (``agent.learning_graph``) gives every node a stable id:
 
 - **skills** → the skill name (e.g. ``"debugging-hermes-desktop"``)
-- **memories** → ``memory:<source>:<index>`` where ``source`` is ``memory``
-  (``MEMORY.md``) or ``profile`` (``USER.md``) and ``index`` is the node's
-  position in the combined card list (``MEMORY.md`` cards first, then
-  ``USER.md``).
+- **memories** → ``memory:<source>:<index>`` where ``source`` is ``shared``
+  (the profile's ``MEMORY.md``), ``memory`` (the viewer's notes) or
+  ``profile`` (the viewer's ``USER.md``), and ``index`` is the node's position
+  in the combined card list (``agent.learning_graph.memory_sources`` order).
+  Only the viewer's own files and the shared block are reachable; the shared
+  block is writable by owner/admin only (FG-24).
 
 This module maps a node id back to its on-disk home and performs the mutation,
 shared by the CLI (``hermes journey delete|edit``), the TUI ``/journey`` overlay
@@ -20,23 +22,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-_MEMORY_FILES = {"memory": "MEMORY.md", "profile": "USER.md"}
+_MEMORY_SOURCES = ("shared", "memory", "profile")
 
 
 def parse_node_kind(node_id: str) -> str:
     return "memory" if node_id.startswith("memory:") else "skill"
 
 
-def _memories_dir() -> Path:
-    from hermes_constants import get_hermes_home
-
-    return get_hermes_home() / "memories"
-
-
 def _parse_memory_id(node_id: str) -> tuple[str, int]:
     """``memory:<source>:<index>`` → (source, global_index)."""
     parts = node_id.split(":", 2)
-    if len(parts) != 3 or parts[0] != "memory" or parts[1] not in _MEMORY_FILES:
+    if len(parts) != 3 or parts[0] != "memory" or parts[1] not in _MEMORY_SOURCES:
         raise ValueError(f"bad memory node id: {node_id!r}")
     try:
         return parts[1], int(parts[2])
@@ -44,37 +40,54 @@ def _parse_memory_id(node_id: str) -> tuple[str, int]:
         raise ValueError(f"bad memory node id: {node_id!r}") from exc
 
 
-def _memory_local_index(source: str, global_index: int) -> int:
+def _viewer(node_id: str, principal: Any) -> Any:
+    """Resolve the viewer once per call (memory nodes only; skills need none)."""
+    if parse_node_kind(node_id) != "memory":
+        return principal
+    from agent.learning_graph import resolve_viewer
+
+    return resolve_viewer(principal)
+
+
+def _memory_local_index(source: str, global_index: int, principal: Any = None) -> int:
     """Global card index → position within the source's own file.
 
-    ``_memory_cards`` emits all ``MEMORY.md`` cards before ``USER.md`` cards, so
-    a profile card's local index is its global index minus the memory count.
+    Cards come out grouped by file in ``memory_sources`` order, so a card's
+    local index is the number of same-source cards before it.
     """
     from agent.learning_graph import _memory_cards
 
-    cards = _memory_cards()
+    cards = _memory_cards(principal)
     if not 0 <= global_index < len(cards):
         raise IndexError(f"memory index {global_index} out of range")
     if cards[global_index].get("source") != source:
         raise ValueError("memory node id is stale — refresh the graph")
-    if source == "memory":
-        return global_index
-    return global_index - sum(1 for c in cards if c.get("source") == "memory")
+    return sum(1 for c in cards[:global_index] if c.get("source") == source)
 
 
-def _locate_memory(source: str, gidx: int) -> tuple[Path, list[str], int]:
+def _locate_memory(
+    source: str, gidx: int, principal: Any = None, *, for_write: bool = False
+) -> tuple[Path, list[str], int]:
     """Resolve a memory card to its file, all §-delimited entries, and local index.
 
     Entries come from ``MemoryStore._read_file`` — the same parser the memory
     tool uses — so journey indices stay aligned with what the graph renders.
     """
+    from agent.learning_graph import memory_sources
     from tools.memory_tool import MemoryStore
 
-    path = _memories_dir() / _MEMORY_FILES[source]
+    src = next((m for m in memory_sources(principal) if m.source == source), None)
+    if src is None:
+        raise ValueError("memory node id is stale — refresh the graph")
+    if for_write and not src.editable:
+        raise ValueError(
+            "the shared memory block is editable by the profile owner or an admin only"
+        )
+    path = src.path
     if not path.exists():
         raise ValueError(f"{path.name} not found")
     chunks = MemoryStore._read_file(path)
-    local = _memory_local_index(source, gidx)
+    local = _memory_local_index(source, gidx, principal)
     if not 0 <= local < len(chunks):
         raise ValueError("memory node id is stale — refresh the graph")
     return path, chunks, local
@@ -83,19 +96,19 @@ def _locate_memory(source: str, gidx: int) -> tuple[Path, list[str], int]:
 # ── Inspect (edit prefill) ──────────────────────────────────────────────────
 
 
-def node_detail(node_id: str) -> dict[str, Any]:
+def node_detail(node_id: str, principal: Any = None) -> dict[str, Any]:
     """Current content for an edit prefill. ``content`` is the full SKILL.md
     (skills) or the raw memory chunk (memories)."""
     try:
-        return _node_detail(node_id)
+        return _node_detail(node_id, _viewer(node_id, principal))
     except (ValueError, IndexError) as exc:
         return {"ok": False, "message": str(exc)}
 
 
-def _node_detail(node_id: str) -> dict[str, Any]:
+def _node_detail(node_id: str, principal: Any = None) -> dict[str, Any]:
     if parse_node_kind(node_id) == "memory":
         source, gidx = _parse_memory_id(node_id)
-        _, chunks, local = _locate_memory(source, gidx)
+        _, chunks, local = _locate_memory(source, gidx, principal)
         body = chunks[local].strip()
 
         return {"ok": True, "kind": "memory", "id": node_id, "label": body.splitlines()[0][:80], "content": body}
@@ -121,9 +134,9 @@ def _node_detail(node_id: str) -> dict[str, Any]:
 # ── Delete ──────────────────────────────────────────────────────────────────
 
 
-def delete_node(node_id: str) -> dict[str, Any]:
+def delete_node(node_id: str, principal: Any = None) -> dict[str, Any]:
     try:
-        return _delete_memory(node_id) if parse_node_kind(node_id) == "memory" else _delete_skill(node_id)
+        return _delete_memory(node_id, _viewer(node_id, principal)) if parse_node_kind(node_id) == "memory" else _delete_skill(node_id)
     except (ValueError, IndexError) as exc:
         return {"ok": False, "message": str(exc)}
 
@@ -141,9 +154,9 @@ def _delete_skill(name: str) -> dict[str, Any]:
     return {"ok": ok, "message": f"archived '{name}' — restore with: hermes curator restore {name}" if ok else message}
 
 
-def _delete_memory(node_id: str) -> dict[str, Any]:
+def _delete_memory(node_id: str, principal: Any = None) -> dict[str, Any]:
     source, gidx = _parse_memory_id(node_id)
-    path, chunks, local = _locate_memory(source, gidx)
+    path, chunks, local = _locate_memory(source, gidx, principal, for_write=True)
 
     del chunks[local]
     _write_memory(path, chunks)
@@ -154,9 +167,9 @@ def _delete_memory(node_id: str) -> dict[str, Any]:
 # ── Edit ────────────────────────────────────────────────────────────────────
 
 
-def edit_node(node_id: str, content: str) -> dict[str, Any]:
+def edit_node(node_id: str, content: str, principal: Any = None) -> dict[str, Any]:
     try:
-        return _edit_memory(node_id, content) if parse_node_kind(node_id) == "memory" else _edit_skill(node_id, content)
+        return _edit_memory(node_id, content, _viewer(node_id, principal)) if parse_node_kind(node_id) == "memory" else _edit_skill(node_id, content)
     except (ValueError, IndexError) as exc:
         return {"ok": False, "message": str(exc)}
 
@@ -173,12 +186,12 @@ def _edit_skill(name: str, content: str) -> dict[str, Any]:
     return {"ok": False, "message": result.get("error", "edit failed")}
 
 
-def _edit_memory(node_id: str, content: str) -> dict[str, Any]:
+def _edit_memory(node_id: str, content: str, principal: Any = None) -> dict[str, Any]:
     source, gidx = _parse_memory_id(node_id)
     body = content.strip()
     if not body:
         return {"ok": False, "message": "empty memory — use delete to remove it"}
-    path, chunks, local = _locate_memory(source, gidx)
+    path, chunks, local = _locate_memory(source, gidx, principal, for_write=True)
 
     chunks[local] = body
     _write_memory(path, chunks)
