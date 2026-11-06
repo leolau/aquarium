@@ -29,9 +29,8 @@ async function roleGate(request: NextRequest): Promise<NextResponse | null> {
 }
 
 /**
- * FG-28 B3: a session working in a non-default profile sees only the pages
- * that honour it (`lib/nav/profile-gate.ts`); the rest render the
- * "default profile only for now" notice in place.
+ * FG-28 B3: a session working in a non-default profile gets the "default
+ * profile only" notice in place of a whole-box page (`lib/nav/profile-gate.ts`).
  */
 async function profileGate(request: NextRequest): Promise<NextResponse | null> {
   const { pathname } = request.nextUrl;

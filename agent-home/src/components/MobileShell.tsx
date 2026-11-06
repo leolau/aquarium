@@ -23,8 +23,9 @@ import type { ProfileSummary, TodosFacets } from "@/types";
 import { unstable_cache } from "next/cache";
 
 const getCachedFacets = unstable_cache(
-  async (hermesToken: string) => {
-    const client = new HermesApiClient({ hermesToken });
+  // unstable_cache keys on the arguments, so each profile has its own count.
+  async (hermesToken: string, profile: string) => {
+    const client = new HermesApiClient({ hermesToken, profile });
     return client.todosFacets();
   },
   ["todos-facets-badge"],
@@ -97,11 +98,10 @@ export async function MobileShell({
         if (session?.hermesToken) {
           enrolments = await getCachedEnrolments(session.hermesToken).catch(() => []);
         }
-        // The todos badge is the default profile's count until the legacy
-        // routes honour the session profile (FG-28 B4).
-        if (session?.hermesToken && sessionProfile === "default") {
+        if (session?.hermesToken) {
           const facets: TodosFacets = await getCachedFacets(
             session.hermesToken,
+            sessionProfile,
           );
           const openCount =
             facets.stages.find((s) => s.value === "open")?.count ?? 0;

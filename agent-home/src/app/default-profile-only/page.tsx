@@ -10,8 +10,8 @@ import { ACTING_PROFILE } from "@/lib/nav/profile-gate";
 export const dynamic = "force-dynamic";
 
 /**
- * Shown in place of a page that still reads only the default profile while
- * the session works in another (FG-28 B3; `lib/nav/profile-gate.ts`). The
+ * Shown in place of a whole-box page while the session works in another
+ * profile (FG-28 B3; `lib/nav/profile-gate.ts`). The
  * middleware rewrites the request here, so the address bar keeps the URL and
  * switching back to the default profile re-renders the real page.
  */
@@ -34,11 +34,11 @@ export default async function Page() {
         className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-center"
       >
         <p className="text-base font-medium">
-          This page is available in the default profile only for now.
+          This page is available in the default profile only.
         </p>
         <p className="mt-2 text-sm text-[var(--color-muted)]">
-          You&apos;re working in <strong>{profile}</strong>. Chat and Users already follow the
-          profile you pick; the other pages will soon.
+          You&apos;re working in <strong>{profile}</strong>. This page manages the whole box
+          (files, capacity, upgrades), not one profile, so it opens in the default profile.
         </p>
         <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
           <Link

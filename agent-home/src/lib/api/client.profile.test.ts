@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { HermesApiClient, isBoxWidePath } from "@/lib/api/client";
@@ -101,6 +104,20 @@ describe("HermesApiClient profile binding (FG-28)", () => {
     }
     for (const p of ["/api/filesystem", "/api/system/other", "/api/quotas", "/api/quotas/me", "/api/sessions"]) {
       expect(isBoxWidePath(p), p).toBe(false);
+    }
+  });
+
+  it("leaves unscoped every route Python refuses to scope (BOX_WIDE_PREFIXES)", () => {
+    const py = readFileSync(
+      path.resolve(__dirname, "../../../../hermes_cli/profile_route_scope.py"),
+      "utf8",
+    );
+    const block = /BOX_WIDE_PREFIXES = \(([\s\S]*?)\)/.exec(py)?.[1] ?? "";
+    const prefixes = [...block.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    expect(prefixes.length).toBeGreaterThan(0);
+    for (const prefix of prefixes) {
+      expect(isBoxWidePath(prefix), prefix).toBe(true);
+      expect(isBoxWidePath(`${prefix}/x?y=1`), prefix).toBe(true);
     }
   });
 });

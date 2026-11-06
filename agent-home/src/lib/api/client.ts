@@ -235,17 +235,30 @@ export interface HermesApiClientOptions {
 }
 
 /**
- * Box-wide Python routes (FG-28 B4): they describe the machine, not a profile,
- * and answer 400 to a non-acting `?profile=`, so the bound profile is never
- * added to them.
+ * Box-wide Python routes (FG-28 B4, `hermes_cli/profile_route_scope.py`
+ * `BOX_WIDE_PREFIXES`): they act on the host or the whole box and answer 400
+ * to a non-acting `?profile=`, so the bound profile is never added to them.
  */
 const BOX_WIDE_PATHS = [
-  "/api/files",
+  "/api/software-upgrade",
+  "/api/hermes/update",
+  "/api/security-basics",
+  "/api/backups/offsite",
+  "/api/vpn",
+  "/api/internal/vpn",
+  "/api/git",
   "/api/fs",
+  "/api/files",
   "/api/browse",
-  "/api/capacity",
+  "/api/dashboard",
   "/api/system/stats",
+  "/api/capacity",
   "/api/quotas/box",
+  "/api/ops",
+  "/api/logs",
+  "/api/gateway/drain",
+  "/api/audio",
+  "/api/wa-bridges",
 ] as const;
 
 export function isBoxWidePath(path: string): boolean {
