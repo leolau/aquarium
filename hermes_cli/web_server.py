@@ -2654,8 +2654,22 @@ async def run_curator():
     return {"ok": True, "pid": proc.pid, "name": "curator-run"}
 
 
+async def _learning_viewer(request: Request):
+    """Whose curated memory a Journey request shows (FG-24).
+
+    A logged-in dashboard session is that person (``_comms_resolve_principal``
+    errors propagate: unenrolled is a 409, never the owner). A sessionless
+    caller — the desktop app on its own box — gets ``None``, i.e. the same local
+    principal ladder its agent sessions use, not the owner fallback.
+    """
+    if getattr(request.state, "session", None) is None:
+        return None
+    principal = await _comms_resolve_principal(request)
+    return (principal.user_id, principal.role)
+
+
 @app.get("/api/learning/graph")
-async def get_learning_graph(profile: Optional[str] = None):
+async def get_learning_graph(request: Request, profile: Optional[str] = None):
     """Learning graph payload for the desktop panel.
 
     Profile-scoped view of learned, non-base skills plus memory chunks, with
@@ -2665,7 +2679,9 @@ async def get_learning_graph(profile: Optional[str] = None):
         from agent.learning_graph import build_learning_graph
 
         with _profile_scope(profile):
-            return build_learning_graph()
+            return build_learning_graph(await _learning_viewer(request))
+    except HTTPException:
+        raise
     except Exception:
         _log.exception("GET /api/learning/graph failed")
         raise HTTPException(status_code=500, detail="Failed to build learning graph")
@@ -2683,36 +2699,36 @@ class LearningNodeEdit(BaseModel):
 
 
 @app.get("/api/learning/node")
-async def get_learning_node(id: str, profile: Optional[str] = None):
+async def get_learning_node(request: Request, id: str, profile: Optional[str] = None):
     """Current content of a journey node (skill SKILL.md or memory chunk), for an edit prefill."""
     from agent.learning_mutations import node_detail
 
     with _profile_scope(profile):
-        res = node_detail(id)
+        res = node_detail(id, await _learning_viewer(request))
     if not res.get("ok"):
         raise HTTPException(status_code=404, detail=res.get("message", "not found"))
     return res
 
 
 @app.delete("/api/learning/node", dependencies=_ADMIN)
-async def delete_learning_node(body: LearningNodeRef):
+async def delete_learning_node(body: LearningNodeRef, request: Request):
     """Delete a journey node — skills are archived (restorable), memories removed."""
     from agent.learning_mutations import delete_node
 
     with _profile_scope(body.profile):
-        res = delete_node(body.id)
+        res = delete_node(body.id, await _learning_viewer(request))
     if not res.get("ok"):
         raise HTTPException(status_code=400, detail=res.get("message", "delete failed"))
     return res
 
 
 @app.put("/api/learning/node", dependencies=_ADMIN)
-async def update_learning_node(body: LearningNodeEdit):
+async def update_learning_node(body: LearningNodeEdit, request: Request):
     """Rewrite a journey node's content (SKILL.md or memory chunk)."""
     from agent.learning_mutations import edit_node
 
     with _profile_scope(body.profile):
-        res = edit_node(body.id, body.content)
+        res = edit_node(body.id, body.content, await _learning_viewer(request))
     if not res.get("ok"):
         raise HTTPException(status_code=400, detail=res.get("message", "edit failed"))
     return res
@@ -14248,10 +14264,32 @@ async def get_memory_status():
         path = mem_dir / fname
         files[key] = path.stat().st_size if path.exists() else 0
 
+    # FG-24: per-person curated memory lives beside the shared files, so a
+    # status that sized only the two above hid every person's notes.
+    home = get_hermes_home()
+    root = home.parent.parent if home.parent.name == "profiles" else home
+
+    def _tier(directory, filename):
+        people = size = 0
+        try:
+            entries = list(directory.iterdir()) if directory.is_dir() else []
+        except OSError:
+            entries = []
+        for entry in entries:
+            path = entry / filename
+            if entry.is_dir() and path.is_file():
+                people += 1
+                size += path.stat().st_size
+        return {"people": people, "bytes": size}
+
     return {
         "active": active,
         "providers": providers,
         "builtin_files": files,
+        "per_person": {
+            "notes": _tier(mem_dir / "users", "MEMORY.md"),
+            "profiles": _tier(root / "persons", "USER.md"),
+        },
     }
 
 

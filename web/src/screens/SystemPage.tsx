@@ -1085,19 +1085,29 @@ export default function SystemPage() {
 
             <div className="flex flex-wrap items-center gap-3 border-t border-border pt-3">
               <span className="text-xs text-muted-foreground">
-                Built-in files — MEMORY.md:{" "}
-                {formatBytes(memory?.builtin_files.memory ?? 0)} · USER.md:{" "}
-                {formatBytes(memory?.builtin_files.user ?? 0)}
+                Shared MEMORY.md:{" "}
+                {formatBytes(memory?.builtin_files.memory ?? 0)}
+                {memory?.builtin_files.user ? (
+                  <> · legacy USER.md: {formatBytes(memory.builtin_files.user)}</>
+                ) : null}
+                {memory?.per_person ? (
+                  <>
+                    {" "}· per-user notes: {memory.per_person.notes.people} (
+                    {formatBytes(memory.per_person.notes.bytes)}) · person profiles:{" "}
+                    {memory.per_person.profiles.people} (
+                    {formatBytes(memory.per_person.profiles.bytes)})
+                  </>
+                ) : null}
               </span>
               <div className="flex items-center gap-2 ml-auto">
                 <Button size="sm" ghost className="text-destructive" onClick={() => memoryReset.requestDelete("memory")}>
-                  Reset MEMORY.md
+                  Reset notes (shared + mine)
                 </Button>
                 <Button size="sm" ghost className="text-destructive" onClick={() => memoryReset.requestDelete("user")}>
-                  Reset USER.md
+                  Reset my USER.md
                 </Button>
                 <Button size="sm" ghost className="text-destructive" onClick={() => memoryReset.requestDelete("all")}>
-                  Reset all
+                  Reset all mine + shared
                 </Button>
               </div>
             </div>

@@ -2125,6 +2125,11 @@ export interface MemoryStatus {
   active: string;
   providers: MemoryProviderInfo[];
   builtin_files: { memory: number; user: number };
+  /** FG-24 per-person tiers: notes in this profile, profiles shared box-wide. */
+  per_person?: {
+    notes: { people: number; bytes: number };
+    profiles: { people: number; bytes: number };
+  };
 }
 
 export interface HookEntry {

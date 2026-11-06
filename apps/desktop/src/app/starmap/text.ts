@@ -18,7 +18,9 @@ export function metaBadges(n: StarmapNode): string[] {
   const out: string[] = [formatDate(n.timestamp)]
 
   if (n.kind === 'memory') {
-    out.push(n.memorySource === 'profile' ? 'profile memory' : 'memory')
+    out.push(
+      n.memorySource === 'profile' ? 'profile memory' : n.memorySource === 'shared' ? 'shared memory' : 'memory'
+    )
   } else {
     out.push(n.category)
 

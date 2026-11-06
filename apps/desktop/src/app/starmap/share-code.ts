@@ -19,7 +19,8 @@ const trim = (s: string): string => (s.length > MAX_LABEL ? s.slice(0, MAX_LABEL
 
 const KINDS = ['skill', 'memory'] as const
 const STATES = ['active', 'archived', 'disabled', 'draft'] as const
-const MEM_SOURCES = ['none', 'memory', 'profile'] as const
+// Append-only: the index is the wire value, so old share codes keep decoding.
+const MEM_SOURCES = ['none', 'memory', 'profile', 'shared'] as const
 const CREATED_BY = ['none', 'agent', 'user'] as const
 
 const REC_BITS = 12 // time position resolution: 1/4096 of the span — sub-pixel here.

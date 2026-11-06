@@ -434,7 +434,9 @@ export interface StarmapNode {
   id: string
   label: string
   kind: 'memory' | 'skill'
-  memorySource?: 'memory' | 'profile'
+  memorySource?: 'memory' | 'profile' | 'shared'
+  /** False for the profile's shared notes unless the viewer is owner/admin (FG-24). */
+  editable?: boolean
   timestamp?: null | number
   category: string
   useCount: number
@@ -456,7 +458,8 @@ export interface StarmapCluster {
 
 /** Freeform memory rendered as a card — never a graph node. */
 export interface StarmapMemoryCard {
-  source: 'memory' | 'profile'
+  source: 'memory' | 'profile' | 'shared'
+  editable?: boolean
   timestamp?: null | number
   title: string
   body: string
