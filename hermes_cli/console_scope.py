@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Iterator, List, Optional, Protocol
+from typing import Any, Callable, Iterator, List, NamedTuple, Optional, Protocol
 
 from hermes_cli.profile_registry import ProfileRegistryEntry, get_profile_registry
 
@@ -111,38 +111,56 @@ async def _principal_for_subject(
     return await store.get(user_id)
 
 
-async def administered_profiles(
+class Enrolment(NamedTuple):
+    """One profile's principal row for a subject (see :func:`enrolments`)."""
+
+    profile: ProfileRegistryEntry
+    principal: Any
+
+
+async def enrolments(
     subject: str,
     *,
     store_factory: StoreFactory,
     registry: Optional[List[ProfileRegistryEntry]] = None,
-) -> List[str]:
-    """Profiles where ``subject`` holds an active ``admin``/``owner`` row.
+) -> List[Enrolment]:
+    """Every profile where ``subject`` holds a principal row, suspended included.
 
-    The cross-profile read the switcher, the picker, and the account-verb gate
-    all need. Iterates the served profile set (:func:`get_profile_registry`),
-    enters each profile's scope, and asks that profile's own ``principals``
-    table — never a shared authority store, so there is nothing here to keep
-    in sync. Returns profile names the caller may administer, in registry
-    order (default first).
+    The one cross-profile read the switcher, the chat picker and the
+    account-verb gate are built on. Iterates the served profile set
+    (:func:`get_profile_registry`), enters each profile's scope, and asks that
+    profile's own ``principals`` table — never a shared authority store, so
+    there is nothing here to keep in sync. Registry order (default first). No
+    subject is no enrolment: there is no owner-fallback here.
     """
     if not subject:
         return []
     entries = registry if registry is not None else get_profile_registry()
-    administered: List[str] = []
+    out: List[Enrolment] = []
     for entry in entries:
         if not entry.hermes_home.is_dir():
             continue
         with _scoped_to(entry.hermes_home):
             store = store_factory(entry.hermes_home)
             principal = await _principal_for_subject(store, subject)
-            if principal is None:
-                continue
-            if not getattr(principal, "active", True):
-                continue
-            if getattr(principal, "role", "") in ("owner", "admin"):
-                administered.append(entry.name)
-    return administered
+        if principal is not None:
+            out.append(Enrolment(entry, principal))
+    return out
+
+
+async def administered_profiles(
+    subject: str,
+    *,
+    store_factory: StoreFactory,
+    registry: Optional[List[ProfileRegistryEntry]] = None,
+) -> List[str]:
+    """Profiles where ``subject`` holds an active ``admin``/``owner`` row."""
+    return [
+        e.profile.name
+        for e in await enrolments(subject, store_factory=store_factory, registry=registry)
+        if getattr(e.principal, "active", True)
+        and getattr(e.principal, "role", "") in ("owner", "admin")
+    ]
 
 
 async def resolve_console_principal(
@@ -223,22 +241,11 @@ async def enrolled_profiles(
     the caller wants *authority* rather than blast radius (Projects §11
     shared-read), where a suspended enrolment carries no weight.
     """
-    if not user_id:
-        return []
-    entries = registry if registry is not None else get_profile_registry()
-    out: List[str] = []
-    for entry in entries:
-        if not entry.hermes_home.is_dir():
-            continue
-        with _scoped_to(entry.hermes_home):
-            store = store_factory(entry.hermes_home)
-            principal = await _principal_for_subject(store, user_id)
-            if principal is None:
-                continue
-            if active_only and not getattr(principal, "active", True):
-                continue
-            out.append(entry.name)
-    return out
+    return [
+        e.profile.name
+        for e in await enrolments(user_id, store_factory=store_factory, registry=registry)
+        if not active_only or getattr(e.principal, "active", True)
+    ]
 
 
 async def guard_account_level_op(
