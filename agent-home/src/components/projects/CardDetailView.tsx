@@ -183,6 +183,16 @@ export function CardDetailView({
             )}
           </div>
         ) : null}
+        {!card.parked && card.replan?.status === "activated" ? (
+          <div
+            data-component="CardSuperseded"
+            className="mt-3 rounded-xl border border-sky-500/30 bg-sky-500/10 p-3 text-sm"
+          >
+            Re-planned automatically after this card parked
+            {card.replan.rev ? ` — plan revision ${card.replan.rev} is active` : ""} and the run
+            continues on it. This card is superseded and won&apos;t be re-run.
+          </div>
+        ) : null}
         {card.parked ? (
           <div
             data-component="CardParked"

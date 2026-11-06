@@ -135,9 +135,9 @@ VALID_BLOCK_KINDS = {"dependency", "needs_input", "capability", "transient"}
 # unblocker (usually a cron) and routes the task to ``triage`` instead of back
 # to ``blocked`` — breaking the infinite unblock↔re-block loop and forcing a
 # human-in-the-loop decision. Mirrors the dispatcher's ``DEFAULT_FAILURE_LIMIT``
-# spirit (default 2) but counts a different signal: manual unblock recurrences,
-# not dispatcher spawn/crash/timeout failures.
-BLOCK_RECURRENCE_LIMIT = 2
+# spirit but counts a different signal: manual unblock recurrences, not
+# dispatcher spawn/crash/timeout failures. The third same-cause block parks.
+BLOCK_RECURRENCE_LIMIT = 3
 VALID_WORKSPACE_KINDS = {"scratch", "worktree", "dir"}
 KNOWN_TOOLSET_NAMES = frozenset(name.casefold() for name in get_toolset_names())
 _IS_WINDOWS = sys.platform == "win32"

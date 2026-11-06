@@ -228,13 +228,13 @@ describe("CardDetailView — re-run a block-loop-parked card", () => {
     card({
       status: "triage",
       parked: true,
-      block_recurrences: 2,
+      block_recurrences: 3,
       replan: { status: "drafting" },
     });
 
   it("says it is parked and re-planning, and offers Re-run instead of Stop", () => {
     const view = render(<CardDetailView slug="tender" card={parked()} />);
-    expect(view.getByText(/Parked after 2 blocks — re-planning/)).toBeTruthy();
+    expect(view.getByText(/Parked after 3 blocks — re-planning/)).toBeTruthy();
     expect(view.getByText("Re-run card")).toBeTruthy();
     expect(view.queryByText("Stop")).toBeNull();
   });
@@ -252,5 +252,20 @@ describe("CardDetailView — re-run a block-loop-parked card", () => {
     await waitFor(() =>
       expect(view.container.querySelector('[data-component="CardParked"]')).toBeNull(),
     );
+  });
+});
+
+describe("CardDetailView — a card an automatic re-plan superseded", () => {
+  it("says the run re-planned around it and that it won't be re-run", () => {
+    const view = render(
+      <CardDetailView
+        slug="tender"
+        card={card({ status: "archived", parked: false, replan: { status: "activated", rev: 2 } })}
+      />,
+    );
+    const banner = view.container.querySelector('[data-component="CardSuperseded"]');
+    expect(banner?.textContent).toContain("Re-planned automatically");
+    expect(banner?.textContent).toContain("plan revision 2");
+    expect(view.container.querySelector('[data-component="CardParked"]')).toBeNull();
   });
 });
