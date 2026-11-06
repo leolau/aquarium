@@ -920,7 +920,9 @@ describe("CardDetailView", () => {
     expect(html).toContain('data-component="CardBlockedReason"');
     expect(html).toContain("Needs your input");
     expect(html).toContain("Which Canva template should I use?");
-    expect(html).toContain("Make ready");
+    expect(html).toContain("Answer the agent");
+    expect(html).toContain("Re-run card");
+    expect(html).not.toContain("Make ready");
     // Not repeated in a second, generically-labelled section.
     expect(html).not.toContain('data-component="CardResult"');
   });
@@ -978,13 +980,15 @@ describe("CardActions", () => {
     expect(html).toContain("Re-run");
   });
 
-  it("offers Make ready (not a reclaim) and no Stop for a blocked card", () => {
+  it("offers an answer + Re-run card (not a reclaim) and no Stop for a blocked card", () => {
     const html = renderToStaticMarkup(
       <CardActions slug="s" taskId="t_1" status="blocked" />,
     );
-    expect(html).toContain("Make ready");
+    expect(html).toContain("Answer the agent");
+    expect(html).toContain("Re-run card");
+    expect(html).not.toContain("Make ready");
     expect(html).not.toContain("Retry");
-    expect(html).not.toContain("Re-run");
+    expect(html).not.toContain(">Re-run<");
     expect(html).not.toContain(">Stop<");
   });
 
