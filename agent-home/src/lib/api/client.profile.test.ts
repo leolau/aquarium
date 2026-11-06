@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { HermesApiClient } from "@/lib/api/client";
+import { HermesApiClient, isBoxWidePath } from "@/lib/api/client";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -76,5 +76,31 @@ describe("HermesApiClient profile binding (FG-28)", () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).not.toContain("profile=");
     expect(JSON.parse(String(init?.body))).toEqual({ message: "hello" });
+  });
+
+  it("never scopes a box-wide route — it describes the machine, not a profile", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => ok({}));
+    const client = bound();
+
+    await client.capacity();
+    await client.systemStats();
+    await client.browsePlaces();
+    await client.browseSave("home", "a.txt");
+    await client.request("/api/files/list?path=x");
+    await client.request("/api/quotas/box");
+
+    for (const [url, init] of fetchMock.mock.calls) {
+      expect(String(url)).not.toContain("profile=");
+      if (init?.body) expect(JSON.parse(String(init.body))).not.toHaveProperty("profile");
+    }
+  });
+
+  it("tells box-wide paths from profile-scoped look-alikes", () => {
+    for (const p of ["/api/files", "/api/fs/read?p=1", "/api/browse/list", "/api/capacity/upload-storage", "/api/system/stats", "/api/quotas/box"]) {
+      expect(isBoxWidePath(p), p).toBe(true);
+    }
+    for (const p of ["/api/filesystem", "/api/system/other", "/api/quotas", "/api/quotas/me", "/api/sessions"]) {
+      expect(isBoxWidePath(p), p).toBe(false);
+    }
   });
 });

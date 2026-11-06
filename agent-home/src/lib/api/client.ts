@@ -234,6 +234,25 @@ export interface HermesApiClientOptions {
   profile?: string;
 }
 
+/**
+ * Box-wide Python routes (FG-28 B4): they describe the machine, not a profile,
+ * and answer 400 to a non-acting `?profile=`, so the bound profile is never
+ * added to them.
+ */
+const BOX_WIDE_PATHS = [
+  "/api/files",
+  "/api/fs",
+  "/api/browse",
+  "/api/capacity",
+  "/api/system/stats",
+  "/api/quotas/box",
+] as const;
+
+export function isBoxWidePath(path: string): boolean {
+  const pathname = path.split(/[?#]/, 1)[0].replace(/\/+$/, "");
+  return BOX_WIDE_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}
+
 /** Rows per `GET /api/sessions` page when reading a whole conversation list. */
 export const SESSION_PAGE_SIZE = 200;
 
@@ -274,7 +293,7 @@ export class HermesApiClient {
    * ignores the parameter, so this is safe to apply uniformly.
    */
   private scopedPath(path: string): string {
-    if (!this.profile) return path;
+    if (!this.profile || isBoxWidePath(path)) return path;
     const sep = path.includes("?") ? "&" : "?";
     return `${path}${sep}profile=${encodeURIComponent(this.profile)}`;
   }
@@ -292,7 +311,7 @@ export class HermesApiClient {
     init: RequestInit & { json?: unknown } = {},
   ): Promise<T> {
     const { json: rawJson, headers, ...rest } = init;
-    const json = this.scopedJson(rawJson);
+    const json = isBoxWidePath(path) ? rawJson : this.scopedJson(rawJson);
     path = this.scopedPath(path);
     const finalHeaders = new Headers(headers);
     if (this.hermesToken) {
