@@ -264,4 +264,22 @@ describe("lastLines / progressSegments", () => {
     expect(progressSegments(0, 0, 0)).toEqual({ done: 0, inProgress: 0 });
     expect(progressSegments(5, 5, 5)).toEqual({ done: 100, inProgress: 0 });
   });
+
+  it("calls triage cards of a run Start approved a queue, not a wait for approval", () => {
+    const board = BOARD(CARD({ id: "t1" }), CARD({ id: "d", status: "triage" }));
+    const asks = liveState(PROJECT(), board, { run: RUN() });
+    expect(asks.nextForYou).toMatch(/wait.* in Triage for your approval/);
+    const approved = liveState(PROJECT({ runs: [BRIEF({ auto_approve: true })] }), board, { run: RUN() });
+    expect(approved.kind).toBe("working");
+    expect(approved.nextForYou).toMatch(/nothing right now\. 1 step queued/);
+    expect(approved.nextForYou).not.toMatch(/approval/);
+  });
+
+  it("never asks to approve the queue of a stalled auto-approved run", () => {
+    const board = BOARD(CARD({ id: "d", status: "triage" }));
+    const run = RUN({ stalled: true, cards: [{ task_id: "d", step_key: "d", status: "triage", title: "D" }] });
+    const s = liveState(PROJECT({ runs: [BRIEF({ auto_approve: true })] }), board, { run });
+    expect(s.kind).toBe("stalled");
+    expect(s.nextForYou).not.toMatch(/approve/);
+  });
 });

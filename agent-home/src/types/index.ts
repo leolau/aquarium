@@ -1890,6 +1890,9 @@ export interface ProjectRunBrief {
   summary?: string | null;
   error?: string | null;
   score_user: number | null;
+  /** Started from Task mode: Start approved every card of the run, so
+   * cards still in triage are queued for a slot, not waiting on a person. */
+  auto_approve?: boolean;
   /**
    * §8.2: present only when it diverges from `score_user` by ≥2 —
    * presence IS the learning signal.
@@ -3136,6 +3139,8 @@ export interface ProjectBoardOpenRun {
   blocked_tree_count: number;
   /** The server's `_run_stalled` verdict. */
   stalled: boolean;
+  /** Start approved every card of this run (Task mode). */
+  auto_approve?: boolean;
 }
 
 /** `GET /{slug}/board/context` — what the board rows alone cannot say. */

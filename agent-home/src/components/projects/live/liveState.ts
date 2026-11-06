@@ -135,6 +135,8 @@ export function liveState(
       stepTotal: stepOf.has(t.id) ? runCards.length : null,
     }));
   const triage = tasks.filter((t) => t.status === "triage").length;
+  // Start already approved this run's cards (Task mode): triage is a queue.
+  const approved = open?.auto_approve === true;
   const blocked = tasks.filter((t) => t.status === "blocked").length;
   const inlineRunning =
     !!open && open.status === "running" && inputs.inlineActive === true;
@@ -252,15 +254,17 @@ export function liveState(
   if (busy) {
     const next = detail?.awaiting_continue
       ? `review the checkpoint${checkpoint ? ` “${checkpoint}”` : ""}, then continue run ${open.run_no}.`
-      : triage > 0
-        ? `${plural(triage, "card")} wait${triage === 1 ? "s" : ""} in Triage for your approval.`
-        : "nothing right now. You'll be told when the agent needs you.";
+      : triage > 0 && approved
+        ? `nothing right now. ${plural(triage, "step")} queued; ${triage === 1 ? "it starts" : "they start"} on ${triage === 1 ? "its" : "their"} own as work frees up.`
+        : triage > 0
+          ? `${plural(triage, "card")} wait${triage === 1 ? "s" : ""} in Triage for your approval.`
+          : "nothing right now. You'll be told when the agent needs you.";
     return make("working", next, { kind: "stop_all", runNo: open.run_no }, true);
   }
 
   if (detail?.stalled === true) {
     const next =
-      triage > 0
+      triage > 0 && !approved
         ? `approve ${plural(triage, "card")} waiting in Triage so work can continue.`
         : blocked > 0
           ? `unblock ${plural(blocked, "card")} so work can continue.`
