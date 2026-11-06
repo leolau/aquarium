@@ -310,7 +310,17 @@ def _get_pty_active_session_files(app: "FastAPI") -> dict[str, Path]:
         return app.state.pty_active_session_files
 
 
-app = FastAPI(title="Hermes Agent", version=__version__, lifespan=_lifespan)
+from hermes_cli.profile_route_scope import require_profile_scope  # noqa: E402
+
+# FG-28 B4: installed app-wide (so on every included router too) — a request
+# naming another profile is served in that profile or refused, never answered
+# from this one.
+app = FastAPI(
+    title="Hermes Agent",
+    version=__version__,
+    lifespan=_lifespan,
+    dependencies=[Depends(require_profile_scope)],
+)
 
 # Memory-provider OAuth connect routes live in the memory layer, not here.
 from hermes_cli.memory_oauth import router as _memory_oauth_router  # noqa: E402
