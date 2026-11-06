@@ -8,6 +8,7 @@ import { CardApprovals } from "@/components/projects/CardApprovals";
 import { CardEditor } from "@/components/projects/CardEditor";
 import { CardModelCalls } from "@/components/projects/CardModelCalls";
 import { durationLabel } from "@/components/projects/format";
+import { parkedText } from "@/components/projects/live/liveState";
 import { useCardLive } from "@/components/projects/useCardLive";
 import { Spinner } from "@/components/ui/Spinner";
 import { Pill, type Tone } from "@/components/ui/Pill";
@@ -182,6 +183,34 @@ export function CardDetailView({
             )}
           </div>
         ) : null}
+        {card.parked ? (
+          <div
+            data-component="CardParked"
+            className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3"
+          >
+            <p className="text-xs font-medium uppercase tracking-wide text-amber-300">
+              Needs you
+            </p>
+            <p className="mt-1 text-sm">
+              {(() => {
+                const text = parkedText(card);
+                return text.charAt(0).toUpperCase() + text.slice(1);
+              })()}
+              .
+            </p>
+            <p className="mt-2 text-xs text-[var(--color-muted)]">
+              It kept blocking for the same reason, so it won&apos;t be
+              restarted automatically.{" "}
+              <Link
+                href={`/projects/${encodeURIComponent(slug)}?tab=plan`}
+                className="text-[var(--color-accent)]"
+              >
+                Review the plan
+              </Link>
+              , or answer the agent below and re-run the card.
+            </p>
+          </div>
+        ) : null}
         {!archived ? (
           <>
             <CardActions
@@ -189,6 +218,7 @@ export function CardDetailView({
               taskId={card.id}
               status={card.status}
               awaitingApproval={approvals.length > 0}
+              parked={card.parked === true}
               onUpdated={applyServerCard}
               answer={answer}
               onAnswerChange={setAnswer}

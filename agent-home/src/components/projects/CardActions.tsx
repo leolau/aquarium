@@ -31,6 +31,7 @@ export function CardActions({
   taskId,
   status,
   awaitingApproval = false,
+  parked = false,
   onUpdated,
   answer: answerProp,
   onAnswerChange,
@@ -41,6 +42,9 @@ export function CardActions({
   /** A blocked card waiting on an approval is released by answering it,
    * not by Make ready (its worker would only ask again). */
   awaitingApproval?: boolean;
+  /** Parked in triage by the unblock-loop breaker: only a person re-runs
+   * it (the same unblock route, which also clears its loop count). */
+  parked?: boolean;
   /** The card as the server returned it after a write, so the page can
    * drop the stale status before the refresh lands. */
   onUpdated?: (card: ProjectCardDetail) => void;
@@ -61,7 +65,7 @@ export function CardActions({
     onAnswerChange?.(next);
   };
 
-  if (status !== "running" && status !== "ready" && status !== "blocked") {
+  if (status !== "running" && status !== "ready" && status !== "blocked" && !parked) {
     return null;
   }
 
@@ -85,7 +89,7 @@ export function CardActions({
 
   return (
     <div data-component="CardActions" className="mt-3 flex flex-wrap items-center gap-2">
-      {status !== "blocked" ? (
+      {status !== "blocked" && !parked ? (
         <BusyRegion busy={busy === "stop"} label="Stopping…">
           <ActionButton
             busy={busy === "stop"}
@@ -111,7 +115,7 @@ export function CardActions({
           </ActionButton>
         </BusyRegion>
       ) : null}
-      {status === "blocked" && !awaitingApproval ? (
+      {(status === "blocked" || parked) && !awaitingApproval ? (
         <BusyRegion busy={busy === "unblock"} label="Re-running…" className="w-full">
           <div data-component="CardRerun" className="flex w-full flex-col gap-2">
             <label className="flex flex-col gap-1 text-sm">

@@ -84,6 +84,10 @@ def _on_card_settled(bconn, task_id: str) -> List[str]:
         promoted = projects_run.refill_run_cards(
             pconn, bconn, project=project, run=run
         )
+        # A card the unblock-loop breaker just parked stays parked (refill
+        # never re-queues it); say so now. The re-plan itself is the
+        # sweep's job — this may be a short-lived worker process.
+        projects_run.handle_parked_cards(pconn, bconn, project=project, run=run)
         if not promoted:
             # Nothing left to promote right now — the common reason is a
             # checkpoint that just engaged (the card that settled *was*
@@ -208,6 +212,15 @@ def reconcile_all_open_runs(now: Optional[int] = None) -> List[Dict[str, Any]]:
     return results
 
 
+def _replan_drafter():
+    try:
+        from hermes_cli import projects_api
+    except Exception:  # noqa: BLE001 — no API deps here: mark, don't re-plan
+        log.warning("projects: re-plan unavailable", exc_info=True)
+        return None
+    return projects_api.start_replan_draft
+
+
 def _reconcile_one_run(
     pconn, project, run: dict, *, now: int, stall_after: int
 ) -> Optional[Dict[str, Any]]:
@@ -216,6 +229,12 @@ def _reconcile_one_run(
     with kanban_db.connect_closing(board=project.board_slug or None) as bconn:
         promoted = projects_run.refill_run_cards(
             pconn, bconn, project=project, run=run
+        )
+        # Loop-parked cards are never re-promoted above; mark them (if the
+        # settle hook did not) and ask the planner, once per parking, for
+        # another way to continue.
+        projects_run.handle_parked_cards(
+            pconn, bconn, project=project, run=run, replan=_replan_drafter()
         )
         if promoted:
             return {

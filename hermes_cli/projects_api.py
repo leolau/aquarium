@@ -49,6 +49,7 @@ import json
 import logging
 import re
 import threading
+from types import SimpleNamespace
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -2831,6 +2832,9 @@ def _card_payload(bconn, project: projects_db.Project, task_id: str, *, principa
         payload["pending_approvals"] = kanban_db.list_task_approvals(
             bconn, [task_id]
         ).get(task_id, [])
+    payload["parked"] = kanban_db.is_block_loop_parked(task)
+    if payload["parked"]:
+        payload["replan"] = projects_run.parked_replan_state(bconn, task_id)
     payload["model_calls"] = _card_model_calls(bconn, task)
     return payload
 
@@ -2964,8 +2968,14 @@ def _move_card_sync(bconn, task, new_status: str, actor: str) -> tuple[bool, str
             return kanban_db.unblock_task(bconn, task.id), "the card is not blocked"
         if cur == "triage":
             # Specify promotes to todo and runs the ready pass itself; a
-            # parent-gated card legitimately stays in todo.
-            if not kanban_db.specify_triage_task(bconn, task.id):
+            # parent-gated card legitimately stays in todo. A card the
+            # unblock-loop breaker parked is released instead, clearing its
+            # loop counter (a person chose to try it again).
+            if kanban_db.is_block_loop_parked(task):
+                moved = kanban_db.release_parked_task(bconn, task.id, actor=actor)
+            else:
+                moved = kanban_db.specify_triage_task(bconn, task.id)
+            if not moved:
                 return False, "the card left triage already"
             after = kanban_db.get_task(bconn, task.id)
             if after is not None and after.status == "ready":
@@ -3566,6 +3576,9 @@ def _plan_draft_job(
     profile_names: set[str],
     created_by: Optional[str],
     enabled_toolsets: Optional[list[str]] = None,
+    note: str = "drafted by the agent",
+    on_saved: Optional[Callable[[int], None]] = None,
+    on_failed: Optional[Callable[[str], None]] = None,
 ) -> None:
     def _set(**fields: Any) -> None:
         with _PLAN_DRAFTS_LOCK:
@@ -3588,16 +3601,18 @@ def _plan_draft_job(
                 body=str(data.get("body") or "").strip(),
                 steps=steps,
                 created_by=created_by,
-                note="drafted by the agent",
+                note=note,
             )
         _set(status="done", rev=rev, finished_at=int(time.time()))
     except Exception as exc:  # noqa: BLE001 — surfaced to the UI, not raised
         logger.warning("plan draft failed for project %s: %s", project_id, exc)
-        _set(
-            status="failed",
-            detail=_plan_draft_error_detail(exc),
-            finished_at=int(time.time()),
-        )
+        detail = _plan_draft_error_detail(exc)
+        _set(status="failed", detail=detail, finished_at=int(time.time()))
+        if on_failed is not None:
+            on_failed(detail)
+        return
+    if on_saved is not None:
+        on_saved(rev)
 
 
 def _plan_draft_job_kwargs(project, outputs, profiles, principal) -> dict:
@@ -3672,6 +3687,51 @@ def start_plan_draft(project, profiles, principal) -> dict:
         daemon=True,
     ).start()
     return started
+
+
+def start_replan_draft(
+    project,
+    *,
+    context: str,
+    note: str,
+    on_claimed: Callable[[], None],
+    on_saved: Callable[[int], None],
+    on_failed: Callable[[str], None],
+) -> bool:
+    """The re-plan for a parked run card (``projects_run.handle_parked_cards``):
+    the ordinary background plan draft, told about the stuck step.
+
+    Same job, same Plan-panel draft state, same inactive revision a lead
+    activates (§7.2) — only the prompt carries ``context`` and the revision
+    ``note``. Returns False without starting while another draft is running;
+    raises ``HTTPException`` 409 when the project declares no outputs.
+    ``on_claimed`` runs before the job starts, then exactly one of
+    ``on_saved(rev)`` / ``on_failed(detail)`` from the job's thread.
+    """
+    with projects_db.connect_closing() as conn:
+        outputs = projects_db.get_project_outputs(conn, project.id)
+        profiles = projects_db.get_project_profiles(conn, project.id)
+    if not outputs:
+        raise HTTPException(
+            status_code=409,
+            detail="declare at least one output before drafting a plan",
+        )
+    kwargs = _plan_draft_job_kwargs(
+        project, outputs, profiles, SimpleNamespace(user_id=None)
+    )
+    kwargs["prompt"] = f"{kwargs['prompt']}\n{context}"
+    try:
+        _claim_plan_draft(project)
+    except HTTPException:
+        return False
+    on_claimed()
+    threading.Thread(
+        target=_plan_draft_job,
+        kwargs={**kwargs, "note": note, "on_saved": on_saved, "on_failed": on_failed},
+        name=f"plan-replan-{project.slug}",
+        daemon=True,
+    ).start()
+    return True
 
 
 @router.post("/{slug}/playbook/draft")

@@ -536,3 +536,34 @@ def test_card_page_totals_its_workers_model_calls(env):
     assert rows[(1, "main")]["run_outcome"] == "crashed"
     assert rows[(2, "main")]["calls"] == 3 and rows[(2, "main")]["failures"] == 1
     assert rows[(2, "aux:vision")]["failures"] == 1
+
+
+def test_rerun_releases_a_card_the_unblock_loop_breaker_parked(env):
+    """The card's Re-run (Answer the agent) is the human act that re-queues
+    a block-loop-parked card — and it clears the loop counter, so automatic
+    promotion treats the card normally again."""
+    client, _state = env
+    project = _project(env)
+    slug = project["slug"]
+    card = _card(env, slug, "Get the supplier price")
+    with kanban_db.connect_closing() as bconn:
+        bconn.execute(
+            "UPDATE tasks SET status = 'triage', block_kind = 'needs_input', "
+            "block_recurrences = ? WHERE id = ?",
+            (kanban_db.BLOCK_RECURRENCE_LIMIT, card),
+        )
+        bconn.commit()
+    detail = client.get(f"{PREFIX}/{slug}/cards/{card}").json()
+    assert detail["parked"] is True
+    assert detail["replan"]["status"] == "pending"
+    resp = client.post(
+        f"{PREFIX}/{slug}/cards/{card}/unblock", json={"reason": "Approved it now."}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "ready"
+    with kanban_db.connect_closing() as bconn:
+        task = kanban_db.get_task(bconn, card)
+    assert task.block_recurrences == 0 and task.block_kind is None
+    detail = client.get(f"{PREFIX}/{slug}/cards/{card}").json()
+    assert detail["parked"] is False
+    assert detail["comments"][-1]["body"] == "Approved it now."

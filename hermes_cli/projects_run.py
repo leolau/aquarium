@@ -656,6 +656,14 @@ def promote_run_cards(
     ``force_held`` is set by the human "continue" act, which passes the
     checkpoint and releases its successors.
 
+    A card the board's unblock-loop breaker parked in ``triage``
+    (:func:`kanban_db.is_block_loop_parked`) is never promoted here in any
+    autonomy mode: it re-blocked for the same cause until the breaker gave
+    up, and re-queueing it only starts the same loop again. It waits for a
+    person (and the re-plan, :func:`handle_parked_cards`). The human
+    ``force_held`` acts (Continue, Resume) do release it, clearing the loop
+    counter (:func:`kanban_db.release_parked_task`).
+
     The ``max_in_progress`` cap is enforced here — the project's own
     promotion step, never by patching the shared dispatcher: count cards in
     running + ready, promote at most up to the cap.
@@ -690,10 +698,14 @@ def promote_run_cards(
     if task_ids:
         placeholders = ",".join("?" for _ in task_ids)
         rows = bconn.execute(
-            f"SELECT id, status FROM tasks WHERE id IN ({placeholders})",
+            f"SELECT id, status, block_recurrences FROM tasks "
+            f"WHERE id IN ({placeholders})",
             task_ids,
         ).fetchall()
         status_by_task = {row["id"]: row["status"] for row in rows}
+        parked = {row["id"] for row in rows if kanban_db.is_block_loop_parked(row)}
+    else:
+        parked = set()
     status_by_key = {
         key_of[tid]: status
         for tid, status in status_by_task.items()
@@ -714,6 +726,8 @@ def promote_run_cards(
             continue
         if status_by_task.get(rc["task_id"]) != "triage":
             continue
+        if rc["task_id"] in parked and not force_held:
+            continue
         eligible.append((rc["task_id"], key))
 
     order_index = {s["key"]: i for i, s in enumerate(steps)}
@@ -724,7 +738,10 @@ def promote_run_cards(
     for task_id, _key in eligible:
         if room is not None and len(promoted) >= room:
             break
-        if kanban_db.specify_triage_task(bconn, task_id):
+        if task_id in parked:
+            if kanban_db.release_parked_task(bconn, task_id, actor="human"):
+                promoted.append(task_id)
+        elif kanban_db.specify_triage_task(bconn, task_id):
             promoted.append(task_id)
     return promoted
 
@@ -1362,6 +1379,9 @@ def resume_run(
       breaker (``BLOCK_RECURRENCE_LIMIT``) even after its checkpoint was
       already passed once; without forcing, the checkpoint-successor check
       would refuse to re-promote a step that has every right to retry.
+      The force is also what releases such a block-loop-parked card
+      (clearing its loop counter); automatic promotion
+      (``refill_run_cards``, the reconcile sweep) never does.
 
     Refuses (``ValueError``) a run that is not ``failed``/``cancelled`` —
     ``done`` has already delivered and reopening it has no defined next
@@ -1516,25 +1536,38 @@ class ScheduledRunSkipped(ValueError):
 
 
 def _human_wait(bconn, task) -> dict:
-    return {
+    wait = {
         "task_id": task.id,
         "title": task.title,
         "block_kind": task.block_kind,
         "reason": _latest_card_note(bconn, task.id),
     }
+    if kanban_db.is_block_loop_parked(task):
+        wait["parked"] = True
+        wait["block_recurrences"] = int(task.block_recurrences or 0)
+        wait["replan"] = parked_replan_state(bconn, task.id)
+    return wait
+
+
+def _is_human_wait(task) -> bool:
+    return (
+        task.status == "blocked" and task.block_kind in HUMAN_BLOCK_KINDS
+    ) or kanban_db.is_block_loop_parked(task)
 
 
 def project_human_waits(bconn, project: projects_db.Project) -> List[dict]:
     """Every card of this project blocked on a person, oldest first."""
     rows = bconn.execute(
-        "SELECT id FROM tasks WHERE project_id = ? AND status = 'blocked' "
-        "AND block_kind IN (?, ?) ORDER BY created_at, id",
-        (project.id, *HUMAN_BLOCK_KINDS),
+        "SELECT id FROM tasks WHERE project_id = ? AND ("
+        "(status = 'blocked' AND block_kind IN (?, ?)) "
+        "OR (status = 'triage' AND block_recurrences >= ?)"
+        ") ORDER BY created_at, id",
+        (project.id, *HUMAN_BLOCK_KINDS, kanban_db.BLOCK_RECURRENCE_LIMIT),
     ).fetchall()
     waits = []
     for row in rows:
         task = kanban_db.get_task(bconn, row["id"])
-        if task is not None:
+        if task is not None and _is_human_wait(task):
             waits.append(_human_wait(bconn, task))
     return waits
 
@@ -1553,11 +1586,7 @@ def run_human_waits(bconn, task_ids: List[str]) -> List[dict]:
     waits = []
     for task_id in sorted(seen):
         task = kanban_db.get_task(bconn, task_id)
-        if (
-            task is not None
-            and task.status == "blocked"
-            and task.block_kind in HUMAN_BLOCK_KINDS
-        ):
+        if task is not None and _is_human_wait(task):
             waits.append(_human_wait(bconn, task))
     return waits
 
@@ -1580,6 +1609,200 @@ def notify_waiting_on_you(
             "projects: could not raise waiting-on-you approval for %s",
             project.slug, exc_info=True,
         )
+
+
+PARKED_EVENT = "block_loop_parked"
+REPLAN_EVENTS = ("replan_requested", "replan_proposed", "replan_failed")
+_REPLAN_STATUS = {
+    "replan_requested": "drafting",
+    "replan_proposed": "proposed",
+    "replan_failed": "failed",
+}
+
+
+def _for_parking(event, parking_id: int) -> bool:
+    """Whether a Projects event was recorded for this parking (the id of the
+    ``block_loop_detected`` event that parked the card) — a later parking of
+    the same card, after a human re-ran it, starts a fresh one."""
+    return (
+        event is not None
+        and isinstance(event.payload, dict)
+        and event.payload.get("parking") == parking_id
+    )
+
+
+def _parking(bconn, task_id: str):
+    event = kanban_db.latest_event(bconn, task_id, ["block_loop_detected"])
+    return (event.id if event else 0), event
+
+
+def parked_replan_state(bconn, task_id: str) -> dict:
+    """Where the re-plan for a parked card's current parking stands:
+    ``pending`` (the sweep has not asked yet), ``drafting``, ``proposed``
+    (with the revision number) or ``failed`` (with why)."""
+    parking_id, _ = _parking(bconn, task_id)
+    event = kanban_db.latest_event(bconn, task_id, REPLAN_EVENTS)
+    if not _for_parking(event, parking_id):
+        return {"status": "pending"}
+    state = {"status": _REPLAN_STATUS[event.kind]}
+    for key in ("rev", "detail"):
+        if event.payload.get(key) is not None:
+            state[key] = event.payload[key]
+    return state
+
+
+def _replan_context(pconn, bconn, run: dict, task, reason: Optional[str]) -> str:
+    """What the planner is told about the stuck step (appended to the
+    ordinary plan-draft prompt)."""
+    lines = [
+        "",
+        "RE-PLAN REQUEST:",
+        f"In run {run.get('run_no')}, the step \"{task.title}\" blocked "
+        f"{int(task.block_recurrences or 0)} times for the same reason and was "
+        "parked. It will not be retried automatically.",
+    ]
+    if reason:
+        lines.append(f"Its last block reason: {reason}")
+    lines.append("Where the run stands:")
+    for card in run_cards_brief(pconn, bconn, run):
+        lines.append(
+            f"- {card.get('step_key')}: {card.get('title')} [{card.get('status')}]"
+        )
+    lines.append(
+        "Propose a revised plan that still delivers the outputs another way: "
+        "route around the stuck step (a different approach, source or tool "
+        "that does not hit the same wall), keep what is already done, and do "
+        "not repeat the stuck step unchanged. If there is genuinely no other "
+        "way, make the first step ask the owner one precise question whose "
+        "answer would unblock it."
+    )
+    return "\n".join(lines)
+
+
+def _record_replan_outcome(project, task_id: str, kind: str, payload: dict, note: str) -> None:
+    try:
+        with kanban_db.connect_closing(board=project.board_slug or None) as bconn:
+            kanban_db.append_event(bconn, task_id, kind, payload)
+            kanban_db.add_comment(bconn, task_id, "projects", note)
+    except Exception:  # noqa: BLE001 — the revision itself still stands
+        log.warning(
+            "projects: could not record %s on %s", kind, task_id, exc_info=True
+        )
+
+
+def handle_parked_cards(
+    pconn,
+    bconn,
+    *,
+    project: projects_db.Project,
+    run: dict,
+    replan: Optional[Callable[..., bool]] = None,
+) -> List[str]:
+    """React to run cards the unblock-loop breaker parked in ``triage``.
+
+    Once per parking (keyed on the ``block_loop_detected`` event that parked
+    the card): a comment on the card, a ``block_loop_parked`` event, and the
+    project's "waiting on you" approval. :func:`promote_run_cards` already
+    refuses to re-queue the card; a person re-runs it, or takes the re-plan.
+
+    With ``replan`` (the reconcile sweep passes
+    ``projects_api.start_replan_draft``), also asks the planner — once per
+    parking — for a revised plan that routes around the stuck step. The
+    revision is saved inactive like every agent draft (§7.2), so it waits
+    in the Plan panel for a lead to activate it in every autonomy mode.
+    ``replan`` returns False while another draft is running (tried again
+    next sweep). Returns the task ids newly marked parked. Never raises.
+    """
+    marked: List[str] = []
+    try:
+        run_cards = projects_db.get_run_cards(pconn, run["id"])
+    except Exception:  # noqa: BLE001
+        log.warning("projects: could not read run cards", exc_info=True)
+        return marked
+    for rc in run_cards:
+        task_id = rc["task_id"]
+        try:
+            task = kanban_db.get_task(bconn, task_id)
+            if not kanban_db.is_block_loop_parked(task):
+                continue
+            parking_id, detected = _parking(bconn, task_id)
+            reason = (
+                detected.payload.get("reason")
+                if detected is not None and isinstance(detected.payload, dict)
+                else None
+            )
+            count = int(task.block_recurrences or 0)
+            parked_event = kanban_db.latest_event(bconn, task_id, [PARKED_EVENT])
+            if not _for_parking(parked_event, parking_id):
+                kanban_db.add_comment(
+                    bconn, task_id, "projects",
+                    f"Parked after {count} blocks for the same reason — "
+                    "it will not be restarted automatically. Re-planning: the "
+                    "planner is drafting a revised plan that finds another way "
+                    "to continue (review it in the Plan panel). To try this "
+                    "card again as it is, answer it and re-run it.",
+                )
+                kanban_db.append_event(
+                    bconn, task_id, PARKED_EVENT,
+                    {"parking": parking_id, "recurrences": count,
+                     "run_no": run.get("run_no")},
+                )
+                notify_waiting_on_you(
+                    project, run, _human_wait(bconn, task),
+                    lead=(
+                        f"Run {run.get('run_no')}: parked after {count} "
+                        "blocks — re-planning."
+                    ),
+                )
+                marked.append(task_id)
+            if replan is None:
+                continue
+            requested = kanban_db.latest_event(bconn, task_id, ["replan_requested"])
+            if _for_parking(requested, parking_id):
+                continue
+
+            def _claimed(task_id=task_id, parking_id=parking_id) -> None:
+                kanban_db.append_event(
+                    bconn, task_id, "replan_requested", {"parking": parking_id}
+                )
+
+            def _saved(rev: int, task_id=task_id, parking_id=parking_id) -> None:
+                _record_replan_outcome(
+                    project, task_id, "replan_proposed",
+                    {"parking": parking_id, "rev": rev},
+                    f"Re-plan proposed as plan revision {rev} — review "
+                    "and activate it in the Plan panel.",
+                )
+
+            def _failed(detail: str, task_id=task_id, parking_id=parking_id) -> None:
+                _record_replan_outcome(
+                    project, task_id, "replan_failed",
+                    {"parking": parking_id, "detail": detail},
+                    f"Re-plan failed: {detail}. Draft a plan in the Plan "
+                    "panel, or answer this card and re-run it.",
+                )
+
+            try:
+                replan(
+                    project,
+                    context=_replan_context(pconn, bconn, run, task, reason),
+                    note=f"re-plan: \"{task.title}\" parked after {count} blocks",
+                    on_claimed=_claimed,
+                    on_saved=_saved,
+                    on_failed=_failed,
+                )
+            except Exception as exc:  # noqa: BLE001 — recorded, not retried
+                if not _for_parking(
+                    kanban_db.latest_event(bconn, task_id, ["replan_requested"]),
+                    parking_id,
+                ):
+                    _claimed()
+                _failed(str(getattr(exc, "detail", None) or exc))
+        except Exception:  # noqa: BLE001 — one card never stops the rest
+            log.warning(
+                "projects: could not handle parked card %s", task_id, exc_info=True
+            )
+    return marked
 
 
 def notify_if_awaiting_checkpoint(
