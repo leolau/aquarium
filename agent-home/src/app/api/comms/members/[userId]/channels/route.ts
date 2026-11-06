@@ -23,7 +23,7 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ userId: string }> },
 ): Promise<NextResponse> {
-  const gate = await requireMemberAdmin();
+  const gate = await requireMemberAdmin(request);
   if ("response" in gate) return gate.response;
   const { userId } = await params;
   let body: ChannelBody;
@@ -60,7 +60,7 @@ export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ userId: string }> },
 ): Promise<NextResponse> {
-  const gate = await requireMemberAdmin();
+  const gate = await requireMemberAdmin(request);
   if ("response" in gate) return gate.response;
   const { userId } = await params;
   const query = new URL(request.url).searchParams;

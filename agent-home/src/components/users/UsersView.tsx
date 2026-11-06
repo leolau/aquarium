@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { AdminProfileSwitcher } from "@/components/users/AdminProfileSwitcher";
 import { BusyRegion } from "@/components/ui/BusyRegion";
 import { Pill } from "@/components/ui/Pill";
 import { CreateUserForm } from "@/components/users/CreateUserForm";
@@ -12,12 +13,14 @@ import { InvitationLink } from "@/components/users/InvitationLink";
 import { UserRow } from "@/components/users/UserRow";
 import { PAGE_SIZE, errorMessage, sendJson } from "@/components/users/api";
 import { optimisticRoleChange } from "@/components/users/optimistic";
+import { withProfileQuery } from "@/lib/profile";
 import type {
   DirectoryResponse,
   Member,
   MemberCreateResponse,
   MemberInvitationResponse,
   MembersResponse,
+  ProfileSummary,
   Role,
 } from "@/types";
 import { ActionButton } from "@/components/ui/ActionButton";
@@ -28,8 +31,14 @@ export interface UsersViewProps {
   role: Role;
   /** The acting principal, so its own row can protect itself. */
   userId: string;
-  /** The profile this console administers (FG-27 derives its schema from it). */
+  /**
+   * The profile this console administers (FG-27 derives its schema from it).
+   * Every members/directory request names it (`?profile=`), so the BFF and
+   * Python judge the caller's role in *this* profile, not the session's.
+   */
   profile: string;
+  /** The profiles the caller administers — the switcher's options (FG-28 C3). */
+  administered?: ProfileSummary[];
   /** The colleague list every enrolled principal may read. */
   directory: DirectoryResponse;
   /** The first roster page — null for a non-admin, who never fetches one. */
@@ -54,9 +63,11 @@ export function UsersView({
   role,
   userId,
   profile,
+  administered = [],
   directory,
   initialPage,
 }: UsersViewProps) {
+  const scoped = (path: string) => withProfileQuery(path, profile);
   const canManage = role === "owner" || role === "admin";
   const [page, setPage] = useState<MembersResponse | null>(initialPage);
   const [offset, setOffset] = useState(initialPage?.offset ?? 0);
@@ -91,7 +102,7 @@ export function UsersView({
     if (r) params.set("role", r);
     if (a) params.set("active", a);
     try {
-      const res = await fetch(`/api/comms/members?${params.toString()}`, {
+      const res = await fetch(scoped(`/api/comms/members?${params.toString()}`), {
         cache: "no-store",
       });
       if (!res.ok) return;
@@ -125,9 +136,9 @@ export function UsersView({
   }) {
     await mutate("create", async () => {
       const resp = await sendJson<MemberCreateResponse>(
-        "/api/comms/members",
+        scoped("/api/comms/members"),
         "POST",
-        input,
+        { ...input, profile },
       );
       if (resp.activation_path) {
         setLink({
@@ -158,7 +169,9 @@ export function UsersView({
       setPage,
       send: () =>
         sendJson(
-          `/api/comms/members/${encodeURIComponent(member.user_id)}/role`,
+          scoped(
+            `/api/comms/members/${encodeURIComponent(member.user_id)}/role`
+          ),
           "PUT",
           { role: next },
         ),
@@ -175,8 +188,10 @@ export function UsersView({
   function setEnrolled(member: Member, enrolled: boolean) {
     return mutate(member.user_id, async () => {
       await sendJson(
-        `/api/comms/members/${encodeURIComponent(member.user_id)}` +
-          (enrolled ? "/activate" : "/deactivate"),
+        scoped(
+          `/api/comms/members/${encodeURIComponent(member.user_id)}` +
+            (enrolled ? "/activate" : "/deactivate")
+        ),
         "POST",
       );
       return `${member.display || member.user_id} ${
@@ -188,7 +203,9 @@ export function UsersView({
   function invite(member: Member) {
     return mutate(member.user_id, async () => {
       const resp = await sendJson<MemberInvitationResponse>(
-        `/api/comms/members/${encodeURIComponent(member.user_id)}/invitation`,
+        scoped(
+          `/api/comms/members/${encodeURIComponent(member.user_id)}/invitation`
+        ),
         "POST",
       );
       setLink({
@@ -203,7 +220,9 @@ export function UsersView({
   function revokeInvite(member: Member) {
     return mutate(member.user_id, async () => {
       await sendJson(
-        `/api/comms/members/${encodeURIComponent(member.user_id)}/invitation`,
+        scoped(
+          `/api/comms/members/${encodeURIComponent(member.user_id)}/invitation`
+        ),
         "DELETE",
       );
       return `Revoked the open link for ${member.display || member.user_id}.`;
@@ -213,7 +232,9 @@ export function UsersView({
   function rename(member: Member, display: string) {
     return mutate(member.user_id, async () => {
       await sendJson(
-        `/api/comms/members/${encodeURIComponent(member.user_id)}/display`,
+        scoped(
+          `/api/comms/members/${encodeURIComponent(member.user_id)}/display`
+        ),
         "PUT",
         { display },
       );
@@ -224,7 +245,9 @@ export function UsersView({
   function linkChannel(member: Member, platform: string, channelUserId: string) {
     return mutate(member.user_id, async () => {
       await sendJson(
-        `/api/comms/members/${encodeURIComponent(member.user_id)}/channels`,
+        scoped(
+          `/api/comms/members/${encodeURIComponent(member.user_id)}/channels`
+        ),
         "POST",
         { platform, channel_user_id: channelUserId },
       );
@@ -238,7 +261,9 @@ export function UsersView({
       const params = new URLSearchParams({ strategy });
       if (transferTo) params.set("transfer_to", transferTo);
       await sendJson(
-        `/api/comms/members/${encodeURIComponent(member.user_id)}?${params.toString()}`,
+        scoped(
+          `/api/comms/members/${encodeURIComponent(member.user_id)}?${params.toString()}`
+        ),
         "DELETE",
       );
       return `Removed ${member.display || member.user_id} from ${profile}.`;
@@ -247,9 +272,10 @@ export function UsersView({
 
   return (
     <div data-component="UsersView" className="flex flex-col gap-4">
+      <AdminProfileSwitcher profiles={administered} current={profile} />
       <p className="flex flex-wrap items-center gap-2 text-xs text-[var(--color-muted)]">
         <Pill tone="accent">{role}</Pill>
-        <Pill tone="muted">profile: {profile}</Pill>
+        {administered.length < 2 ? <Pill tone="muted">profile: {profile}</Pill> : null}
         {canManage ? <Pill tone="muted">{total} enrolled</Pill> : null}
       </p>
 
@@ -271,7 +297,7 @@ export function UsersView({
         />
       ) : null}
 
-      <DirectoryPanel initial={directory} />
+      <DirectoryPanel initial={directory} profile={profile} />
 
       {!canManage ? (
         <p
@@ -411,7 +437,7 @@ export function UsersView({
           </div>
 
           <CsvImportPanel profile={profile} />
-          <IdentityActivityPanel />
+          <IdentityActivityPanel profile={profile} />
         </BusyRegion>
       ) : null}
 

@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { errorMessage } from "@/components/users/api";
+import { withProfileQuery } from "@/lib/profile";
 import type { IdentityActivityResponse, IdentityEvent } from "@/types";
 import { ActionButton } from "@/components/ui/ActionButton";
 
@@ -14,7 +15,7 @@ import { ActionButton } from "@/components/ui/ActionButton";
  * wrong, not something worth fetching on every roster render. No raw invitation
  * token ever reaches a C5 payload, so nothing shown here can be replayed.
  */
-export function IdentityActivityPanel() {
+export function IdentityActivityPanel({ profile }: { profile: string }) {
   const [events, setEvents] = useState<IdentityEvent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -23,7 +24,7 @@ export function IdentityActivityPanel() {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/comms/members/activity?limit=50", {
+      const res = await fetch(withProfileQuery("/api/comms/members/activity?limit=50", profile), {
         cache: "no-store",
       });
       const body = (await res.json()) as IdentityActivityResponse & {

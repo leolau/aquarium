@@ -13,7 +13,7 @@ import { NextResponse } from "next/server";
 import { forwardMemberError, requireEnrolled } from "@/lib/api/member-bff";
 
 export async function GET(request: Request): Promise<NextResponse> {
-  const gate = await requireEnrolled();
+  const gate = await requireEnrolled(request);
   if ("response" in gate) return gate.response;
   const params = new URL(request.url).searchParams;
   const limit = Number.parseInt(params.get("limit") ?? "", 10);

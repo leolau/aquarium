@@ -13,12 +13,16 @@
  * this route must not "helpfully" substitute the current profile, because that
  * would silently enrol somebody somewhere the admin didn't choose.
  *
+ * FG-28: `?profile=` (or, on create, the body's `profile`; the two must agree)
+ * names the profile administered. For a profile other than the session's the
+ * owner/admin gate asks Python `whoami?profile=` for the caller's role there.
+ *
  * Authorization is owner/admin and enforced **twice**: here for a clean UX, and
  * independently in Python as the authority. The browser never calls GoTrue.
  */
 import { NextResponse } from "next/server";
 
-import { forwardMemberError, requireMemberAdmin } from "@/lib/api/member-bff";
+import { bodyTarget, forwardMemberError, requireMemberAdmin } from "@/lib/api/member-bff";
 import type { Role } from "@/types";
 
 interface CreateBody {
@@ -36,7 +40,7 @@ function intParam(raw: string | null, fallback: number): number {
 }
 
 export async function GET(request: Request): Promise<NextResponse> {
-  const gate = await requireMemberAdmin();
+  const gate = await requireMemberAdmin(request);
   if ("response" in gate) return gate.response;
   const params = new URL(request.url).searchParams;
   const role = (params.get("role") ?? "").trim();
@@ -57,16 +61,18 @@ export async function GET(request: Request): Promise<NextResponse> {
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
-  const gate = await requireMemberAdmin();
-  if ("response" in gate) return gate.response;
   let body: CreateBody;
   try {
     body = (await request.json()) as CreateBody;
   } catch {
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
+  const target = bodyTarget(request, body.profile);
+  if ("response" in target) return target.response;
+  const gate = await requireMemberAdmin(request, target);
+  if ("response" in gate) return gate.response;
   const email = typeof body.email === "string" ? body.email.trim() : "";
-  const profile = typeof body.profile === "string" ? body.profile.trim() : "";
+  const profile = target.profile ?? "";
   const display = typeof body.display === "string" ? body.display.trim() : "";
   const role = typeof body.role === "string" ? body.role.trim() : "member";
   if (!email) {

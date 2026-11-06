@@ -17,7 +17,7 @@ export async function PUT(
   request: Request,
   { params }: { params: Promise<{ userId: string }> },
 ): Promise<NextResponse> {
-  const gate = await requireMemberAdmin();
+  const gate = await requireMemberAdmin(request);
   if ("response" in gate) return gate.response;
   const { userId } = await params;
   let body: RoleBody;

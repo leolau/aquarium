@@ -105,6 +105,7 @@
   "people.loadFailed": "Couldn't load each person's connections.",
   "people.reminderNote": "There is no reminder message yet. To nudge someone, open Users and make a new invite link for them.",
   "people.openUsers": "Open Users",
+  "invite.otherProfile": "Inviting into another profile you administer? Choose it on the Users screen.",
   "conn.google": "Google",
   "conn.whatsapp": "WhatsApp",
   "conn.telegram": "Telegram",

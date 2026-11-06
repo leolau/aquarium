@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { activationUrl, errorMessage, sendJson } from "@/components/users/api";
+import { withProfileQuery } from "@/lib/profile";
 import type { MemberImportResponse } from "@/types";
 import { ActionButton } from "@/components/ui/ActionButton";
 
@@ -29,7 +30,7 @@ export function CsvImportPanel({ profile }: { profile: string }) {
     setError(null);
     try {
       setResult(
-        await sendJson<MemberImportResponse>("/api/comms/members/import", "POST", {
+        await sendJson<MemberImportResponse>(withProfileQuery("/api/comms/members/import", profile), "POST", {
           csv,
           profile,
           dry_run: dryRun,

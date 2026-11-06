@@ -8,7 +8,7 @@
  */
 import { NextResponse } from "next/server";
 
-import { forwardMemberError, requireMemberAdmin } from "@/lib/api/member-bff";
+import { bodyTarget, forwardMemberError, requireMemberAdmin } from "@/lib/api/member-bff";
 
 interface ImportBody {
   csv?: unknown;
@@ -17,16 +17,18 @@ interface ImportBody {
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
-  const gate = await requireMemberAdmin();
-  if ("response" in gate) return gate.response;
   let body: ImportBody;
   try {
     body = (await request.json()) as ImportBody;
   } catch {
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
+  const target = bodyTarget(request, body.profile);
+  if ("response" in target) return target.response;
+  const gate = await requireMemberAdmin(request, target);
+  if ("response" in gate) return gate.response;
   const csv = typeof body.csv === "string" ? body.csv : "";
-  const profile = typeof body.profile === "string" ? body.profile.trim() : "";
+  const profile = target.profile ?? "";
   if (!csv.trim()) {
     return NextResponse.json(
       { error: "invalid_input", detail: "Paste at least one CSV row." },

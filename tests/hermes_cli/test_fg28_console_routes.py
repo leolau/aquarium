@@ -242,6 +242,73 @@ def test_no_profile_param_leaves_the_legacy_path_byte_identical(two_homes) -> No
     assert seen["home"] == default_home
 
 
+class _JsonReq(_Req):
+    def __init__(self, profile: str, *, subject: str, body: dict[str, Any]) -> None:
+        super().__init__(profile, subject=subject)
+        self._body = body
+
+    async def json(self) -> dict[str, Any]:
+        return self._body
+
+
+@pytest.fixture
+def hr_roles(two_homes, monkeypatch: pytest.MonkeyPatch):
+    """hr's own principals: an admin and a plain member; nobody else."""
+    _default_home, hr_home, _seen = two_homes
+    roles = {"hr-admin": "admin", "hr-member": "member"}
+
+    async def _resolve(subject, target, *, store_factory, registry=None):
+        from hermes_cli.console_scope import ProfileScopeError
+
+        if target != "hr" or subject not in roles:
+            raise ProfileScopeError(f"{subject!r} is not enrolled in {target!r}")
+        return Principal(subject, subject, roles[subject])
+
+    monkeypatch.setattr("hermes_cli.console_scope.resolve_console_principal", _resolve)
+    created: list[dict[str, Any]] = []
+
+    class _Service:
+        def __init__(self, actor) -> None:
+            from hermes_constants import get_hermes_home
+
+            self.home = Path(str(get_hermes_home()))
+
+        async def create_member(self, actor, **fields):
+            created.append({"home": self.home, "by": actor.user_id, **fields})
+            return SimpleNamespace(as_dict=lambda: {"member": {"user_id": "new"}})
+
+    monkeypatch.setattr(ws, "_comms_user_service", _Service)
+    return hr_home, created
+
+
+async def _create_member(request: _JsonReq):
+    agen = ws.require_console_scope(request)
+    await agen.__anext__()
+    try:
+        return await ws.comms_create_member(request)
+    finally:
+        with pytest.raises(StopAsyncIteration):
+            await agen.__anext__()
+
+
+def test_creating_in_hr_needs_admin_authority_in_hr_itself(hr_roles) -> None:
+    """The admin switcher's create (C1): the role that counts is hr's own."""
+    from fastapi import HTTPException
+
+    hr_home, created = hr_roles
+    body = {"email": "n@x.io", "profile": "hr", "role": "member"}
+    with pytest.raises(HTTPException) as excinfo:
+        asyncio.run(_create_member(_JsonReq("hr", subject="hr-member", body=body)))
+    assert excinfo.value.status_code == 403
+    assert created == []
+
+    out = asyncio.run(_create_member(_JsonReq("hr", subject="hr-admin", body=body)))
+    assert out["ok"] is True
+    assert [(c["home"], c["by"], c["profile"]) for c in created] == [
+        (hr_home, "hr-admin", "hr")
+    ]
+
+
 # -- account-level verbs: guarded or self-service ---------------------------
 
 #: GoTrue primitives that change a box-wide account, plus the one service verb

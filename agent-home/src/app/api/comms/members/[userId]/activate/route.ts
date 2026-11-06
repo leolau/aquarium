@@ -11,10 +11,10 @@ import { NextResponse } from "next/server";
 import { forwardMemberError, requireMemberAdmin } from "@/lib/api/member-bff";
 
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ userId: string }> },
 ): Promise<NextResponse> {
-  const gate = await requireMemberAdmin();
+  const gate = await requireMemberAdmin(request);
   if ("response" in gate) return gate.response;
   const { userId } = await params;
   try {
