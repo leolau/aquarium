@@ -1,12 +1,11 @@
 import { ChatHeaderActions } from "@/components/chat/ChatHeaderActions";
 import { ChatPane } from "@/components/chat/ChatPane";
+import { SwitchOnArrival } from "@/components/SwitchOnArrival";
 import { MobileShell } from "@/components/MobileShell";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
+import { readSession } from "@/lib/auth/session";
 import { storageConfigured } from "@/lib/env";
-import type { ChatMessage, ProfileSummary, SessionSummary } from "@/types";
-
-/** The profile the chat addresses when the URL names none. */
-const DEFAULT_PROFILE = "default";
+import type { ChatMessage, SessionSummary } from "@/types";
 
 // Reads the live principal (cookie) + the C2-scoped conversation list per
 // request — never at build time.
@@ -27,9 +26,11 @@ export default async function Page({
   searchParams: Promise<{ session?: string; profile?: string; draft?: string }>;
 }) {
   await requirePrincipal();
-  // `?session=<id>` is where a memory's citation link lands. `?profile=<name>`
-  // is which profile the chat addresses (FG-28) — a whole HERMES_HOME, so it
-  // selects the brain that answers *and* the conversations shown.
+  // `?session=<id>` is where a memory's citation link lands. The chat
+  // addresses the session's profile (FG-28) — a whole HERMES_HOME, so it is
+  // the brain that answers *and* the conversations shown. A `?profile=<name>`
+  // link (an old bookmark, a shared URL) switches the session first, so the
+  // header, the chat and every later page agree on one profile.
   // `?draft=<text>` pre-fills the composer (a project's "ask the agent to
   // draft a plan" door) — nothing is sent until the user presses send.
   const {
@@ -37,27 +38,25 @@ export default async function Page({
     profile: requestedProfile,
     draft,
   } = await searchParams;
-  const profile = (requestedProfile ?? "").trim() || DEFAULT_PROFILE;
+  const profile = (await readSession())?.profile ?? "default";
+  const wanted = (requestedProfile ?? "").trim();
+  if (wanted && wanted !== profile) {
+    return (
+      <MobileShell title="Chat">
+        <SwitchOnArrival profile={wanted} current={profile} />
+      </MobileShell>
+    );
+  }
 
   let sessions: SessionSummary[] = [];
   let sessionId: string | null = null;
   let messages: ChatMessage[] = [];
-  let profiles: ProfileSummary[] = [];
   let error: string | null = null;
   try {
     const client = await apiClientForRequest({ profile });
-    // `profiles()` and `sessions()` don't depend on each other — awaiting
-    // them sequentially was pure added latency on every page load.
-    const [profilesResult, list] = await Promise.all([
-      // A profile that no longer exists must not silently answer as the
-      // default: the list is what the picker offers, and an unknown name
-      // 404s upstream.
-      client.profiles().catch(() => ({ profiles: [] })),
-      // Every conversation: the strip groups them into categories, and a
-      // recent-first page cap would empty the older end of each category.
-      client.allSessions({ order: "recent" }),
-    ]);
-    profiles = profilesResult.profiles;
+    // Every conversation: the strip groups them into categories, and a
+    // recent-first page cap would empty the older end of each category.
+    const list = await client.allSessions({ order: "recent" });
     sessions = list.sessions;
     if (requested && sessions.some((s) => s.id === requested)) {
       sessionId = requested;
@@ -87,7 +86,6 @@ export default async function Page({
           initialSessionId={sessionId}
           initialMessages={messages}
           storageEnabled={storageConfigured()}
-          profiles={profiles}
           profile={profile}
           initialDraft={(draft ?? "").trim() || undefined}
         />

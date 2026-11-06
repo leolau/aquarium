@@ -65,10 +65,6 @@ function renderPane() {
       initialSessionId="s1"
       initialMessages={MESSAGES}
       storageEnabled={false}
-      profiles={[
-        { name: "default", is_default: true },
-        { name: "work", is_default: false },
-      ] as never}
       profile="default"
     />,
   );

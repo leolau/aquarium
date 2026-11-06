@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAction } from "@/lib/use-action";
 
-import { useRouter } from "next/navigation";
 
 import { ApprovalModal } from "@/components/chat/ApprovalModal";
 import { ArchivedModal } from "@/components/chat/ArchivedModal";
@@ -15,7 +14,6 @@ import {
 } from "@/components/chat/ChatFiltersPanel";
 import { InSessionSearch } from "@/components/chat/InSessionSearch";
 import { LiveActivity } from "@/components/chat/LiveActivity";
-import { DEFAULT_PROFILE, ProfilePicker } from "@/components/chat/ProfilePicker";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { Composer } from "@/components/chat/Composer";
 import { SessionModal } from "@/components/chat/SessionModal";
@@ -68,7 +66,6 @@ import type {
   ChatApprovalRequest,
   ChatAttachment,
   ChatMessage,
-  ProfileSummary,
   SessionSummary,
   SessionTag,
   TagSuggestion,
@@ -83,9 +80,8 @@ export interface ChatPaneProps {
   initialSessionId: string | null;
   initialMessages: ChatMessage[];
   storageEnabled: boolean;
-  /** Every profile this box serves (FG-28); one entry means no picker. */
-  profiles: ProfileSummary[];
-  /** The profile this pane is showing — its sessions, and its brain. */
+  /** The session's profile (FG-28) — its sessions, and its brain. Switching
+   * is the header's profile switcher, which re-renders this page. */
   profile: string;
   /** Text the composer opens with (`?draft=`); never sent on its own. */
   initialDraft?: string;
@@ -123,12 +119,9 @@ export function ChatPane({
   initialSessionId,
   initialMessages,
   storageEnabled,
-  profiles,
   profile,
   initialDraft,
 }: ChatPaneProps) {
-  const router = useRouter();
-  const [switchingProfile, startProfileSwitch] = useTransition();
   // Every client read below carries the selected profile, because a profile is
   // a whole HERMES_HOME: reading the default profile's sessions while the turn
   // runs in another is what files one profile's reply in another's history.
@@ -664,26 +657,6 @@ export function ChatPane({
     }
   }
 
-  /**
-   * Switch which profile this chat addresses. This changes the brain AND the
-   * conversation list, so it navigates rather than refetching in place: the
-   * server then loads that profile's sessions and transcript exactly as it does
-   * on first paint, and the URL carries the choice (shareable, reload-safe).
-   * Refused while a turn is streaming — navigating would abandon it.
-   */
-  function switchProfile(next: string) {
-    if (next === profile || sendingKeys.length > 0) return;
-    // In a transition so the picker can report the wait: the server has to load
-    // another home's sessions and transcript, which is not instant.
-    startProfileSwitch(() => {
-      router.push(
-        next === DEFAULT_PROFILE
-          ? "/chat"
-          : `/chat?profile=${encodeURIComponent(next)}`,
-      );
-    });
-  }
-
   function reorderSessions(orderedIds: string[]) {
     setOrderRaw(JSON.stringify(orderedIds));
   }
@@ -974,15 +947,6 @@ export function ChatPane({
         searchActive={crossSearchOpen || inSearchOpen || highlightTerm !== undefined}
       >
       <div ref={filtersPanelRef}>
-      {/* Which profile answers — switching reloads that profile's chats. */}
-      <ProfilePicker
-        profiles={profiles}
-        selected={profile}
-        onSelect={switchProfile}
-        disabled={sendingKeys.length > 0}
-        switching={switchingProfile}
-      />
-
       {/* Tag filter bar */}
       <TagFilterBar
         tags={allTags}

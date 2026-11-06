@@ -11,7 +11,11 @@ import { getPrincipal } from "@/lib/auth/principal";
 export const dynamic = "force-dynamic";
 
 /** Login page for the C1 bridge; already-authenticated sessions skip to `/`. */
-export default async function LoginPage() {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ profile?: string }>;
+}) {
   if (await getPrincipal()) {
     redirect("/");
   }
@@ -32,7 +36,7 @@ export default async function LoginPage() {
   return (
     <MobileShell title={t("title")} showCoral={false} actions={<LanguageSwitch />}>
       <p className="mb-6 text-sm text-[var(--color-muted)]">{t("intro")}</p>
-      <LoginForm providers={providers} />
+      <LoginForm providers={providers} profile={(await searchParams).profile?.trim() || undefined} />
       {/* Self-service recovery: a locked-out user cannot sign in to ask, and
        * nobody hands out temporary passwords by hand any more. */}
       <div className="mt-4">
