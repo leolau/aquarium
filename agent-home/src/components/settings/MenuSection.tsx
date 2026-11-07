@@ -3,7 +3,8 @@
 /**
  * Settings → Menu (owner/admin): which launcher items each role sees. One tab
  * per role (admin, member, viewer), a switch per app, grouped like the Coral
- * launcher. Home and Settings are locked on; the owner always sees everything.
+ * launcher. Edits are a draft per role until Save. Home and Settings are
+ * locked on; the owner always sees everything.
  * Hidden items are also refused by URL (see `lib/nav/menu-access.ts`).
  */
 import { useEffect, useState } from "react";
@@ -32,10 +33,16 @@ function launcherGroups(): { id: string; label: string; apps: AppManifest[] }[] 
   ].filter((g) => g.apps.length > 0);
 }
 
+const sameSet = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && a.every((id) => b.includes(id));
+
 export function MenuSection() {
   const [nav, setNav] = useState<AgentHomeNav | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [role, setRole] = useState<NavRole>("member");
+  // Unsaved edits per role; a role without an entry shows the stored list.
+  const [drafts, setDrafts] = useState<Partial<Record<NavRole, string[]>>>({});
+  const [savedRole, setSavedRole] = useState<NavRole | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -51,23 +58,46 @@ export function MenuSection() {
     };
   }, []);
 
-  const hidden = nav?.roles?.[role] ?? [];
+  const stored = nav?.roles?.[role] ?? [];
+  const hidden = drafts[role] ?? stored;
+  const dirty = !sameSet(hidden, stored);
   const readOnly = !nav?.roles;
 
-  const { run: toggle, pending: saving } = useAction(async (appId: string) => {
-    if (!nav?.roles) return;
-    if (isLockedOff(role, appId)) return;
+  const toggle = (appId: string) => {
+    if (readOnly || isLockedOff(role, appId) || LOCKED_APP_IDS.includes(appId)) return;
     const next = hidden.includes(appId) ? hidden.filter((id) => id !== appId) : [...hidden, appId];
+    setSavedRole(null);
+    setDrafts((prev) => ({ ...prev, [role]: next }));
+  };
+
+  const discard = () => {
+    setError(null);
+    setDrafts((prev) => {
+      const next = { ...prev };
+      delete next[role];
+      return next;
+    });
+  };
+
+  const { run: save, pending: saving } = useAction(async () => {
+    if (!nav?.roles || !dirty) return;
+    const target = role;
     setError(null);
     try {
-      const res = await fetch(`/api/settings/menu/${role}`, {
+      const res = await fetch(`/api/settings/menu/${target}`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ hidden: next }),
+        body: JSON.stringify({ hidden }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.detail ?? "Couldn't save the menu.");
       setNav(body as AgentHomeNav);
+      setDrafts((prev) => {
+        const next = { ...prev };
+        delete next[target];
+        return next;
+      });
+      setSavedRole(target);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -76,29 +106,48 @@ export function MenuSection() {
   return (
     <section data-section="menu" data-component="MenuSection" className="mt-6">
       <h2 className="text-sm font-semibold">Menu</h2>
-      <p className="mb-3 text-xs text-[var(--color-muted)]">
-        Choose which menu items each role sees. Hidden items are also blocked by link. The owner
-        always sees everything; Home and Settings are always shown. Profiles and Skills stay off
-        for members and viewers, because only owners and admins can make changes there. Changes
-        can take up to 30 seconds to reach everyone.
+      <p className="mb-2 text-xs text-[var(--color-muted)]">
+        Choose which menu items each role sees, then press Save. Hidden items are also blocked by
+        link. Changes can take up to 30 seconds to reach everyone.
       </p>
+      <ul className="mb-3 list-disc space-y-0.5 pl-4 text-xs text-[var(--color-muted)]">
+        <li>
+          <strong>Always shown</strong>: Home and Settings stay on for everyone, so nobody is
+          locked out.
+        </li>
+        <li>
+          <strong>Admins only</strong>: Profiles and Skills stay off for members and viewers,
+          because only owners and admins can make changes there.
+        </li>
+        <li>
+          {nav?.is_owner ? "You are the owner, so your" : "The owner's"} own menu always shows
+          everything; these choices only change what admins, members and viewers see.
+        </li>
+      </ul>
       <div role="tablist" aria-label="Role" className="mb-3 flex gap-2">
-        {NAV_ROLES.map((r) => (
-          <button
-            key={r}
-            type="button"
-            role="tab"
-            aria-selected={role === r}
-            onClick={() => setRole(r)}
-            className={`rounded-full border px-3 py-1 text-xs font-medium ${
-              role === r
-                ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-accent-fg)]"
-                : "border-[var(--color-border)]"
-            }`}
-          >
-            {ROLE_LABEL[r]}
-          </button>
-        ))}
+        {NAV_ROLES.map((r) => {
+          const unsaved = drafts[r] !== undefined && !sameSet(drafts[r]!, nav?.roles?.[r] ?? []);
+          return (
+            <button
+              key={r}
+              type="button"
+              role="tab"
+              aria-selected={role === r}
+              onClick={() => {
+                setRole(r);
+                setSavedRole(null);
+              }}
+              className={`rounded-full border px-3 py-1 text-xs font-medium ${
+                role === r
+                  ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-accent-fg)]"
+                  : "border-[var(--color-border)]"
+              }`}
+            >
+              {ROLE_LABEL[r]}
+              {unsaved ? <span aria-label=" (unsaved)"> •</span> : null}
+            </button>
+          );
+        })}
       </div>
       {error ? (
         <p role="alert" className="mb-2 text-xs text-[var(--color-danger,#b91c1c)]">
@@ -134,7 +183,7 @@ export function MenuSection() {
                             className="ml-2 text-xs text-[var(--color-muted)]"
                             title="Only owners and admins can make changes there"
                           >
-                            Locked off
+                            Admins only
                           </span>
                         ) : null}
                       </span>
@@ -153,6 +202,38 @@ export function MenuSection() {
               </ul>
             </div>
           ))}
+          {readOnly ? null : (
+            <div
+              data-component="MenuSaveBar"
+              className="sticky bottom-2 flex items-center justify-end gap-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-2"
+            >
+              <span role="status" className="mr-auto text-xs text-[var(--color-muted)]">
+                {saving
+                  ? "Saving…"
+                  : dirty
+                    ? `Unsaved changes for ${ROLE_LABEL[role]}`
+                    : savedRole === role
+                      ? `Saved. ${ROLE_LABEL[role]}s see the new menu within 30 seconds.`
+                      : null}
+              </span>
+              <button
+                type="button"
+                onClick={discard}
+                disabled={!dirty || saving}
+                className="rounded-xl border border-[var(--color-border)] px-3 py-1.5 text-xs disabled:opacity-40"
+              >
+                Discard
+              </button>
+              <button
+                type="button"
+                onClick={() => void save()}
+                disabled={!dirty || saving}
+                className="rounded-xl bg-[var(--color-accent)] px-4 py-1.5 text-xs font-medium text-[var(--color-accent-fg)] disabled:opacity-40"
+              >
+                Save
+              </button>
+            </div>
+          )}
         </div>
       )}
     </section>

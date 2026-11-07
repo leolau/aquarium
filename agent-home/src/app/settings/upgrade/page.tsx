@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { MobileShell } from "@/components/MobileShell";
+import { SettingsBackLink } from "@/components/settings/SettingsBackLink";
 import { SoftwareUpgradeView } from "@/components/settings/SoftwareUpgradeView";
 import { getT } from "@/i18n/server";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
@@ -27,6 +28,7 @@ export default async function Page() {
   initial = { ...initial, can_upgrade: principal.role === "owner" };
   return (
     <MobileShell title={(await getT("upgrade"))("title")}>
+      <SettingsBackLink />
       <SoftwareUpgradeView initial={initial} />
     </MobileShell>
   );

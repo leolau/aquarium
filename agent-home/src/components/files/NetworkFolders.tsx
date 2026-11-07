@@ -415,7 +415,7 @@ export function NetworkFolders() {
         {noVpn ? (
           <p data-component="NetworkFoldersNoVpn" className="mt-2 text-sm text-[var(--color-muted)]">
             Network folders need a VPN to the office. Add one in{" "}
-            <Link href="/settings#in-out" className="text-[var(--color-accent)] underline">
+            <Link href="/settings/in-out" className="text-[var(--color-accent)] underline">
               Settings → In&amp;Out → Private networks
             </Link>
             , then come back to add a folder.

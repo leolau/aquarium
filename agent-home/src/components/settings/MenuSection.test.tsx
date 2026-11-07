@@ -79,15 +79,60 @@ describe("MenuSection", () => {
     }
   });
 
-  it("saves the toggled list for the selected role", async () => {
+  it("keeps a toggle as a draft until Save, then saves the role's list", async () => {
     fetchMock.mockReturnValueOnce(reply(NAV));
     render(<MenuSection />);
-    fireEvent.click(await screen.findByLabelText(/show to-dos to member/i));
+    const save = await screen.findByRole("button", { name: "Save" });
+    expect((save as HTMLButtonElement).disabled).toBe(true);
+    const todos = screen.getByLabelText(/show to-dos to member/i) as HTMLInputElement;
+    expect(todos.checked).toBe(true);
+    fireEvent.click(todos);
+    expect(todos.checked).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("status").textContent).toContain("Unsaved changes for Member");
+    expect((save as HTMLButtonElement).disabled).toBe(false);
+
     fetchMock.mockReturnValueOnce(reply({ ...NAV, roles: { ...NAV.roles, member: ["graph", "todos"] } }));
+    fireEvent.click(save);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     const [url, init] = fetchMock.mock.calls[1];
     expect(url).toBe("/api/settings/menu/member");
+    expect(init.method).toBe("PUT");
     expect(JSON.parse(init.body)).toEqual({ hidden: ["graph", "todos"] });
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Saved"));
+    expect((screen.getByLabelText(/show to-dos to member/i) as HTMLInputElement).checked).toBe(false);
+    expect((save as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("Discard drops the draft without saving", async () => {
+    fetchMock.mockReturnValueOnce(reply(NAV));
+    render(<MenuSection />);
+    const todos = (await screen.findByLabelText(/show to-dos to member/i)) as HTMLInputElement;
+    fireEvent.click(todos);
+    expect(todos.checked).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(todos.checked).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps each role's draft when switching tabs", async () => {
+    fetchMock.mockReturnValueOnce(reply(NAV));
+    render(<MenuSection />);
+    fireEvent.click(await screen.findByLabelText(/show to-dos to member/i));
+    fireEvent.click(screen.getByRole("tab", { name: "Viewer" }));
+    expect((screen.getByLabelText(/show to-dos to viewer/i) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByRole("tab", { name: /Member/ }).textContent).toContain("•");
+    fireEvent.click(screen.getByRole("tab", { name: /Member/ }));
+    expect((screen.getByLabelText(/show to-dos to member/i) as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("labels Profiles and Skills 'Admins only' and says the owner sees everything", async () => {
+    fetchMock.mockReturnValueOnce(reply({ ...NAV, role: "owner", is_owner: true }));
+    render(<MenuSection />);
+    await screen.findByRole("tabpanel");
+    const labels = [...document.querySelectorAll('[data-locked-off="true"]')].map((n) => n.textContent);
+    expect(labels).toEqual(["Admins only", "Admins only"]);
+    expect(document.body.textContent).toContain("You are the owner, so your own menu always shows everything");
   });
 
   it("is read-only without per-role lists", async () => {
@@ -99,8 +144,9 @@ describe("MenuSection", () => {
   it("shows the server's error on a failed save", async () => {
     fetchMock.mockReturnValueOnce(reply(NAV));
     render(<MenuSection />);
-    fetchMock.mockReturnValueOnce(reply({ detail: "Unknown menu item" }, 400));
     fireEvent.click(await screen.findByLabelText(/show to-dos to member/i));
+    fetchMock.mockReturnValueOnce(reply({ detail: "Unknown menu item" }, 400));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect((await screen.findByRole("alert")).textContent).toContain("Unknown menu item");
   });
 });
