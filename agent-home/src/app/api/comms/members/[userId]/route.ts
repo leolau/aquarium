@@ -1,5 +1,7 @@
 /**
- * DELETE /api/comms/members/{userId} — remove an enrolment (**owner only**).
+ * DELETE /api/comms/members/{userId} — remove an enrolment (owner/admin of the
+ * named profile, their own enrolment included; Python refuses the profile
+ * owner and the last live admin).
  *
  * `strategy=transfer|purge` is required rather than defaulted, because nothing
  * cascades from `principals` to memories, files or GTS items: without an answer
@@ -12,13 +14,13 @@
  */
 import { NextResponse } from "next/server";
 
-import { forwardMemberError, requireMemberOwner } from "@/lib/api/member-bff";
+import { forwardMemberError, requireMemberAdmin } from "@/lib/api/member-bff";
 
 export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ userId: string }> },
 ): Promise<NextResponse> {
-  const gate = await requireMemberOwner(undefined, request);
+  const gate = await requireMemberAdmin(request);
   if ("response" in gate) return gate.response;
   const { userId } = await params;
   const search = new URL(request.url).searchParams;

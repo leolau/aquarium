@@ -3660,6 +3660,44 @@ async def auth_my_profiles(request: Request):
     }
 
 
+@app.get("/api/comms/people/{user_id}/profiles")
+async def comms_person_profiles(user_id: str, request: Request):
+    """One person's enrolment in each profile the caller administers.
+
+    ``{"user_id", "profiles": [{name, is_default, actor_role, enrolled, role,
+    active, is_owner}]}`` in registry order — the Users screen's per-person
+    "Profiles & roles" panel. Box-wide (``?profile=`` is refused): a profile is
+    listed only where the caller holds an active owner/admin row of their own,
+    so the answer never says whether the person is enrolled anywhere else, and
+    a caller who administers nothing gets an empty list. A read only: every
+    add / re-role / remove goes through the ``/api/comms/members*`` routes with
+    ``?profile=``, which re-derive the caller's authority in that profile.
+    """
+    from hermes_cli.console_scope import person_enrolments
+
+    subject = _comms_session_subject(request)
+    if not subject:
+        raise HTTPException(status_code=401, detail=_CONSOLE_NO_SUBJECT)
+    rows = await person_enrolments(
+        subject, user_id.strip(), store_factory=lambda home: _EnrolmentStore()
+    )
+    return {
+        "user_id": user_id,
+        "profiles": [
+            {
+                "name": r.profile.name,
+                "is_default": bool(r.profile.is_default),
+                "actor_role": r.actor_role,
+                "enrolled": r.principal is not None,
+                "role": r.principal.role if r.principal is not None else None,
+                "active": bool(r.principal.active) if r.principal is not None else None,
+                "is_owner": bool(r.principal is not None and r.principal.role == "owner"),
+            }
+            for r in rows
+        ],
+    }
+
+
 @app.get("/api/comms/whoami")
 async def comms_whoami(request: Request, _console_scope=Depends(require_console_scope)):
     """Return the resolved C1 principal + role for the current web request.
@@ -4233,7 +4271,11 @@ async def comms_member_activity(request: Request, _console_scope=Depends(require
 
 @app.delete("/api/comms/members/{user_id}")
 async def comms_delete_member(user_id: str, request: Request, _console_scope=Depends(require_console_scope)):
-    """Remove an enrolment, resolving the rows it owns (**owner only**).
+    """Remove an enrolment, resolving the rows it owns (owner/admin).
+
+    Any owner or admin of the target profile may remove anybody enrolled there,
+    their own enrolment included; the profile owner and the last live admin
+    are refused by ``delete_member``. The box-wide account is never touched.
 
     ``strategy=transfer|purge`` is required, because without an answer their
     rows would keep a dangling ``owner_user_id`` that no principal resolves.
@@ -4245,7 +4287,7 @@ async def comms_delete_member(user_id: str, request: Request, _console_scope=Dep
     strategy = (params.get("strategy") or "").strip()
     transfer_to = (params.get("transfer_to") or "").strip() or None
     try:
-        # The owner gate is delete_member's own (require_owner); this seam is
+        # The owner/admin gate is _comms_member_service's; this seam is
         # here for the identity, which on a ?profile= request has to be the
         # target profile's record of the caller and never its owner by default.
         actor, service = await _comms_member_service(request)

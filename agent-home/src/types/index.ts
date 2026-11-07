@@ -444,6 +444,29 @@ export interface MyProfilesResponse {
 }
 
 /**
+ * One profile the caller administers, with a given person's enrolment there
+ * (`GET /api/comms/people/{userId}/profiles`). Profiles the caller does not
+ * administer are never listed, so this says nothing about them.
+ */
+export interface PersonProfile {
+  name: string;
+  is_default: boolean;
+  /** The caller's own role in this profile (owner or admin). */
+  actor_role: Role;
+  enrolled: boolean;
+  /** The person's role here; null when not enrolled. */
+  role: Role | null;
+  /** Their enrolment is live (false = suspended); null when not enrolled. */
+  active: boolean | null;
+  is_owner: boolean;
+}
+
+export interface PersonProfilesResponse {
+  user_id: string;
+  profiles: PersonProfile[];
+}
+
+/**
  * FG-30 — a profile suggestion: a proposal (with evidence) that work in one
  * profile has clustered into a distinct sub-goal deserving its own profile.
  *

@@ -249,3 +249,56 @@ def test_the_box_profile_list_is_admin_only(client):
     assert client.get("/api/profiles", headers=_as("leo")).status_code == 200
     # The operator dashboard / desktop app (no interactive session) keep it.
     assert client.get("/api/profiles").status_code == 200
+
+
+# -- the Users screen's per-person "Profiles & roles" read ---------------------
+
+
+def test_person_profiles_lists_only_profiles_the_caller_administers(client):
+    # leo owns default and is a member in hr: dan's hr admin row is not leo's
+    # to see, so hr is not listed at all.
+    res = client.get("/api/comms/people/dan/profiles", headers=_as("leo"))
+    assert res.status_code == 200
+    assert res.json() == {
+        "user_id": "dan",
+        "profiles": [
+            {
+                "name": "default",
+                "is_default": True,
+                "actor_role": "owner",
+                "enrolled": True,
+                "role": "member",
+                "active": True,
+                "is_owner": False,
+            }
+        ],
+    }
+    # dan administers hr only; leo's default ownership is not revealed.
+    res = client.get("/api/comms/people/leo/profiles", headers=_as("dan"))
+    assert [(p["name"], p["role"]) for p in res.json()["profiles"]] == [("hr", "member")]
+
+
+def test_person_profiles_reports_not_enrolled_in_an_administered_profile(client):
+    res = client.get("/api/comms/people/hana/profiles", headers=_as("leo"))
+    assert res.json()["profiles"][0] | {} == {
+        "name": "default",
+        "is_default": True,
+        "actor_role": "owner",
+        "enrolled": False,
+        "role": None,
+        "active": None,
+        "is_owner": False,
+    }
+
+
+def test_person_profiles_is_empty_for_a_caller_who_administers_nothing(client):
+    for caller in ("bob", "sam"):
+        res = client.get("/api/comms/people/leo/profiles", headers=_as(caller))
+        assert res.status_code == 200
+        assert res.json()["profiles"] == []
+
+
+def test_person_profiles_needs_a_subject_and_refuses_a_profile_param(client):
+    assert client.get("/api/comms/people/dan/profiles").status_code == 401
+    res = client.get("/api/comms/people/dan/profiles?profile=hr", headers=_as("dan"))
+    assert res.status_code == 400

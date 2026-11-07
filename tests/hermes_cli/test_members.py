@@ -24,7 +24,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -1391,18 +1391,46 @@ async def test_set_member_role_guards_and_maps_errors() -> None:
 
 
 @pytest.mark.asyncio
-async def test_set_member_role_refuses_self_demotion() -> None:
+async def test_an_admin_may_change_their_own_role_while_another_admin_remains() -> None:
     store = _FakeStore()
     store.principals = {
         "a1": Principal(user_id="a1", display="A", role="admin"),
         "a2": Principal(user_id="a2", display="B", role="admin"),
     }
     svc = _service(store, _FakeAdmin())
+    updated = await svc.set_member_role(
+        _principal("admin", "a1"), user_id="a1", role="member"
+    )
+    assert updated.role == "member"
+
+
+@pytest.mark.asyncio
+async def test_the_last_admin_cannot_demote_themselves() -> None:
+    store = _FakeStore()
+    store.principals = {
+        "a1": Principal(user_id="a1", display="A", role="admin"),
+        "m1": Principal(user_id="m1", display="M", role="member"),
+    }
+    svc = _service(store, _FakeAdmin())
     with pytest.raises(MemberError):
         await svc.set_member_role(
-            _principal("admin", "a1"), user_id="a1", role="member"
+            _principal("admin", "a1"), user_id="a1", role="viewer"
         )
     assert store.principals["a1"].role == "admin"
+
+
+@pytest.mark.asyncio
+async def test_an_admin_may_re_role_another_admin() -> None:
+    store = _FakeStore()
+    store.principals = {
+        "a1": Principal(user_id="a1", display="A", role="admin"),
+        "a2": Principal(user_id="a2", display="B", role="admin"),
+    }
+    svc = _service(store, _FakeAdmin())
+    updated = await svc.set_member_role(
+        _principal("admin", "a1"), user_id="a2", role="viewer"
+    )
+    assert updated.role == "viewer"
 
 
 @pytest.mark.asyncio
@@ -1480,17 +1508,47 @@ async def test_deactivated_admin_cannot_manage() -> None:
 # -- deletion ----------------------------------------------------------------
 
 
+@pytest.fixture
+def no_owned_rows() -> Any:
+    """Stub the row sweep (real Postgres in test_fg26_profile_scope_e2e)."""
+    from hermes_cli.ownership import OwnershipOutcome
+
+    calls: list[dict[str, Any]] = []
+
+    async def _resolve(connection: Any, **kw: Any) -> OwnershipOutcome:
+        calls.append(kw)
+        return OwnershipOutcome(strategy=kw["strategy"])
+
+    with patch("hermes_cli.members.resolve_owned_rows", _resolve):
+        yield calls
+
+
+def _deletable_store(store: _FakeStore) -> _FakeStore:
+    connection = MagicMock()
+    connection.close = AsyncMock()
+    store.app_store.connect = AsyncMock(return_value=connection)
+    store.app_store.schema = "app_prod"
+    return store
+
+
 @pytest.mark.asyncio
-async def test_delete_member_is_owner_only_and_requires_a_strategy() -> None:
+async def test_delete_member_needs_owner_or_admin_and_a_strategy() -> None:
     store = _FakeStore()
     store.principals = {
         "leo_owner": Principal(user_id="leo_owner", display="Leo", role="owner"),
         "m1": Principal(user_id="m1", display="M", role="member"),
     }
     svc = _service(store, _FakeAdmin())
+    for role in ("member", "viewer"):
+        with pytest.raises(MemberAuthorizationError):
+            await svc.delete_member(
+                _principal(role, "x1"), user_id="m1", strategy="purge"
+            )
     with pytest.raises(MemberAuthorizationError):
         await svc.delete_member(
-            _principal("admin", "a1"), user_id="m1", strategy="purge"
+            Principal(user_id="a9", display="A", role="admin", active=False),
+            user_id="m1",
+            strategy="purge",
         )
     with pytest.raises(MemberError):
         await svc.delete_member(
@@ -1502,22 +1560,85 @@ async def test_delete_member_is_owner_only_and_requires_a_strategy() -> None:
 
 
 @pytest.mark.asyncio
-async def test_delete_member_refuses_self_owner_and_missing_successor() -> None:
+async def test_delete_member_refuses_owner_and_missing_successor() -> None:
     store = _FakeStore()
     store.principals = {
         "leo_owner": Principal(user_id="leo_owner", display="Leo", role="owner"),
+        "a1": Principal(user_id="a1", display="A", role="admin"),
         "m1": Principal(user_id="m1", display="M", role="member"),
     }
     owner = _principal("owner", "leo_owner")
     svc = _service(store, _FakeAdmin())
-    with pytest.raises(MemberError):
-        await svc.delete_member(owner, user_id="leo_owner", strategy="purge")
+    # The owner is protected, from an admin and from themselves.
+    for actor in (owner, _principal("admin", "a1")):
+        with pytest.raises(MemberError):
+            await svc.delete_member(actor, user_id="leo_owner", strategy="purge")
     with pytest.raises(MemberError):
         await svc.delete_member(owner, user_id="ghost", strategy="purge")
     # strategy=transfer without a named inheritor is refused rather than guessed
     with pytest.raises(MemberError):
         await svc.delete_member(owner, user_id="m1", strategy="transfer")
+    # …and nobody inherits their own rows.
+    with pytest.raises(MemberError):
+        await svc.delete_member(
+            owner, user_id="m1", strategy="transfer", transfer_to="m1"
+        )
     assert store.unenrolled == []
+
+
+@pytest.mark.asyncio
+async def test_an_admin_removes_another_admin_and_the_account_survives(
+    no_owned_rows: list[dict[str, Any]], audit_events: list[dict[str, Any]]
+) -> None:
+    store = _deletable_store(_FakeStore())
+    store.principals = {
+        "a1": Principal(user_id="a1", display="A", role="admin"),
+        "a2": Principal(user_id="a2", display="B", role="admin"),
+    }
+    admin = _FakeAdmin()
+    svc = _service(store, admin)
+    await svc.delete_member(_principal("admin", "a1"), user_id="a2", strategy="purge")
+    assert store.unenrolled == ["a2"]
+    assert no_owned_rows[0]["successor_user_id"] == "a1"
+    # Removal is an un-enrolment: the box-wide GoTrue account is never touched.
+    assert admin.deleted == [] and admin.bans == []
+    assert [e["action"] for e in audit_events] == ["user.delete"]
+
+
+@pytest.mark.asyncio
+async def test_an_admin_may_remove_their_own_enrolment(
+    no_owned_rows: list[dict[str, Any]],
+) -> None:
+    store = _deletable_store(_FakeStore())
+    store.principals = {
+        "leo_owner": Principal(user_id="leo_owner", display="Leo", role="owner"),
+        "a1": Principal(user_id="a1", display="A", role="admin"),
+    }
+    admin = _FakeAdmin()
+    svc = _service(store, admin)
+    await svc.delete_member(_principal("admin", "a1"), user_id="a1", strategy="purge")
+    assert store.unenrolled == ["a1"]
+    # Their shared rows go to the profile owner, never to the person leaving.
+    assert no_owned_rows[0]["successor_user_id"] == "leo_owner"
+    assert admin.deleted == [] and admin.bans == []
+
+
+@pytest.mark.asyncio
+async def test_the_last_admin_cannot_remove_themselves(
+    no_owned_rows: list[dict[str, Any]],
+) -> None:
+    store = _deletable_store(_FakeStore())
+    store.principals = {
+        "a1": Principal(user_id="a1", display="A", role="admin"),
+        "m1": Principal(user_id="m1", display="M", role="member"),
+    }
+    svc = _service(store, _FakeAdmin())
+    with pytest.raises(MemberError):
+        await svc.delete_member(
+            _principal("admin", "a1"), user_id="a1", strategy="transfer",
+            transfer_to="m1",
+        )
+    assert store.unenrolled == [] and no_owned_rows == []
 
 
 def test_member_view_as_dict_flags_owner() -> None:
