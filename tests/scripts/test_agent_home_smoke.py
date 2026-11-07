@@ -88,6 +88,16 @@ def test_page_verdict_role_markers_and_admin_only_leak():
     assert not ok and "leaked" in detail
 
 
+def test_page_verdict_member_redirect_applies_to_members_only():
+    spec = PageSpec("/settings/upgrade", admin_markers=("SoftwareUpgradeView",), member_redirect="/not-available")
+    sent = '"NEXT_REDIRECT;replace;/not-available;307;"'
+    assert smoke.page_verdict(spec, ADMIN, 200, _html(*SHELL, "SoftwareUpgradeView"))[0]
+    assert smoke.page_verdict(spec, MEMBER, 200, sent)[0]
+    assert smoke.page_verdict(spec, VIEWER, 200, sent)[0]
+    assert not smoke.page_verdict(spec, MEMBER, 200, _html(*SHELL, "SoftwareUpgradeView"))[0]
+    assert not smoke.page_verdict(spec, ADMIN, 200, sent)[0]
+
+
 def test_page_verdict_not_found_page():
     spec = PageSpec("/todos/x", not_found=True)
     assert smoke.page_verdict(spec, MEMBER, 200, '"NEXT_HTTP_ERROR_FALLBACK;404"')[0]
