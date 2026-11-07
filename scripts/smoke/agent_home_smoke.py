@@ -91,6 +91,8 @@ class PageSpec:
     admin_not_found: bool = False
     admin_markers: Tuple[str, ...] = ()
     member_markers: Tuple[str, ...] = ()
+    # Members/viewers are redirected here instead (a server-side redirect).
+    member_redirect: Optional[str] = None
     # Public pages render outside the signed-in shell even for a session.
     shell: bool = True
     quick: bool = False
@@ -105,7 +107,8 @@ PAGES: Tuple[PageSpec, ...] = (
     PageSpec("/survey/smoke-bogus-token", ("SurveyLinkInvalid",), shell=False, anon="public", anon_markers=("SurveyLinkInvalid",)),
     PageSpec("/fb/smoke-bogus-token"),
     PageSpec("/onboarding", ("OnboardingWizard",)),
-    PageSpec("/chat", ("ChatPane", "Composer", "ProfilePicker", "SessionTabs"), quick=True),
+    # ProfilePicker renders only for an account enrolled in two or more profiles.
+    PageSpec("/chat", ("ChatPane", "Composer", "SessionTabs"), quick=True),
     PageSpec("/projects", ("ProjectsList", "ProjectsFilters", "NewProjectAction"), quick=True),
     PageSpec("/projects?view=task", ("ModeSwitch", "TaskHome")),
     PageSpec("/projects?view=project", ("ModeSwitch", "ProjectsList")),
@@ -136,7 +139,7 @@ PAGES: Tuple[PageSpec, ...] = (
     PageSpec(
         "/settings/upgrade",
         admin_markers=("SoftwareUpgradeView",),
-        member_markers=("NotAvailableForRole",),
+        member_redirect="/not-available",
     ),
     PageSpec("/profiles/suggestions", ("ProfileSuggestionsView",)),
     # Owner/admin only: members and viewers get the not-available page.
@@ -340,8 +343,9 @@ def page_verdict(spec: PageSpec, role: str, status: int, html: str) -> Tuple[boo
         if target:
             return False, f"unexpected redirect -> {target}"
         return (not missing, "missing " + ",".join(missing) if missing else "rendered")
-    if spec.redirect:
-        return (target == spec.redirect, f"redirect -> {target or 'none'} (want {spec.redirect})")
+    want_redirect = spec.redirect or (spec.member_redirect if role != ADMIN else None)
+    if want_redirect:
+        return (target == want_redirect, f"redirect -> {target or 'none'} (want {want_redirect})")
     if target:
         return False, f"unexpected redirect -> {target}"
     if spec.not_found or (spec.admin_not_found and role == ADMIN):
