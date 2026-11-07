@@ -1,4 +1,5 @@
 import { MobileShell } from "@/components/MobileShell";
+import { SettingsBackLink } from "@/components/settings/SettingsBackLink";
 import { PersonalMcpServers } from "@/components/settings/PersonalMcpServers";
 import { RoleLimitsSection } from "@/components/settings/RoleLimitsSection";
 import { ToolsSettings } from "@/components/settings/ToolsSettings";
@@ -34,6 +35,7 @@ export default async function Page() {
 
   return (
     <MobileShell title="Tools & Integrations">
+      <SettingsBackLink />
       <PersonalMcpServers />
       {error ? (
         <div

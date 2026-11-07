@@ -1,4 +1,5 @@
 import { MobileShell } from "@/components/MobileShell";
+import { SettingsBackLink } from "@/components/settings/SettingsBackLink";
 import { GetReadyView, type GetReadyExtras } from "@/components/get-ready/GetReadyView";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
 import type { GetReadyResponse } from "@/types";
@@ -53,6 +54,7 @@ export default async function Page() {
 
   return (
     <MobileShell title="Get ready" wide>
+      <SettingsBackLink />
       {data ? (
         <GetReadyView initial={data} extras={extras} />
       ) : (

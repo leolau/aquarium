@@ -7,6 +7,13 @@ import { AccountSecurity } from "@/components/account/AccountSecurity";
 import { AppsSettings, UploadsSettings } from "@/components/settings/AppsSettings";
 import { EntityGoalSection } from "@/components/settings/EntityGoalSection";
 import { MenuSection } from "@/components/settings/MenuSection";
+import { SettingsBackLink } from "@/components/settings/SettingsBackLink";
+import {
+  settingsSectionHref,
+  visibleSettingsSections,
+  type SettingsAccess,
+  type SettingsSectionId,
+} from "@/components/settings/sections";
 import { LanguageSwitch } from "@/components/LanguageSwitch";
 import { PushEnroll } from "@/components/push/PushEnroll";
 import { ConnectedAccounts } from "@/components/settings/ConnectedAccounts";
@@ -53,19 +60,20 @@ const TAG_DOT: Record<string, string> = {
 };
 
 /**
- * The Settings page body. Currently provides:
- * - A UI theme selector (applies immediately, persists in localStorage).
- * - In&Out — the channels the agent talks through (Google, WhatsApp, Telegram).
- * - The entity goal — what the whole system is for (owner-editable).
- * - A Tags management section (create / list / delete tags).
+ * The Settings page body. Without `section` it is the index: one tile per
+ * section the caller may open (see `sections.ts`). With `section` it is that
+ * section's detail page, under a "← All settings" link.
  */
 export function SettingsView({
+  section,
   entityGoal = null,
   entityGoalReadOnly = false,
   canManageMembers = true,
   canManageTools = true,
   isOwner = false,
 }: {
+  /** The detail page to render; omit for the index of section tiles. */
+  section?: SettingsSectionId;
   entityGoal?: EntityGoal | null;
   entityGoalReadOnly?: boolean;
   /** Owner/admin may link and unlink Telegram ids; others see a note. */
@@ -76,6 +84,98 @@ export function SettingsView({
    *  install-wide pieces such as the Google client. */
   isOwner?: boolean;
 } = {}) {
+  if (!section) {
+    return <SettingsIndex access={{ canManageMembers, canManageTools }} />;
+  }
+  return (
+    <div data-component="SettingsView" data-detail={section}>
+      <SettingsBackLink />
+      <SettingsSection
+        section={section}
+        entityGoal={entityGoal}
+        entityGoalReadOnly={entityGoalReadOnly}
+        canManageMembers={canManageMembers}
+        isOwner={isOwner}
+      />
+    </div>
+  );
+}
+
+function SettingsIndex({ access }: { access: SettingsAccess }) {
+  const t = useT("settings");
+  return (
+    <nav data-component="SettingsView" aria-label={t("title")}>
+      <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {visibleSettingsSections(access).map((id) => (
+          <li key={id}>
+            <Link
+              href={settingsSectionHref(id)}
+              data-section-link={id}
+              className="flex h-full items-center justify-between gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 hover:border-[var(--color-accent)]"
+            >
+              <span className="min-w-0">
+                <span className="block text-sm font-semibold">{t(`section.${id}`)}</span>
+                <span className="mt-0.5 block text-xs text-[var(--color-muted)]">
+                  {t(`section.${id}.hint`)}
+                </span>
+              </span>
+              <span aria-hidden className="text-[var(--color-muted)]">→</span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+}
+
+function SettingsSection({
+  section,
+  entityGoal,
+  entityGoalReadOnly,
+  canManageMembers,
+  isOwner,
+}: {
+  section: SettingsSectionId;
+  entityGoal: EntityGoal | null;
+  entityGoalReadOnly: boolean;
+  canManageMembers: boolean;
+  isOwner: boolean;
+}) {
+  const t = useT("settings");
+  switch (section) {
+    case "language":
+      return (
+        <section data-section="language">
+          <h2 className="text-sm font-semibold">{t("language")}</h2>
+          <p className="mb-3 text-xs text-[var(--color-muted)]">{t("languageHint")}</p>
+          <LanguageSwitch />
+        </section>
+      );
+    case "account":
+      return <AccountSecurity isOwner={isOwner} />;
+    case "theme":
+      return <ThemeSection />;
+    case "notifications":
+      return <PushEnroll />;
+    case "in-out":
+      return <InOutSection canManageMembers={canManageMembers} isOwner={isOwner} />;
+    case "uploads":
+      return <UploadsSettings />;
+    case "apps":
+      return <AppsSettings />;
+    case "menu":
+      return <MenuSection />;
+    case "entity-goal":
+      return <EntityGoalSection goal={entityGoal} readOnly={entityGoalReadOnly} />;
+    case "tags":
+      return <TagsSection />;
+    default:
+      // tools, get-ready and upgrade have their own routes.
+      return null;
+  }
+}
+
+function ThemeSection() {
   const t = useT("settings");
   const [theme, setTheme] = usePersistentState<ThemeId>(
     THEME_STORAGE_KEY,
@@ -89,130 +189,54 @@ export function SettingsView({
     applyTheme(next);
   }
 
-
   return (
-    <div data-component="SettingsView" className="space-y-6">
-      <section data-section="language">
-        <h2 className="text-sm font-semibold">{t("language")}</h2>
-        <p className="mb-3 text-xs text-[var(--color-muted)]">{t("languageHint")}</p>
-        <LanguageSwitch />
-      </section>
-
-      <AccountSecurity isOwner={isOwner} />
-      <section>
-        <h2 className="text-sm font-semibold">{t("theme")}</h2>
-        <p className="mb-3 text-xs text-[var(--color-muted)]">{t("themeHint")}</p>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {THEMES.map((opt) => {
-            const active = opt.id === theme;
-            return (
-              <button
-                key={opt.id}
-                type="button"
-                aria-pressed={active}
-                onClick={() => choose(opt.id)}
-                className={`flex flex-col items-start gap-2 rounded-2xl border p-3 text-left ${
-                  active
-                    ? "border-[var(--color-accent)] bg-[var(--color-surface-2)]"
-                    : "border-[var(--color-border)] bg-[var(--color-surface)]"
-                }`}
+    <section data-section="theme">
+      <h2 className="text-sm font-semibold">{t("theme")}</h2>
+      <p className="mb-3 text-xs text-[var(--color-muted)]">{t("themeHint")}</p>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {THEMES.map((opt) => {
+          const active = opt.id === theme;
+          return (
+            <button
+              key={opt.id}
+              type="button"
+              aria-pressed={active}
+              onClick={() => choose(opt.id)}
+              className={`flex flex-col items-start gap-2 rounded-2xl border p-3 text-left ${
+                active
+                  ? "border-[var(--color-accent)] bg-[var(--color-surface-2)]"
+                  : "border-[var(--color-border)] bg-[var(--color-surface)]"
+              }`}
+            >
+              <span
+                aria-hidden
+                className="flex w-full gap-1.5"
+                data-theme={opt.id}
               >
-                <span
-                  aria-hidden
-                  className="flex w-full gap-1.5"
-                  data-theme={opt.id}
-                >
-                  <span className="h-6 flex-1 rounded-md bg-[var(--color-bg)]" />
-                  <span className="h-6 flex-1 rounded-md bg-[var(--color-surface-2)]" />
-                  <span className="h-6 flex-1 rounded-md bg-[var(--color-accent)]" />
-                </span>
-                <span className="flex items-center gap-2 text-sm font-medium">
-                  {opt.label}
-                  {active ? (
-                    <span className="text-xs text-[var(--color-accent)]">
-                      ✓ Active
-                    </span>
-                  ) : null}
-                </span>
-                <span className="text-xs text-[var(--color-muted)]">
-                  {opt.description}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </section>
-
-      <PushEnroll />
-
-      <InOutSection canManageMembers={canManageMembers} isOwner={isOwner} />
-
-      {canManageMembers ? <UploadsSettings /> : null}
-
-      {canManageMembers ? <AppsSettings /> : null}
-
-      {canManageTools ? <MenuSection /> : null}
-
-      <section data-section="tools" className="mt-6">
-        <h2 className="text-sm font-semibold">{t("tools")}</h2>
-        <p className="mb-3 text-xs text-[var(--color-muted)]">{t("toolsHint")}</p>
-        <Link
-          href="/settings/tools"
-          className="flex items-center justify-between rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm font-medium"
-        >
-          {canManageTools ? t("manageIntegrations") : t("viewIntegrations")}
-          <span aria-hidden className="text-[var(--color-muted)]">→</span>
-        </Link>
-      </section>
-
-      <GetReadyLink />
-
-      {canManageMembers ? <SoftwareUpgradeLink /> : null}
-
-      <EntityGoalSection goal={entityGoal} readOnly={entityGoalReadOnly} />
-
-      <TagsSection />
-    </div>
+                <span className="h-6 flex-1 rounded-md bg-[var(--color-bg)]" />
+                <span className="h-6 flex-1 rounded-md bg-[var(--color-surface-2)]" />
+                <span className="h-6 flex-1 rounded-md bg-[var(--color-accent)]" />
+              </span>
+              <span className="flex items-center gap-2 text-sm font-medium">
+                {opt.label}
+                {active ? (
+                  <span className="text-xs text-[var(--color-accent)]">
+                    ✓ Active
+                  </span>
+                ) : null}
+              </span>
+              <span className="text-xs text-[var(--color-muted)]">
+                {opt.description}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
 /* ── In&Out: channels the agent talks through ────────────────────── */
-
-/** Everyone: Settings → Get ready (the checklist; each person sees their own items). */
-function GetReadyLink() {
-  const t = useT("getReady");
-  return (
-    <section data-section="get-ready" data-component="GetReadyLink" className="mt-6">
-      <h2 className="text-sm font-semibold">{t("nav.entry")}</h2>
-      <p className="mb-3 text-xs text-[var(--color-muted)]">{t("nav.hint")}</p>
-      <Link
-        href="/settings/get-ready"
-        className="flex items-center justify-between rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm font-medium"
-      >
-        {t("nav.open")}
-        <span aria-hidden className="text-[var(--color-muted)]">→</span>
-      </Link>
-    </section>
-  );
-}
-
-/** Owner and admin (admins read only): Settings → Software upgrade. */
-function SoftwareUpgradeLink() {
-  const t = useT("upgrade");
-  return (
-    <section data-section="software-upgrade" data-component="SoftwareUpgradeLink" className="mt-6">
-      <h2 className="text-sm font-semibold">{t("title")}</h2>
-      <p className="mb-3 text-xs text-[var(--color-muted)]">{t("navHint")}</p>
-      <Link
-        href="/settings/upgrade"
-        className="flex items-center justify-between rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm font-medium"
-      >
-        {t("navOpen")}
-        <span aria-hidden className="text-[var(--color-muted)]">→</span>
-      </Link>
-    </section>
-  );
-}
 
 function InOutSection({
   canManageMembers,

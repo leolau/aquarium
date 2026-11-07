@@ -230,7 +230,7 @@ describe("NetworkFolders", () => {
     render(<NetworkFolders />);
     const empty = await screen.findByText(/need a VPN to the office/);
     const link = within(empty.closest("p")!).getByRole("link");
-    expect(link.getAttribute("href")).toBe("/settings#in-out");
+    expect(link.getAttribute("href")).toBe("/settings/in-out");
     expect(
       (screen.getByText("Add network folder", { selector: "button" }) as HTMLButtonElement)
         .disabled,
