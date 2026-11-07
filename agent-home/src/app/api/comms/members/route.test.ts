@@ -144,14 +144,27 @@ describe("member BFF — profile-aware gate (FG-28 C1)", () => {
     expect(upstream("/api/comms/whoami").map((c) => c.profile)).toEqual([null]);
   });
 
-  it("keeps hard delete owner-only in the named profile", async () => {
+  it("lets an admin of the named profile remove an enrolment there", async () => {
     const res = await memberDELETE(
       new Request("http://x/api/comms/members/p9?strategy=purge&profile=hr", {
         method: "DELETE",
       }),
       { params: Promise.resolve({ userId: "p9" }) },
     );
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
+    expect(upstream("/api/comms/members/p9").map((c) => c.profile)).toEqual(["hr"]);
+  });
+
+  it("refuses removal where the caller is only a viewer or not enrolled", async () => {
+    for (const profile of ["ops", "finance"]) {
+      const res = await memberDELETE(
+        new Request(`http://x/api/comms/members/p9?strategy=purge&profile=${profile}`, {
+          method: "DELETE",
+        }),
+        { params: Promise.resolve({ userId: "p9" }) },
+      );
+      expect(res.status).toBe(403);
+    }
     expect(upstream("/api/comms/members/p9")).toHaveLength(0);
   });
 

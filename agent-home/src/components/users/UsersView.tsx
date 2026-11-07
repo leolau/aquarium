@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { AdminProfileSwitcher } from "@/components/users/AdminProfileSwitcher";
@@ -11,6 +12,7 @@ import { CsvImportPanel } from "@/components/users/CsvImportPanel";
 import { DirectoryPanel } from "@/components/users/DirectoryPanel";
 import { IdentityActivityPanel } from "@/components/users/IdentityActivityPanel";
 import { InvitationLink } from "@/components/users/InvitationLink";
+import { RemoveUserDialog } from "@/components/users/RemoveUserDialog";
 import { UserRow } from "@/components/users/UserRow";
 import { PAGE_SIZE, errorMessage, sendJson } from "@/components/users/api";
 import { optimisticRoleChange } from "@/components/users/optimistic";
@@ -69,6 +71,7 @@ export function UsersView({
   initialPage,
 }: UsersViewProps) {
   const scoped = (path: string) => withProfileQuery(path, profile);
+  const router = useRouter();
   const canManage = role === "owner" || role === "admin";
   const [page, setPage] = useState<MembersResponse | null>(initialPage);
   const [offset, setOffset] = useState(initialPage?.offset ?? 0);
@@ -195,8 +198,22 @@ export function UsersView({
     } else {
       setNotice(`${member.display || member.user_id} is now ${next}.`);
       await load({});
+      // Demoting yourself changes what this screen may show you.
+      if (member.user_id === userId) router.refresh();
     }
     setBusy(null);
+  }
+
+  /** A "Profiles & roles" change: re-read when it touched the viewed profile. */
+  async function profilesChanged(changed: string, removedSelf: boolean) {
+    if (changed !== profile) return;
+    if (removedSelf) {
+      router.push("/users");
+      router.refresh();
+      return;
+    }
+    await load({});
+    router.refresh();
   }
 
   function setEnrolled(member: Member, enrolled: boolean) {
@@ -269,9 +286,9 @@ export function UsersView({
     });
   }
 
-  function remove(member: Member, strategy: "transfer" | "purge", transferTo: string) {
+  async function remove(member: Member, strategy: "transfer" | "purge", transferTo: string) {
     setRemoving(null);
-    return mutate(member.user_id, async () => {
+    await mutate(member.user_id, async () => {
       const params = new URLSearchParams({ strategy });
       if (transferTo) params.set("transfer_to", transferTo);
       await sendJson(
@@ -282,6 +299,11 @@ export function UsersView({
       );
       return `Removed ${member.display || member.user_id} from ${profile}.`;
     });
+    // Leaving the viewed profile: it is no longer yours to administer.
+    if (member.user_id === userId) {
+      router.push("/users");
+      router.refresh();
+    }
   }
 
   return (
@@ -416,7 +438,7 @@ export function UsersView({
                 key={member.user_id}
                 member={member}
                 self={member.user_id === userId}
-                canDelete={role === "owner"}
+                canDelete={canManage}
                 busy={busy === member.user_id}
                 onChangeRole={changeRole}
                 onSetEnrolled={setEnrolled}
@@ -425,6 +447,7 @@ export function UsersView({
                 onRename={rename}
                 onLinkChannel={linkChannel}
                 onDelete={setRemoving}
+                onProfilesChanged={profilesChanged}
               />
             ))}
             {members.length === 0 ? (
@@ -474,93 +497,13 @@ export function UsersView({
       {removing ? (
         <RemoveUserDialog
           member={removing}
+          profile={profile}
+          self={removing.user_id === userId}
           candidates={members.filter((m) => m.user_id !== removing.user_id)}
           onCancel={() => setRemoving(null)}
-          onConfirm={remove}
+          onConfirm={(strategy, transferTo) => remove(removing, strategy, transferTo)}
         />
       ) : null}
-    </div>
-  );
-}
-
-/**
- * Removal asks what happens to the rows the user owns, because nothing else
- * will: deleting a principal does not cascade to their memories, files or GTS
- * items, and those rows would survive pointing at an `owner_user_id` that no
- * longer resolves — invisible under C2 and unreachable from any surface.
- */
-function RemoveUserDialog({
-  member,
-  candidates,
-  onCancel,
-  onConfirm,
-}: {
-  member: Member;
-  candidates: Member[];
-  onCancel: () => void;
-  onConfirm: (m: Member, strategy: "transfer" | "purge", transferTo: string) => unknown;
-}) {
-  const [strategy, setStrategy] = useState<"transfer" | "purge">("transfer");
-  const [transferTo, setTransferTo] = useState(candidates[0]?.user_id ?? "");
-
-  return (
-    <div
-      data-component="RemoveUserDialog"
-      className="rounded-2xl border border-red-500/40 bg-[var(--color-surface)] p-4"
-    >
-      <p className="text-sm font-medium">
-        Remove {member.display || member.email || member.user_id}?
-      </p>
-      <p className="mt-1 text-xs text-[var(--color-muted)]">
-        Their enrolment in this profile goes away. The box-wide account is kept —
-        it may serve other profiles. Decide what happens to the memories, files
-        and GTS items they own.
-      </p>
-      <label className="mt-3 flex items-center gap-2 text-xs">
-        <span className="text-[var(--color-muted)]">Owned rows</span>
-        <select
-          aria-label="Deletion strategy"
-          value={strategy}
-          onChange={(e) => setStrategy(e.target.value as "transfer" | "purge")}
-          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-xs"
-        >
-          <option value="transfer">transfer to somebody</option>
-          <option value="purge">purge the private ones</option>
-        </select>
-      </label>
-      {strategy === "transfer" ? (
-        <label className="mt-2 flex items-center gap-2 text-xs">
-          <span className="text-[var(--color-muted)]">Inherited by</span>
-          <select
-            aria-label="Transfer owned rows to"
-            value={transferTo}
-            onChange={(e) => setTransferTo(e.target.value)}
-            className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-xs"
-          >
-            {candidates.map((c) => (
-              <option key={c.user_id} value={c.user_id}>
-                {c.display || c.user_id}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : null}
-      <div className="mt-3 flex gap-2">
-        <ActionButton
-          disabled={strategy === "transfer" && !transferTo}
-          onAction={() => onConfirm(member, strategy, strategy === "transfer" ? transferTo : "")}
-          className="rounded-lg bg-red-500/20 px-3 py-1 text-xs text-red-200 disabled:opacity-50"
-        >
-          Remove
-        </ActionButton>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 text-xs"
-        >
-          Cancel
-        </button>
-      </div>
     </div>
   );
 }

@@ -70,7 +70,7 @@ HANDLER_CHECKED = {
     "GET /api/comms/members/activity": ("admin", "_comms_member_service"),
     "POST /api/comms/members/{user_id}/deactivate": ("admin", "_comms_set_member_active"),
     "POST /api/comms/members/{user_id}/activate": ("admin", "_comms_set_member_active"),
-    "DELETE /api/comms/members/{user_id}": ("owner", "_comms_member_service"),
+    "DELETE /api/comms/members/{user_id}": ("admin", "_comms_member_service"),
     # FG-33 local apps: the app's owner, an admin or the owner (AppRuntime.resolve, C2)
     "POST /api/tools/{name}/build": ("member", "_app_tool_call"),
     "POST /api/tools/{name}/start": ("member", "_app_tool_call"),
@@ -341,6 +341,7 @@ SIGNED_IN = {
     "GET /api/portal",
     "GET /api/comms/whoami",
     "GET /api/auth/my-profiles",
+    "GET /api/comms/people/{user_id}/profiles",
     "GET /api/comms/members",
     "GET /api/comms/directory",
     "GET /api/comms/notifications",

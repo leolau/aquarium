@@ -23,6 +23,7 @@ from hermes_cli.console_scope import (
     administered_profiles,
     enrolled_profiles,
     guard_account_level_op,
+    person_enrolments,
     resolve_console_principal,
 )
 from hermes_cli.profile_registry import ProfileRegistryEntry
@@ -344,3 +345,105 @@ def test_guard_allows_vacuously_when_target_enrolled_nowhere(
     asyncio.run(
         guard_account_level_op(actor, "ghost", store_factory=factory, registry=entries)
     )
+
+
+# -- person_enrolments: the Users screen's per-person "Profiles & roles" read --
+
+
+@pytest.fixture
+def people_box(tmp_path: Path):
+    """``default`` (CTO admin), ``hr`` (CTO suspended admin), ``engineers``
+    (CTO member), ``testers`` (CTO owner); the target ``pat`` is enrolled in
+    default, hr and engineers but not testers."""
+    homes = {n: tmp_path / n for n in ("default", "hr", "engineers", "testers")}
+    for home in homes.values():
+        home.mkdir()
+    stores = {
+        homes["default"]: _FakeStore(
+            {
+                SUBJECT: Principal(user_id=SUBJECT, display="CTO", role="admin"),
+                "pat": Principal(user_id="pat", display="Pat", role="member"),
+            }
+        ),
+        homes["hr"]: _FakeStore(
+            {
+                SUBJECT: Principal(
+                    user_id=SUBJECT, display="CTO", role="admin", active=False
+                ),
+                "pat": Principal(user_id="pat", display="Pat", role="admin"),
+            }
+        ),
+        homes["engineers"]: _FakeStore(
+            {
+                SUBJECT: Principal(user_id=SUBJECT, display="CTO", role="member"),
+                "pat": Principal(user_id="pat", display="Pat", role="viewer"),
+            }
+        ),
+        homes["testers"]: _FakeStore(
+            {SUBJECT: Principal(user_id=SUBJECT, display="CTO", role="owner")}
+        ),
+    }
+    registry = [_entry(n, h) for n, h in homes.items()]
+    return registry, stores
+
+
+def test_person_enrolments_lists_only_profiles_the_actor_administers(
+    people_box,
+) -> None:
+    registry, stores = people_box
+    rows = asyncio.run(
+        person_enrolments(
+            SUBJECT, "pat", store_factory=_store_factory(stores), registry=registry
+        )
+    )
+    # hr (suspended admin) and engineers (member) are not the actor's to
+    # administer, so pat's enrolment there is not even read.
+    assert [r.profile.name for r in rows] == ["default", "testers"]
+    by_name = {r.profile.name: r for r in rows}
+    assert by_name["default"].principal.role == "member"
+    assert by_name["default"].actor_role == "admin"
+    assert by_name["testers"].principal is None
+    assert by_name["testers"].actor_role == "owner"
+
+
+def test_person_enrolments_never_reads_the_target_outside_administered_profiles(
+    people_box,
+) -> None:
+    registry, stores = people_box
+    looked_up: list[tuple[str, str]] = []
+    for home, store in stores.items():
+        original = store.get
+
+        async def _spy(user_id, _orig=original, _home=home):
+            looked_up.append((_home.name, user_id))
+            return await _orig(user_id)
+
+        store.get = _spy  # type: ignore[method-assign]
+    asyncio.run(
+        person_enrolments(
+            SUBJECT, "pat", store_factory=_store_factory(stores), registry=registry
+        )
+    )
+    assert ("hr", "pat") not in looked_up
+    assert ("engineers", "pat") not in looked_up
+
+
+def test_person_enrolments_without_a_subject_is_empty(people_box) -> None:
+    registry, stores = people_box
+    rows = asyncio.run(
+        person_enrolments(
+            "", "pat", store_factory=_store_factory(stores), registry=registry
+        )
+    )
+    assert rows == []
+
+
+def test_person_enrolments_for_a_member_everywhere_is_empty(people_box) -> None:
+    registry, stores = people_box
+    rows = asyncio.run(
+        person_enrolments(
+            "pat", SUBJECT, store_factory=_store_factory(stores), registry=registry
+        )
+    )
+    # pat is an active admin only in hr — and is listed there alone.
+    assert [r.profile.name for r in rows] == ["hr"]

@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { ASSIGNABLE_ROLES } from "@/components/users/CreateUserForm";
+import { ProfileRolesPanel } from "@/components/users/ProfileRolesPanel";
 import type { Member, Role } from "@/types";
 import { ActionButton } from "@/components/ui/ActionButton";
 
@@ -16,9 +17,13 @@ import { ActionButton } from "@/components/ui/ActionButton";
  * Restore). Collapsing them would send an admin to the wrong control.
  *
  * The owner row is read-only — `owner` cannot be created or assigned here, and
- * ownership moves via `hermes owner transfer`. The self row hides role and
- * removal controls: an admin who demotes or deletes themselves locks the
- * console, and Python refuses these regardless.
+ * ownership moves via `hermes owner transfer`. An owner or admin may re-role
+ * or remove anybody, themselves included; Python refuses only the owner and
+ * the last live admin. The self row hides Suspend (a suspended enrolment
+ * cannot restore itself).
+ *
+ * "Profiles & roles" opens the person's enrolments across every profile the
+ * actor administers (see `ProfileRolesPanel`).
  */
 export function UserRow({
   member,
@@ -32,11 +37,12 @@ export function UserRow({
   onRename,
   onLinkChannel,
   onDelete,
+  onProfilesChanged,
 }: {
   member: Member;
   /** True when this row is the acting principal. */
   self: boolean;
-  /** Hard delete is owner-only: the account is shared across profiles. */
+  /** Removal from this profile (owner/admin; the box-wide account is kept). */
   canDelete: boolean;
   busy: boolean;
   onChangeRole: (m: Member, r: Role) => void;
@@ -46,8 +52,11 @@ export function UserRow({
   onRename: (m: Member, display: string) => unknown;
   onLinkChannel: (m: Member, platform: string, channelUserId: string) => unknown;
   onDelete: (m: Member) => void;
+  /** A "Profiles & roles" change landed in `profile`. */
+  onProfilesChanged?: (profile: string, removedSelf: boolean) => unknown;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [profilesOpen, setProfilesOpen] = useState(false);
   const [display, setDisplay] = useState(member.display);
   const [platform, setPlatform] = useState("telegram");
   const [handle, setHandle] = useState("");
@@ -61,6 +70,19 @@ export function UserRow({
     invitation !== null &&
     invitation.kind === "recovery" &&
     invitation.status === "open";
+
+  function profilesToggle() {
+    return (
+      <button
+        type="button"
+        aria-expanded={profilesOpen}
+        onClick={() => setProfilesOpen(!profilesOpen)}
+        className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 text-xs"
+      >
+        {profilesOpen ? "Hide profiles & roles" : "Profiles & roles"}
+      </button>
+    );
+  }
 
   return (
     <li
@@ -112,18 +134,16 @@ export function UserRow({
       </div>
 
       {member.is_owner ? (
-        <p className="mt-3 text-xs text-[var(--color-muted)]">
-          Owner — managed via <code>hermes owner transfer</code>.
-        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <p className="text-xs text-[var(--color-muted)]">
+            Owner — managed via <code>hermes owner transfer</code>.
+          </p>
+          {profilesToggle()}
+        </div>
       ) : (
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          {self ? (
-            <span className="text-xs text-[var(--color-muted)]">
-              Your own role and enrolment are managed by another admin.
-            </span>
-          ) : (
-            <>
-              <label className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
+          <>
+            <label className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
                 Role
                 <select
                   aria-label={`Role for ${member.display || member.user_id}`}
@@ -139,15 +159,16 @@ export function UserRow({
                   ))}
                 </select>
               </label>
-              <ActionButton
-                disabled={busy}
-                onAction={() => onSetEnrolled(member, !member.enrolled)}
-                className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 text-xs disabled:opacity-50"
-              >
-                {member.enrolled ? "Suspend" : "Restore"}
-              </ActionButton>
-            </>
-          )}
+              {self ? null : (
+                <ActionButton
+                  disabled={busy}
+                  onAction={() => onSetEnrolled(member, !member.enrolled)}
+                  className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 text-xs disabled:opacity-50"
+                >
+                  {member.enrolled ? "Suspend" : "Restore"}
+                </ActionButton>
+              )}
+          </>
           <ActionButton
             disabled={busy}
             onAction={() => onInvite(member)}
@@ -175,8 +196,13 @@ export function UserRow({
           >
             {expanded ? "Hide details" : "Details"}
           </button>
+          {profilesToggle()}
         </div>
       )}
+
+      {profilesOpen ? (
+        <ProfileRolesPanel member={member} self={self} onChanged={onProfilesChanged} />
+      ) : null}
 
       {expanded && !member.is_owner ? (
         <div
@@ -231,7 +257,7 @@ export function UserRow({
               Link channel
             </ActionButton>
           </div>
-          {canDelete && !self ? (
+          {canDelete ? (
             <button
               type="button"
               disabled={busy}
@@ -242,9 +268,7 @@ export function UserRow({
             </button>
           ) : (
             <p className="text-xs text-[var(--color-muted)]">
-              {self
-                ? "You cannot remove your own enrolment."
-                : "Only the owner can remove a user: the account is shared across profiles."}
+              Only an owner or admin can remove a user from this profile.
             </p>
           )}
         </div>

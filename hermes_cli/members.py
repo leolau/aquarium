@@ -147,25 +147,6 @@ def require_member_admin(actor: Principal) -> None:
         )
 
 
-def require_owner(actor: Principal) -> None:
-    """Authorise ``actor`` for an operation that reaches beyond this profile.
-
-    Anything touching the **account** rather than the enrolment (a hard delete,
-    a password-affecting operation on somebody else) is owner-only in FG-26.
-    The doc's finer rule — "the target is enrolled solely in profiles the actor
-    administers" — cannot be evaluated from inside one profile's process, since
-    reading another profile's ``principals`` is exactly what FG-27's ownership
-    guard prevents; approximating it would be a guess about somebody else's
-    profile, so the narrower gate stands until FG-28 provides a cross-profile
-    view.
-    """
-    if actor.role != "owner":
-        raise MemberAuthorizationError(
-            "Only the owner may perform account-level user operations "
-            f"(actor role: {actor.role})."
-        )
-
-
 def administered_profile() -> str:
     """Return the profile name this process administers (``default`` if unnamed)."""
     from hermes_cli.profiles import get_active_profile_name
@@ -737,8 +718,8 @@ class GoTrueAdminClient:
 class MemberService:
     """Owner/admin user management over GoTrue + the principal store.
 
-    Every mutation runs :func:`require_member_admin` (or :func:`require_owner`
-    for the account-level ones) on the acting principal first, then performs the
+    Every mutation runs :func:`require_member_admin` on the acting principal
+    first (account-level ones also pass ``guard_account_level_op``), then performs the
     account operation and mirrors it into the :class:`PrincipalStore`. The
     service never creates or transfers the owner — that stays with
     ``hermes owner``.
@@ -1255,18 +1236,15 @@ class MemberService:
     ) -> Principal:
         """Change a member's role (never the owner's; never *to* owner).
 
-        Refuses to change the actor's **own** role: self-demotion is either a
-        mistake or an attempt to escape a restriction, and the owner/last-admin
-        guard below cannot protect a profile whose only admin demoted himself.
+        An owner or admin may re-role anybody in the profile, other admins and
+        themselves included. The last-admin guard is what keeps the profile
+        administrable: demoting the last live owner/admin is refused, whoever
+        asks.
         """
         require_member_admin(actor)
         if role not in ASSIGNABLE_ROLES:
             raise MemberError(
                 f"role must be one of {ASSIGNABLE_ROLES}; got {role!r}."
-            )
-        if user_id == actor.user_id:
-            raise MemberError(
-                "You cannot change your own role; ask another owner or admin."
             )
         if role != "admin":
             await self._assert_not_last_admin(user_id, what="demote")
@@ -1330,7 +1308,12 @@ class MemberService:
         strategy: DeleteStrategy,
         transfer_to: str | None = None,
     ) -> DeletedMember:
-        """Remove an enrolment and resolve the rows it owns. Owner-only.
+        """Remove an enrolment and resolve the rows it owns (owner/admin).
+
+        Any owner or admin of this profile may remove anybody enrolled here,
+        other admins and their own enrolment included. Two limits stay: the
+        profile owner cannot be removed (ownership moves via ``hermes owner
+        transfer``), and the last live owner/admin cannot be removed.
 
         ``strategy`` is required by the API rather than defaulted, because both
         answers destroy something: ``transfer`` moves a person's private rows to
@@ -1348,15 +1331,13 @@ class MemberService:
         wrong half: the files are the half the system prompt reads, so a
         purged person could keep being described to the agent by name.
         """
-        require_owner(actor)
+        require_member_admin(actor)
         if strategy not in DELETE_STRATEGIES:
             raise MemberError(
                 "strategy is required and must be one of "
                 f"{DELETE_STRATEGIES} — state what happens to the rows and "
                 "files this user owns."
             )
-        if user_id == actor.user_id:
-            raise MemberError("You cannot delete your own enrolment.")
         target = await self._store.get(user_id)
         if target is None:
             raise MemberError(f"No enrolled principal {user_id!r}.")
@@ -1367,9 +1348,24 @@ class MemberService:
             )
         await self._assert_not_last_admin(user_id, what="delete")
 
-        successor = (transfer_to or "").strip() or (
-            actor.user_id if strategy == "purge" else ""
-        )
+        successor = (transfer_to or "").strip()
+        if not successor and strategy == "purge":
+            # Shared rows survive a purge and need a holder: the purging actor,
+            # or — when they are removing themselves — the profile's owner.
+            if user_id != actor.user_id:
+                successor = actor.user_id
+            else:
+                owner = await self._store.get_owner()
+                successor = owner.user_id if owner is not None else ""
+                if not successor:
+                    raise MemberError(
+                        "transfer_to is required — name who inherits the "
+                        "shared rows you leave behind."
+                    )
+        if successor == user_id:
+            raise MemberError(
+                "The person being removed cannot inherit their own rows."
+            )
         if strategy == "transfer" and not successor:
             raise MemberError(
                 "transfer_to is required with strategy=transfer — name the "

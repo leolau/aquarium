@@ -80,6 +80,7 @@ import type {
   ProfileCreateResult,
   ProfileDescribeResult,
   MyProfilesResponse,
+  PersonProfilesResponse,
   ProfilesResponse,
   SkillHubPreview,
   SkillHubScan,
@@ -260,6 +261,7 @@ const BOX_WIDE_PATHS = [
   "/api/audio",
   "/api/wa-bridges",
   "/api/email-accounts",
+  "/api/comms/people",
 ] as const;
 
 export function isBoxWidePath(path: string): boolean {
@@ -375,6 +377,14 @@ export class HermesApiClient {
    */
   async profiles(): Promise<ProfilesResponse> {
     return { profiles: activeEnrolments(await this.myProfiles()) };
+  }
+
+  /**
+   * A person's enrolment in each profile the signed-in account administers
+   * (box-wide: never bound to a profile). Other profiles are never listed.
+   */
+  async personProfiles(userId: string): Promise<PersonProfilesResponse> {
+    return this.request(`/api/comms/people/${encodeURIComponent(userId)}/profiles`);
   }
 
   /** Every enrolment of the signed-in account, with its role in each profile. */
@@ -1434,7 +1444,7 @@ export class HermesApiClient {
   }
 
   /**
-   * Remove an enrolment (**owner only**), stating what happens to the rows it
+   * Remove an enrolment (owner/admin), stating what happens to the rows it
    * owns: `transfer` needs `transferTo`, `purge` deletes the private ones.
    * Nothing cascades to memories, files or GTS items, hence the requirement.
    */

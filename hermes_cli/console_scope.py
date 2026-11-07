@@ -203,6 +203,53 @@ async def administered_profiles(
     ]
 
 
+class PersonEnrolment(NamedTuple):
+    """One administered profile's record of a person (see :func:`person_enrolments`)."""
+
+    profile: ProfileRegistryEntry
+    #: The acting subject's role there (always ``owner`` or ``admin``).
+    actor_role: str
+    #: The person's principal row there; ``None`` when not enrolled.
+    principal: Optional[Any]
+
+
+async def person_enrolments(
+    actor_subject: str,
+    target_user_id: str,
+    *,
+    store_factory: StoreFactory,
+    registry: Optional[List[ProfileRegistryEntry]] = None,
+) -> List[PersonEnrolment]:
+    """The person's enrolment in every profile ``actor_subject`` administers.
+
+    The Users screen's per-person "Profiles & roles" read. A profile appears
+    only where the actor holds an **active** ``owner``/``admin`` row of their
+    own, re-read from that profile's ``principals``; every other profile is
+    skipped before the target is even looked up, so nothing here says whether
+    the person is enrolled somewhere the actor cannot administer. No subject
+    is no profile (no owner-fallback).
+    """
+    if not actor_subject or not target_user_id:
+        return []
+    entries = registry if registry is not None else get_profile_registry()
+    out: List[PersonEnrolment] = []
+    for entry in entries:
+        if not entry.hermes_home.is_dir():
+            continue
+        with _scoped_to(entry.hermes_home):
+            store = store_factory(entry.hermes_home)
+            actor = await _principal_for_subject(store, actor_subject)
+            if (
+                actor is None
+                or not getattr(actor, "active", True)
+                or getattr(actor, "role", "") not in ("owner", "admin")
+            ):
+                continue
+            target = await store.get(target_user_id)
+        out.append(PersonEnrolment(entry, actor.role, target))
+    return out
+
+
 async def resolve_console_principal(
     subject: str,
     target_profile: str,
