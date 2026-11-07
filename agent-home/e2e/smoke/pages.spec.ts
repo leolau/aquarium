@@ -7,6 +7,8 @@ test.describe("key pages", { tag: "@smoke" }, () => {
   test("settings loads", async ({ page }) => {
     await page.goto("/settings");
     await expectPageReady(page, "/settings");
+    await page.locator('[data-section-link="account"]').click();
+    await expect(page).toHaveURL(/\/settings\/account$/);
     await expect(component(page, "AccountSecurity")).toBeVisible();
   });
 
