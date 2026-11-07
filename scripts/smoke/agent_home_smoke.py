@@ -133,7 +133,8 @@ PAGES: Tuple[PageSpec, ...] = (
     PageSpec("/models", ("ModelsView",), quick=True),
     PageSpec("/tools", ("ToolsRegistry",), quick=True),
     PageSpec("/tools/zz-smoke-missing", ("ToolsError",)),
-    PageSpec("/settings", ("SettingsView", "AccountSecurity"), quick=True),
+    PageSpec("/settings", ("SettingsView",), quick=True),
+    PageSpec("/settings/account", ("SettingsView", "AccountSecurity")),
     PageSpec("/settings/tools", ("ToolsSettings", "RoleLimitsSection")),
     PageSpec("/settings/get-ready", ("GetReadyView",)),
     PageSpec(
@@ -159,6 +160,51 @@ PAGES: Tuple[PageSpec, ...] = (
     PageSpec("/not-available", ("NotAvailableForRole",)),
     PageSpec("/default-profile-only", ("DefaultProfileOnly",)),
 )
+
+
+# Settings -> Menu can hide an app from a role; its pages then render the
+# not-available screen and its APIs answer 403. Mirrors ``APP_URLS`` in
+# agent-home/src/lib/nav/menu-access.ts as (path, exact) rules.
+APP_URLS: Mapping[str, Tuple[Tuple[Tuple[str, bool], ...], Tuple[Tuple[str, bool], ...]]] = {
+    "todos": ((("/todos", False),), (("/api/todos", False),)),
+    "chat": ((("/chat", False),), ()),
+    "inbox": ((("/inbox", True),), (("/api/incomings", True), ("/api/incomings/facets", False))),
+    "memory": ((("/memory", False),), (("/api/memory/projection", False), ("/api/memory/query", False))),
+    "projects": ((("/projects", True), ("/projects/new", False)), ()),
+    "files": ((("/files", False),), (("/api/browse", False),)),
+    "activity": ((("/activity", False),), ()),
+    "graph": ((("/graph", False),), ()),
+    "capacity": ((("/capacity", False),), ()),
+    "users": ((("/users", False), ("/members", False)), (("/api/comms/directory", False),)),
+    "suggestions": ((("/profiles/suggestions", False),), (("/api/profiles/suggestions", False),)),
+    "profiles": ((("/profiles", True),), (("/api/profiles", True), ("/api/profiles/named", False))),
+    "skills": ((("/skills", False),), (("/api/skills", False),)),
+    "tools": ((("/tools", False),), (("/api/tools/apps", False),)),
+    "models": (
+        (("/models", False),),
+        (
+            ("/api/models/overview", False),
+            ("/api/models/performance", False),
+            ("/api/models/pinned", False),
+            ("/api/models/refresh-keys", False),
+        ),
+    ),
+    "core": ((("/core", False),), ()),
+    "webview": ((("/webview", False),), (("/api/webview", False),)),
+    "onboarding": ((("/onboarding", False),), ()),
+}
+HIDDEN_PAGE = PageSpec("/not-available", ("NotAvailableForRole",))
+
+
+def hidden_by_menu(path: str, hidden: Iterable[str], *, api: bool) -> bool:
+    """Whether ``path`` is blocked for a role whose menu hides ``hidden``."""
+    bare = path.split("?", 1)[0].rstrip("/") or "/"
+    for app in hidden:
+        pages, apis = APP_URLS.get(app, ((), ()))
+        for rule, exact in apis if api else pages:
+            if bare == rule or (not exact and bare.startswith(rule + "/")):
+                return True
+    return False
 
 
 def _same(status: int) -> Dict[str, int]:
@@ -534,6 +580,7 @@ class Smoke:
         self.creds = creds
         self.cookies: Dict[str, str] = {ANON: ""}
         self.user_ids: Dict[str, str] = {}
+        self.hidden: Dict[str, List[str]] = {}
         self.report = Report()
 
     # -- helpers -----------------------------------------------------------
@@ -575,6 +622,11 @@ class Smoke:
             data = self.get(role, "/api/webview/session").json() or {}
             if isinstance(data, dict) and data.get("principal"):
                 self.user_ids[role] = str(data["principal"])
+            nav = self.get(role, "/api/settings/menu").json() or {}
+            hidden = nav.get("hidden") if isinstance(nav, dict) else None
+            self.hidden[role] = [str(h) for h in hidden] if isinstance(hidden, list) else []
+            if self.hidden[role]:
+                self.report.add(True, f"menu   {role:<6} hides", ",".join(self.hidden[role]))
 
     def pages(self) -> None:
         specs = [p for p in PAGES if p.quick or not self.args.quick]
@@ -582,14 +634,17 @@ class Smoke:
 
         def run(role: str, spec: PageSpec) -> Tuple[str, PageSpec, bool, str, bool]:
             resp = self.get(role, spec.path)
-            ok, detail = page_verdict(spec, role, resp.status, resp.text)
+            want = spec
+            if role != ANON and hidden_by_menu(spec.path, self.hidden.get(role, ()), api=False):
+                want = HIDDEN_PAGE
+            ok, detail = page_verdict(want, role, resp.status, resp.text)
             retried = False
             if not ok:
                 # One retry: a page whose server fetch timed out under the
                 # parallel load renders its error state. Still reported.
                 time.sleep(RETRY_DELAY_S)
                 retry = self.get(role, spec.path)
-                ok, again = page_verdict(spec, role, retry.status, retry.text)
+                ok, again = page_verdict(want, role, retry.status, retry.text)
                 retried = ok
                 detail = f"{again} (1st try: {detail})" if ok else detail
             return role, spec, ok, detail, retried
@@ -603,6 +658,8 @@ class Smoke:
 
         def run(role: str, spec: ApiSpec) -> Tuple[str, ApiSpec, bool, str, bool]:
             want = spec.anon if role == ANON else spec.expect[role]
+            if role != ANON and hidden_by_menu(spec.path, self.hidden.get(role, ()), api=True):
+                want = 403
             resp = self.get(role, spec.path)
             detail = f"{_status_detail(resp)} (want {want})"
             if resp.status != want and (resp.status == 0 or resp.status >= 500):

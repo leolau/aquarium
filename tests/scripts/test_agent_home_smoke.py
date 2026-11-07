@@ -206,3 +206,41 @@ def test_report_counts_warn_separately_and_warn_does_not_fail():
 def test_concurrency_defaults_to_two():
     assert smoke.parse_args([]).concurrency == 2
     assert smoke.parse_args(["--concurrency", "5"]).concurrency == 5
+
+
+def test_hidden_by_menu_matches_by_path_segment_and_exactness():
+    assert smoke.hidden_by_menu("/todos", ["todos"], api=False)
+    assert smoke.hidden_by_menu("/todos/zz-smoke-missing", ["todos"], api=False)
+    assert smoke.hidden_by_menu("/api/todos/facets", ["todos"], api=True)
+    assert not smoke.hidden_by_menu("/api/todos", ["todos"], api=False)
+    assert not smoke.hidden_by_menu("/todosx", ["todos"], api=False)
+    assert smoke.hidden_by_menu("/projects?view=task", ["projects"], api=False)
+    assert not smoke.hidden_by_menu("/projects/zz-smoke-missing", ["projects"], api=False)
+    assert not smoke.hidden_by_menu("/profiles/suggestions", ["profiles"], api=False)
+    assert not smoke.hidden_by_menu("/todos", [], api=False)
+
+
+def test_page_verdict_hidden_page_wants_not_available_screen():
+    html = _html(*SHELL, "NotAvailableForRole")
+    assert smoke.page_verdict(smoke.HIDDEN_PAGE, ADMIN, 200, html)[0]
+    assert not smoke.page_verdict(smoke.HIDDEN_PAGE, ADMIN, 200, _html(*SHELL, "TodosList"))[0]
+
+
+def test_app_urls_mirror_agent_home_menu_access():
+    import re
+    from pathlib import Path
+
+    ts = (
+        Path(smoke.__file__).resolve().parents[2] / "agent-home" / "src" / "lib" / "nav" / "menu-access.ts"
+    ).read_text(encoding="utf-8")
+    block = ts.split("export const APP_URLS", 1)[1].split("\n};", 1)[0]
+    rule = re.compile(r'\{\s*path:\s*"([^"]+)"(\s*,\s*exact:\s*true)?\s*\}')
+    parsed = {}
+    for m in re.finditer(r"^  (\w+): \{(.*?)(?=^  \w+: \{|\Z)", block, re.S | re.M):
+        body = m.group(2)
+        pages, _, apis = body.partition("apis:")
+        parsed[m.group(1)] = (
+            tuple((p, bool(e)) for p, e in rule.findall(pages)),
+            tuple((p, bool(e)) for p, e in rule.findall(apis)),
+        )
+    assert parsed == dict(smoke.APP_URLS)
