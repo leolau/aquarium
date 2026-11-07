@@ -259,6 +259,7 @@ const BOX_WIDE_PATHS = [
   "/api/gateway/drain",
   "/api/audio",
   "/api/wa-bridges",
+  "/api/email-accounts",
 ] as const;
 
 export function isBoxWidePath(path: string): boolean {
