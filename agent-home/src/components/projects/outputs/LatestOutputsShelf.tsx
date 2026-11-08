@@ -8,6 +8,10 @@ import { useProjectArtifacts } from "@/components/projects/outputs/useProjectArt
 import { Pill } from "@/components/ui/Pill";
 import type { ProjectArtifact, ProjectDetail, ProjectOutputStatus } from "@/types";
 
+/** Open / Download on a tile: full-size tap targets that never shrink. */
+const TILE_ACTION =
+  "inline-flex min-h-10 shrink-0 items-center justify-center whitespace-nowrap rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm";
+
 function tilePill(
   file: ProjectArtifact,
   statusOf: Map<string, ProjectOutputStatus>,
@@ -61,7 +65,7 @@ export function LatestOutputsShelf({
         </button>
       </div>
       {loading ? (
-        <ul data-component="ShelfSkeleton" aria-busy="true" className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <ul data-component="ShelfSkeleton" aria-busy="true" className="mt-3 flex flex-col gap-2">
           {[0, 1, 2, 3].map((i) => (
             <li key={i} className="h-16 animate-pulse rounded-xl bg-[var(--color-surface-2)]" />
           ))}
@@ -71,7 +75,7 @@ export function LatestOutputsShelf({
           Nothing produced yet. Files from runs and cards will show up here.
         </p>
       ) : (
-        <ul className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <ul data-component="OutputTiles" className="mt-3 flex flex-col gap-2">
           {tiles.map((file) => {
             const pill = tilePill(file, statusOf);
             const where = [file.run_no != null ? `Run ${file.run_no}` : null, file.location]
@@ -81,20 +85,33 @@ export function LatestOutputsShelf({
               <li
                 key={file.id}
                 data-component="OutputTile"
-                className="flex items-center gap-2 rounded-xl bg-[var(--color-surface-2)] p-2"
+                className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl bg-[var(--color-surface-2)] p-3"
               >
-                <FileBadge file={file} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm" title={file.title}>
-                    {middleEllipsize(file.title)}
-                  </span>
-                  <span className="flex items-center gap-1.5 text-xs text-[var(--color-muted)]">
-                    <Pill tone={pill.tone}>{pill.label}</Pill>
-                    <span className="truncate">{where || file.output_title || ""}</span>
+                {/* Badge + text keep a readable width; the actions drop to
+                    their own row (right-aligned) instead of squeezing it. */}
+                <span className="flex min-w-0 flex-[1_1_16rem] items-center gap-3">
+                  <FileBadge file={file} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium" title={file.title}>
+                      {middleEllipsize(file.title)}
+                    </span>
+                    <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-[var(--color-muted)]">
+                      <Pill tone={pill.tone}>{pill.label}</Pill>
+                      {where || file.output_title ? (
+                        <span className="min-w-0 max-w-full truncate">{where || file.output_title}</span>
+                      ) : null}
+                    </span>
                   </span>
                 </span>
-                <OpenArtifact file={file} onOpenFile={opener.open}
-          onDownloadFile={opener.download} resolving={opener.resolving} />
+                <span data-component="OutputTileActions" className="ml-auto flex shrink-0 items-center">
+                  <OpenArtifact
+                    file={file}
+                    onOpenFile={opener.open}
+                    onDownloadFile={opener.download}
+                    resolving={opener.resolving}
+                    className={TILE_ACTION}
+                  />
+                </span>
               </li>
             );
           })}

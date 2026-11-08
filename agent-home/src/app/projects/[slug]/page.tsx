@@ -82,7 +82,6 @@ export default async function Page({
     <MobileShell title={project.name} wide>
       <ProjectViewSwitch
         initialMode={view.mode}
-        device={view.device}
         task={{
           project,
           board,

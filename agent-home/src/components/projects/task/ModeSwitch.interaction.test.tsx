@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 /**
- * The Task mode | Project mode switch: it saves the choice for this
- * person's device class, flips a project page in place, and keeps
- * repeating / standing projects in Project mode.
+ * The Task mode | Project mode switch: it flips a one-off's project page
+ * in place without saving (a saved "task" would turn the phone's Projects
+ * list into Task mode), and keeps repeating / standing projects in Project mode.
  */
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -37,7 +37,6 @@ function page(cadence: ProjectDetail["cadence"], initialMode: "task" | "project"
   return render(
     <ProjectViewSwitch
       initialMode={initialMode}
-      device="phone"
       task={{ project, board: null, playbook: null, directives: null, callerUserId: "u", isInstanceAdmin: false }}
     >
       <div data-testid="project-view" />
@@ -63,7 +62,7 @@ describe("ModeSwitch", () => {
 });
 
 describe("ProjectViewSwitch", () => {
-  it("flips the same project in place and saves the choice for this device", () => {
+  it("flips the same project in place without saving a device-wide mode", () => {
     const fetchFn = fetchSpy();
     page("one_off");
     expect(screen.getByTestId("task-view")).toBeTruthy();
@@ -74,10 +73,7 @@ describe("ProjectViewSwitch", () => {
     expect(screen.queryByTestId("task-view")).toBeNull();
     fireEvent.click(screen.getByRole("radio", { name: "Task mode" }));
     expect(screen.getByTestId("task-view")).toBeTruthy();
-    const [path, init] = fetchFn.mock.calls[0] as [string, RequestInit];
-    expect(path).toBe("/api/me/project-view-mode");
-    expect(init.method).toBe("PUT");
-    expect(JSON.parse(String(init.body))).toEqual({ device: "phone", mode: "task" });
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 
   it("opens in Project mode from the task's details link", () => {

@@ -82,6 +82,36 @@ describe("LatestOutputsShelf", () => {
     expect(open.getAttribute("href")).toBe("https://example.com/mou-v1.docx");
   });
 
+  it("lays tiles out one per row with Open/Download in their own wrapping group", () => {
+    // At 1440 px the shelf sits in half of the main column; a 2-up grid there
+    // squeezed the metadata against the buttons. One tile per row, the text
+    // block with a minimum width, and the actions free to wrap below it.
+    const { container } = render(
+      <LatestOutputsShelf
+        project={PROJECT()}
+        onShowAll={() => {}}
+        initialArtifacts={[
+          ARTIFACT({ id: "long", title: "a-very-long-quarterly-memorandum-of-understanding-final-v3.docx", run_no: 12 }),
+        ]}
+      />,
+    );
+    const list = container.querySelector('[data-component="OutputTiles"]')!;
+    expect(list.className).not.toMatch(/grid-cols-2/);
+    const tile = container.querySelector('[data-component="OutputTile"]')!;
+    expect(tile.className).toContain("flex-wrap");
+    const actions = tile.querySelector('[data-component="OutputTileActions"]')!;
+    expect(actions.className).toContain("shrink-0");
+    for (const name of [/^Open /, /^Download /]) {
+      const control = [...actions.querySelectorAll("a,button")].find((el) =>
+        name.test(el.getAttribute("aria-label") ?? ""),
+      )!;
+      expect(control, String(name)).toBeTruthy();
+      // Tappable and never squeezed into a two-line label.
+      expect(control.className).toContain("min-h-10");
+      expect(control.className).toContain("whitespace-nowrap");
+    }
+  });
+
   it("All outputs & drafts calls onShowAll", async () => {
     const onShowAll = vi.fn();
     const { getByText } = render(
