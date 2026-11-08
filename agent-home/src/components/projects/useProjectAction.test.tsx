@@ -3,7 +3,8 @@ import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const router = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
-vi.mock("next/navigation", () => ({ useRouter: () => router }));
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/projects", useRouter: () => router }));
 
 import { ActionButton } from "@/components/projects/ActionButton";
 import {

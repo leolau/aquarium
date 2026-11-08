@@ -8,7 +8,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const router = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
-vi.mock("next/navigation", () => ({ useRouter: () => router }));
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/projects/mou-set/runs/2", useRouter: () => router }));
 
 import { ChangeRequestSheet } from "@/components/projects/changes/ChangeRequestSheet";
 import { IDEMPOTENCY_HEADER } from "@/components/projects/useProjectAction";

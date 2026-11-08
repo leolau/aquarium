@@ -10,6 +10,7 @@ import {
 import type { ProjectLink } from "@/types";
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/projects",
   useRouter: () => ({ refresh: () => {}, push: () => {} }),
 }));
 

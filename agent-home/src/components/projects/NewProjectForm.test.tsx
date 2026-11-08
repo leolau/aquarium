@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 // The form navigates with next/navigation — stub the router hook so SSR
 // rendering works.
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/projects/new",
   useRouter: () => ({ refresh: () => {}, push: () => {} }),
 }));
 

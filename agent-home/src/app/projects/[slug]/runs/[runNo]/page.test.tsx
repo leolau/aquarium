@@ -13,6 +13,7 @@ const projectRunMock = vi.hoisted(() => vi.fn());
 const projectMock = vi.hoisted(() => vi.fn());
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/projects/monday-digest",
   useRouter: () => router,
   notFound: () => {
     throw new Error("NEXT_NOT_FOUND");

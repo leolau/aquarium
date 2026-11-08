@@ -7,6 +7,7 @@ const projectMock = vi.hoisted(() => vi.fn());
 const fanOut = vi.hoisted(() => () => Promise.reject(new Error("unused")));
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/projects",
   useRouter: () => ({ refresh: () => {}, push: () => {}, back: () => {} }),
   notFound: () => {
     throw new Error("NEXT_NOT_FOUND");

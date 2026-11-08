@@ -7,6 +7,7 @@ const projectCardMock = vi.hoisted(() => vi.fn());
 const projectMock = vi.hoisted(() => vi.fn());
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/projects/draft-a-new-quotation/cards/task_1",
   useRouter: () => ({ refresh: () => {}, push: () => {}, back: () => {} }),
   notFound: () => {
     throw new Error("NEXT_NOT_FOUND");
