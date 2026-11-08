@@ -32,7 +32,8 @@ export interface LandingChats {
   error: string | null;
   clearError: () => void;
   refresh: () => Promise<void>;
-  togglePin: (session: LandingSession) => Promise<void>;
+  /** Resolves true once the server saved the new pin state. */
+  togglePin: (session: LandingSession) => Promise<boolean>;
   rename: (session: LandingSession, title: string) => Promise<boolean>;
   acceptSuggestions: (ids: string[]) => Promise<void>;
   dismissSuggestions: (ids: string[]) => Promise<void>;
@@ -176,13 +177,17 @@ export function useLandingChats({
   );
 
   const togglePin = useCallback(
-    (s: LandingSession) =>
-      withLock(s.id, async () => {
+    async (s: LandingSession) => {
+      let ok = false;
+      await withLock(s.id, async () => {
         if (await setPinned(s.id, !isPinned(s), s.pinned_at)) {
+          ok = true;
           setSuggestions((prev) => prev.filter((x) => x.session_id !== s.id));
           void refresh();
         }
-      }),
+      });
+      return ok;
+    },
     [refresh, setPinned, withLock],
   );
 

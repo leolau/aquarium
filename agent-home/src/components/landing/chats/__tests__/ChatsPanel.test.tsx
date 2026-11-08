@@ -119,6 +119,25 @@ describe("ChatsSidebar", () => {
     );
   });
 
+  it("offers Undo after pinning a chat, and Undo unpins it", async () => {
+    const f = install({
+      "GET /api/chat/sessions": () => json({ sessions }),
+      "GET /api/chat/pin-suggestions": () => json({ items: [], generated_at: 1 }),
+      "POST /api/chat/sessions/pin": (init) => {
+        const b = JSON.parse(String(init?.body));
+        return json({ ok: true, session_id: b.sessionId, pinned_at: b.pinned ? 999 : null });
+      },
+    });
+    render(<ChatsSidebar profiles={profiles} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Pin “Debug flaky e2e test”" }));
+    expect(await screen.findByText("Chat pinned")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Undo/ }));
+    await waitFor(() => {
+      const pins = f.mock.calls.filter(([u]) => String(u).includes("/sessions/pin"));
+      expect(pins.map(([, i]) => JSON.parse(String(i?.body)).pinned)).toEqual([true, false]);
+    });
+  });
+
   it("hides all pin UI when pins aren't deployed (no pinned_at, routes 404)", async () => {
     const legacy = withoutPins(sessions);
     install({ "GET /api/chat/sessions": () => json({ sessions: legacy }) });

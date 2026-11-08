@@ -8,12 +8,13 @@ import type { ProfileSummary } from "@/types";
 
 import { chatHref, chatsApi } from "./chatsApi";
 import { ArrowRightIcon, MessageIcon, XIcon } from "@/components/ui/icons";
-import { matchesQuery, type LandingSession } from "./model";
+import { isPinned, matchesQuery, type LandingSession } from "./model";
 import { NewChatButton, profileLabel } from "./NewChatButton";
 import { PinSuggestionCard } from "./PinSuggestionCard";
 import { SessionRow } from "./SessionRow";
 import { SessionSearch } from "./SessionSearch";
 import { useLandingChats } from "./useLandingChats";
+import { useUndoToast } from "@/components/ui/UndoToast";
 import { useT } from "@/i18n";
 import {
   CHAT_CATEGORY_ORDER,
@@ -140,6 +141,15 @@ export function ChatsPanel({
     }
     return counts;
   }, [categoryFilter, chats.pinned, chats.recent]);
+  const { show: showUndo, toast } = useUndoToast();
+  const { togglePin } = chats;
+  const onTogglePin = async (s: LandingSession) => {
+    const wasPinned = isPinned(s);
+    if (!(await togglePin(s))) return;
+    showUndo(t(wasPinned ? "unpinnedToast" : "pinnedToast"), () =>
+      togglePin({ ...s, pinned_at: wasPinned ? null : Date.now() / 1000 }),
+    );
+  };
   const pinned = chats.pinned.filter(inCategory);
   const recent = chats.recent.filter(inCategory).slice(0, RECENT_LIMIT);
   const empty = !chats.loading && chats.sessions.filter((s) => !s.archived).length === 0;
@@ -153,7 +163,7 @@ export function ChatsPanel({
       active={s.id === activeSessionId}
       canPin={chats.canPin}
       busy={chats.busyIds.has(s.id)}
-      onTogglePin={chats.togglePin}
+      onTogglePin={(s) => void onTogglePin(s)}
       onRename={chats.rename}
       onNavigate={onNavigate}
     />
@@ -265,6 +275,7 @@ export function ChatsPanel({
         All chats
         <ArrowRightIcon size={14} className="text-[var(--color-muted)]" />
       </Link>
+      {toast}
     </div>
   );
 }

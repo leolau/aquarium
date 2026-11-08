@@ -1,5 +1,6 @@
 import { MobileShell } from "@/components/MobileShell";
-import { HUB_ICONS, SystemHub, type HubCard, type HubGroup } from "@/components/system/SystemHub";
+import { HUB_ICONS, type HubCard, type HubGroup } from "@/components/system/SystemHub";
+import { SystemHubAdvanced } from "@/components/system/SystemHubAdvanced";
 import { InfoTip } from "@/components/ui/InfoTip";
 import { getT } from "@/i18n/server";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
@@ -92,7 +93,7 @@ export default async function Page() {
         card("profiles", "/profiles", profiles),
         card("skills", "/skills", skills),
         card("memory", "/memory", memory),
-        card("graph", "/graph", graph),
+        card("graph", "/graph", graph, { advanced: true }),
       ].filter(visible),
     },
     {
@@ -102,7 +103,7 @@ export default async function Page() {
         card("models", "/models", models),
         card("tools", "/tools", tools),
         ...(admin
-          ? [card("core", "/core", core, { adminChip: true }), card("webview", "/webview", webview, { adminChip: true })]
+          ? [card("core", "/core", core, { adminChip: true, advanced: true }), card("webview", "/webview", webview, { adminChip: true, advanced: true })]
           : []),
       ].filter(visible),
     },
@@ -115,8 +116,9 @@ export default async function Page() {
       info={<InfoTip label={t("info")}>{t("infoBody")}</InfoTip>}
       wide
     >
-      <SystemHub
+      <SystemHubAdvanced
         groups={groups}
+        advancedHelp={t("hubAdvancedHelp")}
         adminNote={admin ? t("adminView") : null}
         unknown={t("unknown")}
         lockedLabel={t("locked")}

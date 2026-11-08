@@ -81,6 +81,7 @@
     "details": "Technical details"
   },
   "advancedHelp": "Shows the technical details engineers use: ids, file paths, scoring rules and raw states. It changes nothing, and this device remembers your choice.",
+  "hubAdvancedHelp": "Also shows the pages engineers use: the goal graph and, for admins, Core and the agent web browser. It changes nothing, and this device remembers your choice.",
   "core": {
     "subtitle": "The parts of Aquarium agents can never change. Read-only.",
     "info": "What is Core?",

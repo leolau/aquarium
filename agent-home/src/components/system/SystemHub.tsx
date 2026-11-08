@@ -14,6 +14,8 @@ export interface HubCard {
   meta: string | null;
   icon: ReactNode;
   adminChip?: boolean;
+  /** Engineer-facing: shown only while the hub's Advanced switch is on. */
+  advanced?: boolean;
   locked?: { why: string } | null;
 }
 
