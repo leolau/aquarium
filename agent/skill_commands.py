@@ -544,6 +544,8 @@ def build_skill_invocation_message(
     try:
         from tools.skill_usage import bump_use
         bump_use(skill_name)
+        from hermes_cli.skill_ledger import record_use
+        record_use(skill_name, trigger="slash")
     except Exception:
         pass  # Non-critical — skill invocation proceeds regardless
 
@@ -591,6 +593,8 @@ def build_preloaded_skills_prompt(
         try:
             from tools.skill_usage import bump_use
             bump_use(skill_name)
+            from hermes_cli.skill_ledger import record_use
+            record_use(skill_name, trigger="preload")
         except Exception:
             pass  # Non-critical
 

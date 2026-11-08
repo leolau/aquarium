@@ -1659,6 +1659,11 @@ def _skill_view_with_bump(args, **kw):
                 # to act on it — that counts as use, not just a browse/view.
                 # Curator's stale timer keys off last_used_at (see agent/curator.py).
                 bump_use(str(resolved))
+                # One ledger row per load of the skill itself; linked-file
+                # reads are part of the same use.
+                if not args.get("file_path"):
+                    from hermes_cli.skill_ledger import record_use
+                    record_use(str(resolved), trigger="skill_view")
     except Exception:
         pass
     return result

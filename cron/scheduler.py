@@ -2114,6 +2114,8 @@ def _build_job_prompt(job: dict, prerun_script: Optional[tuple] = None) -> str:
         # Bump usage so the curator sees this skill as actively used.
         try:
             bump_use(skill_name)
+            from hermes_cli.skill_ledger import record_use
+            record_use(skill_name, trigger="cron")
         except Exception:
             logger.debug("Cron job: failed to bump skill usage for '%s'", skill_name, exc_info=True)
 
