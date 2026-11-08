@@ -171,4 +171,46 @@ describe("sorting and pages", () => {
     const rows = [...document.querySelectorAll("tr[data-entry]")].map((r) => r.getAttribute("data-entry"));
     expect(rows.slice(0, 2)).toEqual(["Offers", "f119"]);
   });
+
+  it("shows skeleton places and rows while the places load", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const base = fetch as unknown as (url: string, init?: RequestInit) => Promise<Response>;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.startsWith("/api/browse/places")) await gate;
+      return base(url, init);
+    }));
+    render(<BrowseView />);
+    expect(document.querySelector('[data-component="PlacesSkeleton"]')).not.toBeNull();
+    expect(document.querySelector('[data-component="BrowseSkeleton"]')).not.toBeNull();
+    expect(screen.getByRole("status").textContent).toBe("Opening…");
+    release();
+    await screen.findAllByText("Jensen-New");
+    expect(document.querySelector('[data-component="PlacesSkeleton"]')).toBeNull();
+    expect(document.querySelector('[data-component="BrowseSkeleton"]')).toBeNull();
+  });
+
+  it("swaps the list for skeleton rows while a network folder opens", async () => {
+    await openJensen();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const base = fetch as unknown as (url: string, init?: RequestInit) => Promise<Response>;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.startsWith("/api/browse/list")) await gate;
+      return base(url, init);
+    }));
+    fireEvent.click(screen.getAllByRole("button", { name: /Offers/ })[0]);
+    const skeleton = await waitFor(() => {
+      const el = document.querySelector('[data-component="BrowseSkeleton"]');
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    expect(skeleton.getAttribute("aria-hidden")).toBe("true");
+    expect(skeleton.querySelectorAll("[data-skeleton-row]").length).toBeGreaterThan(0);
+    expect(document.querySelectorAll("tr[data-entry]")).toHaveLength(0);
+    expect(screen.getByText(/network folders can take up to 15 s/)).toBeTruthy();
+    release();
+    await screen.findAllByText("offer.pdf");
+    expect(document.querySelector('[data-component="BrowseSkeleton"]')).toBeNull();
+  });
 });

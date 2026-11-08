@@ -78,6 +78,7 @@ export async function MobileShell({
   info,
   back,
   labels,
+  hideHeader = false,
 }: {
   title: string;
   children: ReactNode;
@@ -98,6 +99,8 @@ export async function MobileShell({
   back?: Crumb;
   /** Breadcrumb label overrides by href (e.g. the project's name). */
   labels?: Record<string, string>;
+  /** Top bar and launcher only, no Back row or page title (the root loading screen). */
+  hideHeader?: boolean;
 }) {
   // The badge count: one cached facets call per 30s.  The session is
   // resolved outside the cache so cookies() isn't called inside it, and
@@ -164,6 +167,7 @@ export async function MobileShell({
       clearLauncher
       topBar={<ShellTopBar accountName={accountName} />}
       pageHeader={
+        hideHeader ? null : (
         <PageHeader
           title={title}
           subtitle={subtitle}
@@ -179,6 +183,7 @@ export async function MobileShell({
             ) : null
           }
         />
+        )
       }
       overlays={
         <>

@@ -18,8 +18,10 @@ describe("SurveyForm", () => {
       "Which grade is your child in?",
       "我們可否在網站及社交媒體分享您的意見？",
       "What would you like to do next with AI&amp;I?",
-      "姓名 Name",
+      "姓名 *",
+      "Name *",
       "保持聯絡 Stay in touch",
+      "提交並索取簡報 Submit &amp; get the slides",
     ]) {
       expect(html).toContain(text);
     }
@@ -33,13 +35,16 @@ describe("SurveyForm", () => {
 });
 
 describe("SeminarShell", () => {
-  it("shows the AI&I logo and a bilingual thank-you", () => {
+  it("shows the AI&I mark, the survey line and a bilingual thank-you", () => {
     const html = renderToStaticMarkup(
       <SeminarShell>
         <SurveyThanks />
       </SeminarShell>,
     );
     expect(html).toContain('src="/seminar/ai-and-i-logo.jpg"');
+    expect(html).toContain("AI&amp;I Seminar");
+    expect(html).toContain("講座問卷 Survey");
+    expect(html).not.toContain("Aquarium");
     expect(html).toContain("多謝您完成問卷");
     expect(html).toContain("Thank you for completing the survey");
   });

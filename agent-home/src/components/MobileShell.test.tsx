@@ -73,4 +73,13 @@ describe("MobileShell", () => {
     });
     expect(html).toContain("CoralHost");
   });
+
+  it("hideHeader keeps the top bar and launcher but drops the page header", async () => {
+    const shown = await renderShell({ title: "Aquarium", children: <p>panel</p> });
+    expect(shown).toContain('data-component="PageHeader"');
+    const html = await renderShell({ title: "Aquarium", hideHeader: true, children: <p>panel</p> });
+    expect(html).not.toContain('data-component="PageHeader"');
+    expect(html).toContain("CoralHost");
+    expect(html).toContain("panel");
+  });
 });

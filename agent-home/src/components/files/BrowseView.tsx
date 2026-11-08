@@ -528,7 +528,8 @@ export function BrowseView() {
         aria-busy={placesLoading}
         className="hidden self-start rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-3 md:block"
       >
-        {groups.map((g) => {
+        {placesLoading ? <PlacesSkeleton /> : null}
+        {(placesLoading ? [] : groups).map((g) => {
           const mine = places.filter((p) => p.kind === g.kind);
           return (
             <div key={g.kind} className="mb-3">
@@ -599,9 +600,14 @@ export function BrowseView() {
         aria-busy={busy}
       >
         {!place ? (
-          <p className="text-sm text-[var(--color-muted)]">
-            {placesLoading ? t("opening") : t("choose")}
-          </p>
+          placesLoading ? (
+            <>
+              {openingSlow(true, t("opening"))}
+              <BrowseSkeleton />
+            </>
+          ) : (
+            <p className="text-sm text-[var(--color-muted)]">{t("choose")}</p>
+          )
         ) : place.source === "local" && place.permission !== "granted" ? (
           <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm">
             <p className="mb-3">{t("local.needsPermission", { name: place.name })}</p>
@@ -645,6 +651,8 @@ export function BrowseView() {
               <p className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm text-[var(--color-warn-text)]">
                 {t("listFailed", { detail: listError })}
               </p>
+            ) : openingSelf ? (
+              <BrowseSkeleton />
             ) : entries.length === 0 && !busy ? (
               <p className="text-sm text-[var(--color-muted)]">{t("empty")}</p>
             ) : (
@@ -800,6 +808,78 @@ export function BrowseView() {
         </Sheet>
       ) : null}
       {dialog}
+    </div>
+  );
+}
+
+const bone = "rounded-[var(--radius-sm)] bg-[var(--color-surface-2)]";
+const SKELETON_ROWS = ["w-2/5", "w-1/3", "w-3/5", "w-1/2", "w-2/5"];
+
+/**
+ * Placeholder rows while a folder list loads (Figma 24:12293 notes: the
+ * "Opening…" line over a skeleton). Same shape as the real rows: a table
+ * (name · size · modified) from `md`, list rows with a meta line on a phone.
+ */
+function BrowseSkeleton() {
+  return (
+    <div data-component="BrowseSkeleton" aria-hidden="true" className="animate-pulse">
+      <div className="hidden md:block">
+        <div className="grid grid-cols-[minmax(0,1fr)_90px_140px] gap-3 px-3 pb-2">
+          <div className={`h-3 w-12 ${bone}`} />
+          <div className={`h-3 w-10 ${bone}`} />
+          <div className={`h-3 w-16 ${bone}`} />
+        </div>
+        {SKELETON_ROWS.map((w, i) => (
+          <div
+            key={i}
+            data-skeleton-row
+            className="grid grid-cols-[minmax(0,1fr)_90px_140px] items-center gap-3 border-t border-[var(--color-border)] px-3 py-3"
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              <div className={`size-5 shrink-0 ${bone}`} />
+              <div className={`h-3 ${w} ${bone}`} />
+            </div>
+            <div className={`h-3 w-10 ${bone}`} />
+            <div className={`h-3 w-16 ${bone}`} />
+          </div>
+        ))}
+      </div>
+      <ul className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] md:hidden">
+        {SKELETON_ROWS.map((w, i) => (
+          <li
+            key={i}
+            data-skeleton-row
+            className="flex items-center gap-3 border-b border-[var(--color-border)] px-3 py-3 last:border-b-0"
+          >
+            <div className={`size-5 shrink-0 ${bone}`} />
+            <div className="flex min-w-0 flex-1 flex-col gap-2">
+              <div className={`h-3 ${w} ${bone}`} />
+              <div className={`h-2.5 w-1/4 ${bone}`} />
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** Placeholder place cards while the places list loads. */
+function PlacesSkeleton() {
+  return (
+    <div data-component="PlacesSkeleton" aria-hidden="true" className="animate-pulse">
+      <div className={`mx-2 mb-2 mt-2 h-2.5 w-16 ${bone}`} />
+      {[0, 1, 2].map((i) => (
+        <div
+          key={i}
+          className="mb-2 flex min-h-11 items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] p-3"
+        >
+          <div className={`size-5 shrink-0 ${bone}`} />
+          <div className="flex min-w-0 flex-1 flex-col gap-2">
+            <div className={`h-3 w-3/5 ${bone}`} />
+            <div className={`h-2.5 w-4/5 ${bone}`} />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

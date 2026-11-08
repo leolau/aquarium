@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 
-import { SeminarNotice, SeminarShell, SurveyThanks } from "@/components/seminar/SeminarShell";
+import { SeminarShell, SurveyLinkInvalid, SurveyThanks } from "@/components/seminar/SeminarShell";
 import { SurveyForm } from "@/components/seminar/SurveyForm";
 import { HermesApiClient, HermesApiError } from "@/lib/api/client";
 import { callerIpFromHeaders } from "@/lib/api/callerIp";
@@ -50,19 +50,7 @@ export default async function Page({
   return (
     <SeminarShell>
       {state === "submitted" ? <SurveyThanks /> : null}
-      {state === "unknown" ? (
-        <SeminarNotice component="SurveyLinkInvalid">
-          <p>
-            此問卷連結無效或已被更新的連結取代。請在 WhatsApp 再次向我們發送「I want to do
-            the survey and get the presentation link.」以取得新連結。
-          </p>
-          <p>
-            This survey link is not valid, or a newer link has replaced it. Send us
-            &ldquo;I want to do the survey and get the presentation link.&rdquo; on
-            WhatsApp again for a new one.
-          </p>
-        </SeminarNotice>
-      ) : null}
+      {state === "unknown" ? <SurveyLinkInvalid /> : null}
       {state === "open" ? <SurveyForm token={token} /> : null}
     </SeminarShell>
   );
