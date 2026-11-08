@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { ActionButton } from "@/components/ui/ActionButton";
+import { useT } from "@/i18n/client";
 import type { Member } from "@/types";
 
 /** Who a removal's owned rows can be handed to: anybody else enrolled there. */
@@ -31,6 +32,7 @@ export function RemoveUserDialog({
   onCancel: () => void;
   onConfirm: (strategy: "transfer" | "purge", transferTo: string) => unknown;
 }) {
+  const t = useT("users");
   const [strategy, setStrategy] = useState<"transfer" | "purge">("transfer");
   const [transferTo, setTransferTo] = useState(candidates[0]?.user_id ?? "");
   const name = member.display || member.email || member.user_id;
@@ -41,32 +43,29 @@ export function RemoveUserDialog({
       className="rounded-2xl border border-[var(--color-danger)]/40 bg-[var(--color-surface)] p-4"
     >
       <p className="text-sm font-medium">
-        {self ? `Remove yourself from ${profile}?` : `Remove ${name} from ${profile}?`}
+        {self ? t("remove.titleSelf", { profile }) : t("remove.title", { name, profile })}
       </p>
       <p className="mt-1 text-xs text-[var(--color-muted)]">
-        {self
-          ? "You lose access to this profile until another admin adds you back. "
-          : "Their enrolment in this profile goes away. "}
-        The box-wide account is kept — it may serve other profiles. Decide what
-        happens to the memories, files and GTS items {self ? "you" : "they"} own.
+        {self ? t("remove.bodySelf") : t("remove.bodyOther")}{" "}
+        {self ? t("remove.keptSelf") : t("remove.keptOther")}
       </p>
       <label className="mt-3 flex items-center gap-2 text-xs">
-        <span className="text-[var(--color-muted)]">Owned rows</span>
+        <span className="text-[var(--color-muted)]">{t("remove.owned")}</span>
         <select
-          aria-label="Deletion strategy"
+          aria-label={t("remove.strategy")}
           value={strategy}
           onChange={(e) => setStrategy(e.target.value as "transfer" | "purge")}
           className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-xs"
         >
-          <option value="transfer">transfer to somebody</option>
-          <option value="purge">purge the private ones</option>
+          <option value="transfer">{t("remove.transfer")}</option>
+          <option value="purge">{t("remove.purge")}</option>
         </select>
       </label>
       {strategy === "transfer" ? (
         <label className="mt-2 flex items-center gap-2 text-xs">
-          <span className="text-[var(--color-muted)]">Inherited by</span>
+          <span className="text-[var(--color-muted)]">{t("remove.inherited")}</span>
           <select
-            aria-label="Transfer owned rows to"
+            aria-label={t("remove.transferTo")}
             value={transferTo}
             onChange={(e) => setTransferTo(e.target.value)}
             className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-xs"
@@ -85,14 +84,14 @@ export function RemoveUserDialog({
           onAction={() => onConfirm(strategy, strategy === "transfer" ? transferTo : "")}
           className="rounded-lg bg-[var(--color-danger)]/20 px-3 py-1 text-xs text-[var(--color-danger)] disabled:opacity-50"
         >
-          Remove
+          {t("remove.confirm")}
         </ActionButton>
         <button
           type="button"
           onClick={onCancel}
           className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 text-xs"
         >
-          Cancel
+          {t("remove.cancel")}
         </button>
       </div>
     </div>

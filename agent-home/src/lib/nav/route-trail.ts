@@ -50,6 +50,8 @@ const ROUTES: RouteNode[] = [
   { pattern: "/settings/get-ready", label: "Get ready", parent: "/settings" },
   { pattern: "/settings/tools", label: "Tools & Integrations", parent: "/settings" },
   { pattern: "/settings/upgrade", label: "Software upgrade", parent: "/settings" },
+  { pattern: "/settings/in-out", label: "In&Out", parent: "/settings" },
+  { pattern: "/settings/in-out/google", label: "Google", parent: "/settings/in-out" },
   { pattern: "/settings/:section", label: "Settings", parent: "/settings" },
   { pattern: "/users", label: "People and roles", parent: "/settings" },
   { pattern: "/members", label: "Members", parent: "/settings" },

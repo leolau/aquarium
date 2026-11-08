@@ -55,10 +55,11 @@ export default async function Page() {
   }
 
   const t = await getT("settings");
+  const tg = await getT("getReady");
   return (
     <MobileShell
       title={t("entry.get-ready")}
-      subtitle={t("getReady.subtitle")}
+      subtitle={data ? tg(data.can_manage ? "introManager" : "introPerson") : t("getReady.subtitle")}
       info={<InfoTip label={t("getReady.infoLabel")}>{t("getReady.info")}</InfoTip>}
       wide
     >

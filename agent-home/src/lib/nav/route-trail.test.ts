@@ -14,6 +14,7 @@ describe("routeTrail", () => {
     expect(hrefs("/users")).toEqual(["/", "/settings", "/users"]);
     expect(hrefs("/activity/t1")).toEqual(["/", "/activity", "/activity/t1"]);
     expect(hrefs("/capacity")).toEqual(["/", "/settings", "/capacity"]);
+    expect(hrefs("/settings/in-out/google")).toEqual(["/", "/settings", "/settings/in-out", "/settings/in-out/google"]);
     expect(hrefs("/webview")).toEqual(["/", "/system", "/webview"]);
   });
 

@@ -28,6 +28,7 @@ import type {
 } from "@/types";
 import { ActionButton } from "@/components/ui/ActionButton";
 import { useUndoToast } from "@/components/ui/UndoToast";
+import { useT } from "@/i18n/client";
 import { useConfirm } from "@/components/ui/useConfirm";
 
 const ROLE_RANK: Record<Role, number> = { owner: 3, admin: 2, member: 1, viewer: 0 };
@@ -76,6 +77,7 @@ export function UsersView({
 }: UsersViewProps) {
   const scoped = (path: string) => withProfileQuery(path, profile);
   const router = useRouter();
+  const t = useT("users");
   const { ask, dialog } = useConfirm();
   const undo = useUndoToast();
   const canManage = role === "owner" || role === "admin";
@@ -136,7 +138,7 @@ export function UsersView({
       if (message) setNotice(message);
       await load({});
     } catch (err) {
-      setError(errorMessage(err, "The request was refused."));
+      setError(errorMessage(err, t("view.refused")));
     } finally {
       setBusy(null);
     }
@@ -167,9 +169,8 @@ export function UsersView({
         return null;
       }
       return resp.enrolled_existing
-        ? `${input.email} already had an account on this box and is now enrolled in ${target} — ` +
-            "their existing password still works, so there is no link to send."
-        : `Enrolled ${resp.member.user_id} in ${target}.`;
+        ? t("view.enrolledExisting", { email: input.email, profile: target })
+        : t("view.enrolled", { id: resp.member.user_id, profile: target });
     });
   }
 
@@ -182,12 +183,12 @@ export function UsersView({
     if (!page) return;
     if (ROLE_RANK[next] < ROLE_RANK[member.role]) {
       const ok = await ask({
-        title: `Change ${member.display || member.user_id} to ${next}?`,
+        title: t("view.demoteTitle", { name: member.display || member.user_id, role: t(`role.${next}`) }),
         body:
           member.user_id === userId
-            ? `You will lose ${member.role} rights in ${profile} straight away, and may not be able to change this back yourself.`
-            : `They lose what a ${member.role} can do in ${profile} as soon as you confirm.`,
-        confirmLabel: `Yes, make ${next}`,
+            ? t("view.demoteSelf", { role: t(`role.${member.role}`), profile })
+            : t("view.demoteOther", { role: t(`role.${member.role}`), profile }),
+        confirmLabel: t("view.demoteConfirm", { role: t(`role.${next}`) }),
         tone: "danger",
       });
       if (!ok) return;
@@ -214,7 +215,7 @@ export function UsersView({
     if (failure) {
       setError(failure);
     } else {
-      setNotice(`${member.display || member.user_id} is now ${next}.`);
+      setNotice(t("view.nowRole", { name: member.display || member.user_id, role: t(`role.${next}`) }));
       await load({});
       // Demoting yourself changes what this screen may show you.
       if (member.user_id === userId) router.refresh();
@@ -238,15 +239,15 @@ export function UsersView({
     const name = member.display || member.user_id;
     if (!enrolled) {
       const ok = await ask({
-        title: `Suspend ${name}?`,
-        body: `They can no longer sign in to ${profile} until someone restores them. Their account and work are kept.`,
-        confirmLabel: "Yes, suspend",
+        title: t("view.suspendTitle", { name }),
+        body: t("view.suspendBody", { profile }),
+        confirmLabel: t("view.suspendConfirm"),
         tone: "danger",
       });
       if (!ok) return;
     }
     await sendEnrolled(member, enrolled);
-    if (enrolled) undo.show(`${name} restored in ${profile}.`, () => sendEnrolled(member, false));
+    if (enrolled) undo.show(t("view.restored", { name, profile }), () => sendEnrolled(member, false));
   }
 
   function sendEnrolled(member: Member, enrolled: boolean) {
@@ -258,9 +259,10 @@ export function UsersView({
         ),
         "POST",
       );
-      return `${member.display || member.user_id} ${
-        enrolled ? "restored" : "suspended"
-      } in ${profile}.`;
+      return t(enrolled ? "view.restored" : "view.suspended", {
+        name: member.display || member.user_id,
+        profile,
+      });
     });
   }
 
@@ -283,9 +285,9 @@ export function UsersView({
 
   async function revokeInvite(member: Member) {
     const ok = await ask({
-      title: `Revoke the link for ${member.display || member.user_id}?`,
-      body: "The link stops working at once. You can send a new one later.",
-      confirmLabel: "Yes, revoke",
+      title: t("view.revokeTitle", { name: member.display || member.user_id }),
+      body: t("view.revokeBody"),
+      confirmLabel: t("view.revokeConfirm"),
       tone: "danger",
     });
     if (!ok) return;
@@ -296,7 +298,7 @@ export function UsersView({
         ),
         "DELETE",
       );
-      return `Revoked the open link for ${member.display || member.user_id}.`;
+      return t("view.revoked", { name: member.display || member.user_id });
     });
   }
 
@@ -309,7 +311,7 @@ export function UsersView({
         "PUT",
         { display },
       );
-      return `Renamed to ${display}.`;
+      return t("view.renamed", { display });
     });
   }
 
@@ -322,7 +324,7 @@ export function UsersView({
         "POST",
         { platform, channel_user_id: channelUserId },
       );
-      return `Linked ${platform}:${channelUserId}.`;
+      return t("view.linked", { platform, handle: channelUserId });
     });
   }
 
@@ -337,7 +339,7 @@ export function UsersView({
         ),
         "DELETE",
       );
-      return `Removed ${member.display || member.user_id} from ${profile}.`;
+      return t("view.removed", { name: member.display || member.user_id, profile });
     });
     // Leaving the viewed profile: it is no longer yours to administer.
     if (member.user_id === userId) {
@@ -350,9 +352,9 @@ export function UsersView({
     <div data-component="UsersView" className="flex flex-col gap-4">
       <AdminProfileSwitcher profiles={administered} current={profile} />
       <p className="flex flex-wrap items-center gap-2 text-xs text-[var(--color-muted)]">
-        <Pill tone="accent">{role}</Pill>
-        {administered.length < 2 ? <Pill tone="muted">profile: {profile}</Pill> : null}
-        {canManage ? <Pill tone="muted">{total} enrolled</Pill> : null}
+        <Pill tone="accent">{t(`role.${role}`)}</Pill>
+        {administered.length < 2 ? <Pill tone="muted">{t("view.profilePill", { profile })}</Pill> : null}
+        {canManage ? <Pill tone="muted">{t("view.enrolledCount", { count: total })}</Pill> : null}
       </p>
 
       {notice ? (
@@ -364,12 +366,12 @@ export function UsersView({
           role="status"
           className="rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-sm"
         >
-          Created in <code>{elsewhere}</code> —{" "}
+          {t("view.createdIn")} <code>{elsewhere}</code> —{" "}
           <Link
             href={withProfileQuery("/users", elsewhere)}
             className="text-[var(--color-accent)] underline"
           >
-            view
+            {t("view.view")}
           </Link>
         </p>
       ) : null}
@@ -395,22 +397,20 @@ export function UsersView({
           data-component="UsersReadOnlyNotice"
           className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
         >
-          Enrolling people, changing roles and issuing activation links are
-          owner/admin actions. Ask an administrator of this profile.
+          {t("view.readOnly")}
         </p>
       ) : null}
 
       {canManage && page && !page.configured ? (
         <p className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]">
-          User management isn&apos;t configured on this server yet (it needs the
-          Supabase GoTrue URL + service-role key set server-side).
+          {t("view.notConfigured")}
         </p>
       ) : null}
 
       {canManage ? (
         <BusyRegion
           busy={busy !== null}
-          label={busy === "create" ? "Enrolling…" : "Updating the user…"}
+          label={busy === "create" ? t("view.busyCreate") : t("view.busyUpdate")}
           className="flex flex-col gap-4"
         >
           <CreateUserForm
@@ -427,8 +427,8 @@ export function UsersView({
           >
             <input
               type="search"
-              aria-label="Search users"
-              placeholder="Search name or email"
+              aria-label={t("view.search")}
+              placeholder={t("view.searchPlaceholder")}
               value={query}
               onChange={(e) => {
                 setQuery(e.target.value);
@@ -438,7 +438,7 @@ export function UsersView({
               className="min-w-0 flex-1 basis-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm sm:basis-0"
             />
             <select
-              aria-label="Filter by role"
+              aria-label={t("view.filterRole")}
               value={roleFilter}
               onChange={(e) => {
                 const next = e.target.value as "" | Role;
@@ -448,15 +448,15 @@ export function UsersView({
               }}
               className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-2 text-xs"
             >
-              <option value="">every role</option>
+              <option value="">{t("view.everyRole")}</option>
               {(["owner", "admin", "member", "viewer"] as Role[]).map((r) => (
                 <option key={r} value={r}>
-                  {r}
+                  {t(`role.${r}`)}
                 </option>
               ))}
             </select>
             <select
-              aria-label="Filter by enrolment"
+              aria-label={t("view.filterState")}
               value={activeFilter}
               onChange={(e) => {
                 const next = e.target.value as "" | "true" | "false";
@@ -466,9 +466,9 @@ export function UsersView({
               }}
               className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-2 text-xs"
             >
-              <option value="">any state</option>
-              <option value="true">enrolled</option>
-              <option value="false">suspended</option>
+              <option value="">{t("view.anyState")}</option>
+              <option value="true">{t("view.enrolledState")}</option>
+              <option value="false">{t("view.suspendedState")}</option>
             </select>
           </section>
 
@@ -492,7 +492,7 @@ export function UsersView({
             ))}
             {members.length === 0 ? (
               <li className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]">
-                No users match this view.
+                {t("view.none")}
               </li>
             ) : null}
           </ul>
@@ -510,11 +510,13 @@ export function UsersView({
               }}
               className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 disabled:opacity-50"
             >
-              Previous
+              {t("view.prev")}
             </ActionButton>
             <span>
-              {total === 0 ? "0" : `${offset + 1}–${Math.min(offset + PAGE_SIZE, total)}`}{" "}
-              of {total}
+              {t("view.of", {
+                range: total === 0 ? "0" : `${offset + 1}–${Math.min(offset + PAGE_SIZE, total)}`,
+                total,
+              })}
             </span>
             <ActionButton
               disabled={offset + PAGE_SIZE >= total}
@@ -525,7 +527,7 @@ export function UsersView({
               }}
               className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 disabled:opacity-50"
             >
-              Next
+              {t("view.next")}
             </ActionButton>
           </div>
 

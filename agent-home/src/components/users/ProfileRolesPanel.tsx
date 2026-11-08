@@ -17,6 +17,7 @@ import type {
   PersonProfilesResponse,
   Role,
 } from "@/types";
+import { useT } from "@/i18n/client";
 
 /** The person's enrolments in the profiles the caller administers. */
 async function fetchPersonProfiles(userId: string): Promise<PersonProfile[]> {
@@ -51,6 +52,7 @@ export function ProfileRolesPanel({
   /** A change landed in `profile`; `removedSelf` when the actor left it. */
   onChanged?: (profile: string, removedSelf: boolean) => unknown;
 }) {
+  const t = useT("users");
   const id = member.user_id;
   const name = member.display || member.email || id;
   const [rows, setRows] = useState<PersonProfile[] | null>(null);
@@ -66,7 +68,7 @@ export function ProfileRolesPanel({
     try {
       setRows(await fetchPersonProfiles(id));
     } catch (err) {
-      setError(errorMessage(err, "Couldn't load profiles."));
+      setError(errorMessage(err, t("prp.loadFailed")));
       setRows((prev) => prev ?? []);
     }
   }
@@ -79,14 +81,14 @@ export function ProfileRolesPanel({
       },
       (err: unknown) => {
         if (!live) return;
-        setError(errorMessage(err, "Couldn't load profiles."));
+        setError(errorMessage(err, t("prp.loadFailed")));
         setRows([]);
       },
     );
     return () => {
       live = false;
     };
-  }, [id]);
+  }, [id, t]);
 
   async function act(
     profile: string,
@@ -101,7 +103,7 @@ export function ProfileRolesPanel({
       await load();
       await onChanged?.(profile, removedSelf);
     } catch (err) {
-      setError(errorMessage(err, "The request was refused."));
+      setError(errorMessage(err, t("view.refused")));
     } finally {
       setBusy(null);
     }
@@ -116,7 +118,7 @@ export function ProfileRolesPanel({
         display: member.display,
         role,
       });
-      return `Added ${name} to ${profile} as ${role}.`;
+      return t("prp.added", { name, profile, role: t(`role.${role}`) });
     });
   }
 
@@ -127,7 +129,7 @@ export function ProfileRolesPanel({
         "PUT",
         { role },
       );
-      return `${name} is now ${role} in ${profile}.`;
+      return t("prp.nowRole", { name, profile, role: t(`role.${role}`) });
     });
   }
 
@@ -145,7 +147,7 @@ export function ProfileRolesPanel({
         candidates: (page.members ?? []).filter((m) => m.user_id !== id),
       });
     } catch (err) {
-      setError(errorMessage(err, "Couldn't load that profile's roster."));
+      setError(errorMessage(err, t("prp.rosterFailed")));
     }
   }
 
@@ -163,7 +165,7 @@ export function ProfileRolesPanel({
           ),
           "DELETE",
         );
-        return `Removed ${name} from ${profile}.`;
+        return t("view.removed", { name, profile });
       },
       self,
     );
@@ -172,12 +174,12 @@ export function ProfileRolesPanel({
   return (
     <section
       data-component="ProfileRolesPanel"
-      aria-label={`Profiles and roles for ${name}`}
+      aria-label={t("prp.label", { name })}
       className="mt-3 flex flex-col gap-2 border-t border-[var(--color-border)] pt-3"
     >
-      <p className="text-xs font-medium">Profiles &amp; roles</p>
+      <p className="text-xs font-medium">{t("prp.title")}</p>
       <p className="text-xs text-[var(--color-muted)]">
-        Only profiles you administer are listed.
+        {t("prp.only")}
       </p>
       {notice ? (
         <p role="status" className="rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-xs">
@@ -190,7 +192,7 @@ export function ProfileRolesPanel({
         </p>
       ) : null}
       {rows === null ? (
-        <p className="text-xs text-[var(--color-muted)]">Loading…</p>
+        <p className="text-xs text-[var(--color-muted)]">{t("prp.loading")}</p>
       ) : (
         <ul className="flex flex-col gap-2">
           {rows.map((row) => (
@@ -203,9 +205,9 @@ export function ProfileRolesPanel({
               <code className="min-w-0 flex-1 truncate">{row.name}</code>
               {!row.enrolled ? (
                 <>
-                  <span className="text-[var(--color-muted)]">not enrolled</span>
+                  <span className="text-[var(--color-muted)]">{t("prp.notEnrolled")}</span>
                   <select
-                    aria-label={`Role to add in ${row.name}`}
+                    aria-label={t("prp.roleToAdd", { profile: row.name })}
                     value={addRole[row.name] ?? "member"}
                     disabled={busy !== null}
                     onChange={(e) =>
@@ -215,30 +217,30 @@ export function ProfileRolesPanel({
                   >
                     {ASSIGNABLE_ROLES.map((r) => (
                       <option key={r} value={r}>
-                        {r}
+                        {t(`role.${r}`)}
                       </option>
                     ))}
                   </select>
                   <ActionButton
                     disabled={busy !== null || !member.email}
-                    title={member.email ? undefined : "This person has no email to enrol by."}
+                    title={member.email ? undefined : t("prp.noEmail")}
                     onAction={() => add(row.name)}
                     className="rounded-lg bg-[var(--color-accent)] px-3 py-1 text-xs text-[var(--color-accent-fg)] disabled:opacity-50"
                   >
-                    Add
+                    {t("prp.add")}
                   </ActionButton>
                 </>
               ) : row.is_owner ? (
                 <span className="text-[var(--color-muted)]">
-                  owner — managed via <code>hermes owner transfer</code>
+                  {t("prp.owner")} <code>hermes owner transfer</code>
                 </span>
               ) : (
                 <>
                   {row.active === false ? (
-                    <span className="text-[var(--color-warn-text)]">suspended</span>
+                    <span className="text-[var(--color-warn-text)]">{t("prp.suspended")}</span>
                   ) : null}
                   <select
-                    aria-label={`Role in ${row.name}`}
+                    aria-label={t("prp.roleIn", { profile: row.name })}
                     value={row.role ?? "member"}
                     disabled={busy !== null}
                     onChange={(e) => void changeRole(row.name, e.target.value as Role)}
@@ -246,7 +248,7 @@ export function ProfileRolesPanel({
                   >
                     {ASSIGNABLE_ROLES.map((r) => (
                       <option key={r} value={r}>
-                        {r}
+                        {t(`role.${r}`)}
                       </option>
                     ))}
                   </select>
@@ -255,7 +257,7 @@ export function ProfileRolesPanel({
                     onAction={() => openRemove(row.name)}
                     className="rounded-lg bg-[var(--color-danger)]/15 px-3 py-1 text-xs text-[var(--color-danger)] disabled:opacity-50"
                   >
-                    Remove…
+                    {t("prp.remove")}
                   </ActionButton>
                 </>
               )}
@@ -263,7 +265,7 @@ export function ProfileRolesPanel({
           ))}
           {rows.length === 0 ? (
             <li className="text-xs text-[var(--color-muted)]">
-              You don&apos;t administer any profile.
+              {t("prp.none")}
             </li>
           ) : null}
         </ul>

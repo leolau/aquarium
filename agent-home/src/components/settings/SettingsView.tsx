@@ -17,7 +17,7 @@ import {
 import { LanguageSwitch } from "@/components/LanguageSwitch";
 import { PushEnroll } from "@/components/push/PushEnroll";
 import { ConnectedAccounts } from "@/components/settings/ConnectedAccounts";
-import { GoogleClientSetup } from "@/components/settings/GoogleClientSetup";
+import { useGoogleClientT } from "@/components/settings/googleClientStrings";
 import { TelegramLinks } from "@/components/settings/TelegramLinks";
 import { TelegramBotSetup } from "@/components/settings/TelegramBotSetup";
 import { EmailMailboxes } from "@/components/settings/EmailMailboxes";
@@ -357,6 +357,7 @@ function InOutSection({
   canManageMembers: boolean;
   isOwner: boolean;
 }) {
+  const gt = useGoogleClientT();
   const t = useT("settings");
   return (
     <section
@@ -372,7 +373,19 @@ function InOutSection({
         bridges and Telegram.
       </p>
       <div className="space-y-6 border-t border-[var(--color-border)] pt-4">
-        {isOwner && <GoogleClientSetup />}
+        {isOwner && (
+          <Link
+            href="/settings/in-out/google"
+            data-component="ConnectGoogleLink"
+            className="flex min-h-11 items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg)] p-3"
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold">{gt("pageTitle")}</span>
+              <span className="block text-xs text-[var(--color-muted)]">{gt("linkBody")}</span>
+            </span>
+            <ChevronRightIcon size={16} aria-hidden className="shrink-0 text-[var(--color-muted)]" />
+          </Link>
+        )}
         <ConnectedAccounts />
         <EmailMailboxes />
         <VpnConnections />
