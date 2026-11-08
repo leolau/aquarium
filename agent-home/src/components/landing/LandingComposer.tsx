@@ -79,8 +79,8 @@ export function LandingComposer({
       : "What should we work on?";
 
   return (
-    <section data-component="LandingComposer" className="flex w-full max-w-2xl flex-col items-center gap-6">
-      <div className="text-center">
+    <section data-component="LandingComposer" className="flex w-full max-w-2xl flex-1 flex-col items-center gap-6 lg:flex-none">
+      <div className="order-1 mt-auto text-center lg:mt-0">
         <h1 suppressHydrationWarning className="text-2xl font-semibold tracking-tight lg:text-3xl">{hello}</h1>
         <p
           data-testid="landing-subline"
@@ -91,7 +91,7 @@ export function LandingComposer({
       </div>
 
       <form
-        className="w-full rounded-[var(--radius-2xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-sm focus-within:border-[var(--color-accent)]"
+        className="sticky bottom-0 order-3 w-full rounded-[var(--radius-2xl)] lg:static lg:order-2 border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-sm focus-within:border-[var(--color-accent)]"
         onSubmit={(e) => {
           e.preventDefault();
           submit();
@@ -152,14 +152,14 @@ export function LandingComposer({
         </div>
       </form>
       {error ? (
-        <p role="alert" className="text-sm text-[var(--color-danger)]">
+        <p role="alert" className="order-4 text-sm lg:order-3 text-[var(--color-danger)]">
           {error}
         </p>
       ) : null}
 
-      <ul aria-label="Suggestions" className="flex flex-wrap justify-center gap-2">
-        {LANDING_SUGGESTIONS.map((s) => (
-          <li key={s}>
+      <ul aria-label="Suggestions" className="order-2 mb-auto flex flex-wrap justify-center gap-2 lg:order-4 lg:mb-0">
+        {LANDING_SUGGESTIONS.map((s, i) => (
+          <li key={s} className={i >= 2 ? "hidden lg:list-item" : undefined}>
             <button
               type="button"
               onClick={() => {
