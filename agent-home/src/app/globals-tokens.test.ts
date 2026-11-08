@@ -84,4 +84,9 @@ describe("globals.css tokens", () => {
     expect(css.lastIndexOf("@media (pointer: coarse)", idx)).toBeGreaterThan(0);
     expect(css.match(/min-height: 44px/g)).toHaveLength(1);
   });
+
+  it("breaks long unspaced text instead of widening the page", () => {
+    const body = [...css.matchAll(/\nbody \{([^}]*)\}/g)].map((m) => m[1]).join("");
+    expect(body).toMatch(/overflow-wrap:\s*break-word/);
+  });
 });

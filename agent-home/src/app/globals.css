@@ -120,6 +120,10 @@ body {
   -webkit-font-smoothing: antialiased;
   /* Never allow horizontal scroll on a phone. */
   overflow-x: hidden;
+  /* Agent text carries long URLs, ids and paths; break them rather than let
+   * them push the page wider than the screen. Inherited, and unlike
+   * `anywhere` it leaves table/flex min-content sizing alone. */
+  overflow-wrap: break-word;
 }
 
 /* Large touch targets on touch screens (min 44px per iOS HIG). Scoped to
