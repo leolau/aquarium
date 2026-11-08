@@ -1,6 +1,6 @@
 {
   "title": "Sign in",
-  "intro": "Sign in with your Hermes account to open your agent home.",
+  "intro": "Sign in with your Aquarium account to open your agent home.",
   "provider": "Provider",
   "username": "Email / username",
   "password": "Password",
@@ -16,5 +16,12 @@
   "requestLink": "Request a link",
   "resetSent": "If that address is enrolled here, an administrator now has a link for it.",
   "suspended": "Your access to every profile you're in has been suspended. Ask an administrator to restore it.",
-  "noPrincipal": "You signed in, but you aren't a member of any profile here yet. Ask an administrator to add you."
+  "noPrincipal": "You signed in, but you aren't a member of any profile here yet. Ask an administrator to add you.",
+  "signInWith": "Sign in with",
+  "tabEmail": "Email",
+  "tabUsername": "Username",
+  "email": "Email",
+  "usernameOnly": "Username",
+  "noAccount": "No account? Ask the owner for an invite link.",
+  "backToSignIn": "Back to sign in"
 }

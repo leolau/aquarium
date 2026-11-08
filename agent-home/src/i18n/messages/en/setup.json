@@ -78,5 +78,10 @@
   "steps": "Steps",
   "tz_other": "Other timezones",
   "s2_after": "Right after you press Finish setup, this page shows a code to scan with that app. You can also skip it and turn it on later in Settings → Get ready.",
-  "opening": "Opening Get ready…"
+  "opening": "Opening Get ready…",
+  "invalidTitle": "This setup link has expired",
+  "copyCommand": "Copy command",
+  "stepOf": "Step {n} of {total}",
+  "stepsHelp": "Steps are buttons: they scroll to the section and keep everything you typed.",
+  "stepDone": "Done"
 }

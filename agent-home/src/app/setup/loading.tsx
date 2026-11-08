@@ -1,14 +1,17 @@
-import { MobileShell } from "@/components/MobileShell";
-import { PageSkeleton } from "@/components/ui/PageSkeleton";
+import { AuthLayout } from "@/components/auth/AuthLayout";
+import { RouteLoading } from "@/components/ui/RouteLoading";
 
 /**
- * Route-level loading UI for **Setup**. The visitor is signed out, so this
- * overrides the root skeleton, which would flash the Aquarium launcher.
+ * Route-level loading UI for **Set up Aquarium**.
+ *
+ * Present so this signed-out route doesn't fall through to the root loader —
+ * a signed-out visitor should never see the app shell or launcher flash
+ * before the form. Same auth layout as the page, loader only.
  */
 export default function Loading() {
   return (
-    <MobileShell title="Set up Aquarium" showCoral={false} wide>
-      <PageSkeleton rows={2} label="Loading setup…" />
-    </MobileShell>
+    <AuthLayout wide>
+      <RouteLoading />
+    </AuthLayout>
   );
 }

@@ -1,5 +1,7 @@
 import { MobileShell } from "@/components/MobileShell";
 import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { getT } from "@/i18n/server";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
 import type { OnboardingReadinessResponse } from "@/types";
 
@@ -12,6 +14,7 @@ export const dynamic = "force-dynamic";
  */
 export default async function Page() {
   await requirePrincipal();
+  const t = await getT("edge");
 
   let readiness: OnboardingReadinessResponse | null = null;
   let error: string | null = null;
@@ -23,13 +26,10 @@ export default async function Page() {
   }
 
   return (
-    <MobileShell title="Getting started">
+    <MobileShell title="Getting started" subtitle={t("onbSubtitle")}>
       {error || !readiness ? (
-        <div
-          data-component="OnboardingError"
-          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
-        >
-          Couldn&apos;t load setup readiness{error ? ` (${error})` : ""}.
+        <div data-component="OnboardingError">
+          <ErrorState kind="error" details={error ? `${t("onbError")}\n${error}` : t("onbError")} />
         </div>
       ) : (
         <OnboardingWizard readiness={readiness} />

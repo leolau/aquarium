@@ -1,9 +1,27 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
+import enErrors from "@/i18n/messages/en/errors.json";
+import zhErrors from "@/i18n/messages/zh-Hant/errors.json";
+import { DEFAULT_LOCALE, htmlLang, isLocale, LOCALE_COOKIE, type Locale } from "@/i18n/config";
 import { isChunkLoadError, reloadOnceForChunkError } from "@/lib/chunk-reload";
+import { DEFAULT_THEME, readStoredTheme } from "@/lib/theme";
 import "./globals.css";
+
+const STRINGS: Record<Locale, typeof enErrors> = { en: enErrors, "zh-Hant": zhErrors };
+
+/** The visitor's language (cookie) and theme (localStorage), read in the browser. */
+function readPrefs(): { locale: Locale; theme: string } {
+  if (typeof document === "undefined") return { locale: DEFAULT_LOCALE, theme: DEFAULT_THEME };
+  const raw = document.cookie
+    .split("; ")
+    .find((c) => c.startsWith(`${LOCALE_COOKIE}=`))
+    ?.slice(LOCALE_COOKIE.length + 1);
+  const value = raw ? decodeURIComponent(raw) : null;
+  const theme = readStoredTheme();
+  return { locale: isLocale(value) ? value : DEFAULT_LOCALE, theme };
+}
 
 /**
  * The root error boundary (Next.js App Router convention — replaces the
@@ -25,6 +43,11 @@ export default function GlobalError({
   reset: () => void;
 }) {
   const isStaleBundle = isChunkLoadError(error);
+  // This boundary replaces the root layout, so it re-reads the person's
+  // language and theme itself instead of hard-coding English on dark.
+  const [{ locale, theme }] = useState(readPrefs);
+  const t = STRINGS[locale];
+  const [retrying, setRetrying] = useState(false);
 
   useEffect(() => {
     reloadOnceForChunkError(error);
@@ -35,39 +58,54 @@ export default function GlobalError({
     // the instant before it lands, and no button that would just throw
     // the same error again.
     return (
-      <html lang="en" data-theme="dark">
+      <html lang={htmlLang(locale)} data-theme={theme} suppressHydrationWarning>
         <body />
       </html>
     );
   }
 
   return (
-    <html lang="en" data-theme="dark">
+    <html lang={htmlLang(locale)} data-theme={theme} suppressHydrationWarning>
       <body
         data-component="GlobalError"
         className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[var(--color-bg)] p-6 text-center text-[var(--color-text)]"
       >
-        <h1 className="text-lg font-semibold">Something went wrong</h1>
-        <p className="max-w-sm text-sm text-[var(--color-muted)]">
-          Reloading usually fixes this. If it keeps happening, let us know
-          what you were doing.
-        </p>
-        <div className="flex gap-2">
+        {/* eslint-disable-next-line @next/next/no-img-element -- static brand asset */}
+        <img src="/brand/illustrations/bowl-needs-a-moment.webp" alt="" width={137} height={120} className="h-[120px] w-auto" />
+        <h1 className="text-xl font-semibold">{t.errorHeading}</h1>
+        <p className="max-w-sm text-sm text-[var(--color-muted)]">{t.errorBody}</p>
+        <div className="flex flex-wrap justify-center gap-2">
           <button
             type="button"
-            onClick={() => reset()}
-            className="rounded-xl border border-[var(--color-border)] px-4 py-2 text-sm"
+            disabled={retrying}
+            aria-busy={retrying}
+            onClick={() => {
+              if (retrying) return;
+              setRetrying(true);
+              reset();
+              window.setTimeout(() => setRetrying(false), 600);
+            }}
+            className="min-h-11 rounded-[var(--radius-lg)] bg-[var(--color-accent)] px-4 text-sm font-semibold text-[var(--color-accent-fg)] disabled:opacity-60"
           >
-            Try again
+            {retrying ? t.retrying : t.retry}
           </button>
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            className="rounded-xl bg-[var(--color-accent)] px-4 py-2 text-sm text-[var(--color-accent-fg)]"
+          {/* A full navigation: the client router may be what broke. */}
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+          <a
+            href="/"
+            className="inline-flex min-h-11 items-center rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-2)] px-4 text-sm font-semibold"
           >
-            Reload
-          </button>
+            {t.home}
+          </a>
         </div>
+        {error.message || error.digest ? (
+          <details className="w-full max-w-sm text-left text-xs text-[var(--color-muted)]">
+            <summary className="cursor-pointer text-center">{t.details}</summary>
+            <pre className="mt-2 whitespace-pre-wrap rounded-[var(--radius-md)] bg-[var(--color-surface-2)] p-3 font-mono">
+              {[error.message, error.digest ? t.reference.replace("{digest}", error.digest) : null].filter(Boolean).join("\n")}
+            </pre>
+          </details>
+        ) : null}
       </body>
     </html>
   );

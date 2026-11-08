@@ -1,0 +1,22 @@
+{
+  "title": "Activate your account",
+  "intro": "Choose a password of at least {min} characters. This link works once and expires quickly — if it has, ask an administrator of your profile for a new one.",
+  "newPassword": "New password",
+  "confirmPassword": "Confirm password",
+  "hint": "At least {min} characters. A short sentence you can remember works well.",
+  "tooShort": "Use at least {min} characters.",
+  "mismatch": "The two passwords don't match.",
+  "match": "✓ Passwords match",
+  "setPassword": "Set password",
+  "setting": "Setting…",
+  "alreadySet": "Already set?",
+  "signInInstead": "Sign in instead.",
+  "network": "Aquarium could not be reached. Check your connection and try again.",
+  "doneTitle": "You're all set",
+  "done": "Your password is set and your account is open.",
+  "signIn": "Sign in",
+  "unusableTitle": "This link cannot be used",
+  "unusableBody": "It may have expired, been used already or been replaced by a newer link. Ask an administrator of your profile to send you a new one.",
+  "unusableWhy": "For your safety we don't say which — the message is the same for every unusable link.",
+  "goToSignIn": "Go to sign in"
+}
