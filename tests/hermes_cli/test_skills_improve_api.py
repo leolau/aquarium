@@ -330,3 +330,31 @@ def test_seed_fence_survives_skill_with_code_blocks():
                       usage={"summary": None, "concerns": []})
     assert "````markdown\n" in seed and "````skill-draft" in seed
     assert extract_draft(seed) is None
+
+
+def test_draft_saved_from_improve_chat_is_credited_to_the_agent(client, monkeypatch, who, home):
+    from hermes_cli import web_server
+
+    sid = client.post("/api/skills/improve/start", json={"name": SKILL}).json()["session_id"]
+    other = client.post("/api/skills/improve/start", json={"name": "other-skill"})
+    r = client.post("/api/skills/versions/draft", json={
+        "name": SKILL, "content": DRAFT, "message": "from chat", "session_id": sid,
+    })
+    assert r.status_code == 200, r.text
+    assert (r.json()["author"], r.json()["source"], r.json()["status"]) == (f"agent:{sid}", "improve", "draft")
+    assert (home / "skills" / "docs" / SKILL / "SKILL.md").read_text(encoding="utf-8") == SKILL_MD
+
+    r = client.post("/api/skills/versions/draft", json={"name": SKILL, "content": DRAFT})
+    assert r.status_code == 200 and r.json()["author"].startswith("user:")
+
+    bad = ["skillimp_1_deadbeef", "../etc"]
+    if other.status_code == 200:
+        bad.append(other.json()["session_id"])
+    for bogus in bad:
+        r = client.post("/api/skills/versions/draft", json={"name": SKILL, "content": DRAFT, "session_id": bogus})
+        assert r.status_code == 404, (bogus, r.text)
+
+    monkeypatch.setattr(web_server, "_chat_scope_for", lambda p: p.user_id)
+    who["p"] = SimpleNamespace(user_id="u-other", display="Bo", role="admin", is_owner=False)
+    r = client.post("/api/skills/versions/draft", json={"name": SKILL, "content": DRAFT, "session_id": sid})
+    assert r.status_code == 404

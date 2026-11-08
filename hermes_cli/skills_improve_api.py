@@ -408,6 +408,35 @@ def _improve_skill_of(db: Any, session_id: str) -> Optional[str]:
     return None
 
 
+async def improve_draft_author(
+    request: Request, session_id: str, name: str, profile: Optional[str]
+) -> str:
+    """``agent:<session_id>`` when the caller owns an improve chat for ``name``.
+
+    Raises 404 for anything else, so a draft can't be credited to a chat the
+    caller can't see or that improves a different skill.
+    """
+    ws = _ws()
+    session_id = str(session_id or "").strip()
+    if not _SESSION_ID_RE.match(session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    principal = await ws._chat_principal(request, profile)
+
+    def _check() -> None:
+        db = ws._open_session_db_for_profile(profile)
+        try:
+            if not db.get_session(session_id):
+                raise HTTPException(status_code=404, detail="Session not found")
+            ws._require_chat_access(db, session_id, ws._chat_scope_for(principal))
+            if _improve_skill_of(db, session_id) != name:
+                raise HTTPException(status_code=404, detail="Session not found")
+        finally:
+            db.close()
+
+    await asyncio.to_thread(_check)
+    return f"agent:{session_id}"
+
+
 # ── Routes ───────────────────────────────────────────────────────────────────
 
 

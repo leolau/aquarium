@@ -25,6 +25,7 @@ class DraftRequest(BaseModel):
     content: str
     message: Optional[str] = None
     profile: Optional[str] = None
+    session_id: Optional[str] = None
 
 
 class ActivateRequest(BaseModel):
@@ -96,7 +97,18 @@ async def diff_skill_versions(name: str, a: str, b: str, profile: Optional[str] 
 async def create_skill_draft(
     body: DraftRequest, request: Request, profile: Optional[str] = None
 ) -> dict:
-    author = await acting_author(request)
+    if body.session_id:
+        from hermes_cli.skills_improve_api import improve_draft_author
+
+        try:
+            skill_versions.validate_name(body.name)
+        except skill_versions.SkillVersionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        author = await improve_draft_author(
+            request, body.session_id, body.name, body.profile or profile
+        )
+    else:
+        author = await acting_author(request)
 
     def _work() -> dict:
         skill_versions.validate_name(body.name)
