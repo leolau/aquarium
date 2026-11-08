@@ -2364,6 +2364,84 @@ def remove_project_link(
 
 VALID_STEP_MODES = ("card", "inline")
 
+# FG-34 C-3: who picked a step's assignee and why. Optional on every step;
+# a step (or card) without them behaves exactly as before they existed.
+STEP_FITS = ("strong", "partial", "none")
+STEP_ASSIGNED_BY = ("planner", "fallback", "manual")
+STEP_REASON_MAX = 240
+
+
+def step_assignment(step: Any) -> Optional[dict]:
+    """The C-3 assignment fields present on ``step``, cleaned, or ``None``
+    when it carries none (an old step). Unknown values are dropped, never
+    refused: these fields explain a pick, they do not gate a save."""
+    if not isinstance(step, dict):
+        return None
+    out: dict = {}
+    reason = step.get("assignee_reason")
+    if isinstance(reason, str) and reason.strip():
+        out["assignee_reason"] = reason.strip()[:STEP_REASON_MAX]
+    if "fit" in step and (step["fit"] is None or step["fit"] in STEP_FITS):
+        out["fit"] = step["fit"]
+    skills = step.get("matched_skills")
+    if isinstance(skills, list):
+        out["matched_skills"] = list(dict.fromkeys(
+            s.strip() for s in skills if isinstance(s, str) and s.strip()
+        ))
+    if step.get("assigned_by") in STEP_ASSIGNED_BY:
+        out["assigned_by"] = step["assigned_by"]
+    if "suggested_profile" in step:
+        sp = step["suggested_profile"]
+        out["suggested_profile"] = (
+            sp.strip()[:80] if isinstance(sp, str) and sp.strip() else None
+        )
+    planner = step.get("planner_assignee")
+    if isinstance(planner, str) and planner.strip():
+        out["planner_assignee"] = planner.strip()
+    return out or None
+
+
+def manual_assignment(prior: dict, prior_assignee: Optional[str]) -> dict:
+    """The C-3 fields after a person changed an assignee the planner (or
+    its fallback) chose: ``assigned_by`` becomes ``manual``, the planner's
+    fit and matched skills no longer describe the pick, and the planner's
+    own choice is kept as ``planner_assignee`` (the first one, across
+    repeated hand edits)."""
+    out = dict(prior)
+    if prior.get("assigned_by") != "manual" and not out.get("planner_assignee"):
+        if prior_assignee:
+            out["planner_assignee"] = prior_assignee
+    out["assigned_by"] = "manual"
+    out["fit"] = None
+    out["matched_skills"] = []
+    return out
+
+
+def carry_step_assignments(steps: List[dict], base_steps: Any) -> List[dict]:
+    """Carry each step's C-3 fields over from the revision it was edited
+    from (matched by key, then by title) and mark a changed assignee as a
+    hand edit. A step that already carries its own ``assigned_by`` keeps
+    its fields; a base step without C-3 fields (an old plan) leaves the
+    edited step exactly as saved."""
+    base = [b for b in (base_steps or []) if isinstance(b, dict)]
+    by_key = {b.get("key"): b for b in base if b.get("key")}
+    by_title = {str(b.get("title") or "").strip(): b for b in base}
+    out: List[dict] = []
+    for step in steps:
+        prior = by_key.get(step.get("key")) or by_title.get(
+            str(step.get("title") or "").strip()
+        )
+        prior_fields = step_assignment(prior)
+        if not prior_fields or "assigned_by" not in prior_fields:
+            out.append(step)
+            continue
+        own = step_assignment(step)
+        fields = own if own and "assigned_by" in own else prior_fields
+        if (step.get("assignee") or None) != (prior.get("assignee") or None):
+            fields = manual_assignment(fields, prior.get("assignee"))
+        out.append({**step, **fields})
+    return out
+
 
 def validate_playbook_steps(steps: Any) -> List[dict]:
     """Validate a ``steps`` array **at save time** (design §7.1).
@@ -2422,6 +2500,7 @@ def validate_playbook_steps(steps: Any) -> List[dict]:
                 # dropped at run start and recorded on the run (§4.1) — a
                 # plan may legitimately name sets only some profiles enable.
                 "toolsets": [t.strip() for t in ts],
+                **(step_assignment(step) or {}),
             }
         )
 

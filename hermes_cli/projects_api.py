@@ -2861,9 +2861,11 @@ def _card_payload(bconn, project: projects_db.Project, task_id: str, *, principa
         {"author": c.author, "body": c.body, "created_at": c.created_at}
         for c in kanban_db.list_comments(bconn, task_id)
     ]
+    events = kanban_db.list_events(bconn, task_id)
+    payload["assignment"] = projects_run.card_assignment(events)
     heartbeat_notes = [
         {"note": e.payload["note"], "created_at": e.created_at}
-        for e in kanban_db.list_events(bconn, task_id)
+        for e in events
         if e.kind == "heartbeat"
         and isinstance(e.payload, dict)
         and e.payload.get("note")
@@ -3109,6 +3111,9 @@ async def update_card(request: Request, task_id: str) -> dict[str, Any]:
                     kanban_db.assign_task(bconn, task_id, assignee)
                 except RuntimeError as exc:
                     raise ValueError(str(exc))
+                projects_run.mark_card_assignment_manual(
+                    bconn, task_id, prior_assignee=task.assignee, assignee=assignee
+                )
             if status is not None:
                 ok, reason = _move_card_sync(bconn, task, status, actor)
                 if not ok:
@@ -3203,6 +3208,15 @@ async def get_playbook_route(request: Request) -> dict[str, Any]:
     return await asyncio.to_thread(_get_sync)
 
 
+def _playbook_edit_base(conn, project_id: str, base_rev: Any) -> Optional[dict]:
+    """The revision a hand-edited plan was written from: ``base_rev`` when
+    the editor names it, else the newest revision (the one on screen)."""
+    if isinstance(base_rev, int) and not isinstance(base_rev, bool):
+        return projects_db.get_playbook(conn, project_id, base_rev)
+    revs = projects_db.list_playbook_revs(conn, project_id)
+    return revs[0] if revs else None
+
+
 @router.post("/{slug}/playbook")
 async def save_playbook_route(request: Request) -> dict[str, Any]:
     """Propose revision N+1 with ``active=0`` (§7.2).
@@ -3236,6 +3250,11 @@ async def save_playbook_route(request: Request) -> dict[str, Any]:
                     ),
                 )
         with projects_db.connect_closing() as conn:
+            base = _playbook_edit_base(conn, project.id, body.get("base_rev"))
+            if base is not None:
+                cleaned = projects_db.carry_step_assignments(
+                    cleaned, base.get("steps")
+                )
             rev = projects_db.save_playbook_rev(
                 conn,
                 project_id=project.id,

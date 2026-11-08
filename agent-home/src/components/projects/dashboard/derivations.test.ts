@@ -172,6 +172,7 @@ describe("activityEntries", () => {
       recent_events: [
         { id: 1, task_id: "t1", kind: "created", payload: { by: "default" }, created_at: NOW - 400 },
         { id: 2, task_id: "t1", kind: "heartbeat", payload: null, created_at: NOW - 300 },
+        { id: 5, task_id: "t1", kind: "assignment", payload: { fit: "strong" }, created_at: NOW - 250 },
         { id: 3, task_id: "t1", kind: "commented", payload: { author: "yan" }, created_at: NOW - 200 },
         { id: 4, task_id: "zz", kind: "some_new_kind", payload: null, created_at: NOW - 50 },
       ],
