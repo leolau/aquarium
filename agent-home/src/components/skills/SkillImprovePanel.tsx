@@ -96,6 +96,8 @@ export function SkillImprovePanel({
   const [filter, setFilter] = useState<EvidenceFilter>("failed");
 
   const [sessionId, setSessionId] = useState<string | null>(null);
+  // Read by send() so a retry right after the first turn reuses the session it started.
+  const sessionRef = useRef<string | null>(null);
   const [turns, setTurns] = useState<ChatMessage[]>([]);
   const [transcript, setTranscript] = useState<"idle" | "loading" | string>("idle");
   const [draft, setDraft] = useState<string | null>(null);
@@ -151,6 +153,7 @@ export function SkillImprovePanel({
   }
 
   async function openTranscript(id: string) {
+    sessionRef.current = id;
     setSessionId(id);
     setTurns([]);
     setDraft(null);
@@ -205,9 +208,10 @@ export function SkillImprovePanel({
     setTurns((t) => [...t, { role: "user", content: message, clientKey: key }]);
     setText("");
     try {
-      let id = sessionId;
+      let id = sessionRef.current;
       if (!id) {
         id = await startSession("");
+        sessionRef.current = id;
         setSessionId(id);
       }
       const res = await sendJson<ImproveReply>("/api/skills/improve/message", "POST", { session_id: id, text: message, ...scoped });
