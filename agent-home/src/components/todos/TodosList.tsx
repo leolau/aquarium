@@ -91,8 +91,8 @@ export function TodosList({
     [],
   );
 
-  const setStage = useCallback(
-    async (todo: Todo, stage: TodoStage, fromUndo = false) => {
+  const applyStage = useCallback(
+    async (todo: Todo, stage: TodoStage): Promise<Todo | null> => {
       const before = todo.stage;
       setPending(todo.id);
       setItems((prev) =>
@@ -112,12 +112,7 @@ export function TodosList({
         setItems((prev) =>
           prev.map((row) => (row.id === todo.id ? updated : row)),
         );
-        if (!fromUndo && (stage === "done" || stage === "dismissed")) {
-          showUndo(
-            t(stage === "done" ? "markedDone" : "dismissed", { title: todo.title }),
-            () => setStageRef.current({ ...updated, stage }, before, true),
-          );
-        }
+        return updated;
       } catch {
         // Put it back: a to-do that silently stayed where it was, while the
         // list says otherwise, is worse than an error.
@@ -127,14 +122,27 @@ export function TodosList({
           ),
         );
         setError("That didn't stick — try again.");
+        return null;
       } finally {
         setPending(null);
       }
     },
-    [showUndo, t],
+    [],
   );
-  const setStageRef = useRef(setStage);
-  setStageRef.current = setStage;
+
+  const setStage = useCallback(
+    async (todo: Todo, stage: TodoStage) => {
+      const before = todo.stage;
+      const updated = await applyStage(todo, stage);
+      if (updated && (stage === "done" || stage === "dismissed")) {
+        showUndo(
+          t(stage === "done" ? "markedDone" : "dismissed", { title: todo.title }),
+          () => applyStage(updated, before),
+        );
+      }
+    },
+    [applyStage, showUndo, t],
+  );
 
   // The server rendered the first page, so the debounce must not fire on mount
   // and refetch identical rows; it arms on the first interaction.
