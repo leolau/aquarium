@@ -18,7 +18,11 @@ export const metadata: Metadata = {
     title: "Aquarium",
   },
   icons: {
-    icon: "/icons/icon-192.png",
+    icon: [
+      { url: "/brand/aquarium-favicon.svg", type: "image/svg+xml" },
+      { url: "/favicon.ico", sizes: "16x16 32x32 48x48" },
+      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+    ],
     apple: "/icons/apple-touch-icon.png",
   },
 };

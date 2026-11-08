@@ -71,6 +71,7 @@ export async function MobileShell({
   wide = false,
   fill = false,
   actions,
+  bare = false,
 }: {
   title: string;
   children: ReactNode;
@@ -80,6 +81,9 @@ export async function MobileShell({
   fill?: boolean;
   /** Optional action elements rendered in the header bar, right-aligned next to the title. */
   actions?: ReactNode;
+  /** Full-width page that brings its own top bar (the landing page): no
+   * header, no status/activity strips, no centred column. Coral stays. */
+  bare?: boolean;
 }) {
   // The badge count: one cached facets call per 30s.  The session is
   // resolved outside the cache so cookies() isn't called inside it, and
@@ -115,6 +119,16 @@ export async function MobileShell({
     }
   }
   const contentWidth = wide ? "lg:max-w-7xl" : "lg:max-w-5xl";
+  if (bare) {
+    return (
+      <div data-component="MobileShell" data-variant="bare" className="min-h-dvh bg-[var(--color-bg)]">
+        {children}
+        {showCoral ? <CoralHost badgeCounts={badgeCounts} hiddenApps={hiddenApps} /> : null}
+        {showCoral ? <LeadChatHost storageEnabled={storageConfigured()} /> : null}
+        {showCoral ? <AppMcpBridge /> : null}
+      </div>
+    );
+  }
   return (
     <div data-component="MobileShell" className={`${fill ? "h-dvh" : "min-h-dvh"} bg-[var(--color-bg)]`}>
       <div className={`mx-auto flex ${fill ? "h-dvh" : "min-h-dvh"} w-full max-w-md flex-col md:max-w-2xl lg:max-w-none`}>

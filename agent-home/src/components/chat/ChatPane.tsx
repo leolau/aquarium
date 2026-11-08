@@ -85,6 +85,9 @@ export interface ChatPaneProps {
   profile: string;
   /** Text the composer opens with (`?draft=`); never sent on its own. */
   initialDraft?: string;
+  /** Send `initialDraft` as the first turn on arrival (the landing page's
+   * composer already had the user press send). */
+  autoSend?: boolean;
 }
 
 /** Idle-watch cadence for turns started on other surfaces. */
@@ -121,6 +124,7 @@ export function ChatPane({
   storageEnabled,
   profile,
   initialDraft,
+  autoSend = false,
 }: ChatPaneProps) {
   // Every client read below carries the selected profile, because a profile is
   // a whole HERMES_HOME: reading the default profile's sessions while the turn
@@ -598,6 +602,15 @@ export function ChatPane({
       setLiveActivity((prev) => dropKey(prev, turnKey));
     }
   }
+
+  const autoSentRef = useRef(false);
+  useEffect(() => {
+    if (!autoSend || autoSentRef.current || !initialDraft) return;
+    autoSentRef.current = true;
+    void send(initialDraft, []);
+    // Once, on arrival: the landing page handed over a turn the user already sent.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function resolveApproval(choice: string) {
     const req = selApproval;
@@ -1084,7 +1097,7 @@ export function ChatPane({
         sending={selBusy}
         storageEnabled={storageEnabled}
         sessionId={sessionId}
-        initialText={initialDraft}
+        initialText={autoSend ? undefined : initialDraft}
         onSend={send}
         onStop={() => void stopTurn()}
         stopping={selTurn?.stopping ?? false}

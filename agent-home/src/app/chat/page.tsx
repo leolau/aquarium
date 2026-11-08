@@ -23,7 +23,13 @@ export const dynamic = "force-dynamic";
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ session?: string; profile?: string; draft?: string }>;
+  searchParams: Promise<{
+    session?: string;
+    profile?: string;
+    draft?: string;
+    new?: string;
+    autosend?: string;
+  }>;
 }) {
   await requirePrincipal();
   // `?session=<id>` is where a memory's citation link lands. The chat
@@ -37,7 +43,12 @@ export default async function Page({
     session: requested,
     profile: requestedProfile,
     draft,
+    new: startNew,
+    autosend,
   } = await searchParams;
+  // `?new=1` opens a fresh conversation (the landing composer's hand-off);
+  // `&autosend=1` sends `draft` as its first turn.
+  const freshChat = startNew === "1";
   const profile = (await readSession())?.profile ?? "default";
   const wanted = (requestedProfile ?? "").trim();
   if (wanted && wanted !== profile) {
@@ -58,7 +69,9 @@ export default async function Page({
     // recent-first page cap would empty the older end of each category.
     const list = await client.allSessions({ order: "recent" });
     sessions = list.sessions;
-    if (requested && sessions.some((s) => s.id === requested)) {
+    if (freshChat) {
+      sessionId = null;
+    } else if (requested && sessions.some((s) => s.id === requested)) {
       sessionId = requested;
     } else if (sessions.length > 0) {
       sessionId = sessions[0].id;
@@ -88,6 +101,7 @@ export default async function Page({
           storageEnabled={storageConfigured()}
           profile={profile}
           initialDraft={(draft ?? "").trim() || undefined}
+          autoSend={freshChat && autosend === "1"}
         />
       )}
     </MobileShell>
