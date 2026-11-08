@@ -8,11 +8,22 @@ import { useRefresh } from "@/components/ui/useRefresh";
 import { ActionButton } from "@/components/projects/ActionButton";
 import { ActionError } from "@/components/projects/ActionError";
 import { useProjectAction } from "@/components/projects/useProjectAction";
+import {
+  AssignmentDetails,
+  ProfileFacts,
+  WhoDoesWhat,
+  assignmentForSave,
+  assignmentOf,
+  hasAssignment,
+  useAssignableProfiles,
+} from "@/components/projects/plan/StepAssignment";
 import type {
+  AssignableProfile,
   PlaybookRev,
   PlaybookStep,
   ProjectPlaybookDraftState,
   ProjectPlaybookResponse,
+  StepAssignment,
 } from "@/types";
 import { useTimeLabel } from "@/components/projects/useTimeLabel";
 
@@ -24,9 +35,19 @@ interface StepDraft {
   assignee: string;
   after: string;
   checkpoint: boolean;
+  /** The step's C-3 assignment fields as loaded, and the assignee they explain. */
+  assignment: StepAssignment | null;
+  origAssignee: string;
 }
 
-const EMPTY_STEP: StepDraft = { title: "", assignee: "", after: "", checkpoint: false };
+const EMPTY_STEP: StepDraft = {
+  title: "",
+  assignee: "",
+  after: "",
+  checkpoint: false,
+  assignment: null,
+  origAssignee: "",
+};
 
 /** `Send the Monday digest` → `send-the-monday-digest`; unique within the list. */
 export function stepKey(title: string, index: number, taken: Set<string>): string {
@@ -55,6 +76,7 @@ function stepsToPayload(drafts: StepDraft[]): PlaybookStep[] {
     assignee: draft.assignee || null,
     depends_on: draft.after && byTitle.has(draft.after) ? [byTitle.get(draft.after)!] : [],
     checkpoint: draft.checkpoint,
+    ...assignmentForSave(draft.assignment, draft.origAssignee, draft.assignee),
   }));
 }
 
@@ -86,7 +108,43 @@ function draftsFromRev(rev: PlaybookRev | null): StepDraft[] {
     assignee: s.assignee ?? "",
     after: titleByKey.get((s.depends_on ?? s.needs ?? [])[0] ?? "") ?? "",
     checkpoint: Boolean(s.checkpoint),
+    assignment: assignmentOf(s),
+    origAssignee: s.assignee ?? "",
   }));
+}
+
+/** True when any step of these revisions says why it got its profile. */
+function showsAssignments(revs: (PlaybookRev | null)[]): boolean {
+  return revs.some((rev) => (rev?.steps ?? []).some((step) => hasAssignment(step)));
+}
+
+/**
+ * The assignee picker's choices: the assignable roster when loaded (plus
+ * any project profile or current pick it left out), else the project's
+ * own profile names.
+ */
+function assigneeOptions(
+  roster: AssignableProfile[] | null,
+  profiles: string[],
+  current: string,
+): { name: string; label: string; title?: string }[] {
+  const byName = new Map((roster ?? []).map((p) => [p.name, p]));
+  const names = [...(roster ?? []).map((p) => p.name)];
+  for (const name of [...profiles, ...(current ? [current] : [])]) {
+    if (!names.includes(name)) names.push(name);
+  }
+  return names.map((name) => {
+    const card = byName.get(name);
+    if (!card) return { name, label: name };
+    const tags = [card.is_host ? "host" : null, card.in_project ? null : "not in project yet"]
+      .filter(Boolean)
+      .join(", ");
+    return {
+      name,
+      label: tags ? `${name} (${tags})` : name,
+      title: card.description?.trim() || undefined,
+    };
+  });
 }
 
 /**
@@ -105,13 +163,16 @@ export function PlanPanel({
   slug,
   playbook,
   profiles,
+  hostProfile = null,
   canActivate,
   archived,
 }: {
   slug: string;
   playbook: ProjectPlaybookResponse | null;
-  /** The project's profiles — the only legal step assignees. */
+  /** The project's profiles — the default step assignees. */
   profiles: string[];
+  /** Where a step with no assignee runs. */
+  hostProfile?: string | null;
   canActivate: boolean;
   archived: boolean;
 }) {
@@ -136,6 +197,12 @@ export function PlanPanel({
   const awaitingDecision = !editing && proposed.length > 0;
 
   const slugPath = `/api/projects/${encodeURIComponent(slug)}`;
+
+  const roster = useAssignableProfiles(
+    slug,
+    playbook != null && (editing || showsAssignments([active, ...proposed])),
+  );
+  const cardByName = new Map((roster ?? []).map((p) => [p.name, p]));
 
   const settleDraft = useCallback(
     (state: ProjectPlaybookDraftState) => {
@@ -328,6 +395,9 @@ export function PlanPanel({
                 </p>
               ) : null}
               {active.steps && active.steps.length > 0 ? (
+                <WhoDoesWhat steps={active.steps} hostProfile={hostProfile} />
+              ) : null}
+              {active.steps && active.steps.length > 0 ? (
                 <ol className="mt-2 flex flex-col gap-1">
                   {active.steps.map((step, index) => (
                     <li
@@ -347,11 +417,17 @@ export function PlanPanel({
                             checkpoint
                           </span>
                         ) : null}
-                        {step.assignee ? (
+                        {step.assignee && !hasAssignment(step) ? (
                           <span className="ml-2 text-xs text-[var(--color-muted)]">
                             → {step.assignee}
                           </span>
                         ) : null}
+                        <AssignmentDetails
+                          assignment={step}
+                          assignee={step.assignee}
+                          hostProfile={hostProfile}
+                          profile={cardByName.get(step.assignee || hostProfile || "")}
+                        />
                       </span>
                     </li>
                   ))}
@@ -445,9 +521,9 @@ export function PlanPanel({
                           className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1"
                         >
                           <option value="">any profile</option>
-                          {profiles.map((p) => (
-                            <option key={p} value={p}>
-                              {p}
+                          {assigneeOptions(roster, profiles, step.assignee).map((o) => (
+                            <option key={o.name} value={o.name} title={o.title}>
+                              {o.label}
                             </option>
                           ))}
                         </select>
@@ -491,6 +567,14 @@ export function PlanPanel({
                           />
                           pause for my approval after
                         </label>
+                        {step.assignee !== step.origAssignee && (step.origAssignee || step.assignment?.assigned_by) ? (
+                          <span data-component="ChangedByYou" className="text-[var(--color-muted)]">
+                            changed by you
+                          </span>
+                        ) : null}
+                        {step.assignee && cardByName.get(step.assignee) ? (
+                          <ProfileFacts profile={cardByName.get(step.assignee)!} />
+                        ) : null}
                       </div>
                     </div>
                   ))}
@@ -544,6 +628,8 @@ export function PlanPanel({
                     canActivate={canActivate}
                     archived={archived}
                     onActivated={setActivatedRev}
+                    hostProfile={hostProfile}
+                    cardByName={cardByName}
                   />
                 ))}
               </ul>
@@ -565,6 +651,8 @@ export function PlanPanel({
                     archived={archived}
                     onActivated={setActivatedRev}
                     activateLabel="Switch back to this"
+                    hostProfile={hostProfile}
+                    cardByName={cardByName}
                   />
                 ))}
               </ul>
@@ -595,6 +683,8 @@ function RevisionRow({
   archived,
   onActivated,
   activateLabel = "Activate",
+  hostProfile = null,
+  cardByName,
 }: {
   slug: string;
   rev: PlaybookRev;
@@ -602,17 +692,28 @@ function RevisionRow({
   archived: boolean;
   onActivated: (rev: number) => void;
   activateLabel?: string;
+  hostProfile?: string | null;
+  cardByName?: Map<string, AssignableProfile>;
 }) {
   return (
     <li className="rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm">
       {rev.body ? <p className="whitespace-pre-wrap">{rev.body}</p> : null}
       {(rev.steps ?? []).length > 0 ? (
+        <WhoDoesWhat steps={rev.steps ?? []} hostProfile={hostProfile} />
+      ) : null}
+      {(rev.steps ?? []).length > 0 ? (
         <ol className="mt-1 flex flex-col gap-0.5 text-xs">
           {(rev.steps ?? []).map((step, index) => (
             <li key={step.key}>
               {index + 1}. {step.title}
-              {step.assignee ? ` → ${step.assignee}` : ""}
+              {step.assignee && !hasAssignment(step) ? ` → ${step.assignee}` : ""}
               {step.checkpoint ? " · checkpoint" : ""}
+              <AssignmentDetails
+                assignment={step}
+                assignee={step.assignee}
+                hostProfile={hostProfile}
+                profile={cardByName?.get(step.assignee || hostProfile || "")}
+              />
             </li>
           ))}
         </ol>

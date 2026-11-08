@@ -10,6 +10,7 @@ export function PlanTab({ project, playbook, canLead }: ProjectTabProps) {
         slug={project.slug}
         playbook={playbook}
         profiles={project.profiles.map((row) => row.profile)}
+        hostProfile={project.host_profile}
         canActivate={canLead}
         archived={project.archived}
       />

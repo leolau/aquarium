@@ -8,6 +8,7 @@ import { CardApprovals } from "@/components/projects/CardApprovals";
 import { CardEditor } from "@/components/projects/CardEditor";
 import { CardModelCalls } from "@/components/projects/CardModelCalls";
 import { durationLabel } from "@/components/projects/format";
+import { AssignmentDetails, hasAssignment } from "@/components/projects/plan/StepAssignment";
 import { parkedText } from "@/components/projects/live/liveState";
 import { useCardLive } from "@/components/projects/useCardLive";
 import { Spinner } from "@/components/ui/Spinner";
@@ -143,6 +144,11 @@ export function CardDetailView({
             .filter(Boolean)
             .join(" · ")}
         </p>
+        {hasAssignment(card.assignment) ? (
+          <div data-component="CardAssignment">
+            <AssignmentDetails assignment={card.assignment!} assignee={card.assignee} />
+          </div>
+        ) : null}
         <p className="mt-1 text-xs text-[var(--color-muted)]">
           {card.toolsets && card.toolsets.length > 0
             ? `worker tools: ${card.toolsets.join(", ")}`
