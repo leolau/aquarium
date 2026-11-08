@@ -122,8 +122,8 @@ export function AttentionBanner({
         >
           <AlertIcon size={18} className="mt-0.5 text-[var(--color-warn)]" />
           <div className="flex min-w-0 flex-1 flex-col items-start gap-1">
-            <p className="text-[13px] font-medium text-[var(--color-fg)]">{top.title}</p>
-            {meta ? <p className="text-xs text-[var(--color-muted)]">{meta}</p> : null}
+            <p className="w-full text-[13px] font-medium text-[var(--color-fg)] [overflow-wrap:anywhere]">{top.title}</p>
+            {meta ? <p className="line-clamp-3 w-full text-xs text-[var(--color-muted)] [overflow-wrap:anywhere]">{meta}</p> : null}
             <Link
               href={link.href}
               data-action="attention-primary"

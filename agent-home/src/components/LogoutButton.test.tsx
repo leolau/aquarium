@@ -5,17 +5,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { LogoutButton } from "@/components/LogoutButton";
 
 const replace = vi.fn();
-const refresh = vi.fn();
 
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace, refresh }),
+vi.mock("@/lib/replace-location", () => ({
+  replaceLocation: (href: string) => replace(href),
 }));
 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   replace.mockClear();
-  refresh.mockClear();
 });
 
 describe("LogoutButton", () => {

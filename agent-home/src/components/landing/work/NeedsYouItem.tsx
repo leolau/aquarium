@@ -85,7 +85,7 @@ export function NeedsYouItem({
           <Link
             href={entry.href}
             data-testid="needs-you-title"
-            className="min-w-0 flex-1 text-[13px] font-medium leading-[18px] text-[var(--color-fg)] hover:underline"
+            className="min-w-0 flex-1 text-[13px] font-medium leading-[18px] text-[var(--color-fg)] [overflow-wrap:anywhere] hover:underline"
           >
             {entry.title}
           </Link>
@@ -97,7 +97,7 @@ export function NeedsYouItem({
         </div>
         <p
           data-testid="needs-you-source"
-          className="line-clamp-2 text-[12px] font-medium leading-[16px] text-[var(--color-muted)]"
+          className="line-clamp-2 w-full text-[12px] font-medium leading-[16px] text-[var(--color-muted)] [overflow-wrap:anywhere]"
         >
           {source}
         </p>

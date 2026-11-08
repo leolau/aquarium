@@ -17,14 +17,15 @@ export const component = (page: Page | Locator, name: string): Locator =>
  * shell, its title and no page-level error panel.
  */
 export const PAGE_MARKERS: Record<string, string> = {
-  "/": "PrincipalCard",
+  "/": "LandingLayout",
   "/profiles": "ProfilesView",
   "/skills": "SkillsView",
   "/todos": "TodosList",
   "/chat": "ChatPane",
   "/inbox": "InboxView",
   "/memory": "MemoryView",
-  "/projects": "ProjectsList",
+  // Present in both project and task mode; the mode is saved per device.
+  "/projects": "ProjectsModeView",
   "/files": "FilesView",
   "/files/browse": "BrowseView",
   "/activity": "TraceTimeline",
@@ -56,8 +57,12 @@ export const pageTitle = (page: Page): Locator =>
 export async function expectPageReady(page: Page, route: string): Promise<void> {
   // `.last()`: a route's loading skeleton renders its own shell until the
   // page streams in.
-  await expect(component(page, "MobileShell").last()).toBeVisible();
-  await expect(pageTitle(page).last()).not.toBeEmpty();
+  const shell = component(page, "MobileShell").last();
+  await expect(shell).toBeVisible();
+  // A bare shell (the landing page) draws its own top bar, with no title.
+  if ((await shell.getAttribute("data-variant")) !== "bare") {
+    await expect(pageTitle(page).last()).not.toBeEmpty();
+  }
   const marker = PAGE_MARKERS[route];
   if (marker) {
     await expect(component(page, marker).first()).toBeVisible();
@@ -117,9 +122,21 @@ export async function login(page: Page, creds: Credentials): Promise<void> {
 
 // ── Status strip ─────────────────────────────────────────────────────────
 
-export const statusStrip = (page: Page): Locator => component(page, "StatusStrip");
-export const statusRefresh = (page: Page): Locator =>
-  statusStrip(page).locator('[data-action="status-refresh"]');
+/** The landing top bar's health pill: a bar on desktop, a dot on phones. */
+export const healthPill = (page: Page): Locator =>
+  page.locator('[data-component="HealthPill"]:visible').first();
+/** Opens the health readings (desktop popover or phone sheet). */
+export async function openHealthReadings(page: Page): Promise<Locator> {
+  await page
+    .locator('[data-component="HealthPill"][data-variant="compact"]:visible, [data-action="health-open"]:visible')
+    .first()
+    .click();
+  const readings = component(page, "HealthReadings").last();
+  await expect(readings).toBeVisible();
+  return readings;
+}
+export const statusRefresh = (readings: Locator): Locator =>
+  readings.locator('[data-action="status-refresh"]');
 
 // ── Chat ─────────────────────────────────────────────────────────────────
 
