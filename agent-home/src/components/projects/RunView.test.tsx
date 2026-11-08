@@ -9,7 +9,9 @@ import {
   cleanup,
   fireEvent,
   render,
+  screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -163,9 +165,6 @@ describe("RunView Stop now", () => {
         }) as unknown as Response,
     );
     vi.stubGlobal("fetch", fetchMock);
-    const confirmMock = vi.fn(() => false);
-    vi.stubGlobal("confirm", confirmMock);
-
     const { getByRole } = render(
       <RunView slug="monday-digest" run={RUN({ status: "running" })} />,
     );
@@ -177,11 +176,14 @@ describe("RunView Stop now", () => {
 
     // Declined: nothing is stopped. A kill must not happen on one stray tap.
     fireEvent.click(stop);
-    expect(confirmMock).toHaveBeenCalled();
+    let dialog = await screen.findByRole("dialog", { name: "Stop this run now?" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(stopCalls()).toHaveLength(0);
 
-    confirmMock.mockReturnValue(true);
     fireEvent.click(stop);
+    dialog = await screen.findByRole("dialog", { name: "Stop this run now?" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Stop now" }));
     await waitFor(() => expect(stopCalls()).toHaveLength(1));
   });
 
@@ -362,9 +364,7 @@ describe("RunView resume — continue, never restart from scratch", () => {
     expect(getByRole("button", { name: "Repeat this run" })).toBeTruthy();
   });
 
-  it("warns before starting over when Resume was also on offer", () => {
-    const confirmMock = vi.fn(() => false);
-    vi.stubGlobal("confirm", confirmMock);
+  it("warns before starting over when Resume was also on offer", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
@@ -375,7 +375,10 @@ describe("RunView resume — continue, never restart from scratch", () => {
       />,
     );
     fireEvent.click(getByRole("button", { name: "Start over instead" }));
-    expect(confirmMock).toHaveBeenCalledWith(expect.stringMatching(/redoes every step/));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toMatch(/redoes every step/);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

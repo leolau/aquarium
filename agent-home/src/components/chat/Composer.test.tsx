@@ -174,7 +174,7 @@ describe("Composer upload errors", () => {
     pick(fakeFile("shot.png", 8));
     let text = "";
     await waitFor(() => {
-      text = document.querySelector("p.text-red-300")?.textContent ?? "";
+      text = document.querySelector("p[class*=\"--color-danger\"]")?.textContent ?? "";
       expect(text).not.toBe("");
     });
     return text;

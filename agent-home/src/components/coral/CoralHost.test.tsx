@@ -42,7 +42,7 @@ const ALL_DESTINATIONS = [
 ];
 
 const openCoral = () =>
-  fireEvent.click(screen.getByRole("button", { name: /open coral menu/i }));
+  fireEvent.click(screen.getByRole("button", { name: /open aquarium menu/i }));
 
 describe("CoralHost (SSR)", () => {
   it("renders the FAB closed — no panel in server markup", () => {
@@ -58,20 +58,20 @@ describe("CoralHost grid panel", () => {
   it("opens on tap and shows every destination at once — no nesting", () => {
     render(<CoralHost />);
     openCoral();
-    const menu = screen.getByRole("menu", { name: /coral launcher/i });
+    const menu = screen.getByRole("menu", { name: /aquarium launcher/i });
     for (const label of ALL_DESTINATIONS) {
       expect(menu.textContent).toContain(label);
     }
     // Cluster categories render as section headers.
     expect(menu.textContent).toContain("Workspace");
     expect(menu.textContent).toContain("System");
-    expect(screen.getByRole("button", { name: /close coral menu/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /close aquarium menu/i })).toBeTruthy();
   });
 
   it("leaves out apps hidden from the caller's role", () => {
     render(<CoralHost hiddenApps={["graph", "todos"]} />);
     openCoral();
-    const menu = screen.getByRole("menu", { name: /coral launcher/i });
+    const menu = screen.getByRole("menu", { name: /aquarium launcher/i });
     expect(menu.querySelector('a[href="/graph"]')).toBeNull();
     expect(menu.querySelector('a[href="/todos"]')).toBeNull();
     expect(menu.querySelector('a[href="/settings"]')).toBeTruthy();
@@ -80,7 +80,7 @@ describe("CoralHost grid panel", () => {
   it("tints the Main, Workspace and System sections distinctly", () => {
     render(<CoralHost />);
     openCoral();
-    const menu = screen.getByRole("menu", { name: /coral launcher/i });
+    const menu = screen.getByRole("menu", { name: /aquarium launcher/i });
     expect(menu.querySelector(".coral-section--main")).toBeTruthy();
     expect(menu.querySelector(".coral-section--workspace")).toBeTruthy();
     expect(menu.querySelector(".coral-section--system")).toBeTruthy();
@@ -101,7 +101,7 @@ describe("CoralHost grid panel", () => {
 
   it("closes on backdrop click and returns focus to the FAB", () => {
     render(<CoralHost />);
-    const fab = screen.getByRole("button", { name: /open coral menu/i });
+    const fab = screen.getByRole("button", { name: /open aquarium menu/i });
     fireEvent.click(fab);
     expect(screen.queryByRole("menu")).toBeTruthy();
     fireEvent.click(document.querySelector(".coral-backdrop") as Element);
@@ -119,7 +119,7 @@ describe("CoralHost grid panel", () => {
   it("renders the todos badge count on the To-dos tile", () => {
     render(<CoralHost badgeCounts={{ "todos-open": 4 }} />);
     openCoral();
-    expect(screen.getByRole("menu", { name: /coral launcher/i }).textContent).toContain("4");
+    expect(screen.getByRole("menu", { name: /aquarium launcher/i }).textContent).toContain("4");
   });
 
   it("tiles are real links with their routes", () => {

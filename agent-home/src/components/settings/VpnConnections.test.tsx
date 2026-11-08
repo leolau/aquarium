@@ -212,7 +212,7 @@ describe("VpnConnections", () => {
     ]);
     render(<VpnConnections />);
     const err = await screen.findByText(/Login failed: wrong username or password/);
-    expect(err.className).toContain("text-red-400");
+    expect(err.className).toContain("text-[var(--color-danger)]");
     expect(screen.getByText("Connect")).toBeTruthy();
     expect(screen.getByText(/Error/)).toBeTruthy();
   });
@@ -229,7 +229,7 @@ describe("VpnConnections", () => {
     ]);
     render(<VpnConnections />);
     const err = await screen.findByText(/VPN connected, but the files are not available/);
-    expect(err.className).toContain("text-red-400");
+    expect(err.className).toContain("text-[var(--color-danger)]");
     expect(err.textContent).toContain("File share login failed");
     expect(screen.queryByText(/Last attempt failed/)).toBeNull();
   });

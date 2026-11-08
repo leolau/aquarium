@@ -35,7 +35,7 @@ const renderBoth = () =>
 const openLeadChat = () =>
   fireEvent.click(screen.getByRole("button", { name: /open lead chat/i }));
 const openCoral = () =>
-  fireEvent.click(screen.getByRole("button", { name: /open coral menu/i }));
+  fireEvent.click(screen.getByRole("button", { name: /open aquarium menu/i }));
 
 beforeEach(() => resetCoralInterlockForTests());
 
@@ -51,7 +51,7 @@ describe("Coral menu ⇄ lead chat interlock", () => {
     expect(screen.getByRole("dialog", { name: /lead chat/i })).toBeTruthy();
 
     openCoral();
-    expect(screen.getByRole("menu", { name: /coral launcher/i })).toBeTruthy();
+    expect(screen.getByRole("menu", { name: /aquarium launcher/i })).toBeTruthy();
     expect(screen.queryByRole("dialog", { name: /lead chat/i })).toBeNull();
   });
 

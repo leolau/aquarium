@@ -7,7 +7,9 @@ type Saver = (device: ViewDevice, mode: ProjectViewMode) => Promise<void>;
  * follow-up save of the latest choice. Rapid toggling therefore can't stack
  * requests or let an older response land last and store a stale mode.
  */
-export function createViewModeSaver(fetchImpl: typeof fetch = fetch): Saver {
+export function createViewModeSaver(
+  fetchImpl: typeof fetch = (...args) => fetch(...args),
+): Saver {
   const inFlight = new Map<ViewDevice, Promise<void>>();
   const queued = new Map<ViewDevice, ProjectViewMode>();
 
@@ -44,6 +46,7 @@ export function createViewModeSaver(fetchImpl: typeof fetch = fetch): Saver {
 }
 
 const defaultSaver = createViewModeSaver();
+const injectedSavers = new WeakMap<typeof fetch, Saver>();
 
 /**
  * Remember the choice for this person and device class. The view already
@@ -54,5 +57,11 @@ export function saveViewMode(
   mode: ProjectViewMode,
   fetchImpl?: typeof fetch,
 ): Promise<void> {
-  return fetchImpl ? createViewModeSaver(fetchImpl)(device, mode) : defaultSaver(device, mode);
+  if (!fetchImpl) return defaultSaver(device, mode);
+  let saver = injectedSavers.get(fetchImpl);
+  if (!saver) {
+    saver = createViewModeSaver(fetchImpl);
+    injectedSavers.set(fetchImpl, saver);
+  }
+  return saver(device, mode);
 }
