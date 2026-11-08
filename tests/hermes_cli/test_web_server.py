@@ -957,6 +957,44 @@ class TestWebServerEndpoints:
         assert hit["session_id"] == "search-tip"
         assert hit["lineage_root"] == "search-root"
 
+    def test_search_results_carry_the_chat_title(self):
+        """A message hit names its chat, so the sidebar doesn't list a named
+        chat as untitled. A compressed chat titled on its root keeps that
+        title when the hit opens the tip."""
+        import time as _time
+
+        from hermes_state import SessionDB
+
+        db = SessionDB()
+        try:
+            db.create_session(session_id="titled-chat", source="cli")
+            db.set_session_title("titled-chat", "Smoke test chat")
+            db.append_message(session_id="titled-chat", role="user", content="titleneedle here")
+            db.create_session(session_id="titled-root", source="cli")
+            db.set_session_title("titled-root", "Compressed chat")
+            db.append_message(session_id="titled-root", role="user", content="titleneedle in the root")
+            db.end_session("titled-root", "compression")
+            now = _time.time()
+            db._conn.execute(
+                "UPDATE sessions SET started_at = ?, ended_at = ? WHERE id = ?",
+                (now - 100, now - 90, "titled-root"),
+            )
+            db.create_session(session_id="titled-tip", source="cli", parent_session_id="titled-root")
+            db._conn.execute("UPDATE sessions SET started_at = ? WHERE id = ?", (now - 90, "titled-tip"))
+            db.append_message(session_id="titled-tip", role="user", content="titleneedle in the tip")
+            db.create_session(session_id="untitled-chat", source="cli")
+            db.append_message(session_id="untitled-chat", role="user", content="titleneedle untitled")
+            db._conn.commit()
+        finally:
+            db.close()
+
+        resp = self.client.get("/api/sessions/search?q=titleneedle")
+        assert resp.status_code == 200
+        titles = {r["session_id"]: r.get("title") for r in resp.json()["results"]}
+        assert titles["titled-chat"] == "Smoke test chat"
+        assert titles["titled-tip"] == "Compressed chat"
+        assert titles["untitled-chat"] is None
+
     def test_search_keeps_branch_specific_hits_on_branch(self):
         """Branch sessions share parent_session_id, but they are not compression
         continuations. A query that only exists in the branch must open the

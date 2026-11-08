@@ -53,6 +53,9 @@ class _FakeSessionDB:
     def get_compression_tip(self, session_id):
         return session_id
 
+    def get_session_title(self, session_id):
+        return {"content_session": "Deploy notes"}.get(session_id)
+
     def close(self):
         self.closed = True
 
@@ -69,6 +72,7 @@ def test_desktop_session_search_merges_id_matches_before_content_matches(monkeyp
             {
                 "session_id": "20260603_090200_exact",
                 "lineage_root": "20260603_090200_exact",
+                "title": None,
                 "snippet": "ID match preview",
                 "role": None,
                 "source": "cli",
@@ -78,6 +82,7 @@ def test_desktop_session_search_merges_id_matches_before_content_matches(monkeyp
             {
                 "session_id": "content_session",
                 "lineage_root": "content_session",
+                "title": "Deploy notes",
                 "snippet": "content hit",
                 "role": "assistant",
                 "source": "desktop",
