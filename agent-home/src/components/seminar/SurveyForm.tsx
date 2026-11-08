@@ -111,9 +111,9 @@ export function SurveyForm({ token }: { token: string }) {
     answered("grades");
   }
 
-  // One submit at a time: a double tap or a second Enter lands before the
-  // disabled button renders, so the lock — not `disabled` — stops the repost.
-  const send = useAction(async () => {
+  // Checked before the submit lock: while sending, the fieldset is disabled,
+  // and focusing a question inside it would drop focus to the page.
+  function validate(): boolean {
     setError(null);
     const empty: Field[] = [];
     if (rating === null) empty.push("rating");
@@ -125,8 +125,15 @@ export function SurveyForm({ token }: { token: string }) {
     if (empty.length > 0) {
       setError(empty.length === 1 ? MISSING[empty[0]] : `${MISSING[empty[0]]} 請填寫所有必填項目。Please answer every required question.`);
       formRef.current?.querySelector<HTMLInputElement>(`input[name="${empty[0]}"]`)?.focus();
-      return;
+      return false;
     }
+    return true;
+  }
+
+  // One submit at a time: a double tap or a second Enter lands before the
+  // disabled button renders, so the lock — not `disabled` — stops the repost.
+  const send = useAction(async () => {
+    setError(null);
     try {
       await sendJson<SeminarSurveySubmitResult>("/api/seminar/survey/submit", "POST", {
         token,
@@ -149,6 +156,7 @@ export function SurveyForm({ token }: { token: string }) {
 
   function submit(evt: React.FormEvent) {
     evt.preventDefault();
+    if (send.pending || !validate()) return;
     void send.run();
   }
 
