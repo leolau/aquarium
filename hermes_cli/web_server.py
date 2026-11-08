@@ -6791,6 +6791,18 @@ def search_sessions(
                 tip_cache[root_id] = tip
                 return tip
 
+            def lineage_title(tip: str, root: str) -> Optional[str]:
+                # A compressed chat keeps its title on whichever segment was
+                # named, so try the tip the result opens, then the root.
+                for sid in dict.fromkeys((tip, root)):
+                    try:
+                        title = db.get_session_title(sid)
+                    except Exception:
+                        title = None
+                    if title and title.strip():
+                        return title.strip()
+                return None
+
             # Both ID matches and content matches share one keyspace, keyed by
             # compression lineage root, so an id-hit and a content-hit on the
             # same logical conversation collapse to a single result. The first
@@ -6812,8 +6824,10 @@ def search_sessions(
                 if root in seen or len(seen) >= safe_limit:
                     return
                 payload = dict(payload)
-                payload["session_id"] = lineage_tip(root)
+                tip = lineage_tip(root)
+                payload["session_id"] = tip
                 payload["lineage_root"] = root
+                payload["title"] = lineage_title(tip, root)
                 seen[root] = payload
 
             # Direct ID matches first: users often paste a session id from CLI,
