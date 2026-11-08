@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { MobileShell } from "@/components/MobileShell";
 import { ProfilesView } from "@/components/profiles/ProfilesView";
+import { getT } from "@/i18n/server";
 import { toProfileInfo } from "@/lib/api/profile-info";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
 import { canAdminister } from "@/lib/auth/roles";
@@ -17,6 +18,7 @@ export const dynamic = "force-dynamic";
  */
 export default async function Page() {
   const principal = await requirePrincipal();
+  const t = await getT("system");
   if (!canAdminister(principal)) redirect("/not-available?app=profiles");
 
   let profiles: ProfileInfo[] = [];
@@ -34,7 +36,7 @@ export default async function Page() {
   }
 
   return (
-    <MobileShell title="Profiles" wide>
+    <MobileShell title={t("cards.profiles.name")} subtitle={t("pages.profiles.subtitle")} wide>
       <ProfilesView initialProfiles={profiles} providers={providers} error={error} />
     </MobileShell>
   );

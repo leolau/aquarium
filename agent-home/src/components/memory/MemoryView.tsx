@@ -229,7 +229,7 @@ export function MemoryView({
   return (
     <div
       data-component="MemoryView"
-      className="space-y-4 xl:grid xl:grid-cols-[minmax(0,1fr)_24rem] xl:items-start xl:gap-6 xl:space-y-0"
+      className="space-y-4 pb-24 lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start lg:gap-6 lg:space-y-0 lg:pb-8 xl:grid-cols-[minmax(0,1fr)_24rem]"
     >
       <div className="min-w-0 space-y-4">
       {/* Pills */}
@@ -302,7 +302,7 @@ export function MemoryView({
           map stays in view while the list is paged. */}
       <aside
         data-component="MemoryListPanel"
-        className="space-y-3 xl:sticky xl:top-20 xl:max-h-[calc(100dvh-9rem)] xl:overflow-y-auto xl:pr-1"
+        className="min-w-0 space-y-3 lg:sticky lg:top-20 lg:max-h-[calc(100dvh-9rem)] lg:overflow-y-auto lg:pr-1"
       >
         <input
           type="search"

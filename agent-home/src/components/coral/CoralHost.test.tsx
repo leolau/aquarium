@@ -35,8 +35,8 @@ const ALL_DESTINATIONS = [
   "Users",
   "Suggestions",
   "Tools",
-  "Core area",
-  "Agent webview",
+  "Core",
+  "Agent web browser",
   "Settings",
   "Getting started",
 ];

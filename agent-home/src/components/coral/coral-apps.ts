@@ -109,7 +109,7 @@ registerApp({
   id: "graph",
   name: "Graph",
   glyph: "◈",
-  hint: "GTS Centre",
+  hint: "Goals, tasks, skills",
   kind: "next-route",
   route: "/graph",
   category: "workspace",
@@ -197,9 +197,9 @@ registerApp({
 
 registerApp({
   id: "core",
-  name: "Core area",
+  name: "Core",
   glyph: "▣",
-  hint: "C7 boundary",
+  hint: "Protected boundary",
   kind: "next-route",
   route: "/core",
   category: "system",
@@ -208,9 +208,9 @@ registerApp({
 
 registerApp({
   id: "webview",
-  name: "Agent webview",
+  name: "Agent web browser",
   glyph: "◔",
-  hint: "FG-17b CDP",
+  hint: "Watch the agent browse",
   kind: "next-route",
   route: "/webview",
   category: "system",

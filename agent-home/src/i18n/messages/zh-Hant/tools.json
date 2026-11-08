@@ -144,6 +144,7 @@
   "detail": {
     "back": "所有工具",
     "allActions": "所有操作",
+    "askAgent": "請代理修改",
     "status": "狀態",
     "prodUrl": "正式網址",
     "devUrl": "測試網址",
@@ -164,5 +165,9 @@
     "feedbackLabel": "下次助理處理它時，應該改進什麼？",
     "feedbackSend": "送出意見",
     "feedbackSent": "謝謝 — 助理會在下次建置時看到。"
+  },
+  "undo": {
+    "shown": "{name} 已回到格狀檢視",
+    "hidden": "已從格狀檢視隱藏 {name}"
   }
 }

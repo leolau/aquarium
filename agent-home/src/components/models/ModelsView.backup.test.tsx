@@ -51,7 +51,7 @@ afterEach(() => {
 describe("ModelsView backup models", () => {
   it("shows Main as a role with its backups under its model", () => {
     stubFetch();
-    const { container } = render(<ModelsView initial={OVERVIEW} />);
+    const { container } = render(<ModelsView initialAdvanced initial={OVERVIEW} />);
     expect(container.querySelector('[data-component="BackupModels"]')).toBeNull();
     const line = container.querySelector('[data-component="RoleBackupLine"]')?.textContent ?? "";
     expect(line).toBe("backup: qwen3.8-max · alibaba, deepseek-v4.1-flash · opencode-go");
@@ -59,7 +59,7 @@ describe("ModelsView backup models", () => {
 
   it("Refresh keys reports the providers it cleared", async () => {
     stubFetch();
-    const { getByRole, findByText } = render(<ModelsView initial={OVERVIEW} />);
+    const { getByRole, findByText } = render(<ModelsView initialAdvanced initial={OVERVIEW} />);
     fireEvent.click(getByRole("button", { name: "Refresh keys" }));
     await findByText(/Cleared the old "key failed" mark for alibaba/);
   });

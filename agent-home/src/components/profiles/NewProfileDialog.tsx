@@ -18,7 +18,7 @@ import type {
 
 export type StartFrom = "blank" | "copy" | "all";
 
-const STEPS = ["Identity", "Model", "Skills", "Review"] as const;
+const STEPS = ["Name", "Start from", "Model", "Skills", "Review"] as const;
 const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
 export interface NewProfileDialogProps {
@@ -232,8 +232,16 @@ export function NewProfileDialog({
                 onChange={(e) => setDescription(e.target.value)}
               />
             </label>
+          </>
+        ) : null}
+
+        {step === 1 ? (
+          <>
             <fieldset className="space-y-2">
               <legend className="font-medium">Start from</legend>
+              <p className="text-xs text-[var(--color-muted)]">
+                A blank profile starts empty. Copying gives it another profile&apos;s settings once; the two stay separate afterwards.
+              </p>
               {(["blank", "copy", "all"] as const).map((opt) => (
                 <label key={opt} className="flex items-center gap-2">
                   <input
@@ -269,7 +277,7 @@ export function NewProfileDialog({
           </>
         ) : null}
 
-        {step === 1 ? (
+        {step === 2 ? (
           <label className="block space-y-1">
             <span className="font-medium">Model</span>
             <select className={inputClass} value={model} onChange={(e) => setModel(e.target.value)}>
@@ -285,7 +293,7 @@ export function NewProfileDialog({
           </label>
         ) : null}
 
-        {step === 2 ? (
+        {step === 3 ? (
           <>
             <input
               aria-label="Filter skills"
@@ -380,7 +388,7 @@ export function NewProfileDialog({
           </>
         ) : null}
 
-        {step === 3 ? (
+        {step === 4 ? (
           <dl data-testid="new-profile-review" className="grid grid-cols-[auto,1fr] gap-x-4 gap-y-2">
             <dt className="text-[var(--color-muted)]">Name</dt>
             <dd>{name.trim()}</dd>
