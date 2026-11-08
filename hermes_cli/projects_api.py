@@ -2509,6 +2509,50 @@ async def delete_link(request: Request) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# GET /{slug}/assignable-profiles — FG-34 capability cards (contract C-2)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{slug}/assignable-profiles")
+async def assignable_profiles(request: Request) -> dict[str, Any]:
+    """Capability cards for every profile the caller may assign a plan step
+    to (FG-34 decision 1): host first, then the project's profiles, then the
+    rest by name. Each card adds ``in_project`` and ``is_host``."""
+    from hermes_cli import profile_capabilities
+
+    project, _role, profiles, principal = await _require_read(request)
+    names = await profile_capabilities.accessible_profile_names(
+        principal, project=project
+    )
+    attached = {p["profile"] for p in profiles}
+    host = project.host_profile or next(
+        (p["profile"] for p in profiles if p.get("role") == "host"), None
+    )
+    ordered = sorted(
+        set(names),
+        key=lambda n: (n != host, n not in attached, n),
+    )
+
+    def _roster_sync() -> list[dict]:
+        try:
+            with _board_conn(project) as bconn:
+                return profile_capabilities.capability_roster(
+                    ordered, board_conn=bconn
+                )
+        except Exception:  # noqa: BLE001 — no board → cards without a record
+            logger.debug("projects: board unavailable for roster", exc_info=True)
+            return profile_capabilities.capability_roster(ordered, board_conn=None)
+
+    roster = await asyncio.to_thread(_roster_sync)
+    return {
+        "profiles": [
+            {**card, "in_project": card["name"] in attached, "is_host": card["name"] == host}
+            for card in roster
+        ]
+    }
+
+
+# ---------------------------------------------------------------------------
 # Board + cards (rule 4: reads stay principal-filtered)
 # ---------------------------------------------------------------------------
 

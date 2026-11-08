@@ -274,6 +274,7 @@ SIGNED_IN = {
     "POST /api/registry/projects/{slug}/links",
     "DELETE /api/registry/projects/{slug}/links",
     "GET /api/registry/projects/{slug}/board",
+    "GET /api/registry/projects/{slug}/assignable-profiles",
     "GET /api/registry/projects/{slug}/events",
     "POST /api/registry/projects/{slug}/summarise",
     "POST /api/registry/projects/{slug}/cards",

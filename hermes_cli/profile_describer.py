@@ -97,17 +97,17 @@ class DescribeOutcome:
     description: Optional[str] = None
 
 
-def _collect_skills(profile_dir: Path) -> list[str]:
-    """Return a stable, capped list of skill names for the prompt.
+def installed_skills(profile_dir: Path) -> list[tuple[str, str]]:
+    """Every installed skill as ``(category, skill_name)``, sorted, uncapped.
 
-    Format: ``category/skill_name`` where category is the immediate
-    subdir under ``skills/`` (e.g. ``devops``, ``research``). Skills
-    that live directly under ``skills/`` show as bare ``skill_name``.
+    ``category`` is the immediate subdir under ``skills/`` (e.g. ``devops``,
+    ``research``); a skill living directly under ``skills/`` has category
+    ``""``.
     """
     skills_dir = profile_dir / "skills"
     if not skills_dir.is_dir():
         return []
-    names: list[str] = []
+    found: list[tuple[str, str]] = []
     for md in skills_dir.rglob("SKILL.md"):
         if is_excluded_skill_path(md):
             continue
@@ -118,12 +118,21 @@ def _collect_skills(profile_dir: Path) -> list[str]:
         parts = rel.parts[:-1]  # drop SKILL.md filename
         if not parts:
             continue
-        # parts[-1] is the skill dir name; parts[:-1] is the category path
-        if len(parts) == 1:
-            names.append(parts[0])
-        else:
-            names.append(f"{parts[0]}/{parts[-1]}")
-    names.sort()
+        # parts[-1] is the skill dir name; parts[0] is the category
+        found.append(("" if len(parts) == 1 else parts[0], parts[-1]))
+    return sorted(set(found))
+
+
+def _collect_skills(profile_dir: Path) -> list[str]:
+    """Return a stable, capped list of skill names for the prompt.
+
+    Format: ``category/skill_name`` (see :func:`installed_skills`); skills
+    that live directly under ``skills/`` show as bare ``skill_name``.
+    """
+    names = sorted(
+        f"{cat}/{name}" if cat else name
+        for cat, name in installed_skills(profile_dir)
+    )
     # Keep within prompt budget. Skills earlier in alphabet aren't more
     # important — we'll let the LLM see a sample. Pick evenly-spaced
     # entries instead of just the head so a profile with skills A..Z
