@@ -26,16 +26,17 @@ describe("device class", () => {
 });
 
 describe("resolveViewMode", () => {
-  it("defaults to Task mode on phones and Project mode on desktop", () => {
-    expect(resolveViewMode({}, "phone")).toBe("task");
-    expect(resolveViewMode(null, "desktop")).toBe("project");
+  it("defaults to Project mode on phones and desktop alike", () => {
+    expect(resolveViewMode({}, "phone")).toBe("project");
+    expect(resolveViewMode(null, "phone")).toBe("project");
+    expect(resolveViewMode(undefined, "desktop")).toBe("project");
   });
 
   it("keeps each device class's own saved choice", () => {
     const saved = { phone: "project", desktop: "task" } as const;
     expect(resolveViewMode(saved, "phone")).toBe("project");
     expect(resolveViewMode(saved, "desktop")).toBe("task");
-    expect(resolveViewMode({ desktop: "task" }, "phone")).toBe("task");
+    expect(resolveViewMode({ desktop: "task" }, "phone")).toBe("project");
   });
 });
 

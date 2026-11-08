@@ -35,11 +35,15 @@ export function deviceFromHeaders(
   return PHONE_UA.test(userAgent ?? "") ? "phone" : "desktop";
 }
 
-/** The saved choice for this device class, else Task on phones, Project on desktop. */
+/**
+ * The saved choice for this device class, else Project mode on every device:
+ * the Projects list and the 4-tab project page are the default, and a one-off
+ * opens as its Task view on its own (see the project page).
+ */
 export function resolveViewMode(saved: SavedViewModes | null | undefined, device: ViewDevice): ProjectViewMode {
   const chosen = saved?.[device];
   if (isProjectViewMode(chosen)) return chosen;
-  return device === "phone" ? "task" : "project";
+  return "project";
 }
 
 /** Only one-off projects are tasks; repeating and standing ones stay in Project mode. */
