@@ -78,7 +78,7 @@ def test_full_lifecycle(client, homes):
     })
     assert r.status_code == 200, r.text
     draft = r.json()
-    assert draft["status"] == "draft" and draft["source"] == "improve"
+    assert draft["status"] == "draft" and draft["source"] == "edit"
     assert draft["author"].startswith("user:") and draft["message"] == "try"
     live = homes["default"] / "skills" / "dash-skill" / "SKILL.md"
     assert "Better." not in live.read_text()
@@ -170,3 +170,24 @@ def test_store_hidden_from_skill_list_and_details(client):
     assert r.status_code == 200
     names = [s["name"] for s in r.json()] if isinstance(r.json(), list) else [s["name"] for s in r.json()["skills"]]
     assert names.count("dash-skill") == 1
+
+
+def test_editing_a_draft_builds_on_that_draft(client):
+    first = client.post("/api/skills/versions/draft", json={
+        "name": "dash-skill", "content": _md("dash-skill", "First draft."),
+    }).json()
+    client.post("/api/skills/versions/draft", json={"name": "dash-skill", "content": _md("dash-skill", "Other.")})
+    r = client.post("/api/skills/versions/draft", json={
+        "name": "dash-skill", "content": _md("dash-skill", "Edited."), "base": first["id"],
+    })
+    assert r.status_code == 200, r.text
+    edited = r.json()
+    assert edited["parent"] == first["id"] and edited["source"] == "edit"
+    r = client.post("/api/skills/versions/draft", json={
+        "name": "dash-skill", "content": _md("dash-skill", "x"), "base": "v99",
+    })
+    assert r.status_code == 404
+    r = client.post("/api/skills/versions/draft", json={
+        "name": "dash-skill", "content": _md("dash-skill", "x"), "base": "../v1",
+    })
+    assert r.status_code == 400
