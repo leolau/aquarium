@@ -8,8 +8,10 @@ import { NewSkillModal } from "@/components/skills/NewSkillModal";
 import { SkillsHubView } from "@/components/skills/SkillsHubView";
 import { skillHref } from "@/components/skills/skill-links";
 import { categoryCounts, filterSkills, sourceLabel, type SkillFilter } from "@/components/skills/skill-filters";
+import { InfoTip } from "@/components/ui/InfoTip";
 import { Pill } from "@/components/ui/Pill";
-import { inputClass, primaryButtonClass, secondaryButtonClass } from "@/components/ui/Sheet";
+import { useUndoToast } from "@/components/ui/UndoToast";
+import { inputClass, primaryButtonClass } from "@/components/ui/Sheet";
 import { errorText, getJson, profileQuery, sendJson } from "@/lib/admin-fetch";
 import { useAction } from "@/lib/use-action";
 import type { SkillInfo } from "@/types";
@@ -42,17 +44,28 @@ export function SkillsView({ profiles, profile, initialSkills, initialView, erro
     }
   }, [q]);
 
+  const undo = useUndoToast();
+  const setEnabled = useCallback(
+    async (name: string, enabled: boolean): Promise<boolean> => {
+      setMessage(null);
+      try {
+        await sendJson("/api/skills/toggle", "PUT", { name, enabled, ...(q ? { profile } : {}) });
+        setSkills((list) => list.map((s) => (s.name === name ? { ...s, enabled } : s)));
+        return true;
+      } catch (err) {
+        setMessage(errorText(err));
+        return false;
+      }
+    },
+    [q, profile],
+  );
   const toggle = useAction(async (skill: SkillInfo) => {
-    setMessage(null);
-    try {
-      await sendJson("/api/skills/toggle", "PUT", {
-        name: skill.name,
-        enabled: !skill.enabled,
-        ...(q ? { profile } : {}),
-      });
-      setSkills((list) => list.map((s) => (s.name === skill.name ? { ...s, enabled: !s.enabled } : s)));
-    } catch (err) {
-      setMessage(errorText(err));
+    const next = !skill.enabled;
+    if (await setEnabled(skill.name, next)) {
+      undo.show(
+        `${skill.name} turned ${next ? "on" : "off"} for new chats`,
+        () => setEnabled(skill.name, !next),
+      );
     }
   });
 
@@ -87,11 +100,40 @@ export function SkillsView({ profiles, profile, initialSkills, initialView, erro
     );
   };
 
+  const chip = (key: string, label: string, count: number, f: SkillFilter) => {
+    const active = filter.kind === f.kind;
+    return (
+      <button
+        key={key}
+        type="button"
+        aria-pressed={active}
+        onClick={() => setFilter(f)}
+        className={`inline-flex min-h-9 items-center gap-1 whitespace-nowrap rounded-full border px-3 text-xs ${
+          active
+            ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-accent-fg)]"
+            : "border-[var(--color-border)] text-[var(--color-fg)]"
+        }`}
+      >
+        {label} <span className="opacity-80">{count}</span>
+      </button>
+    );
+  };
+  const activeCategory = filter.kind === "category" ? filter.category : "";
+
   return (
-    <section data-component="SkillsView" className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
+    <section data-component="SkillsView" className="space-y-4 pb-24 lg:pb-8">
+      <div className="flex flex-wrap items-center gap-3">
+        <div role="tablist" aria-label="Skills view" className="inline-flex rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-2)] p-1">
+          <button type="button" role="tab" data-action="view-installed" aria-selected={view === "installed"} onClick={() => setView("installed")} className={"min-h-9 rounded-[var(--radius-md)] px-3.5 text-sm font-medium aria-selected:bg-[var(--color-bg)] aria-selected:text-[var(--color-fg)] text-[var(--color-muted)]"}>
+            Installed
+          </button>
+          <button type="button" role="tab" data-action="view-hub" aria-selected={view === "hub"} onClick={() => setView("hub")} className={"min-h-9 rounded-[var(--radius-md)] px-3.5 text-sm font-medium aria-selected:bg-[var(--color-bg)] aria-selected:text-[var(--color-fg)] text-[var(--color-muted)]"}>
+            Hub
+          </button>
+        </div>
+        <span className="flex-1" />
         <label className="flex items-center gap-2 text-sm">
-          <span className="text-[var(--color-muted)]">{view === "hub" ? "Install into:" : "Profile:"}</span>
+          <span className="text-[var(--color-muted)]">{view === "hub" ? "Install into" : "Profile"}</span>
           <select
             aria-label="Profile"
             className={`${inputClass} w-auto`}
@@ -105,21 +147,11 @@ export function SkillsView({ profiles, profile, initialSkills, initialView, erro
             ))}
           </select>
         </label>
-        <span className="flex-1" />
-        {view === "hub" ? (
-          <button type="button" className={secondaryButtonClass} onClick={() => setView("installed")}>
-            ← Installed skills
+        {view === "installed" ? (
+          <button type="button" data-action="new-skill" className={primaryButtonClass} onClick={() => setCreating(true)}>
+            + New skill
           </button>
-        ) : (
-          <>
-            <button type="button" className={secondaryButtonClass} onClick={() => setView("hub")}>
-              Browse hub
-            </button>
-            <button type="button" className={primaryButtonClass} onClick={() => setCreating(true)}>
-              + New skill
-            </button>
-          </>
-        )}
+        ) : null}
       </div>
 
       {message ? (
@@ -131,77 +163,107 @@ export function SkillsView({ profiles, profile, initialSkills, initialView, erro
       {view === "hub" ? (
         <SkillsHubView profile={profile} onInstalled={reload} />
       ) : (
-        <div className="flex flex-col gap-4 md:flex-row">
-          <nav aria-label="Skill filters" className="md:w-56 md:shrink-0">
-            <ul className="flex gap-1 overflow-x-auto md:flex-col md:overflow-visible">
-              {sideItem("all", "All", skills.length, { kind: "all" })}
-              {sideItem("enabled", "Enabled", enabledCount, { kind: "enabled" })}
-              {sideItem("disabled", "Disabled", skills.length - enabledCount, { kind: "disabled" })}
-              <li className="hidden px-3 pt-3 text-xs uppercase tracking-wide text-[var(--color-muted)] md:block">
-                Categories
-              </li>
-              {categories.map(([c, n]) => sideItem(`cat-${c}`, c, n, { kind: "category", category: c }))}
-            </ul>
-          </nav>
-
-          <div className="min-w-0 flex-1 space-y-3">
+        <>
+          <div className="flex flex-col gap-2 md:flex-row md:items-center">
             <input
               aria-label="Search skills"
-              className={inputClass}
+              className={`${inputClass} md:max-w-xs`}
               placeholder="Search skills…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
-            <ul className="divide-y divide-[var(--color-border)] rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-              {visible.map((s) => (
-                <li key={s.name} data-component="SkillRow" data-skill={s.name} className="flex items-start gap-3 p-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <Link href={skillHref(s.name, profile)} className="font-medium hover:text-[var(--color-accent)]">
-                        {s.name}
-                      </Link>
-                      {s.category ? <Pill>{s.category}</Pill> : null}
-                      <Pill tone={s.source === "hub" ? "accent" : "muted"}>{sourceLabel(s)}</Pill>
+            <div className="flex flex-wrap items-center gap-2">
+              {chip("all", "All", skills.length, { kind: "all" })}
+              {chip("enabled", "Enabled", enabledCount, { kind: "enabled" })}
+              {chip("disabled", "Disabled", skills.length - enabledCount, { kind: "disabled" })}
+              <select
+                aria-label="Category"
+                className={`${inputClass} w-auto min-h-9 py-1 text-xs lg:hidden`}
+                value={activeCategory}
+                onChange={(e) => setFilter(e.target.value ? { kind: "category", category: e.target.value } : { kind: "all" })}
+              >
+                <option value="">All categories</option>
+                {categories.map(([c, n]) => (
+                  <option key={c} value={c}>
+                    {c} ({n})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+            <nav aria-label="Skill filters" className="hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-3 lg:block lg:w-60 lg:shrink-0">
+              <p className="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">Categories</p>
+              <ul className="flex flex-col gap-0.5">
+                {sideItem("all", "All categories", skills.length, { kind: "all" })}
+                {categories.map(([c, n]) => sideItem(`cat-${c}`, c, n, { kind: "category", category: c }))}
+              </ul>
+            </nav>
+
+            <div className="min-w-0 flex-1 space-y-3">
+              <ul className="divide-y divide-[var(--color-border)] rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)]">
+                {visible.map((s) => (
+                  <li key={s.name} data-component="SkillRow" data-skill={s.name} className="flex items-center gap-2 p-3 sm:gap-3 sm:px-4">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Link href={skillHref(s.name, profile)} className="font-medium [overflow-wrap:anywhere] hover:text-[var(--color-accent)]">
+                          {s.name}
+                        </Link>
+                        {s.category ? <Pill>{s.category}</Pill> : null}
+                        <Pill tone={s.source === "hub" ? "accent" : "muted"}>{sourceLabel(s)}</Pill>
+                      </div>
+                      <p className="mt-1 line-clamp-2 text-sm text-[var(--color-muted)]">{s.description}</p>
                     </div>
-                    <p className="mt-1 line-clamp-2 text-sm text-[var(--color-muted)]">{s.description}</p>
-                  </div>
-                  <Link href={skillHref(s.name, profile, "edit")} role="button" className={`${secondaryButtonClass} inline-flex items-center`}>
-                    Edit
-                  </Link>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={s.enabled}
-                    aria-label={`${s.enabled ? "Disable" : "Enable"} ${s.name}`}
-                    disabled={toggle.pending}
-                    onClick={() => void toggle.run(s)}
-                    className="flex h-11 w-14 shrink-0 items-center justify-center disabled:opacity-60"
-                  >
-                    <span
-                      className={`relative block h-6 w-11 rounded-full transition-colors ${
-                        s.enabled ? "bg-[var(--color-accent)]" : "bg-[var(--color-surface-2)]"
-                      }`}
+                    <Link
+                      href={skillHref(s.name, profile, "edit")}
+                      role="button"
+                      aria-label={`Edit ${s.name}`}
+                      className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-[var(--radius-md)] px-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-fg)]"
+                    >
+                      Edit
+                    </Link>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={s.enabled}
+                      aria-label={`${s.enabled ? "Disable" : "Enable"} ${s.name}`}
+                      disabled={toggle.pending}
+                      aria-busy={toggle.pending || undefined}
+                      onClick={() => void toggle.run(s)}
+                      className="flex h-11 w-14 shrink-0 items-center justify-center disabled:opacity-60"
                     >
                       <span
-                        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${
-                          s.enabled ? "left-[1.375rem]" : "left-0.5"
+                        className={`relative block h-6 w-11 rounded-full transition-colors ${
+                          s.enabled ? "bg-[var(--color-accent)]" : "bg-[var(--color-surface-2)]"
                         }`}
-                      />
-                    </span>
-                  </button>
-                </li>
-              ))}
-              {visible.length === 0 ? (
-                <li className="p-4 text-sm text-[var(--color-muted)]">No skills match.</li>
-              ) : null}
-            </ul>
-            <p className="text-xs text-[var(--color-muted)]">
-              Turning a skill off or editing it applies to new chats; running chats keep their skills
-              so their cache isn&apos;t broken.
-            </p>
+                      >
+                        <span
+                          className={`absolute top-0.5 h-5 w-5 rounded-full bg-[var(--color-fg)] transition-all ${
+                            s.enabled ? "left-[1.375rem]" : "left-0.5"
+                          }`}
+                        />
+                      </span>
+                    </button>
+                  </li>
+                ))}
+                {visible.length === 0 ? (
+                  <li className="p-6 text-center text-sm text-[var(--color-muted)]">
+                    {skills.length === 0 ? "No skills installed yet. Add one, or browse the hub." : "No skills match. Try another search or filter."}
+                  </li>
+                ) : null}
+              </ul>
+              <p className="flex items-center gap-1 text-xs text-[var(--color-muted)]">
+                Turning a skill off or editing it applies to new chats.
+                <InfoTip label="Why not running chats?">
+                  Running chats keep their skills so their cache isn&apos;t broken (which would make every reply cost more).
+                </InfoTip>
+              </p>
+            </div>
           </div>
-        </div>
+        </>
       )}
+      {undo.toast}
 
       {creating ? (
         <NewSkillModal

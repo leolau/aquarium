@@ -62,7 +62,7 @@ function overview(overrides: Partial<ModelsOverviewResponse> = {}): ModelsOvervi
 
 describe("ModelsView", () => {
   it("renders the main model with provider, context and capability pills", () => {
-    const html = renderToStaticMarkup(<ModelsView initial={overview()} />);
+    const html = renderToStaticMarkup(<ModelsView initialAdvanced initial={overview()} />);
     expect(html).toContain("Main model");
     expect(html).toContain("glm-5.2");
     expect(html).toContain("alibaba");
@@ -73,7 +73,7 @@ describe("ModelsView", () => {
   });
 
   it("shows pinned roles by model and auto roles as inheriting the main model", () => {
-    const html = renderToStaticMarkup(<ModelsView initial={overview()} />);
+    const html = renderToStaticMarkup(<ModelsView initialAdvanced initial={overview()} />);
     expect(html).toContain("Vision");
     expect(html).toContain("qwen3.8-max");
     expect(html).toContain("auto → glm-5.2");
@@ -81,7 +81,7 @@ describe("ModelsView", () => {
 
   it("shows the provider under each role's model", () => {
     const html = renderToStaticMarkup(
-      <ModelsView
+      <ModelsView initialAdvanced
         initial={overview({
           auxiliary: {
             main: { provider: "deepseek", model: "deepseek-v4-flash" },
@@ -98,19 +98,19 @@ describe("ModelsView", () => {
   });
 
   it("shows the provider under each in-use model", () => {
-    const html = renderToStaticMarkup(<ModelsView initial={overview()} />);
+    const html = renderToStaticMarkup(<ModelsView initialAdvanced initial={overview()} />);
     expect(html).toMatch(/deepseek-chat<\/span>.*?>deepseek<\/span>/);
   });
 
   it("collapses non-top roles behind an expander", () => {
-    const html = renderToStaticMarkup(<ModelsView initial={overview()} />);
+    const html = renderToStaticMarkup(<ModelsView initialAdvanced initial={overview()} />);
     // 'approval' is not a top role — hidden behind the "+N more roles" row.
     expect(html).not.toContain(">Approval<");
     expect(html).toContain("more roles");
   });
 
   it("tags usage rows by the slot that serves them, or 'not configured'", () => {
-    const html = renderToStaticMarkup(<ModelsView initial={overview()} />);
+    const html = renderToStaticMarkup(<ModelsView initialAdvanced initial={overview()} />);
     expect(html).toContain("In use — last 30 days");
     expect(html).toContain("412 sessions");
     // glm-5.2 is the main model → 'main' tag; deepseek-chat serves nothing.
@@ -121,13 +121,29 @@ describe("ModelsView", () => {
 
   it("shows a quiet empty state when nothing has run", () => {
     const html = renderToStaticMarkup(
-      <ModelsView initial={overview({ usage: [] })} />,
+      <ModelsView initialAdvanced initial={overview({ usage: [] })} />,
     );
     expect(html).toContain("No recorded usage");
   });
 
   it("warns that changes apply to new sessions only", () => {
-    const html = renderToStaticMarkup(<ModelsView initial={overview()} />);
+    const html = renderToStaticMarkup(<ModelsView initialAdvanced initial={overview()} />);
     expect(html).toContain("new sessions");
+  });
+});
+
+describe("ModelsView role gating", () => {
+  it("hides Change, Test and Refresh keys from non-admins", () => {
+    const html = renderToStaticMarkup(<ModelsView initial={overview()} profile="default" canAdmin={false} />);
+    expect(html).not.toContain(">Change<");
+    expect(html).not.toContain(">Test<");
+    expect(html).not.toContain("Refresh keys");
+    expect(html).not.toContain('data-component="ProviderKeys"');
+  });
+
+  it("shows them to admins", () => {
+    const html = renderToStaticMarkup(<ModelsView initial={overview()} profile="default" canAdmin />);
+    expect(html).toContain(">Change<");
+    expect(html).toContain("Refresh keys");
   });
 });

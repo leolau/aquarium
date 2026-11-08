@@ -1,4 +1,9 @@
-import type { ReactNode } from "react";
+"use client";
+
+import { createContext, useContext, useState, type ReactNode } from "react";
+
+import { AdvancedSwitch, useAdvanced } from "@/components/system/Advanced";
+import { useT } from "@/i18n/client";
 
 import type {
   GtsEvaluationMethod,
@@ -10,7 +15,9 @@ import type {
 } from "@/types";
 
 /**
- * FG-20 Wave B1 — mobile-first GTS Centre (read-only, C9).
+ * FG-20 Wave B1 — mobile-first Graph, formerly GTS Centre (read-only, C9).
+ * Raw states, visibility, evaluation methods and the assignment scheme sit
+ * behind Advanced (off by default).
  *
  * Renders the C2-scoped goal→task→skill graph the Python API returns from
  * `/api/gts/graph`: goal/task hierarchy, engine-computed 0–100 scores,
@@ -20,6 +27,9 @@ import type {
  * CLI/agent authority paths (no HTTP write API exists), so this surface never
  * mutates the graph. Server-rendered; the browser only ever gets scoped rows.
  */
+
+/** Whether the engineer-facing detail is shown. */
+const AdvancedContext = createContext(false);
 
 /** Maps derived once from the M:N edges so nodes render their linked children. */
 interface GraphIndex {
@@ -123,6 +133,7 @@ function MethodLine({ method }: { method: GtsEvaluationMethod }) {
 }
 
 function TaskRow({ task, index }: { task: GtsTask; index: GraphIndex }) {
+  const advanced = useContext(AdvancedContext);
   const linkedSkills = (index.skillsByTask.get(task.id) ?? [])
     .map((sid) => index.skillsById.get(sid))
     .filter((s): s is GtsSkill => Boolean(s));
@@ -133,16 +144,18 @@ function TaskRow({ task, index }: { task: GtsTask; index: GraphIndex }) {
         <GtsBadge tone={PRIORITY_TONE[task.priority] ?? "muted"}>
           {task.priority}
         </GtsBadge>
-        <GtsBadge tone="muted">{task.current_state}</GtsBadge>
+        {advanced ? <GtsBadge tone="muted">{task.current_state}</GtsBadge> : null}
         <AssignmentBadges
           assigneeUserId={task.assignee_user_id}
           grants={task.grants}
         />
         <ScoreBadge score={task.score} />
       </div>
-      <div className="pl-3">
-        <MethodLine method={task.evaluation_method} />
-      </div>
+      {advanced ? (
+        <div className="pl-3">
+          <MethodLine method={task.evaluation_method} />
+        </div>
+      ) : null}
       {linkedSkills.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1 pl-3 text-xs text-[var(--color-muted)]">
           {linkedSkills.map((s) => (
@@ -155,6 +168,9 @@ function TaskRow({ task, index }: { task: GtsTask; index: GraphIndex }) {
     </div>
   );
 }
+
+/** Tasks shown per goal before "Show more" (expands in place). */
+const TASK_PREVIEW = 3;
 
 function GoalCard({
   goal,
@@ -169,11 +185,16 @@ function GoalCard({
     .map((tid) => index.tasksById.get(tid))
     .filter((t): t is GtsTask => Boolean(t));
   const childGoals = index.subGoalsByParent.get(goal.id) ?? [];
+  const advanced = useContext(AdvancedContext);
+  const t = useT("system");
+  const [allTasks, setAllTasks] = useState(false);
+  const shownTasks = allTasks ? linkedTasks : linkedTasks.slice(0, TASK_PREVIEW);
   return (
     <div
       data-component="GoalCard"
-      className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
-      style={depth > 0 ? { marginLeft: "0.75rem" } : undefined}
+      className={`min-w-0 rounded-[var(--radius-xl)] border border-[var(--color-border)] p-4 ${
+        depth > 0 ? "ml-2 bg-[var(--color-surface-2)] sm:ml-3" : "bg-[var(--color-surface)]"
+      }`}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -182,8 +203,8 @@ function GoalCard({
             {goal.priority}
           </GtsBadge>
           <GtsBadge tone="muted">{goal.status}</GtsBadge>
-          <GtsBadge tone="muted">{goal.level}</GtsBadge>
-          <GtsBadge tone="muted">{goal.visibility}</GtsBadge>
+          {advanced ? <GtsBadge tone="muted">{goal.level}</GtsBadge> : null}
+          {advanced ? <GtsBadge tone="muted">{goal.visibility}</GtsBadge> : null}
           <AssignmentBadges
             assigneeUserId={goal.assignee_user_id}
             grants={goal.grants}
@@ -192,15 +213,28 @@ function GoalCard({
         <ScoreBadge score={goal.score} />
       </div>
 
-      <div className="mt-2">
-        <MethodLine method={goal.evaluation_method} />
-      </div>
+      {advanced ? (
+        <div className="mt-2">
+          <MethodLine method={goal.evaluation_method} />
+        </div>
+      ) : null}
 
       {linkedTasks.length > 0 ? (
         <div className="mt-3 flex flex-col gap-2 border-l border-[var(--color-border)] pl-3">
-          {linkedTasks.map((task) => (
+          {shownTasks.map((task) => (
             <TaskRow key={task.id} task={task} index={index} />
           ))}
+          {linkedTasks.length > TASK_PREVIEW ? (
+            <button
+              type="button"
+              data-action="toggle-tasks"
+              aria-expanded={allTasks}
+              onClick={() => setAllTasks((v) => !v)}
+              className="inline-flex min-h-11 items-center self-start text-sm font-medium text-[var(--color-accent)] hover:underline"
+            >
+              {allTasks ? t("graph.hideTasks") : t("graph.showTasks", { count: linkedTasks.length - TASK_PREVIEW })}
+            </button>
+          ) : null}
         </div>
       ) : null}
 
@@ -245,21 +279,34 @@ function InfoCard({ children }: { children: ReactNode }) {
   return (
     <div
       data-component="GtsInfoCard"
-      className="rounded-2xl border border-dashed border-[var(--color-border)] p-5 text-sm text-[var(--color-muted)]"
+      className="rounded-[var(--radius-xl)] border border-dashed border-[var(--color-border)] p-5 text-sm text-[var(--color-muted)]"
     >
       {children}
     </div>
   );
 }
 
-export function GtsCentreView({ graph }: { graph: GtsGraphResponse }) {
+export function GtsCentreView({
+  graph,
+  initialAdvanced = false,
+}: {
+  graph: GtsGraphResponse;
+  initialAdvanced?: boolean;
+}) {
+  const t = useT("system");
+  const [advanced, setAdvanced] = useAdvanced("graph", initialAdvanced);
+
   if (!graph.configured) {
+    const [before, rest] = t("graph.notConfigured").split("{dsn}");
+    const [middle, after] = (rest ?? "").split("{cmd}");
     return (
-      <div data-component="GtsCentreView" className="flex flex-col gap-4">
+      <div data-component="GtsCentreView" className="flex flex-col gap-4 pb-24 lg:pb-8">
         <InfoCard>
-          The GTS Centre needs the application datastore. Set{" "}
-          <code>datastore.supabase_app.dsn</code>, then create goals with{" "}
-          <code>hermes goal</code> or the GTS tools.
+          {before}
+          <code>datastore.supabase_app.dsn</code>
+          {middle}
+          <code>hermes goal</code>
+          {after}
         </InfoCard>
       </div>
     );
@@ -269,20 +316,27 @@ export function GtsCentreView({ graph }: { graph: GtsGraphResponse }) {
   const topGoals = graph.goals.filter((g) => g.level === "top");
 
   return (
-    <div data-component="GtsCentreView" className="flex flex-col gap-3">
-      {topGoals.length === 0 ? (
-        <InfoCard>No goals visible in your scope yet.</InfoCard>
-      ) : (
-        <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-          {topGoals.map((goal) => (
-            <GoalCard key={goal.id} goal={goal} index={index} depth={0} />
-          ))}
+    <AdvancedContext.Provider value={advanced}>
+      <div data-component="GtsCentreView" className="flex flex-col gap-3 pb-24 lg:pb-8">
+        <div className="flex justify-end">
+          <AdvancedSwitch on={advanced} onChange={setAdvanced} />
         </div>
-      )}
-      <p className="text-xs text-[var(--color-muted)]">
-        Read-only · GTS Centre (C9). Assignment: {graph.assignment.scheme}
-        {graph.assignment.enabled ? " (assignee + watchers)" : ""}.
-      </p>
-    </div>
+        {topGoals.length === 0 ? (
+          <InfoCard>{t("graph.empty")}</InfoCard>
+        ) : (
+          <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-2">
+            {topGoals.map((goal) => (
+              <GoalCard key={goal.id} goal={goal} index={index} depth={0} />
+            ))}
+          </div>
+        )}
+        <p className="text-xs text-[var(--color-muted)]">
+          {t("graph.readOnly", {
+            scheme: advanced ? graph.assignment.scheme : graph.assignment.scheme.replace(/-/g, " "),
+            watchers: graph.assignment.enabled ? t("graph.watchers") : "",
+          })}
+        </p>
+      </div>
+    </AdvancedContext.Provider>
   );
 }
