@@ -32,6 +32,18 @@ describe("LogoutButton", () => {
     expect(replace).toHaveBeenCalledWith("/login");
   });
 
+  it("opens the confirmation on <body>, outside a sticky top bar", async () => {
+    render(
+      <div className="sticky top-0 z-20" data-testid="top-bar">
+        <LogoutButton />
+      </div>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.parentElement).toBe(document.body);
+    expect(screen.getByTestId("top-bar").contains(dialog)).toBe(false);
+  });
+
   it("cancel keeps the session", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { createPortal } from "react-dom";
 
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Spinner } from "@/components/ui/Spinner";
@@ -46,15 +47,19 @@ export function LogoutButton() {
           t("signOut")
         )}
       </button>
-      {confirming && (
-        <ConfirmDialog
-          title={t("signOutConfirmTitle")}
-          body={t("signOutConfirmBody")}
-          confirmLabel={t("signOut")}
-          onCancel={() => setConfirming(false)}
-          onConfirm={() => signOutOnce()}
-        />
-      )}
+      {/* On <body>: the account menu sits in a sticky top bar (a stacking
+          context) that would keep the dialog under the z-60 Coral launchers. */}
+      {confirming &&
+        createPortal(
+          <ConfirmDialog
+            title={t("signOutConfirmTitle")}
+            body={t("signOutConfirmBody")}
+            confirmLabel={t("signOut")}
+            onCancel={() => setConfirming(false)}
+            onConfirm={() => signOutOnce()}
+          />,
+          document.body,
+        )}
     </>
   );
 }
