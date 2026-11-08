@@ -11,6 +11,7 @@ import { SkillMarkdown } from "@/components/skills/SkillMarkdown";
 import { skillHref } from "@/components/skills/skill-links";
 import { ActionButton } from "@/components/ui/ActionButton";
 import { inputClass, primaryButtonClass, secondaryButtonClass } from "@/components/ui/Sheet";
+import { useConfirm } from "@/components/ui/useConfirm";
 import { errorText, profileQuery, sendJson } from "@/lib/admin-fetch";
 import { changedLineCount, diffLines, hunks } from "@/lib/skills/diff";
 import { applyEdit, byteLength, formatSize, lineCount, type SkillEdit } from "@/lib/skills/editor-state";
@@ -104,6 +105,7 @@ export function SkillEditor({
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const dirty = doc !== original;
   const leaving = useRef(false);
+  const { ask: askConfirm, dialog: leaveDialog } = useConfirm();
   const q = profileQuery(profile);
   const viewHref = skillHref(name, profile);
 
@@ -136,12 +138,17 @@ export function SkillEditor({
       if (!a || a.getAttribute("target") === "_blank" || a.hasAttribute("download")) return;
       const href = a.getAttribute("href") ?? "";
       if (href.startsWith("#")) return;
-      if (!window.confirm("You have unsaved changes to this skill. Leave without saving?")) {
-        e.preventDefault();
-        e.stopPropagation();
-      } else {
+      e.preventDefault();
+      e.stopPropagation();
+      void askConfirm({
+        title: "Leave without saving?",
+        body: "You have unsaved changes to this skill.",
+        confirmLabel: "Leave",
+      }).then((leave) => {
+        if (!leave) return;
         leaving.current = true;
-      }
+        (a as HTMLAnchorElement).click();
+      });
     };
     window.addEventListener("beforeunload", beforeUnload);
     document.addEventListener("click", onClick, true);
@@ -149,7 +156,7 @@ export function SkillEditor({
       window.removeEventListener("beforeunload", beforeUnload);
       document.removeEventListener("click", onClick, true);
     };
-  }, [dirty]);
+  }, [dirty, askConfirm]);
 
   useEffect(() => {
     if (!fullscreen) return;
@@ -209,6 +216,7 @@ export function SkillEditor({
 
   return (
     <section data-component="SkillEditor" data-skill={name} data-view={view} className="space-y-3.5 pb-2">
+      {leaveDialog}
       <div className="flex flex-wrap items-center gap-2">
         <div className="min-w-0 flex-1 text-[13px] text-[var(--color-muted)]">
           <Link href={viewHref} className="text-[var(--color-accent)]">

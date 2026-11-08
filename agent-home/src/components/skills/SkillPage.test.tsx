@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -205,15 +205,15 @@ describe("SkillEditor", () => {
     vi.unstubAllGlobals();
   });
 
-  it("asks before an in-app link drops unsaved changes", () => {
+  it("asks (in the themed dialog) before an in-app link drops unsaved changes", async () => {
     render(editor());
     fireEvent.change(screen.getByLabelText("Version"), { target: { value: "9.9.9" } });
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     const link = screen.getByRole("link", { name: /pdf-tools/ });
     const ev = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
     link.dispatchEvent(ev);
-    expect(confirm).toHaveBeenCalled();
     expect(ev.defaultPrevented).toBe(true);
-    confirm.mockRestore();
+    expect(await screen.findByText("Leave without saving?")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByText("Leave without saving?")).toBeNull());
   });
 });
