@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { MobileShell } from "@/components/MobileShell";
-import { BackToProject } from "@/components/projects/BackToProject";
+import { ProjectsLoadError } from "@/components/projects/ProjectsLoadError";
 import { RunView } from "@/components/projects/RunView";
 import { HermesApiError } from "@/lib/api/client";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
@@ -59,22 +59,20 @@ export default async function Page({
 
   if (!run) {
     return (
-      <MobileShell title="Run">
-        <BackToProject slug={slug} name={project.name} />
-        <div
-          data-component="RunPageError"
-          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
-        >
-          Couldn&apos;t load run {runNoInt} right now.
-        </div>
+      <MobileShell title="Run" labels={projectLabel(slug, project.name)}>
+        <ProjectsLoadError component="RunPageError" details={`Couldn't load run ${runNoInt} right now.`} />
       </MobileShell>
     );
   }
 
   return (
-    <MobileShell title={`Run ${runNoInt}`}>
-      <BackToProject slug={slug} name={project.name} />
+    <MobileShell title={`Run ${runNoInt}`} labels={projectLabel(slug, project.name)}>
       <RunView slug={slug} run={run} archived={project.archived} />
     </MobileShell>
   );
+}
+
+/** The breadcrumb / Back label for the parent project: its name once known. */
+function projectLabel(slug: string, name?: string): Record<string, string> | undefined {
+  return name ? { [`/projects/${encodeURIComponent(slug)}`]: name } : undefined;
 }

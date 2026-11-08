@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 
+import { InfoTip } from "@/components/ui/InfoTip";
+import { useT } from "@/i18n";
 import { ActionButton } from "@/components/projects/ActionButton";
 import { CategoryPicker, findCategory } from "@/components/projects/categories/CategoryPicker";
 import { useProjectCategories } from "@/components/projects/categories/useProjectCategories";
@@ -130,6 +132,7 @@ export function NewProjectForm({
   memoryFetch?: typeof fetch;
 }) {
   const router = useRouter();
+  const tp = useT("projects");
   const [step, setStep] = useState<WizardStep>(1);
   const [goal, setGoal] = useState("");
   const [description, setDescription] = useState("");
@@ -370,26 +373,74 @@ export function NewProjectForm({
           goNext();
         }}
       >
-        <header data-component="WizardStepHeader" className="flex flex-col gap-1">
+        <header data-component="WizardStepHeader" className="flex flex-col gap-2">
           <p className="text-xs uppercase tracking-wide text-[var(--color-muted)]">
             Step {step} of 4 · {stepLabel(step)}
           </p>
-          <ol className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+          {/* Phone: four progress segments under the step line. */}
+          <div aria-hidden className="grid grid-cols-4 gap-1 sm:hidden">
             {WIZARD_STEPS.map((s) => (
-              <li
+              <span
                 key={s.step}
-                aria-current={s.step === step ? "step" : undefined}
-                className={
-                  s.step === step
-                    ? "font-semibold text-[var(--color-accent)]"
-                    : s.step < step
-                      ? "text-[var(--color-text)]"
-                      : "text-[var(--color-muted)]"
-                }
-              >
-                {s.step} {s.label}
-              </li>
+                className={`h-1 rounded-[var(--radius-full)] ${
+                  s.step <= step ? "bg-[var(--color-accent)]" : "bg-[var(--color-surface-2)]"
+                }`}
+              />
             ))}
+          </div>
+          {/* Numbered steps; a finished one is a button back to it. */}
+          <ol className="hidden flex-wrap items-center gap-2 text-xs sm:flex">
+            {WIZARD_STEPS.map((s) => {
+              const current = s.step === step;
+              const done = s.step < step;
+              const body = (
+                <>
+                  <span
+                    aria-hidden
+                    className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-[var(--radius-full)] border text-[11px] font-semibold ${
+                      current
+                        ? "border-[var(--color-accent)] text-[var(--color-accent)]"
+                        : done
+                          ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-accent-fg)]"
+                          : "border-[var(--color-border)] text-[var(--color-muted)]"
+                    }`}
+                  >
+                    {s.step}
+                  </span>
+                  <span>{s.label}</span>
+                </>
+              );
+              return (
+                <li
+                  key={s.step}
+                  aria-current={current ? "step" : undefined}
+                  className={`flex items-center gap-2 rounded-[var(--radius-full)] px-2 py-1 ${
+                    current
+                      ? "border border-[var(--color-accent)] font-semibold text-[var(--color-accent)]"
+                      : done
+                        ? "text-[var(--color-text)]"
+                        : "text-[var(--color-muted)]"
+                  }`}
+                >
+                  {done && !busy && !created ? (
+                    <button
+                      type="button"
+                      data-action="wizard-go-to-step"
+                      data-step={s.step}
+                      onClick={() => {
+                        setError(null);
+                        setStep(s.step);
+                      }}
+                      className="flex items-center gap-2 hover:underline"
+                    >
+                      {body}
+                    </button>
+                  ) : (
+                    body
+                  )}
+                </li>
+              );
+            })}
           </ol>
         </header>
 
@@ -448,7 +499,10 @@ export function NewProjectForm({
             />
 
             <div className="flex flex-col gap-1 text-sm">
-              <span>Outputs — what it delivers * </span>
+              <span className="flex items-center gap-1">
+                Outputs — what it delivers *
+                <InfoTip label={tp("wizard.outputsInfoLabel")}>{tp("wizard.outputsInfo")}</InfoTip>
+              </span>
               {outputs.map((title, index) => (
                 <div key={index} className="flex gap-2">
                   <input

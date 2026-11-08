@@ -66,9 +66,10 @@ export function CardModelCalls({ data }: { data: CardModelCallsData | null | und
               <Totals stats={data.main} />
             </>
           ) : null}
-          <div className="mt-3 overflow-x-auto">
-            <table className="w-full text-left text-[12px]">
-              <thead className="text-[11px] text-[var(--color-muted)]">
+          <div className="mt-3 sm:overflow-x-auto">
+            {/* Phone: each row becomes a stacked card, each cell labelled. */}
+            <table className="w-full text-left text-[12px] max-sm:block">
+              <thead className="text-[11px] text-[var(--color-muted)] max-sm:hidden">
                 <tr>
                   <th className="py-1 pr-3 font-normal">Attempt</th>
                   <th className="py-1 pr-3 font-normal">Model</th>
@@ -79,29 +80,30 @@ export function CardModelCalls({ data }: { data: CardModelCallsData | null | und
                   <th className="py-1 text-right font-normal">Max</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="max-sm:flex max-sm:flex-col max-sm:gap-2">
                 {rows.map((r) => (
                   <tr
                     key={`${r.run_id ?? "none"}:${r.caller}:${r.provider}:${r.model}`}
-                    className="border-t border-[var(--color-border)]"
+                    className="border-t border-[var(--color-border)] max-sm:block max-sm:rounded-[var(--radius-md)] max-sm:border max-sm:p-2"
                   >
-                    <td className="py-1 pr-3">{attemptLabel(r.attempt, r.run_outcome)}</td>
-                    <td className="py-1 pr-3">
+                    <td data-label="Attempt" className="py-1 pr-3 max-sm:flex max-sm:justify-between max-sm:gap-3 max-sm:pr-0 max-sm:text-right max-sm:before:text-[var(--color-muted)] max-sm:before:content-[attr(data-label)]">{attemptLabel(r.attempt, r.run_outcome)}</td>
+                    <td data-label="Model" className="py-1 pr-3 max-sm:flex max-sm:justify-between max-sm:gap-3 max-sm:pr-0 max-sm:text-right max-sm:before:text-[var(--color-muted)] max-sm:before:content-[attr(data-label)]">
                       {r.model}
                       <span className="block text-[11px] text-[var(--color-muted)]">
                         {callerLabel(r.caller)}
                         {r.provider ? ` · ${r.provider}` : ""}
                       </span>
                     </td>
-                    <td className="py-1 pr-3 text-right">{r.calls.toLocaleString()}</td>
+                    <td data-label="Calls" className="py-1 pr-3 text-right max-sm:flex max-sm:justify-between max-sm:gap-3 max-sm:pr-0 max-sm:text-right max-sm:before:text-[var(--color-muted)] max-sm:before:content-[attr(data-label)]">{r.calls.toLocaleString()}</td>
                     <td
-                      className={`py-1 pr-3 text-right ${r.failures > 0 ? "text-[var(--color-warn-text)]" : ""}`}
+                      data-label="Failed"
+                      className={`py-1 pr-3 text-right max-sm:flex max-sm:justify-between max-sm:gap-3 max-sm:pr-0 max-sm:text-right max-sm:before:text-[var(--color-muted)] max-sm:before:content-[attr(data-label)] ${r.failures > 0 ? "text-[var(--color-warn-text)]" : ""}`}
                     >
                       {r.failures}
                     </td>
-                    <td className="py-1 pr-3 text-right">{callDurationLabel(r.min_ms)}</td>
-                    <td className="py-1 pr-3 text-right">{callDurationLabel(r.avg_ms)}</td>
-                    <td className="py-1 text-right">{callDurationLabel(r.max_ms)}</td>
+                    <td data-label="Min" className="py-1 pr-3 text-right max-sm:flex max-sm:justify-between max-sm:gap-3 max-sm:pr-0 max-sm:text-right max-sm:before:text-[var(--color-muted)] max-sm:before:content-[attr(data-label)]">{callDurationLabel(r.min_ms)}</td>
+                    <td data-label="Avg" className="py-1 pr-3 text-right max-sm:flex max-sm:justify-between max-sm:gap-3 max-sm:pr-0 max-sm:text-right max-sm:before:text-[var(--color-muted)] max-sm:before:content-[attr(data-label)]">{callDurationLabel(r.avg_ms)}</td>
+                    <td data-label="Max" className="py-1 text-right max-sm:flex max-sm:justify-between max-sm:gap-3 max-sm:pr-0 max-sm:text-right max-sm:before:text-[var(--color-muted)] max-sm:before:content-[attr(data-label)]">{callDurationLabel(r.max_ms)}</td>
                   </tr>
                 ))}
               </tbody>

@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { MobileShell } from "@/components/MobileShell";
-import { BackToProject } from "@/components/projects/BackToProject";
+import { ProjectsLoadError } from "@/components/projects/ProjectsLoadError";
 import { CardDetailView } from "@/components/projects/CardDetailView";
 import { HermesApiError } from "@/lib/api/client";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
@@ -42,20 +42,13 @@ export default async function Page({
   if (!card) {
     return (
       <MobileShell title="Card">
-        <BackToProject slug={slug} />
-        <div
-          data-component="CardPageError"
-          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
-        >
-          Couldn&apos;t load this card right now.
-        </div>
+        <ProjectsLoadError component="CardPageError" details={"Couldn't load this card right now."} />
       </MobileShell>
     );
   }
 
   return (
-    <MobileShell title={card.title}>
-      <BackToProject slug={slug} name={project?.name} />
+    <MobileShell title={card.title} labels={projectLabel(slug, project?.name)}>
       <CardDetailView
         slug={slug}
         card={card}
@@ -64,4 +57,9 @@ export default async function Page({
       />
     </MobileShell>
   );
+}
+
+/** The breadcrumb / Back label for the parent project: its name once known. */
+function projectLabel(slug: string, name?: string): Record<string, string> | undefined {
+  return name ? { [`/projects/${encodeURIComponent(slug)}`]: name } : undefined;
 }

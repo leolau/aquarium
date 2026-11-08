@@ -40,11 +40,14 @@ export function ProjectViewSwitch({
   };
   return (
     <div data-component="ProjectViewSwitch" data-mode={mode} className="flex flex-col gap-3">
-      <div className="flex items-center justify-end gap-2">
-        {!eligible ? <span className="text-xs text-[var(--color-muted)]">{NOT_A_TASK}</span> : null}
-        <ModeSwitch mode={mode} onChange={change} taskDisabledReason={eligible ? undefined : NOT_A_TASK} />
-      </div>
-      {mode === "task" ? <TaskView {...task} onOpenProject={() => change("project")} /> : children}
+      {/* Only a one-off has a Task view; it opens there, and "Open full project"
+          (in the Task view) leads here — the switch is then the way back. */}
+      {eligible && mode === "project" ? (
+        <div className="flex items-center justify-end gap-2">
+          <ModeSwitch mode={mode} onChange={change} />
+        </div>
+      ) : null}
+      {mode === "task" ? <TaskView {...task} onOpenProject={() => setChosen("project")} /> : children}
     </div>
   );
 }

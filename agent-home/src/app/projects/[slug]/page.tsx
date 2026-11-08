@@ -1,7 +1,8 @@
 import { notFound } from "next/navigation";
 
 import { MobileShell } from "@/components/MobileShell";
-import { BackToProjects } from "@/components/projects/BackToProject";
+import { ProjectsLoadError } from "@/components/projects/ProjectsLoadError";
+import { isTaskCadence } from "@/components/projects/task/viewMode";
 import { ProjectViewSwitch } from "@/components/projects/task/ProjectViewSwitch";
 import { projectViewContext } from "@/components/projects/task/viewModeServer";
 import { ProjectDetailView } from "@/components/projects/ProjectDetailView";
@@ -54,13 +55,7 @@ export default async function Page({
   if (!project) {
     return (
       <MobileShell title="Project">
-        <BackToProjects />
-        <div
-          data-component="ProjectPageError"
-          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
-        >
-          Couldn&apos;t load this project right now.
-        </div>
+        <ProjectsLoadError component="ProjectPageError" details={"Couldn't load this project right now."} />
       </MobileShell>
     );
   }
@@ -75,13 +70,16 @@ export default async function Page({
     ),
     client.projectDoctor(slug).catch((): ProjectDoctorDetail | null => null),
     // A tab link means Project mode: tabs only exist there.
-    projectViewContext(client, initialTab ? "project" : query?.view),
+    // A one-off opens as its Task view unless the URL asks for the project.
+    projectViewContext(
+      client,
+      initialTab ? "project" : query?.view ?? (isTaskCadence(project.cadence) ? "task" : undefined),
+    ),
   ]);
   const isInstanceAdmin = principal.role === "owner" || principal.role === "admin";
 
   return (
-    <MobileShell title={project.name}>
-      <BackToProjects />
+    <MobileShell title={project.name} wide>
       <ProjectViewSwitch
         initialMode={view.mode}
         device={view.device}

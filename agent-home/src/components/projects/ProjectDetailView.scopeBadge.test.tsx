@@ -21,7 +21,7 @@ function scopeTab(p: ProjectDetail): string {
       isInstanceAdmin={false}
     />,
   );
-  const match = html.match(/<button[^>]*data-tab="scope"[^>]*>([\s\S]*?)<\/button>/);
+  const match = html.match(/<button[^>]*data-tab="setup"[^>]*>([\s\S]*?)<\/button>/);
   expect(match).not.toBeNull();
   return match![1];
 }
@@ -36,15 +36,15 @@ const summary = (over: Partial<ClarifySummary>): ClarifySummary => ({
   ...over,
 });
 
-describe("ProjectDetailView — Scope tab badge", () => {
+describe("ProjectDetailView — Setup tab badge (open scope questions)", () => {
   it("shows how many scope questions are open", () => {
     const tab = scopeTab(project({ clarify: summary({ open_count: 3 }) }));
-    expect(tab).toMatch(/^Scope<span[^>]*>3<\/span>$/);
+    expect(tab).toMatch(/^Setup<span[^>]*>3<\/span>$/);
   });
 
   it("shows no badge with nothing open, or on an older server without clarify", () => {
-    expect(scopeTab(project({ clarify: summary({ status: "answered", open_count: 0 }) }))).toBe("Scope");
-    expect(scopeTab(project())).toBe("Scope");
-    expect(scopeTab(project({ clarify: null }))).toBe("Scope");
+    expect(scopeTab(project({ clarify: summary({ status: "answered", open_count: 0 }) }))).toBe("Setup");
+    expect(scopeTab(project())).toBe("Setup");
+    expect(scopeTab(project({ clarify: null }))).toBe("Setup");
   });
 });

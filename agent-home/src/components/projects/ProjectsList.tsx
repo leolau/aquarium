@@ -8,6 +8,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 const AUTO_REFRESH_MS = 30_000;
 
 import { ProjectRow } from "@/components/projects/ProjectRow";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import { useT } from "@/i18n";
 import { ProjectsBulkBar } from "@/components/projects/ProjectsBulkBar";
 import { ProjectsFilters } from "@/components/projects/ProjectsFilters";
 import {
@@ -278,6 +280,7 @@ export function ProjectsList({
     [filters, fetchPage],
   );
 
+  const t = useT("projects");
   return (
     <div data-component="ProjectsList" className="flex flex-col gap-3">
       {/* The create door (§13): the feature is unreachable if its only
@@ -307,13 +310,6 @@ export function ProjectsList({
             </button>
           ))}
         </div>
-        <Link
-          href="/projects/new"
-          data-component="NewProjectAction"
-          className="rounded-xl bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent-fg)]"
-        >
-          New project
-        </Link>
       </div>
 
       <ProjectsFilters value={filters} onChange={changeFilters} />
@@ -327,12 +323,25 @@ export function ProjectsList({
       )}
 
       {error ? (
-        <p
-          data-component="ProjectsError"
-          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
-        >
-          {error}
-        </p>
+        <div data-component="ProjectsError">
+          <InlineAlert
+            tone="danger"
+            title={t("loadError")}
+            action={
+              <button
+                type="button"
+                data-action="projects-retry"
+                disabled={loading}
+                onClick={() => void fetchPage(filters)}
+                className="min-h-9 rounded-[var(--radius-md)] border border-[var(--color-border)] px-3 text-xs disabled:opacity-60"
+              >
+                {t("retry")}
+              </button>
+            }
+          >
+            {error}
+          </InlineAlert>
+        </div>
       ) : null}
 
       {board ? (
@@ -371,25 +380,42 @@ export function ProjectsList({
             />
           ) : null}
         </>
+      ) : items.length === 0 && !loading && (narrowed || filters.q) ? (
+        <div data-component="ProjectsEmpty" data-kind="no-match">
+          <InlineAlert
+            tone="info"
+            title={t("noMatchTitle")}
+            action={
+              <button
+                type="button"
+                data-action="clear-filters"
+                onClick={() => changeFilters({ ...EMPTY_FILTERS, layout: filters.layout })}
+                className="min-h-9 rounded-[var(--radius-md)] border border-[var(--color-border)] px-3 text-xs"
+              >
+                {t("clearFilters")}
+              </button>
+            }
+          >
+            {t("noMatchBody")}
+          </InlineAlert>
+        </div>
       ) : items.length === 0 && !loading ? (
         <div
           data-component="ProjectsEmpty"
-          className="flex flex-col gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
+          data-kind="empty"
+          className="flex flex-col items-center gap-3 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-8 text-center"
         >
-          <p>
-            {narrowed || filters.q
-              ? "Nothing matches that view."
-              : "No projects yet. Anything the agent works on over time — a deliverable, a recurring job, a standing duty — lives here. Create one, let the agent draft its plan, and run it from this app."}
+          <h2 className="text-base font-semibold">{t("emptyTitle")}</h2>
+          <p className="max-w-md text-sm text-[var(--color-muted)]">
+            {t("emptyBody")}
           </p>
-          {!narrowed && !filters.q ? (
-            <Link
-              href="/projects/new"
-              data-component="NewProjectAction"
-              className="self-start rounded-xl bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent-fg)]"
-            >
-              New project
-            </Link>
-          ) : null}
+          <Link
+            href="/projects/new"
+            data-component="NewProjectAction"
+            className="inline-flex min-h-10 items-center rounded-[var(--radius-md)] bg-[var(--color-accent)] px-4 text-sm font-medium text-[var(--color-accent-fg)]"
+          >
+            New project
+          </Link>
         </div>
       ) : (
         <>

@@ -354,14 +354,10 @@ describe("ProjectsList", () => {
     expect(html).toContain("a recurring job, a standing duty");
   });
 
-  it("carries the create door in the header and in the empty state", () => {
+  it("carries the create door in the empty state (the page header carries it otherwise)", () => {
     // A client method with no caller is the exact shape of the U1 defect:
-    // the door must exist on the *rendered* page, in both states.
-    const withItems = renderToStaticMarkup(
-      <ProjectsList initial={{ items: [ITEM], next_cursor: null }} initialFilters={LIST_FILTERS} />,
-    );
-    expect(withItems).toContain('href="/projects/new"');
-    expect(withItems).toContain("New project");
+    // the door must exist on the *rendered* page. With projects, it is the
+    // PageHeader action of app/projects/page.tsx.
 
     const empty = renderToStaticMarkup(
       <ProjectsList initial={{ items: [], next_cursor: null }} initialFilters={LIST_FILTERS} />,

@@ -2,6 +2,9 @@
 
 import { useCallback, useState, type ComponentType } from "react";
 
+import { ChevronDownIcon } from "@/components/ui/icons";
+import { useT } from "@/i18n";
+
 import { AddToProjectSheet } from "@/components/projects/AddToProjectSheet";
 import { EditBriefSheet } from "@/components/projects/EditBriefSheet";
 import { ProjectCategoryTag } from "@/components/projects/categories/ProjectCategoryTag";
@@ -42,8 +45,15 @@ import { IterationsTab } from "@/components/projects/tabs/IterationsTab";
 import { OutputsTab } from "@/components/projects/tabs/OutputsTab";
 import { PlanTab } from "@/components/projects/tabs/PlanTab";
 import { ProjectTabsNav } from "@/components/projects/tabs/ProjectTabsNav";
+import {
+  GROUP_SECTIONS,
+  groupOf,
+  isProjectGroup,
+  type ProjectGroup,
+} from "@/components/projects/tabs/groups";
 import { SettingsTab } from "@/components/projects/tabs/SettingsTab";
 import {
+  PROJECT_TAB_LABEL,
   parseProjectTab,
   type ProjectTab,
   type ProjectTabProps,
@@ -140,16 +150,32 @@ export function ProjectDetailView({
       .flatMap((column) => column.tasks)
       .filter((task) => task.status === "blocked").length ?? 0;
 
-  const [tab, setTab] = useState<ProjectTab>(() => parseProjectTab(initialTab));
+  const t = useT("projects");
+  const [tab, setTab] = useState<ProjectTab>(() =>
+    isProjectGroup(initialTab) ? GROUP_SECTIONS[initialTab][0] : parseProjectTab(initialTab),
+  );
+  const group = groupOf(tab);
+  // `?tab=` names the tab (or, for a deep link, the section inside it).
+  const writeTabParam = (value: string | null) => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (!value || value === "overview" || value === "dashboard") url.searchParams.delete("tab");
+    else url.searchParams.set("tab", value);
+    window.history.replaceState(window.history.state, "", url.toString());
+  };
   const selectTab = useCallback((next: ProjectTab) => {
     setTab(next);
-    if (typeof window !== "undefined") {
-      const url = new URL(window.location.href);
-      if (next === "dashboard") url.searchParams.delete("tab");
-      else url.searchParams.set("tab", next);
-      window.history.replaceState(window.history.state, "", url.toString());
+    writeTabParam(GROUP_SECTIONS[groupOf(next)][0] === next ? groupOf(next) : next);
+    if (GROUP_SECTIONS[groupOf(next)][0] !== next && typeof window !== "undefined") {
+      window.requestAnimationFrame(() =>
+        document.getElementById(`project-section-${next}`)?.scrollIntoView({ block: "start" }),
+      );
     }
   }, []);
+  const selectGroup = (next: ProjectGroup) => {
+    setTab(GROUP_SECTIONS[next][0]);
+    writeTabParam(next);
+  };
   // Open the tab that fixes a readiness gap, then scroll to and ring its field.
   const reveal = useCallback(
     (item: ReadinessItem) => {
@@ -169,10 +195,19 @@ export function ProjectDetailView({
     board?.columns
       .flatMap((column) => column.tasks)
       .filter((task) => task.status === "triage").length ?? 0;
-  const tabBadges: Partial<Record<ProjectTab, number>> = {
-    board: blockedCount + triageCount,
-    scope: project.clarify?.open_count ?? 0,
+  const tabBadges: Partial<Record<ProjectGroup, number>> = {
+    work: blockedCount + triageCount,
+    setup: project.clarify?.open_count ?? 0,
   };
+  const needsYou = blockedCount + triageCount;
+  const liveRun = project.runs.find((run) => run.status === "running" || run.status === "waiting");
+  const [statusOpen, setStatusOpen] = useState(() => needsYou > 0 || Boolean(liveRun));
+  const statusLine = [
+    liveRun ? `Run ${liveRun.run_no} ${liveRun.status}` : project.status,
+    needsYou === 1 ? t("needsYouOne") : needsYou > 1 ? t("needsYou", { count: needsYou }) : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   const tabProps: ProjectTabProps = {
     project,
     board,
@@ -186,7 +221,7 @@ export function ProjectDetailView({
     onNavigate: selectTab,
     onChangeRequest: openChange,
   };
-  const ActiveTab = TAB_COMPONENT[tab];
+  const sections = GROUP_SECTIONS[group];
   const action = nextAction(project, board, readiness, playbook, undefined, canLead);
 
   const meta = [
@@ -202,147 +237,193 @@ export function ProjectDetailView({
     .join(" · ");
 
   return (
-    <div data-component="ProjectDetailView" className="flex flex-col gap-4">
-      <BusyRegion
-        busy={refreshing}
-        label={refreshing ? "Talking to the agent…" : undefined}
+    <div
+      data-component="ProjectDetailView"
+      data-active-group={group}
+      className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start lg:gap-6"
+    >
+      {/* ── Status: the desktop right rail; a collapsible section atop Overview on phone ── */}
+      <aside
+        data-component="ProjectStatus"
+        aria-label={t("statusAria")}
+        data-open={statusOpen ? "true" : "false"}
+        className={`min-w-0 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-3 lg:col-start-2 lg:row-start-1 lg:border-0 lg:bg-transparent lg:p-0 ${
+          group === "overview" ? "" : "max-lg:hidden"
+        }`}
       >
-        <div className="flex flex-col gap-4">
-          {/* ── Header ─────────────────────────────────────────────── */}
-          <header
-            id="project-header"
-            data-component="ProjectHeader"
-            className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
-          >
-            <div className="flex items-center gap-2">
-              <span
-                aria-hidden
-                className="text-lg leading-none text-[var(--color-muted)]"
-              >
-                {CADENCE_GLYPH[project.cadence]}
-              </span>
-              <h1 className="min-w-0 flex-1 truncate text-lg font-semibold">
-                {project.name}
-              </h1>
-              <Pill tone={HEALTH_TONE[project.health]}>
-                {HEALTH_LABEL[project.health]}
-              </Pill>
-              <ProjectLifecycleMenu
-                project={project}
-                callerUserId={callerUserId}
-                isInstanceAdmin={isInstanceAdmin}
-              />
-            </div>
-            <div className="mt-1 flex">
-              <ProjectCategoryTag
-                categories={categories}
-                categoryId={project.category_id}
-              />
-            </div>
-            <p className="mt-1 text-xs text-[var(--color-muted)]">{meta}</p>
-
-            {project.archived ? (
-              <p className="mt-2 text-sm text-[var(--color-muted)]">
-                This project is archived — restore it (⋯) to run it again.
-              </p>
-            ) : null}
-          </header>
-        </div>
-      </BusyRegion>
-
-      {/* ── Journey bar: sticky, right under the title, above every tab ── */}
-      <div data-component="ProjectStickyBars" className="sticky top-0 z-30 -mx-1 bg-[var(--color-bg)] px-1 pb-1 pt-1">
-        <JourneyBar
-          project={project}
-          action={action}
-          readiness={readiness}
-          canLead={canLead}
-          canAct={canAct}
-          onNavigate={selectTab}
-          onReveal={reveal}
-          onChangeRequest={openChange}
-        />
-      </div>
-
-      {/* ── Tools, About, readiness: below the journey bar ─────────── */}
-      {!project.archived || project.goal || project.usage || project.summary ? (
-        <section
-          data-component="ProjectDetails"
-          aria-label="Project details"
-          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 [&>*:first-child]:mt-0"
+        <button
+          type="button"
+          data-action="toggle-project-status"
+          aria-expanded={statusOpen}
+          onClick={() => setStatusOpen((open) => !open)}
+          className="flex min-h-11 w-full items-center gap-2 text-left lg:hidden"
         >
-          {!project.archived ? (
-            <div
-              data-component="ProjectToolbar"
-              role="toolbar"
-              aria-label="Project tools"
-              className="mt-2 flex flex-wrap gap-1.5"
+          <span className="text-sm font-semibold">{t("status")}</span>
+          <span className="min-w-0 flex-1 truncate text-xs text-[var(--color-muted)]">{statusLine}</span>
+          <ChevronDownIcon
+            aria-hidden
+            className={`h-4 w-4 shrink-0 text-[var(--color-muted)] transition-transform ${statusOpen ? "rotate-180" : ""}`}
+          />
+        </button>
+        <div className={`flex flex-col gap-3 ${statusOpen ? "mt-2 lg:mt-0" : "max-lg:hidden"}`}>
+          <div data-component="ProjectStickyBars">
+            <JourneyBar
+              project={project}
+              action={action}
+              readiness={readiness}
+              canLead={canLead}
+              canAct={canAct}
+              onNavigate={selectTab}
+              onReveal={reveal}
+              onChangeRequest={openChange}
+            />
+          </div>
+          <LiveStatusBar project={project} board={board} runnable={runnable} ownsNextStep={false} />
+        </div>
+      </aside>
+
+      <div className="flex min-w-0 flex-col gap-4 lg:col-start-1 lg:row-start-1">
+        <BusyRegion
+          busy={refreshing}
+          label={refreshing ? "Talking to the agent…" : undefined}
+        >
+          <div className="flex flex-col gap-4">
+            {/* ── Header ─────────────────────────────────────────────── */}
+            <header
+              id="project-header"
+              data-component="ProjectHeader"
+              className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
             >
-              <button type="button" onClick={() => setAddOpen(true)} className={TOOL_BTN}>
-                Add
-              </button>
-              {canLead ? (
-                <button type="button" onClick={() => setEditOpen(true)} className={TOOL_BTN}>
-                  Edit
-                </button>
-              ) : null}
-              <button type="button" onClick={() => setSummariseOpen(true)} className={TOOL_BTN}>
-                {project.summary ? "Update summary" : "Summarise"}
-              </button>
-            </div>
-          ) : null}
-
-          {project.goal || project.usage || project.summary ? (
-            <details data-component="ProjectAbout" className="group mt-2">
-              <summary className="cursor-pointer select-none text-xs font-medium text-[var(--color-muted)]">
-                About
-              </summary>
-              {project.goal ? (
-                <p className="mt-1 text-sm text-[var(--color-muted)]">{project.goal}</p>
-              ) : null}
-              {project.usage ? <ProjectUsageLine usage={project.usage} /> : null}
-              {project.summary ? (
-                <div
-                  data-component="ProjectSummary"
-                  className="mt-2 rounded-xl bg-[var(--color-surface-2)] px-3 py-2 text-sm"
+              <div className="flex items-center gap-2">
+                <span
+                  aria-hidden
+                  className="text-lg leading-none text-[var(--color-muted)]"
                 >
-                  <p className="italic">{project.summary}</p>
-                  {project.summary_at != null ? (
-                    <p className="mt-1 text-xs text-[var(--color-muted)]">
-                      Summarised {timeLabel(project.summary_at, "ago")}
-                    </p>
-                  ) : null}
-                </div>
+                  {CADENCE_GLYPH[project.cadence]}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-sm text-[var(--color-muted)]">
+                  {meta}
+                </span>
+                <Pill tone={HEALTH_TONE[project.health]}>
+                  {HEALTH_LABEL[project.health]}
+                </Pill>
+                <ProjectLifecycleMenu
+                  project={project}
+                  callerUserId={callerUserId}
+                  isInstanceAdmin={isInstanceAdmin}
+                />
+              </div>
+              <div className="mt-1 flex">
+                <ProjectCategoryTag
+                  categories={categories}
+                  categoryId={project.category_id}
+                />
+              </div>
+
+              {project.archived ? (
+                <p className="mt-2 text-sm text-[var(--color-muted)]">
+                  This project is archived — restore it (⋯) to run it again.
+                </p>
               ) : null}
-            </details>
+            </header>
+          </div>
+        </BusyRegion>
+
+        {/* ── Tools, About, readiness: below the journey bar ─────────── */}
+        {!project.archived || project.goal || project.usage || project.summary ? (
+          <section
+            data-component="ProjectDetails"
+            aria-label="Project details"
+            className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 [&>*:first-child]:mt-0"
+          >
+            {!project.archived ? (
+              <div
+                data-component="ProjectToolbar"
+                role="toolbar"
+                aria-label="Project tools"
+                className="mt-2 flex flex-wrap gap-1.5"
+              >
+                <button type="button" onClick={() => setAddOpen(true)} className={TOOL_BTN}>
+                  Add
+                </button>
+                {canLead ? (
+                  <button type="button" onClick={() => setEditOpen(true)} className={TOOL_BTN}>
+                    Edit
+                  </button>
+                ) : null}
+                <button type="button" onClick={() => setSummariseOpen(true)} className={TOOL_BTN}>
+                  {project.summary ? "Update summary" : "Summarise"}
+                </button>
+              </div>
+            ) : null}
+
+            {project.goal || project.usage || project.summary ? (
+              <details data-component="ProjectAbout" className="group mt-2">
+                <summary className="cursor-pointer select-none text-xs font-medium text-[var(--color-muted)]">
+                  About
+                </summary>
+                {project.goal ? (
+                  <p className="mt-1 text-sm text-[var(--color-muted)]">{project.goal}</p>
+                ) : null}
+                {project.usage ? <ProjectUsageLine usage={project.usage} /> : null}
+                {project.summary ? (
+                  <div
+                    data-component="ProjectSummary"
+                    className="mt-2 rounded-xl bg-[var(--color-surface-2)] px-3 py-2 text-sm"
+                  >
+                    <p className="italic">{project.summary}</p>
+                    {project.summary_at != null ? (
+                      <p className="mt-1 text-xs text-[var(--color-muted)]">
+                        Summarised {timeLabel(project.summary_at, "ago")}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+              </details>
+            ) : null}
+
+            {!project.archived && !runnable ? (
+              <details data-component="ProjectReadinessDetails" className="mt-2">
+                <summary className="cursor-pointer select-none text-xs font-medium text-[var(--color-muted)]">
+                  Before it can run · {readiness.filter((item) => item.ok).length} of {readiness.length} ready
+                </summary>
+                <ReadinessChecklist items={readiness} findings={findings} onItem={reveal} />
+              </details>
+            ) : null}
+          </section>
+        ) : null}
+
+        <ProjectTabsNav active={group} onSelect={selectGroup} badges={tabBadges} />
+
+        <div
+          data-component="ProjectTabPanel"
+          role="tabpanel"
+          data-active-tab={tab}
+          data-active-group={group}
+          className="flex min-w-0 flex-col gap-6"
+        >
+          {sections.map((section) => {
+            const Section = TAB_COMPONENT[section];
+            return (
+              <section
+                key={section}
+                id={`project-section-${section}`}
+                data-section={section}
+                className="flex min-w-0 scroll-mt-20 flex-col gap-2"
+              >
+                {sections.length > 1 ? (
+                  <h2 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+                    {PROJECT_TAB_LABEL[section]}
+                  </h2>
+                ) : null}
+                <Section {...tabProps} />
+              </section>
+            );
+          })}
+          {group === "overview" && !project.archived ? (
+            <AskOrChangeBox project={project} onChangeRequest={openChange} />
           ) : null}
-
-          {!project.archived && !runnable ? (
-            <details data-component="ProjectReadinessDetails" className="mt-2">
-              <summary className="cursor-pointer select-none text-xs font-medium text-[var(--color-muted)]">
-                Before it can run · {readiness.filter((item) => item.ok).length} of {readiness.length} ready
-              </summary>
-              <ReadinessChecklist items={readiness} findings={findings} onItem={reveal} />
-            </details>
-          ) : null}
-        </section>
-      ) : null}
-
-      <LiveStatusBar project={project} board={board} runnable={runnable} ownsNextStep={false} />
-
-
-      {!project.archived ? (
-        <AskOrChangeBox project={project} onChangeRequest={openChange} />
-      ) : null}
-
-      <ProjectTabsNav active={tab} onSelect={selectTab} badges={tabBadges} />
-
-      <div
-        data-component="ProjectTabPanel"
-        role="tabpanel"
-        data-active-tab={tab}
-      >
-        <ActiveTab {...tabProps} />
+        </div>
       </div>
 
       {addOpen ? (

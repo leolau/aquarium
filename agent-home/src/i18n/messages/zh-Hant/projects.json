@@ -1,0 +1,40 @@
+{
+  "subtitle": "代理人長期處理的工作，按類別分組。",
+  "infoLabel": "甚麼是項目？",
+  "info": "項目可以是一份交付成果、一項定期工作或一項常駐職責。把卡片拖到另一個類別（觸控螢幕可用「移到…」）；移動後可以復原。",
+  "newProject": "新項目",
+  "loadError": "未能載入你的項目",
+  "retry": "再試一次",
+  "noMatchTitle": "沒有符合此檢視的項目",
+  "noMatchBody": "試試其他搜尋字眼，或清除篩選以查看所有項目。",
+  "clearFilters": "清除篩選",
+  "emptyTitle": "還沒有項目",
+  "emptyBody": "代理人長期處理的工作——交付成果、定期工作、常駐職責——都放在這裏。建立一個，讓代理人草擬計劃，然後在此應用程式中執行。",
+  "moveTo": "移到…",
+  "moveTitle": "把「{name}」移到…",
+  "moving": "移動中",
+  "current": "目前",
+  "cancel": "取消",
+  "uncategorized": "未分類",
+  "movedTo": "已移到 {name}",
+  "tabs": {
+    "overview": "概覽",
+    "work": "工作",
+    "files": "檔案",
+    "setup": "設定",
+    "aria": "項目分區"
+  },
+  "status": "狀態",
+  "statusAria": "項目狀態",
+  "needsYou": "{count} 項需要你處理",
+  "needsYouOne": "1 項需要你處理",
+  "wizard": {
+    "stepOf": "第 {step} 步，共 {total} 步",
+    "steps": "新項目步驟",
+    "infoLabel": "新項目怎樣運作？",
+    "info": "四個簡短步驟：目標、交付甚麼、如何執行，然後檢查一遍。建立之前，你可以返回任何已完成的步驟。",
+    "outputsInfoLabel": "甚麼算是交付成果？",
+    "outputsInfo": "每項交付成果是項目交出的一樣東西——報告、檔案或訊息。代理人會圍繞它們規劃工作，並請你逐一驗收。",
+    "subtitle": "四個簡短步驟；檢查之前不會建立任何東西。"
+  }
+}

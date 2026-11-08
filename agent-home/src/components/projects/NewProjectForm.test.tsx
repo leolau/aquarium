@@ -27,9 +27,9 @@ describe("NewProjectForm", () => {
 
   it("the step header names all four steps and marks the current one", () => {
     const html = renderToStaticMarkup(<NewProjectForm servingProfile="default" />);
-    for (const label of ["1 What", "2 Inputs", "3 How it runs", "4 Review &amp; plan"]) {
-      expect(html).toContain(label);
+    for (const label of ["What", "Inputs", "How it runs", "Review &amp; plan"]) {
+      expect(html).toContain(`<span>${label}</span>`);
     }
-    expect(html).toMatch(/aria-current="step"[^>]*>1 What/);
+    expect(html).toMatch(/aria-current="step"[^>]*><span[^>]*>1<\/span><span>What<\/span>/);
   });
 });
