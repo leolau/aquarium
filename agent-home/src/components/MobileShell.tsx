@@ -4,15 +4,16 @@ import { AppMcpBridge } from "@/components/app-mcp/AppMcpBridge";
 import { CoralHost } from "@/components/coral/CoralHost";
 import { LeadChatHost } from "@/components/coral/LeadChatHost";
 import { ProfileSwitcher } from "@/components/ProfileSwitcher";
+import { PageHeader } from "@/components/shell/PageHeader";
+import { ShellTopBar } from "@/components/shell/ShellTopBar";
 import { ShellFrame } from "@/components/ShellFrame";
-import { ActivityStrip } from "@/components/ui/ActivityStrip";
-import { StatusStrip } from "@/components/ui/StatusStrip";
 import { getPrincipal } from "@/lib/auth/principal";
 import { readSession } from "@/lib/auth/session";
 import { HermesApiClient } from "@/lib/api/client";
 import { activeEnrolments } from "@/lib/api/my-profiles";
 import { storageConfigured } from "@/lib/env";
 import { getHiddenApps } from "@/lib/nav/hidden-apps";
+import type { Crumb } from "@/lib/nav/route-trail";
 import type { ProfileSummary, TodosFacets } from "@/types";
 
 // Cache the facets call for 30s so every page render doesn't hit the backend
@@ -73,6 +74,10 @@ export async function MobileShell({
   fill = false,
   actions,
   bare = false,
+  subtitle,
+  info,
+  back,
+  labels,
 }: {
   title: string;
   children: ReactNode;
@@ -85,6 +90,14 @@ export async function MobileShell({
   /** Full-width page that brings its own top bar (the landing page): no
    * header, no status/activity strips, no centred column. Coral stays. */
   bare?: boolean;
+  /** One-line explanation under the title. */
+  subtitle?: ReactNode;
+  /** Tap-to-open tip next to the title (`InfoTip`). */
+  info?: ReactNode;
+  /** Override the logical parent Back target (default: route table). */
+  back?: Crumb;
+  /** Breadcrumb label overrides by href (e.g. the project's name). */
+  labels?: Record<string, string>;
 }) {
   // The badge count: one cached facets call per 30s.  The session is
   // resolved outside the cache so cookies() isn't called inside it, and
@@ -93,10 +106,12 @@ export async function MobileShell({
   let hiddenApps: string[] = [];
   let enrolments: ProfileSummary[] = [];
   let sessionProfile = "default";
+  let accountName: string | null = null;
   if (showCoral) {
     try {
       const principal = await getPrincipal();
       if (principal) {
+        accountName = principal.display || null;
         const session = await readSession();
         hiddenApps = await getHiddenApps(principal, session?.hermesToken);
         sessionProfile = session?.profile ?? sessionProfile;
@@ -129,36 +144,48 @@ export async function MobileShell({
       </div>
     );
   }
+  if (!showCoral) {
+    return (
+      <ShellFrame
+        title={title}
+        wide={wide}
+        fill={fill}
+        headerEnd={actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
+      >
+        {children}
+      </ShellFrame>
+    );
+  }
   return (
     <ShellFrame
       title={title}
       wide={wide}
       fill={fill}
-      clearLauncher={showCoral}
-      headerEnd={
-        enrolments.length > 1 || actions ? (
-          <div className="flex min-w-0 items-center gap-2">
-            <ProfileSwitcher profiles={enrolments} current={sessionProfile} />
-            {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
-          </div>
-        ) : null
-      }
-      belowHeader={
-        showCoral ? (
-          <>
-            <StatusStrip />
-            <ActivityStrip />
-          </>
-        ) : null
+      clearLauncher
+      topBar={<ShellTopBar accountName={accountName} />}
+      pageHeader={
+        <PageHeader
+          title={title}
+          subtitle={subtitle}
+          info={info}
+          back={back}
+          labels={labels}
+          actions={
+            enrolments.length > 1 || actions ? (
+              <>
+                <ProfileSwitcher profiles={enrolments} current={sessionProfile} />
+                {actions}
+              </>
+            ) : null
+          }
+        />
       }
       overlays={
-        showCoral ? (
-          <>
-            <CoralHost badgeCounts={badgeCounts} hiddenApps={hiddenApps} />
-            <LeadChatHost storageEnabled={storageConfigured()} />
-            <AppMcpBridge />
-          </>
-        ) : null
+        <>
+          <CoralHost badgeCounts={badgeCounts} hiddenApps={hiddenApps} />
+          <LeadChatHost storageEnabled={storageConfigured()} />
+          <AppMcpBridge />
+        </>
       }
     >
       {children}
