@@ -2,6 +2,9 @@
 
 import { useState } from "react";
 
+import { authField, authLabel, authLink, authSecondary } from "@/components/auth/styles";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import { Spinner } from "@/components/ui/Spinner";
 import { useT } from "@/i18n";
 import { useAction } from "@/lib/use-action";
 
@@ -44,14 +47,18 @@ export function ResetRequestForm({ profile }: { profile?: string } = {}) {
 
   if (!open) {
     return (
-      <button
-        data-component="ResetRequestToggle"
-        type="button"
-        onClick={() => setOpen(true)}
-        className="text-xs text-[var(--color-muted)] underline"
-      >
-        {t("cantSignIn")}
-      </button>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-xs">
+        <button
+          data-component="ResetRequestToggle"
+          type="button"
+          aria-expanded={false}
+          onClick={() => setOpen(true)}
+          className={`${authLink} min-h-11 text-sm lg:min-h-0`}
+        >
+          {t("cantSignIn")}
+        </button>
+        <span className="text-[var(--color-muted)]">{t("noAccount")}</span>
+      </div>
     );
   }
 
@@ -59,32 +66,45 @@ export function ResetRequestForm({ profile }: { profile?: string } = {}) {
     <form
       data-component="ResetRequestForm"
       onSubmit={(e) => void submitOnce(e)}
-      className="mt-4 flex flex-col gap-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
+      aria-busy={busy}
+      className="flex flex-col gap-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg)] p-4"
     >
-      <p className="text-xs text-[var(--color-muted)]">
-        {t("resetIntro")}
-      </p>
-      <input
-        type="email"
-        required
-        aria-label={t("resetEmailLabel")}
-        placeholder="email@example.com"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
-      />
-      <button
-        type="submit"
-        disabled={busy}
-        className="rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-xs disabled:opacity-50"
-      >
-        {busy ? t("sending") : t("requestLink")}
+      <h2 className="text-sm font-semibold">{t("cantSignIn")}</h2>
+      <p className="text-xs text-[var(--color-muted)]">{t("resetIntro")}</p>
+      <label className={authLabel}>
+        {t("resetEmailLabel")}
+        <input
+          type="email"
+          required
+          autoComplete="email"
+          readOnly={busy}
+          placeholder="email@example.com"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className={authField}
+        />
+      </label>
+      <button type="submit" disabled={busy} className={authSecondary}>
+        {busy ? (
+          <>
+            <Spinner /> {t("sending")}
+          </>
+        ) : (
+          t("requestLink")
+        )}
       </button>
-      {sent ? (
-        <p className="text-xs text-[var(--color-muted)]">
-          {t("resetSent")}
-        </p>
-      ) : null}
+      {sent ? <InlineAlert tone="info">{t("resetSent")}</InlineAlert> : null}
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => {
+          setOpen(false);
+          setSent(false);
+        }}
+        className={`${authLink} w-fit text-sm`}
+      >
+        {t("backToSignIn")}
+      </button>
     </form>
   );
 }

@@ -1,9 +1,8 @@
 import { redirect } from "next/navigation";
 
+import { AuthCard, AuthIllustration, AuthLayout } from "@/components/auth/AuthLayout";
 import { ResetRequestForm } from "@/components/auth/ResetRequestForm";
-import { LanguageSwitch } from "@/components/LanguageSwitch";
 import { LoginForm, type ProviderOption } from "@/components/LoginForm";
-import { MobileShell } from "@/components/MobileShell";
 import { getT } from "@/i18n/server";
 import { HermesApiClient, HermesApiError } from "@/lib/api/client";
 import { getPrincipal } from "@/lib/auth/principal";
@@ -36,14 +35,18 @@ export default async function LoginPage({
   const profile = (await searchParams).profile?.trim() || undefined;
 
   return (
-    <MobileShell title={t("title")} showCoral={false} actions={<LanguageSwitch />}>
-      <p className="mb-6 text-sm text-[var(--color-muted)]">{t("intro")}</p>
-      <LoginForm providers={providers} profile={profile} />
-      {/* Self-service recovery: a locked-out user cannot sign in to ask, and
-       * nobody hands out temporary passwords by hand any more. */}
-      <div className="mt-4">
+    <AuthLayout component="LoginPage">
+      <AuthCard className="gap-5">
+        <div className="flex flex-col gap-3">
+          <AuthIllustration name="welcome" className="self-start" />
+          <h1 className="text-[26px] font-semibold tracking-tight lg:text-3xl">{t("title")}</h1>
+          <p className="text-sm text-[var(--color-muted)]">{t("intro")}</p>
+        </div>
+        <LoginForm providers={providers} profile={profile} />
+        {/* Self-service recovery: a locked-out user cannot sign in to ask, and
+         * nobody hands out temporary passwords by hand any more. */}
         <ResetRequestForm profile={profile} />
-      </div>
-    </MobileShell>
+      </AuthCard>
+    </AuthLayout>
   );
 }

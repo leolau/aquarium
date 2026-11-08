@@ -2,8 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import { AuthCard, AuthIllustration } from "@/components/auth/AuthLayout";
+
 import { TwoFactorSetup } from "@/components/account/TwoFactorSetup";
+import { AquariumLoader } from "@/components/brand/AquariumLoader";
 import { LanguageSwitch } from "@/components/LanguageSwitch";
+import { CopyButton } from "@/components/skills/CopyButton";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import { CheckIcon } from "@/components/ui/icons";
 import { Spinner } from "@/components/ui/Spinner";
 import { errorMessage, sendJson } from "@/components/users/api";
 import { useT, type Translator } from "@/i18n";
@@ -94,7 +100,7 @@ export function passwordStrength(password: string): 0 | 1 | 2 | 3 {
   return Math.min(score, 3) as 0 | 1 | 2 | 3;
 }
 
-const STRENGTH_COLOURS = ["#ef4444", "#f59e0b", "#eab308", "#10b981"];
+const STRENGTH_COLOURS = ["var(--color-danger)", "var(--color-warn)", "var(--color-warn-text)", "var(--color-success)"];
 
 function browserTimezone(): string {
   try {
@@ -116,14 +122,14 @@ type Phase = "checking" | "invalid" | "form" | "twoFactor" | "done";
 type ModelState = { kind: "idle" } | { kind: "ok"; seconds: string; model: string } | { kind: "bad"; key: string | null; detail?: string };
 type DomainState = { kind: "idle" } | { kind: "result"; result: SetupDomainResult } | { kind: "error"; message: string };
 
-const card = "rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4";
-const field = "w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-text)]";
-const label = "flex flex-col gap-1.5 text-sm";
-const btn = "inline-flex items-center justify-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60";
-const primary = "inline-flex items-center justify-center gap-2 rounded-lg bg-[var(--color-accent)] px-3 py-2 text-sm font-medium text-[var(--color-accent-fg)] disabled:cursor-not-allowed disabled:opacity-60";
-const okBox = "rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300";
-const badBox = "rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300";
-const warnBox = "rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-[var(--color-warn-text)]";
+const card = "rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4 lg:p-5";
+const field = "min-h-11 w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-text)] read-only:opacity-70 focus:border-[var(--color-accent)] focus:outline-none";
+const label = "flex flex-col gap-1.5 text-sm font-medium";
+const btn = "inline-flex min-h-11 items-center justify-center gap-2 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60";
+const primary = "inline-flex min-h-11 items-center justify-center gap-2 rounded-[var(--radius-lg)] bg-[var(--color-accent)] px-3 py-2 text-sm font-medium text-[var(--color-accent-fg)] disabled:cursor-not-allowed disabled:opacity-60";
+const okBox = "rounded-[var(--radius-lg)] border border-[var(--color-success)] bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[var(--color-success)]";
+const badBox = "rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[var(--color-danger)]";
+const warnBox = "rounded-[var(--radius-lg)] border border-[var(--color-warn)] bg-[var(--color-attention-bg)] px-3 py-2 text-sm text-[var(--color-warn-text)]";
 
 /**
  * First-run setup from the link `hermes setup-link` prints (P2 screen 1):
@@ -160,6 +166,8 @@ export function SetupOwnerForm({
   const [error, setError] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  const [current, setCurrent] = useState("s1");
+  const [invalidStep, setInvalidStep] = useState<string | null>(null);
 
   useEffect(() => {
     const found = tokenFromHash(window.location.hash);
@@ -240,6 +248,30 @@ export function SetupOwnerForm({
     }
   }
 
+  /** Steps are buttons: scroll in place and move focus, never touch the fragment. */
+  function goToStep(id: string) {
+    setCurrent(id);
+    const el = document.getElementById(id);
+    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    el?.focus({ preventScroll: true });
+  }
+
+  useEffect(() => {
+    if (phase !== "form" || typeof IntersectionObserver === "undefined") return;
+    const sections = Array.from(document.querySelectorAll<HTMLElement>("[data-setup-step]"));
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const top = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+        if (top) setCurrent(top.target.id);
+      },
+      { rootMargin: "-20% 0px -60% 0px" },
+    );
+    sections.forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, [phase, steps]);
+
   function openGetReady() {
     setPassword("");
     setConfirm("");
@@ -251,10 +283,12 @@ export function SetupOwnerForm({
     evt.preventDefault();
     if (finishing) return;
     setError(null);
+    setInvalidStep(null);
     const problem = setupFormError(email, password, confirm, t);
     if (problem) {
       setError(problem);
-      document.getElementById("s1")?.scrollIntoView({ behavior: "smooth" });
+      setInvalidStep("s1");
+      goToStep("s1");
       return;
     }
     setFinishing(true);
@@ -287,40 +321,49 @@ export function SetupOwnerForm({
 
   if (phase === "checking") {
     return (
-      <p data-component="SetupChecking" aria-busy="true" className="text-sm text-[var(--color-muted)]">
-        {t("checking")}
-      </p>
+      <AuthCard component="SetupChecking" className="mx-auto w-full max-w-[420px] items-center gap-3 text-center">
+        <div aria-busy="true" className="flex flex-col items-center gap-3">
+          <AquariumLoader size={56} label={t("checking")} />
+          <p className="text-sm text-[var(--color-muted)]">{t("checking")}</p>
+        </div>
+      </AuthCard>
     );
   }
   if (phase === "invalid") {
     const [before, after = ""] = t("invalidHelp").split("{command}");
     return (
-      <div className="flex flex-col gap-4">
-        <LanguageSwitch />
-        <div data-component="SetupInvalid" role="alert" className={`${card} text-sm`}>
+      <AuthCard component="SetupInvalid" className="mx-auto w-full max-w-[420px] gap-4 text-sm">
+        <div role="alert" className="flex flex-col gap-3">
+          <AuthIllustration name="lostFish" className="self-start" />
+          <h1 className="text-[26px] font-semibold tracking-tight">{t("invalidTitle")}</h1>
           <p>{t("invalid")}</p>
-          <p className="mt-2 text-[var(--color-muted)]">
+          <p className="text-[var(--color-muted)]">
             {before}
             <code className="font-mono">hermes setup-link</code>
             {after}
           </p>
         </div>
-      </div>
+        <div className="flex min-w-0 items-center gap-2 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg)] p-2 pl-3">
+          <code className="min-w-0 flex-1 truncate font-mono text-sm">hermes setup-link</code>
+          <CopyButton text="hermes setup-link" label={t("copyCommand")} className={btn} />
+        </div>
+      </AuthCard>
     );
   }
   if (phase === "done") {
     return (
-      <div data-component="SetupDone" className={`${card} text-sm`}>
-        <p>{t("done")}</p>
-        <a href="/login" className={`${primary} mt-3`}>
+      <AuthCard component="SetupDone" className="mx-auto w-full max-w-[420px] gap-4 text-sm">
+        <AuthIllustration name="welcome" className="self-start" />
+        <InlineAlert tone="success">{t("done")}</InlineAlert>
+        <a href="/login" className={`${primary} w-full`}>
           {t("signIn")}
         </a>
-      </div>
+      </AuthCard>
     );
   }
   if (phase === "twoFactor") {
     return (
-      <section data-component="SetupTwoFactor" className={`${card} mx-auto flex w-full max-w-2xl flex-col gap-3 text-sm`}>
+      <section data-component="SetupTwoFactor" className={`${card} mx-auto flex w-full max-w-2xl flex-col gap-3 text-sm lg:p-8`}>
         <h2 className="text-base font-semibold">{t("s2_t")}</h2>
         <p className="text-xs text-[var(--color-muted)]">{ta("s2Desc")}</p>
         {leaving ? (
@@ -343,6 +386,15 @@ export function SetupOwnerForm({
     );
   }
 
+  const stepClass = (id: string) =>
+    `${card} flex scroll-mt-6 flex-col gap-3 focus:outline-none ${
+      id === invalidStep
+        ? "border-[var(--color-danger)]"
+        : id === current
+          ? "lg:border-[var(--color-accent)]"
+          : ""
+    }`;
+
   const rail: { id: string; key: string; done: boolean }[] = [
     { id: "s1", key: "r1", done: ownerDone },
     { id: "s2", key: "r2", done: false },
@@ -362,44 +414,64 @@ export function SetupOwnerForm({
       data-component="SetupOwnerForm"
       onSubmit={(e) => void finishOnce(e)}
       aria-busy={finishing}
-      className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-6"
+      className="grid min-w-0 gap-4 lg:grid-cols-[184px_minmax(0,1fr)] lg:gap-7"
     >
-      <nav aria-label={t("steps")} className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 lg:sticky lg:top-20 lg:flex-col lg:self-start lg:overflow-visible">
-        {rail.map((r, i) => (
-          <a
-            key={r.id}
-            href={`#${r.id}`}
-            onClick={(e) => {
-              // Scroll in place: changing the fragment would fire hashchange.
-              e.preventDefault();
-              document.getElementById(r.id)?.scrollIntoView({ behavior: "smooth", block: "start" });
-            }}
-            className={`flex shrink-0 items-center gap-2 rounded-full border px-3 py-1.5 text-xs lg:rounded-lg lg:text-sm ${
-              r.done ? "border-[var(--color-success)] text-[var(--color-success)]" : "border-[var(--color-border)] text-[var(--color-muted)]"
-            }`}
-          >
-            <span
-              className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold ${
-                r.done ? "bg-[var(--color-success)] text-[var(--color-bg)]" : "bg-[var(--color-surface-2)] text-[var(--color-text)]"
-              }`}
-            >
-              {r.done ? "✓" : i + 1}
-            </span>
-            {t(r.key)}
-          </a>
-        ))}
-      </nav>
+      <div className="flex min-w-0 flex-col gap-3 lg:sticky lg:top-6 lg:self-start">
+        <AuthIllustration name="welcome" className="hidden lg:block lg:h-[100px]" />
+        <p className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+          <span className="lg:hidden">{t("stepOf", { n: Math.max(1, rail.findIndex((r) => r.id === current) + 1), total: rail.length })}</span>
+          <span className="hidden lg:inline">{t("steps")}</span>
+        </p>
+        <nav aria-label={t("steps")} className="flex flex-wrap gap-2 lg:flex-col">
+          {rail.map((r, i) => {
+            const isCurrent = r.id === current;
+            const isInvalid = r.id === invalidStep;
+            return (
+              <button
+                key={r.id}
+                type="button"
+                data-action="setup-step"
+                aria-current={isCurrent ? "step" : undefined}
+                onClick={() => goToStep(r.id)}
+                className={`flex min-h-11 shrink-0 items-center gap-2 rounded-[var(--radius-full)] border px-3 text-left text-xs lg:rounded-[var(--radius-lg)] lg:text-sm ${
+                  isInvalid
+                    ? "border-[var(--color-danger)] text-[var(--color-text)]"
+                    : isCurrent
+                      ? "border-[var(--color-accent)] bg-[var(--color-surface-2)] text-[var(--color-text)]"
+                      : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-muted)]"
+                }`}
+              >
+                <span
+                  aria-hidden="true"
+                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${
+                    r.done
+                      ? "bg-[var(--color-success)] text-[var(--color-bg)]"
+                      : isCurrent
+                        ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]"
+                        : "bg-[var(--color-surface-2)] text-[var(--color-text)]"
+                  }`}
+                >
+                  {r.done ? <CheckIcon size={14} /> : i + 1}
+                </span>
+                {t(r.key)}
+                {r.done ? <span className="sr-only">({t("stepDone")})</span> : null}
+              </button>
+            );
+          })}
+        </nav>
+        <p className="hidden text-xs text-[var(--color-muted)] lg:block">{t("stepsHelp")}</p>
+      </div>
 
       <div className="flex min-w-0 flex-col gap-4">
-        <div className="flex flex-col gap-1">
-          <h2 className="text-lg font-semibold">{t("title")}</h2>
+        <div className="flex flex-col gap-2">
+          <h1 className="text-[26px] font-semibold tracking-tight lg:text-3xl">{t("title")}</h1>
           <p className="text-sm text-[var(--color-muted)]">
             {steps ? t("setup_intro") : t("reset_intro")}
           </p>
         </div>
 
-        <section id="s1" className={`${card} flex scroll-mt-20 flex-col gap-3`}>
-          <h3 className="font-semibold">{t("s1_t")}</h3>
+        <section id="s1" data-setup-step tabIndex={-1} className={stepClass("s1")}>
+          <StepHead title={t("s1_t")} done={ownerDone} doneLabel={t("stepDone")} />
           <p className="text-xs text-[var(--color-muted)]">{t("s1_d")}</p>
           <div className="grid gap-3 md:grid-cols-2">
             <label className={`${label} md:col-span-2 md:max-w-[calc(50%-0.375rem)]`}>
@@ -456,8 +528,8 @@ export function SetupOwnerForm({
           </div>
         </section>
 
-        <section id="s2" className={`${card} flex scroll-mt-20 flex-col gap-3`}>
-          <h3 className="font-semibold">{t("s2_t")}</h3>
+        <section id="s2" data-setup-step tabIndex={-1} className={stepClass("s2")}>
+          <StepHead title={t("s2_t")} />
           <p className="text-xs text-[var(--color-muted)]">{t("s2_d")}</p>
           <p data-component="TwoFactorLater" className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm">
             {t("s2_after")}
@@ -466,8 +538,8 @@ export function SetupOwnerForm({
 
         {steps ? (
           <>
-            <section id="s3" className={`${card} flex scroll-mt-20 flex-col gap-3`} aria-busy={modelBusy}>
-              <h3 className="font-semibold">{t("s3_t")}</h3>
+            <section id="s3" data-setup-step tabIndex={-1} className={stepClass("s3")} aria-busy={modelBusy}>
+              <StepHead title={t("s3_t")} done={model.kind === "ok"} doneLabel={t("stepDone")} />
               <p className="text-xs text-[var(--color-muted)]">{t("s3_d")}</p>
               <div className="grid gap-3 md:grid-cols-2">
                 <label className={label}>
@@ -531,8 +603,8 @@ export function SetupOwnerForm({
               <p className="text-xs text-[var(--color-muted)]">{t("s3_skip")}</p>
             </section>
 
-            <section id="s4" className={`${card} flex scroll-mt-20 flex-col gap-3`}>
-              <h3 className="font-semibold">{t("s4_t")}</h3>
+            <section id="s4" data-setup-step tabIndex={-1} className={stepClass("s4")}>
+              <StepHead title={t("s4_t")} />
               <div className="grid gap-3 md:grid-cols-2">
                 <label className={label}>
                   {t("tz")}
@@ -560,8 +632,8 @@ export function SetupOwnerForm({
               </div>
             </section>
 
-            <section id="s5" className={`${card} flex scroll-mt-20 flex-col gap-3`} aria-busy={domainBusy}>
-              <h3 className="font-semibold">{t("s5_t")}</h3>
+            <section id="s5" data-setup-step tabIndex={-1} className={stepClass("s5")} aria-busy={domainBusy}>
+              <StepHead title={t("s5_t")} done={domain.kind === "result" && domain.result.points_here} doneLabel={t("stepDone")} />
               <p className="text-xs text-[var(--color-muted)]">{t("s5_d")}</p>
               <label className={label}>
                 {t("addr")}
@@ -632,5 +704,20 @@ export function SetupOwnerForm({
         </div>
       </div>
     </form>
+  );
+}
+
+/** A step's numbered title with its status pill (Figma `section-card` 16:207). */
+function StepHead({ title, done = false, doneLabel }: { title: string; done?: boolean; doneLabel?: string }) {
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-2">
+      <h2 className="text-base font-semibold lg:text-lg">{title}</h2>
+      {done ? (
+        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--color-success)]">
+          <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[var(--color-success)]" />
+          {doneLabel}
+        </span>
+      ) : null}
+    </div>
   );
 }

@@ -12,13 +12,17 @@ vi.mock("@/i18n/server", async () => {
 });
 
 import NotFound from "@/app/not-found";
+import { AuthLayout } from "@/components/auth/AuthLayout";
+import { MobileShell } from "@/components/MobileShell";
 
 describe("app/not-found", () => {
-  it("renders the shell without the launcher for a signed-out visitor", async () => {
-    const shell = (await NotFound()) as ReactElement<{ showCoral: boolean; title: string }>;
-    expect(shell.props.showCoral).toBe(false);
-    expect(shell.props.title).toBe("Page not found");
-    const html = renderToStaticMarkup((shell.props as unknown as { children: ReactElement }).children);
+  it("gives a signed-out visitor the auth layout (no launcher) and Sign in", async () => {
+    const page = (await NotFound()) as ReactElement<{ children: ReactElement }>;
+    expect(page.type).toBe(AuthLayout);
+    expect(page.type).not.toBe(MobileShell);
+    const html = renderToStaticMarkup(page.props.children);
     expect(html).toContain('data-kind="notFound"');
+    expect(html).toContain('href="/login"');
+    expect(html).not.toContain("Or jump to");
   });
 });

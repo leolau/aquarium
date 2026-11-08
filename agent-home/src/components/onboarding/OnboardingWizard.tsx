@@ -14,7 +14,7 @@ import type { OnboardingItem, OnboardingReadinessResponse } from "@/types";
 function ItemRow({ item }: { item: OnboardingItem }) {
   return (
     <li data-component="OnboardingItemRow">
-      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+      <div className="rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4 lg:p-5">
         <div className="flex flex-wrap items-center gap-2">
           <span aria-hidden>{item.met ? "✓" : "○"}</span>
           <span className="font-medium">{item.label}</span>
@@ -49,7 +49,7 @@ export function OnboardingWizard({
 
   return (
     <div data-component="OnboardingWizard" className="flex flex-col gap-4">
-      <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+      <section className="rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4 lg:p-5">
         <div className="flex items-center justify-between gap-3">
           <span className="text-3xl font-semibold">{readiness.score_pct}%</span>
           <Pill tone={readiness.ready_for_prod ? "success" : "warning"}>
@@ -58,7 +58,7 @@ export function OnboardingWizard({
         </div>
         <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-[var(--color-surface-2)]">
           <div
-            className="h-full bg-emerald-500"
+            className="h-full bg-[var(--color-success)] transition-[width]"
             style={{ width: `${readiness.score_pct}%` }}
           />
         </div>

@@ -1,6 +1,6 @@
 {
   "title": "登入",
-  "intro": "請用你的 Hermes 帳戶登入，打開你的助理主頁。",
+  "intro": "請用你的 Aquarium 帳戶登入，打開你的助理主頁。",
   "provider": "登入方式",
   "username": "電郵／用戶名稱",
   "password": "密碼",
@@ -16,5 +16,12 @@
   "requestLink": "索取連結",
   "resetSent": "如果這個地址已在此登記，管理員現已收到相關連結。",
   "suspended": "你在所有設定檔的存取權已被暫停。請聯絡管理員恢復。",
-  "noPrincipal": "你已登入，但尚未加入這裡的任何設定檔。請聯絡管理員把你加入。"
+  "noPrincipal": "你已登入，但尚未加入這裡的任何設定檔。請聯絡管理員把你加入。",
+  "signInWith": "登入方式",
+  "tabEmail": "電郵",
+  "tabUsername": "用戶名稱",
+  "email": "電郵",
+  "usernameOnly": "用戶名稱",
+  "noAccount": "未有帳戶？請向擁有人索取邀請連結。",
+  "backToSignIn": "返回登入"
 }

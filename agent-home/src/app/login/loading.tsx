@@ -1,17 +1,17 @@
-import { MobileShell } from "@/components/MobileShell";
-import { PageSkeleton } from "@/components/ui/PageSkeleton";
+import { AuthLayout } from "@/components/auth/AuthLayout";
+import { RouteLoading } from "@/components/ui/RouteLoading";
 
 /**
  * Route-level loading UI for **Sign in**.
  *
- * Present so the sign-in route doesn't fall through to the root skeleton —
- * a signed-out visitor should never see the app shell flash before the
- * login form.
+ * Present so this signed-out route doesn't fall through to the root loader —
+ * a signed-out visitor should never see the app shell or launcher flash
+ * before the form. Same auth layout as the page, loader only.
  */
 export default function Loading() {
   return (
-    <MobileShell title="Sign in" showCoral={false}>
-      <PageSkeleton rows={1} label="Loading sign in…" />
-    </MobileShell>
+    <AuthLayout>
+      <RouteLoading />
+    </AuthLayout>
   );
 }

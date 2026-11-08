@@ -28,10 +28,10 @@ describe("setup step rail", () => {
     render(<SetupOwnerForm />);
     await act(async () => {});
     const rail = screen.getByRole("navigation");
-    const link = rail.querySelector("a")!;
-    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
-    link.dispatchEvent(click);
-    expect(click.defaultPrevented).toBe(true);
+    const step = rail.querySelector("button")!;
+    expect(step.getAttribute("type")).toBe("button");
+    expect(rail.querySelector("a[href^='#']")).toBeNull();
+    act(() => step.click());
     expect(window.location.hash).toBe("");
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
   });

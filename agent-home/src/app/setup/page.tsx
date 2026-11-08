@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 
 import { SetupOwnerForm } from "@/components/auth/SetupOwnerForm";
-import { MobileShell } from "@/components/MobileShell";
-import { getT } from "@/i18n/server";
+import { AuthLayout } from "@/components/auth/AuthLayout";
 import { HermesApiClient } from "@/lib/api/client";
 
 /**
@@ -21,7 +20,6 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 export default async function Page() {
-  const t = await getT("setup");
   // The sign-in provider "Finish setup" uses; an unreachable API still lets the
   // owner be created (they then sign in from /login).
   const providers = await new HermesApiClient()
@@ -29,8 +27,8 @@ export default async function Page() {
     .then((res) => res.providers)
     .catch(() => []);
   return (
-    <MobileShell title={t("title")} showCoral={false} wide>
+    <AuthLayout wide component="SetupPage">
       <SetupOwnerForm providers={providers} />
-    </MobileShell>
+    </AuthLayout>
   );
 }

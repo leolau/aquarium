@@ -2,6 +2,9 @@ import Link from "next/link";
 
 import { SwitchToProfileButton } from "@/components/SwitchToProfileButton";
 import { MobileShell } from "@/components/MobileShell";
+import { edgeCard, edgeGhost, edgePrimary, edgeSecondary } from "@/components/ui/edgeStyles";
+import { Pill } from "@/components/ui/Pill";
+import { getT } from "@/i18n/server";
 import { activeEnrolments } from "@/lib/api/my-profiles";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
 import { readSession } from "@/lib/auth/session";
@@ -13,10 +16,12 @@ export const dynamic = "force-dynamic";
  * Shown in place of a whole-box page while the session works in another
  * profile (FG-28 B3; `lib/nav/profile-gate.ts`). The
  * middleware rewrites the request here, so the address bar keeps the URL and
- * switching back to the default profile re-renders the real page.
+ * switching back to the default profile re-renders the real page. Open chat
+ * stays in the current profile; Switch locks until the refreshed page lands.
  */
 export default async function Page() {
   await requirePrincipal();
+  const t = await getT("edge");
   const profile = (await readSession())?.profile ?? ACTING_PROFILE;
   let canSwitchBack = false;
   try {
@@ -28,27 +33,32 @@ export default async function Page() {
     // Offer only the chat link; the header switcher still lists the profiles.
   }
   return (
-    <MobileShell title="Default profile only">
-      <section
-        data-component="DefaultProfileOnly"
-        className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-center"
-      >
-        <p className="text-base font-medium">
-          This page is available in the default profile only.
+    <MobileShell title={t("dpoTitle")}>
+      <section data-component="DefaultProfileOnly" className={edgeCard}>
+        <Pill tone="accent">{t("dpoPill")}</Pill>
+        <h2 className="mt-1 text-xl font-semibold">{t("dpoHeading")}</h2>
+        <p className="max-w-[460px] text-sm text-[var(--color-muted)]">
+          {t("dpoBodyBefore")}
+          <strong className="text-[var(--color-text)]">{profile}</strong>
+          {t("dpoBodyAfter")}
         </p>
-        <p className="mt-2 text-sm text-[var(--color-muted)]">
-          You&apos;re working in <strong>{profile}</strong>. This page manages the whole box
-          (files, capacity, upgrades), not one profile, so it opens in the default profile.
-        </p>
-        <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-          <Link
-            href="/chat"
-            className="inline-block rounded-lg bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent-fg)]"
-          >
-            Open chat
+        <div className="mt-2 flex w-full flex-wrap items-center justify-center gap-2">
+          {canSwitchBack ? (
+            <SwitchToProfileButton
+              profile={ACTING_PROFILE}
+              label={t("dpoSwitch")}
+              busyLabel={t("dpoSwitching")}
+              className={edgePrimary}
+            />
+          ) : null}
+          <Link href="/chat" className={canSwitchBack ? edgeSecondary : edgePrimary}>
+            {t("dpoOpenChat")}
           </Link>
-          {canSwitchBack ? <SwitchToProfileButton profile={ACTING_PROFILE} /> : null}
+          <Link href="/" data-action="back" className={edgeGhost}>
+            {t("goBack")}
+          </Link>
         </div>
+        {canSwitchBack ? <p className="text-xs text-[var(--color-muted)]">{t("dpoNote")}</p> : null}
       </section>
     </MobileShell>
   );

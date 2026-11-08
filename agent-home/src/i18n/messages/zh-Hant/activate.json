@@ -1,0 +1,22 @@
+{
+  "title": "啟用你的帳戶",
+  "intro": "請設定最少 {min} 個字元的密碼。這條連結只能使用一次，而且很快失效——如已失效，請向你所屬設定檔的管理員索取新連結。",
+  "newPassword": "新密碼",
+  "confirmPassword": "確認密碼",
+  "hint": "最少 {min} 個字元。用一句容易記住的短句就很好。",
+  "tooShort": "請使用最少 {min} 個字元。",
+  "mismatch": "兩次輸入的密碼不一致。",
+  "match": "✓ 密碼一致",
+  "setPassword": "設定密碼",
+  "setting": "正在設定…",
+  "alreadySet": "已經設定好？",
+  "signInInstead": "直接登入。",
+  "network": "未能連接 Aquarium。請檢查網絡連線後再試。",
+  "doneTitle": "一切就緒",
+  "done": "你的密碼已設定，帳戶已開通。",
+  "signIn": "登入",
+  "unusableTitle": "這條連結無法使用",
+  "unusableBody": "連結可能已過期、已被使用，或已被較新的連結取代。請向你所屬設定檔的管理員索取新連結。",
+  "unusableWhy": "為保障安全，我們不會說明是哪一種情況——所有無法使用的連結都會顯示同一句訊息。",
+  "goToSignIn": "前往登入"
+}

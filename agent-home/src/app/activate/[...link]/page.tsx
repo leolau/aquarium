@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { ActivateForm } from "@/components/auth/ActivateForm";
-import { MobileShell } from "@/components/MobileShell";
+import { AuthCard, AuthLayout } from "@/components/auth/AuthLayout";
 import { parseActivationLink } from "@/lib/auth/activation-link";
 
 /**
@@ -25,8 +25,8 @@ export const dynamic = "force-dynamic";
  * refuses two differently named dynamic segments at the same level).
  * **Unauthenticated on purpose**: somebody setting their
  * first password has no session yet, and the invitation is what authorises
- * them. The Coral launcher is hidden (`showCoral={false}`) because there is nothing else
- * they can reach yet.
+ * them. It uses the signed-out auth layout (no launcher) because there is nothing
+ * else they can reach yet.
  *
  * The page renders the form without asking the server whether the token is
  * valid. A pre-flight check would answer "does this token exist?" to anybody
@@ -41,8 +41,10 @@ export default async function Page({
   const link = parseActivationLink((await params).link.map(decodeURIComponent));
   if (!link) notFound();
   return (
-    <MobileShell title="Activate your account" showCoral={false}>
-      <ActivateForm token={link.token} profile={link.profile} />
-    </MobileShell>
+    <AuthLayout component="ActivatePage">
+      <AuthCard>
+        <ActivateForm token={link.token} profile={link.profile} />
+      </AuthCard>
+    </AuthLayout>
   );
 }
