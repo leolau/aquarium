@@ -11993,6 +11993,7 @@ async def session_chat(session_id: str, request: Request):
                         conversation_history=history,
                         session_id=sid,
                         principal=principal,
+                        auto_title_db_factory=lambda: _open_session_db_for_profile(profile),
                     )
             finally:
                 run_db.close()
@@ -12489,6 +12490,7 @@ async def session_chat_stream(session_id: str, request: Request):
                         tool_complete_callback=_tool_complete,
                         on_agent_ready=_agent_ready,
                         principal=principal,
+                        auto_title_db_factory=lambda: _open_session_db_for_profile(profile),
                     )
             finally:
                 run_db.close()

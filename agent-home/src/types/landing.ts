@@ -110,3 +110,22 @@ export interface DismissPinSuggestionsRequest {
   sessionIds: string[];
   profile?: string;
 }
+
+/** GET /api/chat/sessions/rename?sessionId=&profile= — one conversation's title. */
+export interface SessionTitleResponse {
+  session_id: string;
+  /** null while untitled; the agent auto-titles a few seconds after the first reply. */
+  title: string | null;
+}
+
+/** PATCH /api/chat/sessions/rename { sessionId, title, profile? } — empty title clears it. */
+export interface RenameSessionRequest {
+  sessionId: string;
+  title: string;
+  profile?: string;
+}
+
+export interface RenameSessionResponse {
+  ok: boolean;
+  title: string;
+}
