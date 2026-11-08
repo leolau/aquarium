@@ -48,7 +48,8 @@ test.describe("key pages", { tag: "@smoke" }, () => {
     await expect(component(page, "SkillDiff").locator('[data-op="add"]').first()).toBeVisible();
     // Nothing is saved: keep editing, then discard.
     await page.getByRole("button", { name: "Keep editing" }).click();
-    await page.getByRole("button", { name: "Discard" }).click();
+    await component(page, "SkillSaveBar").getByRole("button", { name: "Discard" }).click();
+    await component(page, "ConfirmDialog").getByRole("button", { name: "Discard" }).click();
     await expect(component(page, "SkillPage")).toBeVisible();
   });
 
@@ -59,7 +60,14 @@ test.describe("key pages", { tag: "@smoke" }, () => {
     test.skip((await links.count()) === 0, "no projects visible to this account");
     const href = await links.first().getAttribute("href");
     await page.goto(href!);
-    await expect(projects.detail(page)).toBeVisible();
-    await expect(component(page, "ProjectHeader")).toBeVisible();
+    // One-off projects open as a Task; the rest open the full project page.
+    const detail = projects.detail(page);
+    const task = component(page, "TaskView");
+    await expect(detail.or(task)).toBeVisible();
+    if (await task.isVisible()) {
+      await expect(component(page, "TaskHeader")).toBeVisible();
+    } else {
+      await expect(component(page, "ProjectHeader")).toBeVisible();
+    }
   });
 });

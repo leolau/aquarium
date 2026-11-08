@@ -107,7 +107,7 @@ export async function fillLogin(page: Page, creds: Credentials): Promise<void> {
   if (await provider.count()) {
     await provider.selectOption(LOGIN_PROVIDER);
   }
-  await form.locator('input[autocomplete="username"]').fill(creds.email);
+  await form.locator('input[autocomplete="username"], input[autocomplete="email"]').fill(creds.email);
   await form.locator('input[autocomplete="current-password"]').fill(creds.password);
   await form.locator('button[type="submit"]').click();
 }
