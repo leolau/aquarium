@@ -1302,6 +1302,20 @@ file will silently overwrite recent fixes on main when squashed. Verify
 with `git diff HEAD~1..HEAD` after merging — unexpected deletions are a
 red flag.
 
+### Commits pushed after a PR is merged are silently dropped
+The owner merges a PR as soon as an agent says it can be merged. Pushing more
+commits to the branch afterwards does nothing: GitHub doesn't add them to a
+merged PR, so they never reach `develop`. This happened with #751, whose phone
+layout and sign-out fixes had to be re-sent as #752.
+- Keep a PR as a **draft** while you are still testing or adding fixes. Only
+  mark it ready, or say it can be merged, once the branch is final.
+- Before every push to a PR branch, check the PR is still open (`gh pr view
+  <n> --json state` or `GET /repos/{owner}/{repo}/pulls/<n>`). If it is merged,
+  put the new commits on a fresh branch from `develop` and open a follow-up PR.
+- Before deploying, check that `develop` contains the PR's final content.
+  Merges are squash merges, so compare content (`git diff <pr-head> origin/develop
+  -- <paths>` should be empty), not ancestry.
+
 ### Don't wire in dead code without E2E validation
 Unused code that was never shipped was dead for a reason. Before wiring an
 unused module into a live code path, E2E test the real resolution chain
