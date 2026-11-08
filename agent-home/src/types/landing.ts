@@ -20,7 +20,9 @@ export type NeedsYouSource =
   | "webview_approval"
   | "todo"
   | "profile_suggestion"
-  | "pin_suggestion";
+  | "pin_suggestion"
+  /** A pending notification that maps to no source above (e.g. a proactive ask). */
+  | "notification";
 
 export interface NeedsYouAction {
   id: string;

@@ -12549,6 +12549,26 @@ async def session_chat_stream(session_id: str, request: Request):
             {"tool_id": str(tc_id or ""), "name": str(name or "tool"), "run_id": run_id},
         )
 
+    from hermes_cli.projects_api import _instance_admin as _is_instance_admin
+
+    # Push devices are the instance's own, so a member's approval is not
+    # pushed to them; the member still sees it in-stream and in Needs you.
+    _approval_push_ok = _is_instance_admin(principal)
+
+    async def _push_chat_approval(event: dict) -> None:
+        try:
+            from hermes_cli.needs_you import chat_href
+            from plugins.platforms.app.push import send_push
+
+            await send_push(
+                f"chat_approval:{run_id}:{event.get('approval_id') or ''}",
+                title="Approval needed",
+                body=str(event.get("description") or event.get("command") or "A tool is waiting for your approval"),
+                url=chat_href(sid, profile),
+            )
+        except Exception:
+            _log.debug("chat approval push failed", exc_info=True)
+
     def _approval_notify(approval_data: dict) -> None:
         # A gated tool blocked the agent thread. Redact the command (it can
         # carry secrets) and forward the prompt to the browser; the user's
@@ -12561,6 +12581,8 @@ async def session_chat_stream(session_id: str, request: Request):
         event["run_id"] = run_id
         event.setdefault("choices", ["once", "session", "always", "deny"])
         _enqueue("approval.request", event)
+        if _approval_push_ok:
+            asyncio.run_coroutine_threadsafe(_push_chat_approval(event), loop)
 
     def _agent_ready(agent) -> None:
         run_entry["agent"] = agent
@@ -12799,6 +12821,84 @@ async def activity_running(request: Request):
         return act.finalize(items)
 
     return await asyncio.to_thread(_collect)
+
+
+_NEEDS_YOU_PUSH_TASKS: "set[asyncio.Task]" = set()
+
+
+@app.get("/api/needs-you")
+async def needs_you(request: Request):
+    """Everything waiting on the caller, for agent-home's "Needs you" list.
+
+    ``NeedsYouResponse`` (``agent-home/src/types/landing.ts``); with
+    ``?include=count`` the ``items`` array is empty and only the counts are
+    returned. Each source is scoped to the caller and fails independently
+    (see ``hermes_cli.needs_you``).
+    """
+    from hermes_cli import needs_you as ny
+    from hermes_cli.projects_api import _enrolled_profiles, _instance_admin
+
+    count_only = request.query_params.get("include") == "count"
+    try:
+        principal = await _comms_resolve_principal(request)
+    except _CommsNotConfigured:
+        return ny.response([], count_only=count_only)
+    admin = _instance_admin(principal)
+    items: list = []
+
+    try:
+        from hermes_cli.human_comms import NotificationStore
+
+        ntf = NotificationStore(_comms_app_store(), config=load_config() or {})
+        await ntf.initialize()
+        items.extend(
+            ny.notification_entries(await ntf.list_pending(principal), principal.user_id)
+        )
+    except Exception:
+        _log.warning("needs-you: notifications source failed", exc_info=True)
+    covered = ny.notification_dedupe_keys(items)
+
+    runs = {
+        run_id: {"session_id": entry["session_id"], "profile": entry.get("profile")}
+        for run_id, entry in list(_CHAT_RUNS.items())
+        if not entry["done"]
+    }
+    try:
+        from tools.approval import list_pending_gateway_approvals
+
+        items.extend(ny.chat_approval_entries(
+            list_pending_gateway_approvals(runs.keys()), runs, principal, admin=admin,
+        ))
+    except Exception:
+        _log.warning("needs-you: chat approvals source failed", exc_info=True)
+
+    try:
+        items.extend(ny.webview_entries(_get_webview_registry().get(principal.user_id)))
+    except Exception:
+        _log.warning("needs-you: webview source failed", exc_info=True)
+
+    try:
+        from hermes_cli.profile_suggestion import ProfileSuggestionStore
+
+        open_rows, _reviewed = await ProfileSuggestionStore(_comms_app_store()).queue(principal)
+        items.extend(ny.profile_suggestion_entries(open_rows))
+    except Exception:
+        _log.warning("needs-you: profile suggestions source failed", exc_info=True)
+
+    try:
+        enrolled = set() if admin else await _enrolled_profiles(principal.user_id)
+        items.extend(await asyncio.to_thread(ny.project_entries, principal, enrolled, covered))
+    except Exception:
+        _log.warning("needs-you: projects source failed", exc_info=True)
+
+    items = ny.finalize(items)
+    # Enrolled push devices are the instance's, not per-member, so only the
+    # admin's own waits are pushed from here.
+    if admin:
+        task = asyncio.create_task(ny.push_new(principal.user_id, items))
+        _NEEDS_YOU_PUSH_TASKS.add(task)
+        task.add_done_callback(_NEEDS_YOU_PUSH_TASKS.discard)
+    return ny.response(items, count_only=count_only)
 
 
 @app.post("/api/sessions/{session_id}/chat/stream/attach")
