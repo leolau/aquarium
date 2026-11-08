@@ -57,7 +57,7 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
   // One lock for the whole card: while one change is in flight, a click on any
   // other button here is dropped instead of racing it.
   const { run: exclusive, pending: busy } = useAction(
-    (work: () => Promise<void>) => work(),
+    (work: () => Promise<unknown>) => work(),
   );
   const [error, setError] = useState<string | null>(null);
   const [sessionLink, setSessionLink] = useState<string | null>(null);
@@ -67,7 +67,7 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
 
   const post = (path: string, body: unknown) => exclusive(() => postNow(path, body));
 
-  async function postNow(path: string, body: unknown) {
+  async function postNow(path: string, body: unknown): Promise<boolean> {
     setError(null);
     try {
       const res = await fetch(
@@ -81,11 +81,13 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
       const payload = (await res.json()) as Todo & { detail?: string };
       if (!res.ok) {
         setError(payload.detail ?? "That didn't stick — try again.");
-        return;
+        return false;
       }
-      setCurrent({ ...current, ...payload });
+      setCurrent((prev) => ({ ...prev, ...payload }));
+      return true;
     } catch {
       setError("Couldn't reach the AI layer.");
+      return false;
     }
   }
 
@@ -126,11 +128,12 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
   const moveStage = (stage: TodoStage) =>
     stage === "dismissed" ? dismissWithUndo() : post("/stage", { stage });
 
+  // Undo puts back what the snooze overwrote — the earlier snooze (or none)
+  // and the announcement stamp — rather than snoozing until "now".
   async function snoozeFor(hours: number) {
-    await post("/snooze", { until: hoursFromNow(hours) });
-    showUndo(t("snoozed", { title: current.title }), () =>
-      post("/snooze", { until: hoursFromNow(0) }),
-    );
+    const before = { until: current.snoozed_until, notified_at: current.notified_at };
+    if (!(await post("/snooze", { until: hoursFromNow(hours) }))) return;
+    showUndo(t("snoozed", { title: current.title }), () => post("/unsnooze", before));
   }
 
   async function dismissWithUndo() {

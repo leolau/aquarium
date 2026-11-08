@@ -1957,6 +1957,21 @@ export class HermesApiClient {
     });
   }
 
+  /**
+   * Clear a to-do's snooze. Undo passes what the row held before the snooze
+   * (`until`: the earlier snooze or null; `notified_at`: the stamp the snooze
+   * cleared), so the to-do comes back exactly as it was.
+   */
+  async unsnoozeTodo(
+    id: string,
+    restore: { until?: string | null; notified_at?: string | null } = {},
+  ): Promise<Todo> {
+    return this.request(`/api/registry/todos/${encodeURIComponent(id)}/unsnooze`, {
+      method: "POST",
+      json: restore,
+    });
+  }
+
   /** Move a to-do to `working` and optionally spawn a seeded session. */
   async startTodo(
     id: string,

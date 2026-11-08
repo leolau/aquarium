@@ -101,6 +101,10 @@ class _Store:
         self.calls.append({"op": "snooze", "id": todo_id, "until": until, **kwargs})
         return _todo(snoozed_until=until)
 
+    async def unsnooze(self, principal, todo_id, **kwargs):
+        self.calls.append({"op": "unsnooze", "id": todo_id, **kwargs})
+        return _todo(snoozed_until=kwargs.get("until"))
+
 
 _TODO_FIELDS = {
     "title",
@@ -224,6 +228,7 @@ async def test_somebody_else_s_todo_is_simply_not_found(wired):
         todos_api.snooze_todo(
             request=_request({"until": "2026-08-20T09:00:00Z"}), todo_id="not-mine"
         ),
+        todos_api.unsnooze_todo(request=_request({}), todo_id="not-mine"),
     ):
         with pytest.raises(HTTPException) as excinfo:
             await call
@@ -303,3 +308,47 @@ async def test_a_snooze_carries_the_moment_it_ends(wired):
     call = wired.calls[-1]
     assert call["until"] == datetime(2026, 8, 20, 9, 0, tzinfo=timezone.utc)
     assert call["actor"] == "user:leo"
+
+
+@pytest.mark.asyncio
+async def test_unsnooze_with_no_body_wakes_the_todo_now(wired):
+    payload = await todos_api.unsnooze_todo(request=_request({}), todo_id="tsk_1")
+    call = wired.calls[-1]
+    assert call["op"] == "unsnooze"
+    assert (call["until"], call["notified_at"]) == (None, None)
+    assert call["actor"] == "user:leo"
+    assert payload["snoozed_until"] is None
+
+
+@pytest.mark.asyncio
+async def test_undo_puts_back_the_snooze_and_stamp_it_replaced(wired):
+    """Undo restores what the snooze overwrote, so nothing is re-announced."""
+    await todos_api.unsnooze_todo(
+        request=_request(
+            {"until": "2026-08-18T09:00:00Z", "notified_at": "2026-08-11T09:00:00Z"}
+        ),
+        todo_id="tsk_1",
+    )
+    call = wired.calls[-1]
+    assert call["until"] == datetime(2026, 8, 18, 9, 0, tzinfo=timezone.utc)
+    assert call["notified_at"] == datetime(2026, 8, 11, 9, 0, tzinfo=timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_unsnooze_refuses_a_notification_that_has_not_happened(wired):
+    with pytest.raises(HTTPException) as excinfo:
+        await todos_api.unsnooze_todo(
+            request=_request({"notified_at": "2999-01-01T00:00:00Z"}),
+            todo_id="tsk_1",
+        )
+    assert excinfo.value.status_code == 400
+    assert not [c for c in wired.calls if c["op"] == "unsnooze"]
+
+
+@pytest.mark.asyncio
+async def test_unsnooze_rejects_a_malformed_time(wired):
+    with pytest.raises(HTTPException) as excinfo:
+        await todos_api.unsnooze_todo(
+            request=_request({"until": "next tuesday"}), todo_id="tsk_1"
+        )
+    assert excinfo.value.status_code == 400

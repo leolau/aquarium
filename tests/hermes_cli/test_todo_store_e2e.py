@@ -334,6 +334,56 @@ async def test_snoozing_hides_the_todo_and_rearms_notification(
 
 
 @pytest.mark.asyncio
+async def test_unsnooze_restores_the_todo_exactly_as_it_was(
+    postgres_dsn: str,
+) -> None:
+    """Undo after a snooze: visible again and not announced a second time."""
+    store = await _store(postgres_dsn)
+    ada = _principal("ada")
+    todo = await store.create(ada, title="Ring the landlord", stage="open")
+    await store.mark_notified(ada, todo.id)
+    before = await store.get(ada, todo.id)
+    assert before is not None and before.notified_at is not None
+
+    await store.snooze(ada, todo.id, datetime.now(timezone.utc) + timedelta(days=1))
+    restored = await store.unsnooze(
+        ada, todo.id, until=before.snoozed_until, notified_at=before.notified_at
+    )
+
+    assert restored.snoozed_until is None
+    assert restored.notified_at == before.notified_at
+    assert [t.id for t in (await store.list(ada))[0]] == [todo.id]
+    assert await store.pending_notification(ada) == []
+
+    # An earlier snooze comes back as it was, not cleared.
+    earlier = datetime.now(timezone.utc) + timedelta(hours=3)
+    await store.snooze(ada, todo.id, earlier)
+    await store.snooze(ada, todo.id, earlier + timedelta(days=7))
+    back = await store.unsnooze(ada, todo.id, until=earlier)
+    assert back.snoozed_until == earlier
+
+    # Clearing with no arguments wakes it now.
+    cleared = await store.unsnooze(ada, todo.id)
+    assert cleared.snoozed_until is None
+    history = [step["to"] for step in await store.history(ada, todo.id)]
+    assert "stage:snooze cleared" in history
+
+
+@pytest.mark.asyncio
+async def test_nobody_else_can_unsnooze_my_todo(postgres_dsn: str) -> None:
+    store = await _store(postgres_dsn)
+    ada, bob = _principal("ada"), _principal("bob")
+    todo = await store.create(ada, title="Private errand", stage="open")
+    later = datetime.now(timezone.utc) + timedelta(days=1)
+    await store.snooze(ada, todo.id, later)
+
+    with pytest.raises(LookupError):
+        await store.unsnooze(bob, todo.id)
+    still = await store.get(ada, todo.id)
+    assert still is not None and still.snoozed_until == later
+
+
+@pytest.mark.asyncio
 async def test_untouched_staged_todos_expire(postgres_dsn: str) -> None:
     store = await _store(postgres_dsn)
     ada = _principal("ada")

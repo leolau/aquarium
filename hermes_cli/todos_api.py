@@ -512,6 +512,43 @@ async def snooze_todo(request: Request, todo_id: str) -> dict[str, Any]:
     return todo.as_dict()
 
 
+@router.post("/{todo_id}/unsnooze")
+async def unsnooze_todo(request: Request, todo_id: str) -> dict[str, Any]:
+    """Clear a to-do's snooze, or restore the state a snooze replaced.
+
+    An empty body wakes the to-do now. Undo sends what the row held before
+    the snooze — ``until`` (the earlier snooze, or null) and ``notified_at``
+    (the announcement stamp the snooze cleared) — so it comes back exactly as
+    it was instead of being re-announced. ``notified_at`` records something
+    that already happened, so a future one is refused.
+    """
+    principal = await _resolve_principal(request)
+    try:
+        body = await request.json()
+    except ValueError:
+        body = None
+    if not isinstance(body, dict):
+        body = {}
+    until = _when(body.get("until"), field="until")
+    notified_at = _when(body.get("notified_at"), field="notified_at")
+    if notified_at is not None and notified_at > datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=400, detail="notified_at cannot be in the future"
+        )
+
+    store = _store()
+    if not await _table_ready(store) or await store.get(principal, todo_id) is None:
+        raise HTTPException(status_code=404, detail="No such to-do")
+    todo = await store.unsnooze(
+        principal,
+        todo_id,
+        until=until,
+        notified_at=notified_at,
+        actor=f"user:{principal.user_id}",
+    )
+    return todo.as_dict()
+
+
 # ---------------------------------------------------------------------------
 # Promotion seam — a to-do becomes a project card (Part 2)
 # ---------------------------------------------------------------------------
