@@ -1,0 +1,16 @@
+{
+  "chats": "對話",
+  "newChat": "新對話",
+  "categories": "對話分類",
+  "categoryEmpty": "此分類暫時沒有對話。",
+  "category": {
+    "all": "全部",
+    "kanban": "看板",
+    "daily": "今日",
+    "scheduled": "排程",
+    "others": "其他"
+  },
+  "loadError": "無法載入你的對話",
+  "loadErrorHint": "你的對話安全無損，請稍後再試。",
+  "tryAgain": "再試一次"
+}

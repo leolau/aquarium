@@ -7,7 +7,10 @@ import { ApprovalsList } from "@/components/inbox/ApprovalsList";
 import { ChangesList } from "@/components/inbox/ChangesList";
 import { IncomingsList } from "@/components/inbox/IncomingsList";
 import { BusyRegion } from "@/components/ui/BusyRegion";
-import { Pill } from "@/components/ui/Pill";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import { useUndoToast } from "@/components/ui/UndoToast";
+import { useConfirm } from "@/components/ui/useConfirm";
+import { useT } from "@/i18n";
 import type {
   Change,
   ChangeOpResponse,
@@ -89,6 +92,9 @@ export function InboxView({
   // `reversible` in the log but their inverse op was recorded by a flow FG-12
   // does not know how to reverse, so we present them as review-only rather
   // than re-offering an action that can never succeed.
+  const t = useT("inbox");
+  const { ask, dialog } = useConfirm();
+  const { show: showUndo, toast } = useUndoToast();
   const [blocked, setBlocked] = useState<ReadonlySet<string>>(new Set());
 
   async function refreshNotifications() {
@@ -118,6 +124,16 @@ export function InboxView({
   const { run: exclusive } = useAction((work: () => Promise<void>) => work());
 
   async function answer(item: Notification, value: string) {
+    if (item.kind === "approval" && value === "approved" && !item.reversible) {
+      const ok = await ask({
+        title: t("confirmApproveTitle", { title: item.title }),
+        body: t("confirmApproveBody"),
+        confirmLabel: t("confirmApprove"),
+        cancelLabel: t("cancel"),
+        tone: "accent",
+      });
+      if (!ok) return;
+    }
     setBusy(item.id);
     setError(null);
     setNotice(null);
@@ -139,7 +155,7 @@ export function InboxView({
     }
   }
 
-  async function changeOp(change: Change, op: "undo" | "redo") {
+  async function changeOp(change: Change, op: "undo" | "redo", fromToast = false) {
     setBusy(change.id);
     setError(null);
     setNotice(null);
@@ -147,9 +163,12 @@ export function InboxView({
       const resp = await postJson<ChangeOpResponse>(
         `/api/comms/changes/${encodeURIComponent(change.id)}/${op}`,
       );
-      setNotice(
-        `${op === "undo" ? "Undid" : "Redid"} ${resp.target_kind} change.`,
-      );
+      const message = t("changeDone", {
+        op: op === "undo" ? t("undid") : t("redid"),
+        kind: resp.target_kind,
+      });
+      if (fromToast) setNotice(message);
+      else showUndo(message, () => changeOp(change, op === "undo" ? "redo" : "undo", true));
       await refreshChanges();
     } catch (err) {
       if (err instanceof ForwardError && err.status === 409) {
@@ -174,83 +193,52 @@ export function InboxView({
 
   return (
     <div data-component="InboxView" className="flex flex-col gap-4">
-      <p className="flex flex-wrap items-center gap-2 text-xs text-[var(--color-muted)]">
-        <Pill tone="accent">principal-scoped (C2)</Pill>
-        <Pill tone="muted">deduped across surfaces</Pill>
-      </p>
-
+      {dialog}
+      {toast}
       <div
         role="tablist"
-        aria-label="Inbox sections"
-        className="grid grid-cols-3 gap-1 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-1"
+        aria-label={t("tabs.label")}
+        data-component="InboxTabs"
+        className="flex w-full gap-1 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-1 lg:w-auto lg:self-start"
       >
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "incomings"}
-          onClick={() => setTab("incomings")}
-          className={`flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm ${
-            tab === "incomings"
-              ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]"
-              : "text-[var(--color-muted)]"
-          }`}
-        >
-          Incomings
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "approvals"}
-          onClick={() => setTab("approvals")}
-          className={`flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm ${
-            tab === "approvals"
-              ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]"
-              : "text-[var(--color-muted)]"
-          }`}
-        >
-          Approvals
-          {pendingCount > 0 ? (
-            <span className="rounded-full bg-[var(--color-surface-2)] px-2 text-xs text-[var(--color-fg)]">
-              {pendingCount}
-            </span>
-          ) : null}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "changes"}
-          onClick={() => setTab("changes")}
-          className={`flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm ${
-            tab === "changes"
-              ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]"
-              : "text-[var(--color-muted)]"
-          }`}
-        >
-          Changes
-          {reversibleCount > 0 ? (
-            <span className="rounded-full bg-[var(--color-surface-2)] px-2 text-xs text-[var(--color-fg)]">
-              {reversibleCount}
-            </span>
-          ) : null}
-        </button>
+        {(
+          [
+            ["incomings", t("tabs.arrived"), 0],
+            ["approvals", t("tabs.approvals"), pendingCount],
+            ["changes", t("tabs.changes"), reversibleCount],
+          ] as const
+        ).map(([key, label, count]) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            data-tab={key}
+            aria-selected={tab === key}
+            onClick={() => setTab(key)}
+            className={`flex h-10 min-w-0 flex-auto items-center justify-center gap-1.5 rounded-[var(--radius-md)] px-2 text-sm lg:flex-none lg:px-4 ${
+              tab === key
+                ? "bg-[var(--color-surface-2)] font-semibold text-[var(--color-fg)]"
+                : "text-[var(--color-muted)]"
+            }`}
+          >
+            <span className="truncate">{label}</span>
+            {count > 0 ? (
+              <span className="rounded-full bg-[var(--color-accent)] px-1.5 text-xs tabular-nums text-[var(--color-accent-fg)]">
+                {count}
+              </span>
+            ) : null}
+          </button>
+        ))}
       </div>
 
       {!configured ? (
         <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]">
-          The comms inbox needs the multi-user datastore configured.
+          {t("needsDatastore")}
         </div>
       ) : null}
 
-      {notice ? (
-        <p className="rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[var(--color-fg)]">
-          {notice}
-        </p>
-      ) : null}
-      {error ? (
-        <p className="rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[var(--color-danger)]">
-          {error}
-        </p>
-      ) : null}
+      {notice ? <InlineAlert tone="success">{notice}</InlineAlert> : null}
+      {error ? <InlineAlert tone="danger">{error}</InlineAlert> : null}
 
       {tab === "incomings" ? (
         <IncomingsList initial={initialIncomings} facets={incomingsFacets} />

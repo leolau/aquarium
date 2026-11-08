@@ -1,6 +1,10 @@
 "use client";
 
 import Link from "next/link";
+
+import { InfoTip } from "@/components/ui/InfoTip";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import { useT } from "@/i18n";
 import { ActionButton } from "@/components/ui/ActionButton";
 import { useState } from "react";
 
@@ -23,6 +27,8 @@ export function IncomingDetailView({ item }: { item: IncomingDetail }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [justRemembered, setJustRemembered] = useState(false);
+  const t = useT("inbox");
 
   async function remember() {
     setBusy(true);
@@ -38,6 +44,7 @@ export function IncomingDetailView({ item }: { item: IncomingDetail }) {
         return;
       }
       setCurrent({ ...current, ...body });
+      setJustRemembered(true);
     } catch {
       setError("Couldn't reach the AI layer.");
     } finally {
@@ -52,18 +59,18 @@ export function IncomingDetailView({ item }: { item: IncomingDetail }) {
     "(untitled)";
 
   return (
-    <div data-component="IncomingDetailView" className="flex flex-col gap-4">
-      <Link href="/inbox?tab=incomings" className="text-xs text-[var(--color-muted)]">
-        ← Inbox
-      </Link>
-
-      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-        <h1 className="flex items-start gap-2 text-sm font-semibold">
+    <div
+      data-component="IncomingDetailView"
+      className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start"
+    >
+      <div className="flex min-w-0 flex-col gap-4">
+      <div className="min-w-0 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+        <p className="flex items-start gap-2 text-sm font-semibold">
           <span aria-hidden>{surfaceGlyph(current.surface)}</span>
-          <span className="break-words">{title}</span>
-        </h1>
+          <span className="min-w-0 break-words">{title}</span>
+        </p>
 
-        <dl className="mt-3 grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-xs">
+        <dl className="mt-3 grid grid-cols-[112px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-xs [overflow-wrap:anywhere]">
           <Row label="Arrived">{formatWhen(current.occurred_at)}</Row>
           <Row label="Channel">{surfaceLabel(current.surface)}</Row>
           {current.sender_name || current.sender_id ? (
@@ -88,7 +95,7 @@ export function IncomingDetailView({ item }: { item: IncomingDetail }) {
         </dl>
 
         {current.body ? (
-          <p className="mt-4 whitespace-pre-wrap text-sm">{current.body}</p>
+          <p className="mt-4 whitespace-pre-wrap break-words text-sm">{current.body}</p>
         ) : null}
       </div>
 
@@ -126,36 +133,46 @@ export function IncomingDetailView({ item }: { item: IncomingDetail }) {
         </div>
       ) : null}
 
-      {error ? (
-        <p className="rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[var(--color-danger)]">
-          {error}
-        </p>
-      ) : null}
+      </div>
 
-      <div className="flex flex-wrap gap-2 text-xs">
+      <aside
+        data-component="IncomingActions"
+        aria-label={t("detail.doSomething")}
+        className="sticky bottom-[calc(var(--coral-clearance)+var(--safe-bottom))] z-10 flex flex-col gap-3 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-lg lg:top-4 lg:bottom-auto lg:shadow-none"
+      >
+      <h2 className="flex items-center gap-1 text-sm font-semibold">
+        {t("detail.doSomething")}
+        <InfoTip label={t("detail.rememberInfoLabel")} align="end">
+          {t("detail.rememberInfo")}
+        </InfoTip>
+      </h2>
+      {error ? <InlineAlert tone="danger">{error}</InlineAlert> : null}
+      {justRemembered ? <InlineAlert tone="success">{t("detail.remembered")}</InlineAlert> : null}
+
+      <div className="flex flex-wrap gap-2 text-sm lg:flex-col">
         {current.document_id ? (
           <Link
             href={`/memory?document=${encodeURIComponent(current.document_id)}`}
-            className="rounded-lg border border-[var(--color-border)] px-3 py-1.5"
+            className="inline-flex min-h-10 items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-border)] px-3 py-2"
           >
-            See what it remembers
+            {t("detail.seeRemembered")}
           </Link>
         ) : (
           <ActionButton
             disabled={!current.body}
             busy={busy}
             onAction={remember}
-            busyLabel="Remembering…"
-            className="inline-flex items-center gap-2 rounded-lg border border-[var(--color-accent)] px-3 py-1.5 text-[var(--color-accent)] disabled:opacity-40"
+            busyLabel={t("detail.remembering")}
+            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-[var(--radius-md)] bg-[var(--color-accent)] px-3 py-2 font-medium text-[var(--color-accent-fg)] disabled:opacity-40"
           >
-            Remember this
+            {t("detail.rememberThis")}
           </ActionButton>
         )}
         {/* The other direction of the same link the to-do detail page shows:
             an arrival is only half the story once triage acted on it. */}
         <Link
           href={`/todos?source_ref=${encodeURIComponent(current.id)}&stage=staged,open,working,done,dismissed`}
-          className="rounded-lg border border-[var(--color-border)] px-3 py-1.5"
+          className="inline-flex min-h-10 items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-border)] px-3 py-2"
         >
           To-dos from this
         </Link>
@@ -164,11 +181,12 @@ export function IncomingDetailView({ item }: { item: IncomingDetail }) {
         <button
           type="button"
           onClick={() => setAddOpen(true)}
-          className="rounded-lg border border-[var(--color-border)] px-3 py-1.5"
+          className="inline-flex min-h-10 items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-border)] px-3 py-2"
         >
           Add to project
         </button>
       </div>
+      </aside>
 
       {addOpen ? (
         <AddToProjectSheet

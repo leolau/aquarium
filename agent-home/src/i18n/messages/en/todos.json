@@ -1,0 +1,21 @@
+{
+  "filters": "Filters",
+  "filtersCount": "Filters ({count})",
+  "clearAll": "Clear all",
+  "showResults": "Show results",
+  "markedDone": "Marked “{title}” done.",
+  "dismissed": "Dismissed “{title}”.",
+  "emptyTitle": "You're all caught up",
+  "empty": "As messages arrive, anything that looks like it needs you lands here first.",
+  "filteredEmptyTitle": "Nothing matches those filters",
+  "filteredEmpty": "Try another stage or clear the search.",
+  "snoozed": "Snoozed “{title}”.",
+  "detailMoved": "Moved “{title}” to {stage}.",
+  "nextStep": "Next step",
+  "markDone": "Mark done",
+  "more": "More",
+  "moreHint": "More: Work on it · Add to project · Promote · Snooze",
+  "moreTitle": "More actions",
+  "workOnThis": "Work on this",
+  "snoozeFor": "Snooze for"
+}

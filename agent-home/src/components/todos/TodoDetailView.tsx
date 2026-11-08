@@ -11,7 +11,10 @@ import { useAction } from "@/lib/use-action";
 import { STAGE_LABEL, sourceGlyph } from "@/components/todos/TodoRow";
 import { formatWhen } from "@/components/files/FilesView";
 import type { Todo, TodoDetail, TodoStage } from "@/types";
-import { useConfirm } from "@/components/ui/useConfirm";
+import { Sheet } from "@/components/ui/Sheet";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import { useUndoToast } from "@/components/ui/UndoToast";
+import { useT } from "@/i18n";
 
 /** The moves offered from each stage, in the order a user reaches for them. */
 const NEXT_STAGES: Record<TodoStage, TodoStage[]> = {
@@ -48,7 +51,8 @@ const SNOOZES: { label: string; hours: number }[] = [
  * provenance instead — "a WhatsApp message from this number" beats silence.
  */
 export function TodoDetailView({ todo }: { todo: TodoDetail }) {
-  const { askText, dialog } = useConfirm();
+  const t = useT("todos");
+  const { show: showUndo, toast } = useUndoToast();
   const [current, setCurrent] = useState<TodoDetail>(todo);
   // One lock for the whole card: while one change is in flight, a click on any
   // other button here is dropped instead of racing it.
@@ -58,6 +62,8 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
   const [error, setError] = useState<string | null>(null);
   const [sessionLink, setSessionLink] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [doneOpen, setDoneOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   const post = (path: string, body: unknown) => exclusive(() => postNow(path, body));
 
@@ -85,79 +91,9 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
 
   const source = current.source;
 
-  return (
-    <div data-component="TodoDetailView" className="flex flex-col gap-4">
-      {dialog}
-      <Link href="/todos" className="text-xs text-[var(--color-muted)]">
-        ← To-dos
-      </Link>
 
-      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-        <h1 className="flex items-start gap-2 text-sm font-semibold">
-          <span aria-hidden>{sourceGlyph(current.source_kind)}</span>
-          <span className="break-words">{current.title}</span>
-        </h1>
-
-        <dl className="mt-3 grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-xs">
-          <Row label="Stage">{STAGE_LABEL[current.stage]}</Row>
-          <Row label="Priority">{current.priority}</Row>
-          {current.due_at ? (
-            <Row label="Due">{formatWhen(current.due_at)}</Row>
-          ) : null}
-          {current.snoozed_until ? (
-            <Row label="Snoozed until">{formatWhen(current.snoozed_until)}</Row>
-          ) : null}
-          <Row label="Raised by">
-            {current.origin === "triage" ? "Triage" : current.origin}
-          </Row>
-          {current.outcome ? (
-            <Row label="Outcome">{current.outcome}</Row>
-          ) : null}
-        </dl>
-
-        {current.description ? (
-          <p className="mt-4 whitespace-pre-wrap text-sm">
-            {current.description}
-          </p>
-        ) : null}
-
-        <div className="mt-4 flex flex-wrap gap-1.5 text-[11px]">
-          {/* Finishing goes through the form below instead: it is the one
-              transition that may also propose something outgoing. */}
-          {NEXT_STAGES[current.stage]
-            .filter((stage) => stage !== "done")
-            .map((stage) => (
-              <ActionButton
-                key={stage}
-                disabled={busy}
-                busyLabel="Saving…"
-                onAction={() => post("/stage", { stage })}
-                className="rounded-lg border border-[var(--color-border)] px-2 py-1 text-[var(--color-muted)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
-              >
-                {STAGE_VERB[stage]}
-              </ActionButton>
-            ))}
-          {/* "Add to project" (§13): the user is here when they realise the
-              to-do belongs to something bigger — link it from both ends. */}
-          <button
-            type="button"
-            onClick={() => setAddOpen(true)}
-            className="rounded-lg border border-[var(--color-border)] px-2 py-1 text-[var(--color-muted)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
-          >
-            Add to project
-          </button>
-        </div>
-
-        {/* “Work on this” moves to working AND spawns a seeded session.
-            The stage change happens first; the spawn is best-effort and
-            reports itself.  Sits beside the stage buttons rather than
-            replacing “Work on it”, so the user can move the stage without
-            spawning if they prefer. */}
-        {current.stage === "staged" || current.stage === "open" ? (
-          <div className="mt-2">
-            <ActionButton
-              disabled={busy}
-              onAction={() => exclusive(async () => {
+  const startWork = () =>
+    exclusive(async () => {
                 setError(null);
                 setSessionLink(null);
                 try {
@@ -185,109 +121,60 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
                 } catch {
                   setError("Couldn’t reach the AI layer.");
                 }
-              })}
-              busyLabel="Starting…"
-              className="rounded-lg border border-[var(--color-accent)] bg-[var(--color-accent)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-surface)] transition hover:opacity-90 disabled:opacity-50"
-            >
-              Work on this
-            </ActionButton>
-            {sessionLink ? (
-              <Link
-                href={`/chat?session=${encodeURIComponent(sessionLink)}`}
-                className="ml-2 inline-block text-[11px] text-[var(--color-accent)]"
-              >
-                Session started →
-              </Link>
-            ) : null}
-          </div>
+    });
+
+  const moveStage = (stage: TodoStage) =>
+    stage === "dismissed" ? dismissWithUndo() : post("/stage", { stage });
+
+  async function snoozeFor(hours: number) {
+    await post("/snooze", { until: hoursFromNow(hours) });
+    showUndo(t("snoozed", { title: current.title }), () =>
+      post("/snooze", { until: hoursFromNow(0) }),
+    );
+  }
+
+  async function dismissWithUndo() {
+    const before = current.stage;
+    await post("/stage", { stage: "dismissed" });
+    showUndo(t("dismissed", { title: current.title }), () => post("/stage", { stage: before }));
+  }
+
+  return (
+    <div
+      data-component="TodoDetailView"
+      className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start"
+    >
+      {toast}
+      <div className="flex min-w-0 flex-col gap-4">
+      <div className="min-w-0 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+        <p className="flex items-start gap-2 text-sm font-semibold">
+          <span aria-hidden>{sourceGlyph(current.source_kind)}</span>
+          <span className="min-w-0 break-words">{current.title}</span>
+        </p>
+
+        <dl className="mt-3 grid grid-cols-[112px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-xs [overflow-wrap:anywhere]">
+          <Row label="Stage">{STAGE_LABEL[current.stage]}</Row>
+          <Row label="Priority">{current.priority}</Row>
+          {current.due_at ? (
+            <Row label="Due">{formatWhen(current.due_at)}</Row>
+          ) : null}
+          {current.snoozed_until ? (
+            <Row label="Snoozed until">{formatWhen(current.snoozed_until)}</Row>
+          ) : null}
+          <Row label="Raised by">
+            {current.origin === "triage" ? "Triage" : current.origin}
+          </Row>
+          {current.outcome ? (
+            <Row label="Outcome">{current.outcome}</Row>
+          ) : null}
+        </dl>
+
+        {current.description ? (
+          <p className="mt-4 whitespace-pre-wrap text-sm">
+            {current.description}
+          </p>
         ) : null}
 
-        {/* Promote to a project card (Part 2). Only a human promotes —
-            the card lands in `triage`, not `ready`, and the to-do moves to
-            `working`, not `done`. The link-vs-promote difference: link keeps
-            it a to-do; promote makes it a card. */}
-        {current.stage === "staged" || current.stage === "open" ? (
-          <div className="mt-2">
-            <ActionButton
-              disabled={busy}
-              onAction={async () => {
-                const project = await askText({
-                  title: "Promote to a project card",
-                  body: "The card lands in the project's triage column.",
-                  label: "Project slug",
-                  confirmLabel: "Promote",
-                  tone: "accent",
-                });
-                if (!project) return;
-                await exclusive(async () => {
-                setError(null);
-                try {
-                  const res = await fetch(
-                    `/api/todos/${encodeURIComponent(current.id)}/promote`,
-                    {
-                      method: "POST",
-                      headers: { "content-type": "application/json" },
-                      body: JSON.stringify({ project }),
-                    },
-                  );
-                  const payload = (await res.json()) as Todo & {
-                    card_id?: string;
-                    project_id?: string;
-                    detail?: string;
-                  };
-                  if (!res.ok) {
-                    setError(payload.detail ?? "Promotion failed — try again.");
-                  } else {
-                    setCurrent({ ...current, ...payload });
-                  }
-                } catch {
-                  setError("Couldn’t reach the AI layer.");
-                }
-                });
-              }}
-              busyLabel="Promoting…"
-              className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-[11px] text-[var(--color-muted)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
-            >
-              Promote to a project card
-            </ActionButton>
-          </div>
-        ) : null}
-
-        {current.stage !== "done" && current.stage !== "dismissed" ? (
-          <div className="mt-2 flex">
-            <TodoCompleteForm
-              todo={current}
-              onDone={(completed) => setCurrent({ ...current, ...completed })}
-            />
-          </div>
-        ) : null}
-
-        {current.stage === "staged" || current.stage === "open" ? (
-          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--color-muted)]">
-            <span>Snooze:</span>
-            {SNOOZES.map((option) => (
-              <ActionButton
-                key={option.hours}
-                disabled={busy}
-                busyLabel="Snoozing…"
-                onAction={() =>
-                  post("/snooze", {
-                    until: new Date(
-                      Date.now() + option.hours * 3_600_000,
-                    ).toISOString(),
-                  })
-                }
-                className="rounded-lg border border-[var(--color-border)] px-2 py-1 transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
-              >
-                {option.label}
-              </ActionButton>
-            ))}
-          </div>
-        ) : null}
-
-        {error ? (
-          <p className="mt-2 text-xs text-[var(--color-muted)]">{error}</p>
-        ) : null}
       </div>
 
       {source ? (
@@ -372,6 +259,241 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
         </div>
       ) : null}
 
+      </div>
+
+      <aside
+        data-component="TodoActions"
+        aria-label={t("nextStep")}
+        className="flex min-w-0 flex-col gap-2 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4 lg:sticky lg:top-4"
+      >
+        <h2 className="text-sm font-semibold">{t("nextStep")}</h2>
+        {error ? <InlineAlert tone="danger">{error}</InlineAlert> : null}
+        <div className="flex flex-wrap gap-1.5 text-[11px]">
+          {/* Finishing goes through the form below instead: it is the one
+              transition that may also propose something outgoing. */}
+          {NEXT_STAGES[current.stage]
+            .filter((stage) => stage !== "done")
+            .map((stage) => (
+              <ActionButton
+                key={stage}
+                disabled={busy}
+                busyLabel="Saving…"
+                onAction={() => moveStage(stage)}
+                className="rounded-lg border border-[var(--color-border)] px-2 py-1 text-[var(--color-muted)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+              >
+                {STAGE_VERB[stage]}
+              </ActionButton>
+            ))}
+          {/* "Add to project" (§13): the user is here when they realise the
+              to-do belongs to something bigger — link it from both ends. */}
+          <button
+            type="button"
+            onClick={() => setAddOpen(true)}
+            className="rounded-lg border border-[var(--color-border)] px-2 py-1 text-[var(--color-muted)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+          >
+            Add to project
+          </button>
+        </div>
+
+        {/* “Work on this” moves to working AND spawns a seeded session.
+            The stage change happens first; the spawn is best-effort and
+            reports itself.  Sits beside the stage buttons rather than
+            replacing “Work on it”, so the user can move the stage without
+            spawning if they prefer. */}
+        {current.stage === "staged" || current.stage === "open" ? (
+          <div className="mt-2">
+            <ActionButton
+              disabled={busy}
+              onAction={startWork}
+              busyLabel="Starting…"
+              className="rounded-lg border border-[var(--color-accent)] bg-[var(--color-accent)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-surface)] transition hover:opacity-90 disabled:opacity-50"
+            >
+              Work on this
+            </ActionButton>
+            {sessionLink ? (
+              <Link
+                href={`/chat?session=${encodeURIComponent(sessionLink)}`}
+                className="ml-2 inline-block text-[11px] text-[var(--color-accent)]"
+              >
+                Session started →
+              </Link>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* Promote to a project card (Part 2). Only a human promotes —
+            the card lands in `triage`, not `ready`, and the to-do moves to
+            `working`, not `done`. The link-vs-promote difference: link keeps
+            it a to-do; promote makes it a card. */}
+        {current.stage === "staged" || current.stage === "open" ? (
+          <div className="mt-2">
+            <button
+              type="button"
+              data-action="promote"
+              disabled={busy}
+              onClick={() => setAddOpen(true)}
+              className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-[11px] text-[var(--color-muted)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+            >
+              Promote to a project card
+            </button>
+          </div>
+        ) : null}
+
+        {current.stage !== "done" && current.stage !== "dismissed" ? (
+          <div className="mt-2 flex">
+            <TodoCompleteForm
+              todo={current}
+              onDone={(completed) => setCurrent({ ...current, ...completed })}
+            />
+          </div>
+        ) : null}
+
+        {current.stage === "staged" || current.stage === "open" ? (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--color-muted)]">
+            <span>Snooze:</span>
+            {SNOOZES.map((option) => (
+              <ActionButton
+                key={option.hours}
+                disabled={busy}
+                busyLabel="Snoozing…"
+                onAction={() => snoozeFor(option.hours)}
+                className="rounded-lg border border-[var(--color-border)] px-2 py-1 transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+              >
+                {option.label}
+              </ActionButton>
+            ))}
+          </div>
+        ) : null}
+
+      </aside>
+
+      {current.stage !== "done" && current.stage !== "dismissed" ? (
+        <div
+          data-component="TodoDock"
+          className="sticky bottom-[calc(var(--coral-clearance)+var(--safe-bottom))] z-10 flex min-w-0 flex-col gap-2 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-lg lg:hidden"
+        >
+          <div className="flex gap-2">
+            {current.stage === "staged" || current.stage === "open" ? (
+              <ActionButton
+                data-action="work-on-this"
+                disabled={busy}
+                onAction={startWork}
+                busyLabel="Starting…"
+                className="h-11 min-w-0 flex-1 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 text-sm font-medium text-[var(--color-fg)] disabled:opacity-60"
+              >
+                {t("workOnThis")}
+              </ActionButton>
+            ) : null}
+            <button
+              type="button"
+              data-action="mark-done"
+              disabled={busy}
+              onClick={() => setDoneOpen(true)}
+              className="h-11 min-w-0 flex-1 rounded-[var(--radius-lg)] bg-[var(--color-accent)] px-3 text-sm font-medium text-[var(--color-accent-fg)] disabled:opacity-60"
+            >
+              {t("markDone")}
+            </button>
+          </div>
+          {sessionLink ? (
+            <Link
+              href={`/chat?session=${encodeURIComponent(sessionLink)}`}
+              className="text-center text-xs text-[var(--color-accent)]"
+            >
+              Session started →
+            </Link>
+          ) : null}
+          <button
+            type="button"
+            data-action="more-actions"
+            onClick={() => setMoreOpen(true)}
+            className="truncate text-center text-xs text-[var(--color-muted)]"
+          >
+            {t("moreHint")}
+          </button>
+        </div>
+      ) : null}
+
+      {doneOpen ? (
+        <Sheet title={t("markDone")} onClose={() => setDoneOpen(false)} component="TodoDoneSheet">
+          <TodoCompleteForm
+            todo={current}
+            defaultOpen
+            onCancel={() => setDoneOpen(false)}
+            onDone={(completed) => {
+              setCurrent({ ...current, ...completed });
+              if (!completed.proposal) setDoneOpen(false);
+            }}
+          />
+        </Sheet>
+      ) : null}
+
+      {moreOpen ? (
+        <Sheet title={t("moreTitle")} onClose={() => setMoreOpen(false)} component="TodoMoreSheet">
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap gap-2">
+              {NEXT_STAGES[current.stage]
+                .filter((stage) => stage !== "done")
+                .map((stage) => (
+                  <ActionButton
+                    key={stage}
+                    disabled={busy}
+                    busyLabel="Saving…"
+                    onAction={async () => {
+                      await moveStage(stage);
+                      setMoreOpen(false);
+                    }}
+                    className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-fg)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+                  >
+                    {STAGE_VERB[stage]}
+                  </ActionButton>
+                ))}
+              <button
+                type="button"
+                onClick={() => {
+                  setMoreOpen(false);
+                  setAddOpen(true);
+                }}
+                className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-fg)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+              >
+                Add to project
+              </button>
+              {current.stage === "staged" || current.stage === "open" ? (
+                <button
+                  type="button"
+                  data-action="promote"
+                  onClick={() => {
+                    setMoreOpen(false);
+                    setAddOpen(true);
+                  }}
+                  className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-fg)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+                >
+                  Promote to a project card
+                </button>
+              ) : null}
+            </div>
+            {current.stage === "staged" || current.stage === "open" ? (
+              <div className="flex flex-wrap items-center gap-2 text-sm text-[var(--color-muted)]">
+                <span>{t("snoozeFor")}</span>
+                {SNOOZES.map((option) => (
+                  <ActionButton
+                    key={option.hours}
+                    disabled={busy}
+                    busyLabel="Snoozing…"
+                    onAction={async () => {
+                      await snoozeFor(option.hours);
+                      setMoreOpen(false);
+                    }}
+                    className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-fg)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+                  >
+                    {option.label}
+                  </ActionButton>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </Sheet>
+      ) : null}
+
       {addOpen ? (
         <AddToProjectSheet
           onClose={() => setAddOpen(false)}
@@ -381,6 +503,10 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
       ) : null}
     </div>
   );
+}
+
+function hoursFromNow(hours: number): string {
+  return new Date(Date.now() + hours * 3_600_000).toISOString();
 }
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {

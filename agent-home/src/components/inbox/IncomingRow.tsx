@@ -66,7 +66,7 @@ export function excerpt(item: IncomingItem, max = 140): string {
  * subject, and "(no subject)" in a list of chat messages would be noise on
  * every row rather than information on any of them.
  */
-export function IncomingRow({ item }: { item: IncomingItem }) {
+export function IncomingRow({ item, from = "" }: { item: IncomingItem; from?: string }) {
   const title =
     item.subject?.trim() ||
     item.sender_name?.trim() ||
@@ -78,7 +78,7 @@ export function IncomingRow({ item }: { item: IncomingItem }) {
   return (
     <li data-component="IncomingRow">
       <Link
-        href={`/inbox/${encodeURIComponent(item.id)}`}
+        href={`/inbox/${encodeURIComponent(item.id)}${from ? `?from=${encodeURIComponent(from)}` : ""}`}
         className="block rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 transition hover:border-[var(--color-accent)]"
       >
         <div className="flex items-start gap-2">

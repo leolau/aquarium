@@ -20,10 +20,12 @@
 export interface ChatHeaderActionsRef {
   startNew: () => void;
   openArchived: () => void;
+  /** Opens the details sheet (rename, category, tags) of the open conversation. */
+  openDetails: () => void;
 }
 
 const noop = () => {};
 
 export const chatHeaderActionsRef: { current: ChatHeaderActionsRef } = {
-  current: { startNew: noop, openArchived: noop },
+  current: { startNew: noop, openArchived: noop, openDetails: noop },
 };

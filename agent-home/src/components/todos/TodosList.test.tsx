@@ -222,8 +222,14 @@ describe("TodoDetailView", () => {
     const withSource = renderToStaticMarkup(<TodoDetailView todo={DETAIL} />);
     expect(withSource).toContain('data-component="TodoCompleteForm"');
     expect(withSource).toContain("Mark done…");
-    // The stage buttons must not offer a second, silent way to finish.
-    expect(withSource).not.toContain(">Mark done<");
+    // The stage buttons must not offer a second, silent way to finish; the
+    // phone dock's "Mark done" only opens the same form in a sheet.
+    const rail = withSource.slice(
+      withSource.indexOf('data-component="TodoActions"'),
+      withSource.indexOf("</aside>"),
+    );
+    expect(rail).not.toContain(">Mark done<");
+    expect(withSource).toMatch(/data-action="mark-done"[^>]*>Mark done</);
   });
 
   it("does not offer to finish a to-do that is already closed", () => {

@@ -15,10 +15,18 @@ export const dynamic = "force-dynamic";
  * renders the same not-found either way rather than confirming that somebody
  * else's message exists.
  */
+/** Only an Inbox query string is a valid Back target (no open redirects). */
+function inboxBackHref(from: string | string[] | undefined): string {
+  const value = Array.isArray(from) ? from[0] : from;
+  return value && value.startsWith("?") && !value.includes("//") ? `/inbox${value}` : "/inbox";
+}
+
 export default async function Page({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams?: Promise<{ from?: string | string[] }>;
 }) {
   await requirePrincipal();
   const { id } = await params;
@@ -34,7 +42,12 @@ export default async function Page({
   }
 
   return (
-    <MobileShell title="Inbox">
+    <MobileShell
+      title={
+        item.subject?.trim() || item.sender_name?.trim() || item.sender_id?.trim() || "(untitled)"
+      }
+      back={{ href: inboxBackHref((await searchParams)?.from), label: "Inbox" }}
+    >
       <IncomingDetailView item={item} />
     </MobileShell>
   );

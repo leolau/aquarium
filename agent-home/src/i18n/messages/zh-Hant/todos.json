@@ -1,0 +1,21 @@
+{
+  "filters": "篩選",
+  "filtersCount": "篩選（{count}）",
+  "clearAll": "全部清除",
+  "showResults": "顯示結果",
+  "markedDone": "已將「{title}」標為完成。",
+  "dismissed": "已略過「{title}」。",
+  "emptyTitle": "全部處理好了",
+  "empty": "有新訊息時，看來需要你處理的事項會先出現在這裡。",
+  "filteredEmptyTitle": "沒有符合篩選的待辦",
+  "filteredEmpty": "試試其他階段，或清除搜尋。",
+  "snoozed": "已延後「{title}」。",
+  "detailMoved": "已將「{title}」移至{stage}。",
+  "nextStep": "下一步",
+  "markDone": "標為完成",
+  "more": "更多",
+  "moreHint": "更多：開始處理 · 加入專案 · 升級 · 延後",
+  "moreTitle": "更多操作",
+  "workOnThis": "處理這項",
+  "snoozeFor": "延後"
+}

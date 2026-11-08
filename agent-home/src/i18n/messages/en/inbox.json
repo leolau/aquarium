@@ -1,0 +1,37 @@
+{
+  "tabs": {
+    "arrived": "Arrived",
+    "approvals": "Approvals",
+    "changes": "Changes",
+    "label": "Inbox sections"
+  },
+  "info": "Arrived is everything that came in. Approvals are things your agent needs you to decide. Changes are things it did that you can undo.",
+  "infoLabel": "About the Inbox",
+  "filters": "Filters",
+  "filtersCount": "Filters ({count})",
+  "clearAll": "Clear all",
+  "showResults": "Show results",
+  "confirmApproveTitle": "Approve “{title}”?",
+  "confirmApproveBody": "This can't be undone once your agent acts on it.",
+  "confirmApprove": "Approve",
+  "cancel": "Cancel",
+  "changeDone": "{op} {kind} change.",
+  "undo": "Undo",
+  "redo": "Redo",
+  "undid": "Undid",
+  "redid": "Redid",
+  "needsDatastore": "The Inbox needs the multi-user datastore configured.",
+  "approvalsEmptyTitle": "Nothing waiting on you",
+  "approvalsEmpty": "When your agent needs a decision, it shows up here.",
+  "changesEmptyTitle": "No changes yet",
+  "changesEmpty": "Things your agent changes for you appear here, with a way to undo them.",
+  "detail": {
+    "doSomething": "Do something with it",
+    "rememberInfo": "Remember saves this into your agent's memory so it can use it later. You can see or remove it in Memory.",
+    "rememberInfoLabel": "What Remember does",
+    "remembered": "Saved to memory. Your agent can now use it.",
+    "seeRemembered": "See what it remembers",
+    "rememberThis": "Remember this",
+    "remembering": "Remembering…"
+  }
+}
