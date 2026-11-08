@@ -615,6 +615,11 @@ export function ChatPane({
   useEffect(() => {
     if (!autoSend || autoSentRef.current || !initialDraft) return;
     autoSentRef.current = true;
+    // Drop the hand-off from the address bar first, so a reload or Back
+    // re-opens this chat instead of sending the same first turn again.
+    const url = new URL(window.location.href);
+    for (const key of ["new", "autosend", "draft"]) url.searchParams.delete(key);
+    window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
     void send(initialDraft, []);
     // Once, on arrival: the landing page handed over a turn the user already sent.
     // eslint-disable-next-line react-hooks/exhaustive-deps
