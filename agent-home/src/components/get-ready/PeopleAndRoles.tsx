@@ -8,6 +8,7 @@ import { useT, type T } from "@/components/get-ready/i18n";
 import { CreateUserForm } from "@/components/users/CreateUserForm";
 import { InvitationLink } from "@/components/users/InvitationLink";
 import { errorMessage, sendJson } from "@/components/users/api";
+import { useAction } from "@/lib/use-action";
 import { withProfileQuery } from "@/lib/profile";
 import type {
   GetReadyConnectionCell,
@@ -44,14 +45,17 @@ export function PeopleAndRoles({
   peopleError: string | null;
 }) {
   const t = useT("getReady");
-  const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [link, setLink] = useState<{ label: string; path: string; expiresAt: string | null } | null>(
     null,
   );
 
-  async function invite(input: { email: string; profile: string; display: string; role: Role }) {
-    setBusy(true);
+  const { run: invite, pending: busy } = useAction(async (input: {
+    email: string;
+    profile: string;
+    display: string;
+    role: Role;
+  }) => {
     setNotice(null);
     try {
       const resp = await sendJson<MemberCreateResponse>(
@@ -70,10 +74,8 @@ export function PeopleAndRoles({
       }
     } catch (err) {
       setNotice(errorMessage(err, "Invite failed"));
-    } finally {
-      setBusy(false);
     }
-  }
+  });
 
   return (
     <div data-component="PeopleAndRoles" className="space-y-5">

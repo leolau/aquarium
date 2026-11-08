@@ -18,6 +18,7 @@ import {
 import type { FolderPermission } from "@/lib/folder-bridge/types";
 import type { BrowseEntry, BrowsePlace, ChatAttachment } from "@/types";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { useConfirm } from "@/components/ui/useConfirm";
 
 /** A place on the left: a folder on this computer, a network folder or the workspace. */
 export interface Place {
@@ -120,6 +121,7 @@ type Preview =
  * network folders and the workspace go through `/api/browse/*`.
  */
 export function BrowseView() {
+  const { ask: askConfirm, dialog } = useConfirm();
   const t = useT("filesBrowse");
   const locale = useLocale();
   const router = useRouter();
@@ -321,7 +323,12 @@ export function BrowseView() {
     if (
       p.kind === "network" &&
       !p.trusted &&
-      !window.confirm(t("file.confirmUntrusted", { folder: p.name, name: entry.name }))
+      !(await askConfirm({
+        title: t("file.save"),
+        body: t("file.confirmUntrusted", { folder: p.name, name: entry.name }),
+        confirmLabel: t("file.save"),
+        tone: "accent",
+      }))
     ) {
       return;
     }
@@ -443,6 +450,7 @@ export function BrowseView() {
       data-component="BrowseView"
       className="grid gap-4 md:grid-cols-[220px_minmax(0,1fr)] lg:grid-cols-[220px_minmax(0,1fr)_300px]"
     >
+      {dialog}
       {/* Places: a sidebar on a computer, chips on a phone. */}
       <nav aria-label={t("places.label")} aria-busy={placesLoading} className="hidden md:block">
         {groups.map((g) => {

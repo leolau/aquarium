@@ -52,8 +52,15 @@ export function IncomingsList({
   const [replacing, setReplacing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // The observer fires again before `loading` re-renders, so the next-page
+  // fetch is locked synchronously: one request per page, however many hits.
+  const paging = useRef(false);
   const fetchPage = useCallback(
     async (value: IncomingsFilterState, after: string | null) => {
+      if (after != null) {
+        if (paging.current) return;
+        paging.current = true;
+      }
       setLoading(true);
       setReplacing(after == null);
       setError(null);
@@ -77,6 +84,7 @@ export function IncomingsList({
       } catch {
         setError("Couldn't reach the AI layer.");
       } finally {
+        if (after != null) paging.current = false;
         setLoading(false);
         setReplacing(false);
       }

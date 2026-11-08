@@ -13,6 +13,7 @@ import {
 import { Pill } from "@/components/ui/Pill";
 import type { ProjectRunBrief, ProjectRunStatus } from "@/types";
 import { useTimeLabel } from "@/components/projects/useTimeLabel";
+import { useConfirm } from "@/components/ui/useConfirm";
 
 const RUN_TONE: Record<
   ProjectRunStatus,
@@ -136,6 +137,7 @@ function RunRowActions({
   runNo: number;
   status: ProjectRunStatus;
 }) {
+  const { ask, dialog } = useConfirm();
   const action = useProjectAction();
   const [which, setWhich] = useState<RunRowAction | null>(null);
   const fire = (next: RunRowAction) => {
@@ -154,6 +156,7 @@ function RunRowActions({
       data-component="RunRowActions"
       className="flex flex-wrap items-center gap-1.5 px-3 pb-2"
     >
+      {dialog}
       {status === "waiting" ? (
         <ActionButton
           busy={pending("continue")}
@@ -178,15 +181,13 @@ function RunRowActions({
       <ActionButton
         busy={pending("stop")}
         pendingLabel={ROW_PENDING.stop}
-        onClick={() => {
-          if (
-            !window.confirm(
-              `Stop run ${runNo} now? Work in progress is terminated where it stands — Cancel instead lets a running card finish.`,
-            )
-          ) {
-            return;
-          }
-          fire("stop");
+        onClick={async () => {
+          const ok = await ask({
+            title: `Stop run ${runNo} now?`,
+            body: "Work in progress is terminated where it stands — Cancel instead lets a running card finish.",
+            confirmLabel: "Stop now",
+          });
+          if (ok) fire("stop");
         }}
         disabled={action.busy}
         className={`${actionClass} text-[var(--color-danger)]`}

@@ -26,6 +26,7 @@ import type {
   ProjectRunStatus,
 } from "@/types";
 import { useTimeLabel } from "@/components/projects/useTimeLabel";
+import { useConfirm } from "@/components/ui/useConfirm";
 
 /**
  * One colour per run state, used for the badge, the progress bar and the
@@ -234,6 +235,7 @@ export function RunView({
   run: ProjectRun;
   archived?: boolean;
 }) {
+  const { ask, dialog } = useConfirm();
   const timeLabel = useTimeLabel();
   const router = useRouter();
   const [run, setRun] = useServerState(initial);
@@ -468,6 +470,7 @@ export function RunView({
 
   return (
     <div data-component="RunView" className="flex flex-col gap-4">
+      {dialog}
       <BusyRegion busy={busy} label={busy ? "Talking to the agent…" : undefined}>
         <div className="flex flex-col gap-4">
           {/* ── Headline ──────────────────────────────────────────── */}
@@ -605,15 +608,13 @@ export function RunView({
                 <ActionButton
                   busy={controlPending("stop")}
                   pendingLabel="Stopping…"
-                  onClick={() => {
-                    if (
-                      !window.confirm(
-                        "Stop this run now? Work in progress is terminated where it stands — Cancel instead lets a running card finish.",
-                      )
-                    ) {
-                      return;
-                    }
-                    steer("stop");
+                  onClick={async () => {
+                    const ok = await ask({
+                      title: "Stop this run now?",
+                      body: "Work in progress is terminated where it stands — Cancel instead lets a running card finish.",
+                      confirmLabel: "Stop now",
+                    });
+                    if (ok) steer("stop");
                   }}
                   disabled={busy}
                   className="rounded-xl bg-red-500/90 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
@@ -636,12 +637,15 @@ export function RunView({
                 <ActionButton
                   busy={controlPending("repeat")}
                   pendingLabel="Starting run…"
-                  onClick={() => {
+                  onClick={async () => {
                     if (
                       canResume &&
-                      !window.confirm(
-                        "Start a brand-new run on the same method? This redoes every step from scratch, including ones already done — Resume instead continues from exactly where this run left off.",
-                      )
+                      !(await ask({
+                        title: "Start a brand-new run on the same method?",
+                        body: "This redoes every step from scratch, including ones already done — Resume instead continues from exactly where this run left off.",
+                        confirmLabel: "Start over",
+                        tone: "accent",
+                      }))
                     ) {
                       return;
                     }

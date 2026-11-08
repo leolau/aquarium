@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { ActionButton } from "@/components/ui/ActionButton";
+import { useAction } from "@/lib/use-action";
 import { Pill, type Tone } from "@/components/ui/Pill";
 import { inputClass, primaryButtonClass, secondaryButtonClass, Sheet } from "@/components/ui/Sheet";
 import { errorText, getJson, profileQuery, sendJson } from "@/lib/admin-fetch";
@@ -103,7 +104,8 @@ export function SkillsHubView({ profile, onInstalled }: { profile: string; onIns
     } catch (err) {
       setMessage({ tone: "error", text: errorText(err) });
     }
-  }
+  }  const searchAction = useAction(search);
+
 
   async function openPreview(r: SkillHubResult) {
     setMessage(null);
@@ -147,10 +149,10 @@ export function SkillsHubView({ profile, onInstalled }: { profile: string; onIns
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && query.trim()) void search();
+            if (e.key === "Enter" && query.trim()) void searchAction.run();
           }}
         />
-        <ActionButton className={primaryButtonClass} disabled={!query.trim()} busyLabel="Searching…" onAction={search}>
+        <ActionButton className={primaryButtonClass} disabled={!query.trim()} busyLabel="Searching…" busy={searchAction.pending} onAction={() => searchAction.run()}>
           Search
         </ActionButton>
       </div>

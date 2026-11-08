@@ -14,6 +14,7 @@ import type {
   MemorySummary,
 } from "@/types";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { useAction } from "@/lib/use-action";
 import { useHydrated } from "@/lib/use-hydrated";
 
 /**
@@ -219,6 +220,8 @@ export function MemoryView({
       setQueryLoading(false);
     }
   }, [queryText]);
+  // Enter and the Place button share one lock: the upstream allows one placement every 3 s.
+  const place = useAction(placeQuery);
 
   // --- Row lookup for nearest neighbours ----------------------------------
   const rowMap = new Map(rows.map((r) => [r.id, r]));
@@ -256,13 +259,13 @@ export function MemoryView({
             value={queryText}
             onChange={(e) => setQueryText(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") placeQuery();
+              if (e.key === "Enter") void place.run();
             }}
             placeholder="Place a query on the map…"
             className="flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm"
           />
           <ActionButton
-            onAction={placeQuery}
+            onAction={() => place.run()}
             disabled={queryLoading || !queryText.trim()}
             className="inline-flex items-center gap-2 rounded-lg bg-[var(--color-accent)] px-3 py-2 text-sm font-medium text-[var(--color-accent-fg)] disabled:opacity-40"
           >

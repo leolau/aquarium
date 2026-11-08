@@ -48,8 +48,15 @@ export function TodosList({
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // The observer fires again before `loading` re-renders, so the next-page
+  // fetch is locked synchronously: one request per page, however many hits.
+  const paging = useRef(false);
   const fetchPage = useCallback(
     async (value: TodosFilterState, after: string | null) => {
+      if (after != null) {
+        if (paging.current) return;
+        paging.current = true;
+      }
       setLoading(true);
       setError(null);
       try {
@@ -72,6 +79,7 @@ export function TodosList({
       } catch {
         setError("Couldn't reach the AI layer.");
       } finally {
+        if (after != null) paging.current = false;
         setLoading(false);
       }
     },
