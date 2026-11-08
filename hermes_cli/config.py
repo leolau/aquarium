@@ -1501,6 +1501,21 @@ DEFAULT_CONFIG = {
                                       # after live validation.
     },
 
+    # agent-home landing page.
+    "landing": {
+        # On landing load the agent reviews recent chats (one tool-less
+        # auxiliary.session_review call, cached per user; heuristic without
+        # a model) and suggests unfinished ones to pin.
+        "pin_suggestions": {
+            "enabled": True,
+            "use_model": True,       # False = heuristic only, no model call
+            "max_items": 3,
+            "candidates": 8,         # most recent unpinned chats reviewed
+            "lookback_days": 14,
+            "refresh_hours": 6,      # re-review an unchanged set at most this often
+        },
+    },
+
     # Kanban subsystem (orchestrator workers + dispatcher-driven child tasks).
     # See tools/kanban_tools.py and hermes_cli/kanban_db.py for the actual
     # implementations. Per-platform notification opt-out is handled by the
@@ -1651,6 +1666,16 @@ DEFAULT_CONFIG = {
             "timeout": 30,
             "extra_body": {},
             "language": "",
+        },
+        # Landing "review" that suggests chats to pin (one tool-less call
+        # over recent chat titles/last messages; see landing.pin_suggestions).
+        "session_review": {
+            "provider": "auto",
+            "model": "",
+            "base_url": "",
+            "api_key": "",
+            "timeout": 30,
+            "extra_body": {},
         },
         "tts_audio_tags": {
             "provider": "auto",

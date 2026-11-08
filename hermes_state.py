@@ -123,7 +123,7 @@ T = TypeVar("T")
 
 DEFAULT_DB_PATH = get_hermes_home() / "state.db"
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 # Cap on user-controlled FTS5 query input before regex/sanitizer processing.
 # Search queries do not need to be arbitrarily large, and bounding them keeps
@@ -869,6 +869,24 @@ CREATE TABLE IF NOT EXISTS session_tag_map (
     PRIMARY KEY (session_id, tag_id)
 );
 
+CREATE TABLE IF NOT EXISTS session_pins (
+    user_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    pinned_at REAL NOT NULL,
+    PRIMARY KEY (user_id, session_id)
+);
+
+CREATE TABLE IF NOT EXISTS session_pin_suggestions (
+    user_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    reason TEXT,
+    score REAL,
+    status TEXT NOT NULL DEFAULT 'open',
+    created_at REAL NOT NULL,
+    decided_at REAL,
+    PRIMARY KEY (user_id, session_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
 CREATE INDEX IF NOT EXISTS idx_sessions_source_id ON sessions(source, id);
 CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id);
@@ -878,6 +896,7 @@ CREATE INDEX IF NOT EXISTS idx_compression_locks_expires ON compression_locks(ex
 CREATE INDEX IF NOT EXISTS idx_session_tag_map_session ON session_tag_map(session_id);
 CREATE INDEX IF NOT EXISTS idx_session_tag_map_tag ON session_tag_map(tag_id);
 CREATE INDEX IF NOT EXISTS idx_session_tags_name ON session_tags(name);
+CREATE INDEX IF NOT EXISTS idx_session_pins_user ON session_pins(user_id, pinned_at DESC);
 """
 
 # Indexes that reference columns added in later schema versions must be
@@ -1890,6 +1909,33 @@ class SessionDB:
                 cursor.execute(
                     "CREATE INDEX IF NOT EXISTS idx_session_tag_map_tag "
                     "ON session_tag_map(tag_id)"
+                )
+            if current_version < 19:
+                # v19: per-user session pins + cached pin suggestions (landing
+                # redesign). SCHEMA_SQL creates them; repeat for older DBs.
+                cursor.execute(
+                    "CREATE TABLE IF NOT EXISTS session_pins ("
+                    "user_id TEXT NOT NULL, "
+                    "session_id TEXT NOT NULL, "
+                    "pinned_at REAL NOT NULL, "
+                    "PRIMARY KEY (user_id, session_id)"
+                    ")"
+                )
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_session_pins_user "
+                    "ON session_pins(user_id, pinned_at DESC)"
+                )
+                cursor.execute(
+                    "CREATE TABLE IF NOT EXISTS session_pin_suggestions ("
+                    "user_id TEXT NOT NULL, "
+                    "session_id TEXT NOT NULL, "
+                    "reason TEXT, "
+                    "score REAL, "
+                    "status TEXT NOT NULL DEFAULT 'open', "
+                    "created_at REAL NOT NULL, "
+                    "decided_at REAL, "
+                    "PRIMARY KEY (user_id, session_id)"
+                    ")"
                 )
             if current_version < SCHEMA_VERSION and fts_migrations_complete:
                 cursor.execute(
@@ -3216,10 +3262,13 @@ class SessionDB:
         archived_only: bool = False,
         id_query: str = None,
         user_id: str = None,
+        root_ids: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """List sessions with preview (first user message) and last active timestamp.
 
         ``user_id`` restricts the list to conversations that user owns.
+        ``root_ids`` restricts it to those surfaced (root) ids — e.g. a
+        user's pins, which key on the compression root.
 
         Returns dicts with keys: id, source, model, title, started_at, ended_at,
         message_count, preview (first 60 chars of first user message),
@@ -3270,6 +3319,12 @@ class SessionDB:
         if user_id:
             where_clauses.append("s.user_id = ?")
             params.append(user_id)
+        if root_ids is not None:
+            if not root_ids:
+                return []
+            placeholders = ",".join("?" for _ in root_ids)
+            where_clauses.append(f"s.id IN ({placeholders})")
+            params.extend(root_ids)
         if source:
             where_clauses.append("s.source = ?")
             params.append(source)
@@ -3453,6 +3508,173 @@ class SessionDB:
             sessions = projected
 
         return sessions
+
+    # -----------------------------------------------------------------------
+    # Session pins (per user, per profile) and cached pin suggestions
+    # -----------------------------------------------------------------------
+    MAX_PINS_PER_USER = 20
+
+    def get_compression_root(self, session_id: str) -> str:
+        """Walk compression continuations back to the conversation's root id.
+
+        Pins and suggestion decisions key on the root so a conversation stays
+        pinned after it auto-compresses into a continuation with a new id.
+        """
+        current = session_id
+        with self._lock:
+            for _ in range(64):
+                row = self._conn.execute(
+                    "SELECT c.parent_session_id AS parent, p.end_reason AS parent_end, "
+                    "c.model_config AS mc, c.source AS source "
+                    "FROM sessions c LEFT JOIN sessions p ON p.id = c.parent_session_id "
+                    "WHERE c.id = ?",
+                    (current,),
+                ).fetchone()
+                if not row or not row["parent"] or row["parent_end"] != "compression":
+                    break
+                try:
+                    mc = json.loads(row["mc"] or "{}")
+                except (TypeError, ValueError):
+                    mc = {}
+                if (
+                    isinstance(mc, dict)
+                    and (mc.get("_branched_from") or mc.get("_delegate_from"))
+                ) or row["source"] == "tool":
+                    break
+                current = row["parent"]
+        return current
+
+    def pin_session(self, user_id: str, session_id: str, now: Optional[float] = None) -> float:
+        """Pin *session_id* (its compression root) for *user_id*; idempotent.
+
+        Returns the ``pinned_at`` timestamp (the original one when it was
+        already pinned). Raises ``ValueError`` past :attr:`MAX_PINS_PER_USER`.
+        """
+        root = self.get_compression_root(session_id)
+        stamp = float(now if now is not None else time.time())
+
+        def _do(conn):
+            row = conn.execute(
+                "SELECT pinned_at FROM session_pins WHERE user_id = ? AND session_id = ?",
+                (user_id, root),
+            ).fetchone()
+            if row:
+                return float(row[0])
+            count = conn.execute(
+                "SELECT COUNT(*) FROM session_pins WHERE user_id = ?", (user_id,)
+            ).fetchone()[0]
+            if count >= self.MAX_PINS_PER_USER:
+                raise ValueError(
+                    f"You can pin up to {self.MAX_PINS_PER_USER} chats. Unpin one first."
+                )
+            conn.execute(
+                "INSERT INTO session_pins (user_id, session_id, pinned_at) VALUES (?, ?, ?)",
+                (user_id, root, stamp),
+            )
+            conn.execute(
+                "UPDATE session_pin_suggestions SET status = 'accepted', decided_at = ? "
+                "WHERE user_id = ? AND session_id = ? AND status = 'open'",
+                (stamp, user_id, root),
+            )
+            return stamp
+
+        return self._execute_write(_do)
+
+    def unpin_session(self, user_id: str, session_id: str) -> bool:
+        """Unpin; True when a pin was removed (False is still success)."""
+        root = self.get_compression_root(session_id)
+
+        def _do(conn):
+            cur = conn.execute(
+                "DELETE FROM session_pins WHERE user_id = ? AND session_id = ?",
+                (user_id, root),
+            )
+            return cur.rowcount > 0
+
+        return self._execute_write(_do)
+
+    def get_pins(self, user_id: str) -> Dict[str, float]:
+        """``{root_session_id: pinned_at}`` for *user_id*, newest first."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT session_id, pinned_at FROM session_pins WHERE user_id = ? "
+                "ORDER BY pinned_at DESC",
+                (user_id,),
+            ).fetchall()
+        return {r[0]: float(r[1]) for r in rows}
+
+    def get_pin_suggestion_rows(self, user_id: str) -> List[Dict[str, Any]]:
+        """Every cached suggestion row (open, accepted, dismissed) for *user_id*."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT session_id, reason, score, status, created_at, decided_at "
+                "FROM session_pin_suggestions WHERE user_id = ? "
+                "ORDER BY score DESC, created_at DESC",
+                (user_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def replace_open_pin_suggestions(
+        self,
+        user_id: str,
+        items: List[Dict[str, Any]],
+        now: Optional[float] = None,
+    ) -> None:
+        """Swap the open suggestions for *items* (``session_id``/``reason``/``score``).
+
+        Decided rows (dismissed / accepted) are kept and never reopened.
+        """
+        stamp = float(now if now is not None else time.time())
+
+        def _do(conn):
+            conn.execute(
+                "DELETE FROM session_pin_suggestions WHERE user_id = ? AND status = 'open'",
+                (user_id,),
+            )
+            for item in items:
+                conn.execute(
+                    "INSERT OR IGNORE INTO session_pin_suggestions "
+                    "(user_id, session_id, reason, score, status, created_at) "
+                    "VALUES (?, ?, ?, ?, 'open', ?)",
+                    (user_id, item["session_id"], item.get("reason"),
+                     float(item.get("score") or 0.0), stamp),
+                )
+
+        self._execute_write(_do)
+
+    def dismiss_pin_suggestions(
+        self, user_id: str, session_ids: List[str], now: Optional[float] = None
+    ) -> int:
+        """Mark suggestions dismissed for good (also pre-emptively for ids
+        with no open row, so a later review never suggests them)."""
+        stamp = float(now if now is not None else time.time())
+        roots = list(dict.fromkeys(self.get_compression_root(s) for s in session_ids if s))
+
+        def _do(conn):
+            for root in roots:
+                conn.execute(
+                    "INSERT INTO session_pin_suggestions "
+                    "(user_id, session_id, status, created_at, decided_at) "
+                    "VALUES (?, ?, 'dismissed', ?, ?) "
+                    "ON CONFLICT(user_id, session_id) DO UPDATE SET "
+                    "status = 'dismissed', decided_at = excluded.decided_at",
+                    (user_id, root, stamp, stamp),
+                )
+            return len(roots)
+
+        return self._execute_write(_do)
+
+    def last_messages(self, session_id: str, limit: int = 6) -> List[Dict[str, Any]]:
+        """The newest *limit* active user/assistant rows (oldest first)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT role, content, timestamp FROM messages "
+                "WHERE session_id = ? AND role IN ('user', 'assistant') "
+                "AND COALESCE(active, 1) = 1 AND content IS NOT NULL AND content != '' "
+                "ORDER BY timestamp DESC, id DESC LIMIT ?",
+                (session_id, limit),
+            ).fetchall()
+        return [dict(r) for r in reversed(rows)]
 
     # -----------------------------------------------------------------------
     # Session tags

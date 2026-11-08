@@ -103,6 +103,12 @@ export interface PinSuggestion {
 export interface PinSuggestionsResponse {
   items: PinSuggestion[];
   generated_at: number | null;
+  /** False when `landing.pin_suggestions.enabled` is off in config.yaml. */
+  enabled?: boolean;
+  /** A fresh review is running; re-read shortly. */
+  pending?: boolean;
+  /** Who picked the current items: the auxiliary model or the heuristic. */
+  source?: "model" | "heuristic" | null;
 }
 
 /** POST /api/chat/pin-suggestions/dismiss { sessionIds } */

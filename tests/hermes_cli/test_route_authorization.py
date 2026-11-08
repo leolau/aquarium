@@ -392,6 +392,10 @@ SIGNED_IN = {
     "GET /api/sessions/tags",
     "POST /api/sessions/tags",
     "DELETE /api/sessions/tags/{tag_id}",
+    # session pins: the caller's own pins in the addressed profile; chat scope
+    "POST /api/sessions/{session_id}/pin",
+    "GET /api/sessions/pin-suggestions",
+    "POST /api/sessions/pin-suggestions/dismiss",
     "GET /api/sessions/{session_id}",
     "GET /api/sessions/{session_id}/latest-descendant",
     "GET /api/sessions/{session_id}/messages",

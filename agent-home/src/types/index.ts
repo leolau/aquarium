@@ -402,6 +402,9 @@ export interface SessionSummary {
   reasoning_tokens?: number;
   /** Tags assigned to this session (populated by tag endpoints). */
   tags?: SessionTag[];
+  /** When the caller pinned this chat (epoch seconds), null when not pinned.
+   * Pins are per user and per profile. */
+  pinned_at?: number | null;
 }
 
 /** The list of conversations from `GET /api/sessions`. */
