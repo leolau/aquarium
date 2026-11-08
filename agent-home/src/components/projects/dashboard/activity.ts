@@ -24,6 +24,9 @@ const SKIP = new Set([
   "linked",
   "unlinked",
   "spawned",
+  // FG-34 assignment record (who picked the profile and why); a hand change
+  // already shows as "assigned".
+  "assignment",
 ]);
 
 const SENTENCE: Record<string, { verb: (title: string) => string; tone: ActivityTone }> = {

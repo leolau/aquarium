@@ -572,6 +572,44 @@ def check_step_assignees(pconn, project: projects_db.Project, steps: Sequence[di
             )
 
 
+_ASSIGNMENT_EVENT = "assignment"
+
+
+def record_card_assignment(bconn, task_id: str, assignment: dict) -> None:
+    """Store a card's C-3 assignment fields (FG-34) as a task event; the
+    latest one is the card's current ``assignment``."""
+    kanban_db.append_event(bconn, task_id, _ASSIGNMENT_EVENT, assignment)
+
+
+def card_assignment(events: Sequence[Any]) -> Optional[dict]:
+    """The latest assignment record among a card's ``events``, or ``None``
+    for a card written before FG-34 (or by hand)."""
+    for event in reversed(list(events)):
+        if event.kind == _ASSIGNMENT_EVENT and isinstance(event.payload, dict):
+            return dict(event.payload)
+    return None
+
+
+def mark_card_assignment_manual(
+    bconn, task_id: str, *, prior_assignee: Optional[str], assignee: Optional[str]
+) -> Optional[dict]:
+    """A person changed the card's assignee: if the planner (or its
+    fallback) had picked it, record the hand edit. A card without an
+    assignment record is left exactly as it was. Returns the new record."""
+    if (prior_assignee or None) == (assignee or None):
+        return None
+    current = card_assignment(kanban_db.list_events(bconn, task_id))
+    if current is None:
+        return None
+    updated = projects_db.manual_assignment(
+        {k: v for k, v in current.items() if k != "assignee"},
+        current.get("assignee") or prior_assignee,
+    )
+    updated = {"assignee": assignee, **updated}
+    record_card_assignment(bconn, task_id, updated)
+    return updated
+
+
 def instantiate_run_cards(
     bconn,
     pconn,
@@ -622,6 +660,9 @@ def instantiate_run_cards(
             toolsets=(card_toolsets or {}).get(step["key"]),
         )
         card_ids[step["key"]] = tid
+        assignment = projects_db.step_assignment(step)
+        if assignment:
+            record_card_assignment(bconn, tid, {"assignee": assignee, **assignment})
 
     for step in steps:
         if step.get("mode") == "inline":
