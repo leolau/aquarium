@@ -215,7 +215,7 @@ export function InboxView({
             data-tab={key}
             aria-selected={tab === key}
             onClick={() => setTab(key)}
-            className={`flex h-10 min-w-0 flex-1 items-center justify-center gap-2 rounded-[var(--radius-md)] px-3 text-sm lg:flex-none lg:px-4 ${
+            className={`flex h-10 min-w-0 flex-auto items-center justify-center gap-1.5 rounded-[var(--radius-md)] px-2 text-sm lg:flex-none lg:px-4 ${
               tab === key
                 ? "bg-[var(--color-surface-2)] font-semibold text-[var(--color-fg)]"
                 : "text-[var(--color-muted)]"
