@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { NewSkillModal } from "@/components/skills/NewSkillModal";
 import { SkillsHubView } from "@/components/skills/SkillsHubView";
+import { SkillUsageSignal } from "@/components/skills/SkillUsagePanel";
 import { skillHref } from "@/components/skills/skill-links";
 import { categoryCounts, filterSkills, sourceLabel, type SkillFilter } from "@/components/skills/skill-filters";
 import { InfoTip } from "@/components/ui/InfoTip";
@@ -14,6 +15,7 @@ import { useUndoToast } from "@/components/ui/UndoToast";
 import { inputClass, primaryButtonClass } from "@/components/ui/Sheet";
 import { errorText, getJson, profileQuery, sendJson } from "@/lib/admin-fetch";
 import { useAction } from "@/lib/use-action";
+import type { SkillUsageList, SkillUsageRow } from "@/lib/skills/usage";
 import type { SkillInfo } from "@/types";
 
 export interface SkillsViewProps {
@@ -42,6 +44,18 @@ export function SkillsView({ profiles, profile, initialSkills, initialView, erro
     } catch (err) {
       setMessage(errorText(err));
     }
+  }, [q]);
+
+  // Uses and results per skill, once per list load; the list works without them.
+  const [usage, setUsage] = useState<{ days: number; byName: Map<string, SkillUsageRow> } | null>(null);
+  useEffect(() => {
+    let live = true;
+    getJson<SkillUsageList>(`/api/skills/usage?days=90${q ? `&${q}` : ""}`)
+      .then((d) => live && setUsage({ days: d.days, byName: new Map(d.skills.map((r) => [r.name, r])) }))
+      .catch(() => live && setUsage(null));
+    return () => {
+      live = false;
+    };
   }, [q]);
 
   const undo = useUndoToast();
@@ -212,6 +226,7 @@ export function SkillsView({ profiles, profile, initialSkills, initialView, erro
                         </Link>
                         {s.category ? <Pill>{s.category}</Pill> : null}
                         <Pill tone={s.source === "hub" ? "accent" : "muted"}>{sourceLabel(s)}</Pill>
+                        {usage ? <SkillUsageSignal row={usage.byName.get(s.name)} days={usage.days} /> : null}
                       </div>
                       <p className="mt-1 line-clamp-2 text-sm text-[var(--color-muted)]">{s.description}</p>
                     </div>

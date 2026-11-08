@@ -18,6 +18,7 @@ import { activeEnrolments } from "@/lib/api/my-profiles";
 import type { SkillVersionDetail, SkillVersionDiff, SkillVersionList } from "@/lib/skills/versions";
 import { hermesApiBaseUrl } from "@/lib/env";
 import type { SecurityBasicsResult } from "@/lib/api/security-basics";
+import type { SkillUsageEvent, SkillUsageList } from "@/lib/skills/usage";
 import type { PinResponse, PinSuggestionsResponse } from "@/types/landing";
 import type {
   ActivityItem,
@@ -471,6 +472,14 @@ export class HermesApiClient {
 
   async skillDetails(name: string): Promise<SkillDetails> {
     return this.request(`/api/skills/details?name=${encodeURIComponent(name)}`);
+  }
+
+  async skillUsage(days: number): Promise<SkillUsageList> {
+    return this.request(`/api/skills/usage?days=${days}`);
+  }
+
+  async skillUsageFeedback(input: { event_id: number; rating: -1 | 1; note?: string }): Promise<SkillUsageEvent> {
+    return this.request("/api/skills/usage/feedback", { method: "POST", json: input });
   }
 
   async createSkill(input: {

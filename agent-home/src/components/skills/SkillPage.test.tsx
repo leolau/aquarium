@@ -114,6 +114,26 @@ describe("SkillPage", () => {
     expect(screen.getByText("off")).toBeTruthy();
   });
 
+  it("orders the tabs and opens the Usage tab from ?tab=usage", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ detail: "down" }), { status: 502 })));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      render(<SkillPage name="pdf-tools" profile="default" content={DOC} skill={SKILL} details={DETAILS} installed={["pdf-tools"]} initialTab="usage" />);
+      const tabs = screen.getAllByRole("tab").map((t) => t.textContent?.match(/^(Instructions|Files|Usage|Versions|Improve|Used by)/)?.[0]);
+      const order = ["Instructions", "Files", "Usage", "Versions", "Improve", "Used by"];
+      expect(tabs).toContain("Usage");
+      expect(tabs.map((t) => order.indexOf(t ?? ""))).toEqual([...tabs.map((t) => order.indexOf(t ?? ""))].sort((a, b) => a - b));
+      expect(screen.getByRole("tab", { name: /Usage/ }).getAttribute("aria-selected")).toBe("true");
+      await screen.findByText("Usage couldn't be loaded");
+      fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
+      expect(window.location.search).toBe("?tab=files");
+      fireEvent.click(screen.getByRole("tab", { name: /Instructions/ }));
+      expect(window.location.search).toBe("");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("degrades when details are unavailable", () => {
     render(page(null));
     fireEvent.click(screen.getByRole("tab", { name: "Files" }));
