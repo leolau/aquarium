@@ -1,60 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { StatusSummary } from "@/types";
 import { useT } from "@/i18n";
-import { useAction } from "@/lib/use-action";
 import { useHydrated } from "@/lib/use-hydrated";
+import {
+  buildInfo,
+  fmtAge,
+  fmtBuildTime,
+  fmtGb,
+  fmtPct,
+  fmtTokens,
+  resetStatusSummaryCache,
+  useStatusSummary,
+} from "@/components/ui/useStatusSummary";
 
-const POLL_MS = 30_000;
-const AGE_TICK_MS = 1_000;
-
-function fmtPct(v: number | null): string {
-  return v === null ? "—" : `${Math.round(v)}%`;
-}
-
-function fmtAge(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  if (s < 3) return "just now";
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  return `${Math.floor(m / 60)}h ago`;
-}
-
-/** Short local date/time for the build stamp, e.g. "4 Oct 07:04". */
-export function fmtBuildTime(iso: string | undefined): string | null {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleString(undefined, {
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-}
-
-function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
-  return `${n}`;
-}
-
-function fmtGb(bytes: number | null): string {
-  return bytes === null ? "—" : `${(bytes / 1024 ** 3).toFixed(1)} GB`;
-}
-
-// Last good read, shared across mounts: MobileShell renders per page, so
-// every client navigation remounts the strip. A read younger than the poll
-// interval is reused instead of re-firing the summary's upstream fan-out.
-let lastGood: { summary: StatusSummary; at: number } | null = null;
+export { fmtBuildTime };
 
 export function resetStatusStripCache(): void {
-  lastGood = null;
+  resetStatusSummaryCache();
 }
 
 /**
@@ -64,97 +28,20 @@ export function resetStatusStripCache(): void {
  * (a strip that blanks on every hiccup is worse than a stale one) but the
  * self-ticking "Ns ago" label — amber with "retrying" while fetches fail —
  * always says exactly how old the numbers are. The ↻ button re-reads now.
+ * Data comes from `useStatusSummary` (shared with the landing top bar).
  */
 export function StatusStrip() {
   const t = useT("nav");
-  const [summary, setSummary] = useState<StatusSummary | null>(
-    () => lastGood?.summary ?? null,
-  );
-  const [stale, setStale] = useState(false);
-  // When the last *successful* fetch landed (local clock — immune to server/
-  // browser clock skew) and a 1s heartbeat so the age label self-ticks.
-  const [fetchedAt, setFetchedAt] = useState<number | null>(
-    () => lastGood?.at ?? null,
-  );
-  const [now, setNow] = useState(() => Date.now());
-  const [refreshing, setRefreshing] = useState(false);
-  const mounted = useRef(true);
-  // One read at a time: the poll, focus wake and the ↻ button share it.
-  const inFlight = useRef<Promise<void> | null>(null);
+  const { summary, stale, fetchedAt, now, refreshing, refresh: refreshOnce } =
+    useStatusSummary();
 
-  const tick = useCallback((): Promise<void> => {
-    if (inFlight.current) return inFlight.current;
-    const run = (async () => {
-      try {
-        const res = await fetch("/api/status/summary", { cache: "no-store" });
-        if (!res.ok) throw new Error(String(res.status));
-        const data = (await res.json()) as StatusSummary;
-        lastGood = { summary: data, at: Date.now() };
-        if (mounted.current) {
-          setSummary(data);
-          setFetchedAt(Date.now());
-          setNow(Date.now());
-          setStale(false);
-        }
-      } catch {
-        if (mounted.current) setStale(true);
-      } finally {
-        inFlight.current = null;
-      }
-    })();
-    inFlight.current = run;
-    return run;
-  }, []);
-
-  const refreshNow = useCallback(async () => {
-    setRefreshing(true);
-    try {
-      await tick();
-    } finally {
-      if (mounted.current) setRefreshing(false);
-    }
-  }, [tick]);  const { run: refreshOnce } = useAction(refreshNow);
-
-
-  useEffect(() => {
-    mounted.current = true;
-    if (!lastGood || Date.now() - lastGood.at >= POLL_MS) void tick();
-    const interval = setInterval(() => {
-      if (document.visibilityState === "visible") void tick();
-    }, POLL_MS);
-    const wake = () => {
-      if (document.visibilityState === "visible") void tick();
-    };
-    document.addEventListener("visibilitychange", wake);
-    window.addEventListener("focus", wake);
-    return () => {
-      mounted.current = false;
-      clearInterval(interval);
-      document.removeEventListener("visibilitychange", wake);
-      window.removeEventListener("focus", wake);
-    };
-  }, [tick]);
-
-  // Self-ticking clock for the "Ns ago" freshness label — skipped while the
-  // tab is hidden so background tabs don't burn a render a second.
-  useEffect(() => {
-    const t = setInterval(() => {
-      if (document.visibilityState === "visible") setNow(Date.now());
-    }, AGE_TICK_MS);
-    return () => clearInterval(t);
-  }, []);
-
-  // The browser bundle's own SHA vs the one the server reports. A mismatch
-  // means this tab is running a pre-deploy bundle — flag it instead of
-  // quietly showing old metrics forever.
-  const clientBuild = process.env.NEXT_PUBLIC_HERMES_BUILD ?? "dev";
-  const buildTimeIso = process.env.NEXT_PUBLIC_HERMES_BUILD_TIME;
+  // A server/bundle SHA mismatch means this tab is running a pre-deploy
+  // bundle — flag it instead of quietly showing old metrics forever.
+  const { clientBuild, buildTimeIso, serverBuild, buildMismatch } = buildInfo(summary);
   // Local time in the browser's locale and zone: the server's differ, so the
   // stamp only renders once hydrated (else a React #418 text mismatch).
   const hydrated = useHydrated();
   const buildTime = hydrated ? fmtBuildTime(buildTimeIso) : null;
-  const serverBuild = summary?.build ?? null;
-  const buildMismatch = serverBuild !== null && serverBuild !== clientBuild;
 
   const tokens = summary?.tokens_month
     ? fmtTokens(summary.tokens_month.input + summary.tokens_month.output)

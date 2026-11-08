@@ -3,45 +3,20 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { ActivityItem, ActivityRunning } from "@/types";
+import {
+  ACTIVITY_GLYPH as GLYPH,
+  LONG_RUN_MS,
+  activityLabel,
+  activityTiming,
+  fmtElapsed,
+  resetActivityRunningCache,
+  useActivityRunning,
+} from "@/components/ui/useActivityRunning";
 
-const POLL_MS = 15_000;
-const CLOCK_TICK_MS = 1_000;
-/** A run older than this turns amber — worth a look. */
-export const LONG_RUN_MS = 30 * 60_000;
-
-const GLYPH: Record<ActivityItem["kind"], string> = {
-  chat: "❝",
-  project_run: "▶",
-  card: "▣",
-  cron: "◷",
-};
-
-const KIND_LABEL: Record<ActivityItem["kind"], string> = {
-  chat: "Chat",
-  project_run: "Project run",
-  card: "Card",
-  cron: "Scheduled job",
-};
-
-/** Compact elapsed time: "42s", "12m", "1h 05m", "2d 3h". */
-export function fmtElapsed(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ${String(m % 60).padStart(2, "0")}m`;
-  return `${Math.floor(h / 24)}d ${h % 24}h`;
-}
-
-// Last good read, shared across mounts: MobileShell renders per page, so
-// every client navigation remounts the bar. A read younger than the poll
-// interval is reused instead of re-fetching (same as StatusStrip).
-let lastGood: { items: ActivityItem[]; at: number } | null = null;
+export { LONG_RUN_MS, fmtElapsed };
 
 export function resetActivityStripCache(): void {
-  lastGood = null;
+  resetActivityRunningCache();
 }
 
 /**
@@ -50,74 +25,16 @@ export function resetActivityStripCache(): void {
  * locally ticking "running for" time, amber once a run gets long. One row;
  * scrolls sideways (swipe on phones, ‹ › on desktop) when it overflows.
  *
- * Polls while the tab is visible and re-reads on focus; a failed read keeps
- * the last good rows, dimmed. With nothing running it renders nothing at
+ * Data comes from `useActivityRunning` (shared with the landing top bar):
+ * polled while visible, re-read on focus; a failed read keeps the last good
+ * rows, dimmed. With nothing running it renders nothing at
  * all — no empty row.
  */
 export function ActivityStrip() {
-  const [items, setItems] = useState<ActivityItem[]>(() => lastGood?.items ?? []);
-  const [stale, setStale] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
-  const mounted = useRef(true);
-  // One read at a time: the poll and focus wake share it.
-  const inFlight = useRef<Promise<void> | null>(null);
+  const { items, stale, now } = useActivityRunning();
   const scroller = useRef<HTMLDivElement | null>(null);
   const [edges, setEdges] = useState({ left: false, right: false });
-
-  const tick = useCallback((): Promise<void> => {
-    if (inFlight.current) return inFlight.current;
-    const run = (async () => {
-      try {
-        const res = await fetch("/api/activity/running", { cache: "no-store" });
-        if (!res.ok) throw new Error(String(res.status));
-        const data = (await res.json()) as ActivityRunning;
-        const next = Array.isArray(data.items) ? data.items : [];
-        lastGood = { items: next, at: Date.now() };
-        if (mounted.current) {
-          setItems(next);
-          setNow(Date.now());
-          setStale(false);
-        }
-      } catch {
-        if (mounted.current) setStale(true);
-      } finally {
-        inFlight.current = null;
-      }
-    })();
-    inFlight.current = run;
-    return run;
-  }, []);
-
-  useEffect(() => {
-    mounted.current = true;
-    if (!lastGood || Date.now() - lastGood.at >= POLL_MS) void tick();
-    const interval = setInterval(() => {
-      if (document.visibilityState === "visible") void tick();
-    }, POLL_MS);
-    const wake = () => {
-      if (document.visibilityState === "visible") void tick();
-    };
-    document.addEventListener("visibilitychange", wake);
-    window.addEventListener("focus", wake);
-    return () => {
-      mounted.current = false;
-      clearInterval(interval);
-      document.removeEventListener("visibilitychange", wake);
-      window.removeEventListener("focus", wake);
-    };
-  }, [tick]);
-
   const hasItems = items.length > 0;
-
-  // The elapsed timers tick locally — no refetch — and only while there is
-  // something to time and the tab is visible.
-  useEffect(() => {
-    if (!hasItems) return;
-    const t = setInterval(() => {
-      if (document.visibilityState === "visible") setNow(Date.now());
-    }, CLOCK_TICK_MS);
-    return () => clearInterval(t);
-  }, [hasItems]);
 
   const measure = useCallback(() => {
     const el = scroller.current;
@@ -180,12 +97,8 @@ export function ActivityStrip() {
           className="flex min-w-0 flex-1 snap-x snap-mandatory items-center gap-2 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {items.map((item) => {
-            const elapsedMs =
-              item.started_at !== null ? now - item.started_at * 1000 : null;
-            const long = elapsedMs !== null && elapsedMs >= LONG_RUN_MS;
-            const label = `${KIND_LABEL[item.kind] ?? item.kind}: ${item.name}${
-              item.profile ? ` (${item.profile})` : ""
-            }${item.status === "waiting" ? " — waiting" : ""}`;
+            const { elapsedMs, long } = activityTiming(item, now);
+            const label = activityLabel(item);
             const body = (
               <>
                 <span aria-hidden className="text-[var(--color-fg)]">
