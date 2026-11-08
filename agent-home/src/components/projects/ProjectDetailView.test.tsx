@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 // ProjectDetailView + RunView use next/navigation — stub the router hooks
 // so SSR rendering works.
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/projects/monday-digest/cards/task_3",
   useRouter: () => ({ refresh: () => {}, push: () => {} }),
 }));
 
@@ -1112,7 +1113,8 @@ describe("CardDetailView", () => {
     expect(html).toContain("Draft the digest");
     expect(html).toContain("Write the thing.");
     expect(html).toContain("Done — sent to the channel.");
-    expect(html).toContain("/projects/monday-digest");
+    // Back to the project is the shell's PageHeader, not a second in-card link.
+    expect(html).not.toContain("Back to the project");
   });
 });
 

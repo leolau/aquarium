@@ -35,6 +35,10 @@
     "info": "Four short steps: the goal, what it delivers, how it runs, then a review. You can go back to any finished step before you create it.",
     "outputsInfoLabel": "What counts as an output?",
     "outputsInfo": "Each output is one thing the project hands over — a report, a file, a message. The agent plans its work around them and asks you to accept each one.",
-    "subtitle": "Four short steps; nothing is created until you review it."
+    "subtitle": "Four short steps; nothing is created until you review it.",
+    "discardTitle": "Discard this new project?",
+    "discardBody": "Your answers haven't been saved. Leaving now throws them away.",
+    "discardConfirm": "Discard",
+    "discardKeep": "Keep editing"
   }
 }

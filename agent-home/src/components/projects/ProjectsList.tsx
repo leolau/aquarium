@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { usePersistentState } from "@/lib/use-persistent-state";
 
 /** How often the visible list re-reads its first page — project statuses,
  * health and next-run move without anyone touching this page. */
@@ -65,12 +67,18 @@ export function ProjectsList({
   initial,
   categories: initialCategories = [],
   initialFilters,
+  rememberLayout = false,
+  layoutInUrl = false,
 }: {
   initial: ProjectsResponse;
   /** The board's columns, in any order (the board sorts by `position`). */
   categories?: ProjectCategory[];
   /** The server's parse of the same URL, so SSR renders the same layout. */
   initialFilters?: ProjectsFilterState;
+  /** Phones: remember the Board/List pick in this browser when the URL has none. */
+  rememberLayout?: boolean;
+  /** The URL names a layout, which beats the remembered one. */
+  layoutInUrl?: boolean;
 }) {
   const [items, setItems] = useState<ProjectListItem[]>(initial.items);
   const [cursor, setCursor] = useState<string | null>(initial.next_cursor);
@@ -79,10 +87,28 @@ export function ProjectsList({
   const [managing, setManaging] = useState(false);
   // The server rendered from the same URL, so the state starts from the
   // address bar rather than from an effect that would flash the default view.
-  const [filters, setFilters] = useState<ProjectsFilterState>(() =>
+  const [addressFilters, setFilters] = useState<ProjectsFilterState>(() =>
     typeof window === "undefined"
       ? (initialFilters ?? EMPTY_FILTERS)
       : fromAddressBar(new URLSearchParams(window.location.search), initialFilters),
+  );
+  // Phones remember Board/List in this browser; it applies until the first
+  // filter change (which then carries it) and never over a URL `layout`.
+  const [savedLayout, saveLayout] = usePersistentState<ProjectsLayout | null>(
+    PHONE_LAYOUT_KEY,
+    null,
+    parseLayout,
+    String,
+  );
+  const [filtersTouched, setFiltersTouched] = useState(false);
+  const applySaved =
+    rememberLayout && !layoutInUrl && !filtersTouched && savedLayout !== null;
+  const filters = useMemo<ProjectsFilterState>(
+    () =>
+      applySaved && savedLayout !== addressFilters.layout
+        ? { ...addressFilters, layout: savedLayout, categoryIds: [] }
+        : addressFilters,
+    [applySaved, savedLayout, addressFilters],
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -226,6 +252,7 @@ export function ProjectsList({
   // A new view starts on page 1 with nothing ticked: a tick the person can
   // no longer see must never be archived by accident.
   const changeFilters = useCallback((next: ProjectsFilterState) => {
+    setFiltersTouched(true);
     setFilters(next);
     setPage(1);
     setSelected(new Set());
@@ -297,9 +324,10 @@ export function ProjectsList({
               key={option.layout}
               type="button"
               aria-pressed={filters.layout === option.layout}
-              onClick={() =>
-                changeFilters({ ...filters, layout: option.layout, categoryIds: [] })
-              }
+              onClick={() => {
+                if (rememberLayout) saveLayout(option.layout);
+                changeFilters({ ...filters, layout: option.layout, categoryIds: [] });
+              }}
               className={`rounded-lg px-3 py-1.5 ${
                 filters.layout === option.layout
                   ? "bg-[var(--color-surface-2)] font-medium text-[var(--color-fg)]"
@@ -473,4 +501,10 @@ export function ProjectsList({
 function fromAddressBar(params: URLSearchParams, initialFilters?: ProjectsFilterState): ProjectsFilterState {
   const parsed = filtersFromParams(params);
   return params.has("layout") || !initialFilters ? parsed : { ...parsed, layout: initialFilters.layout };
+}
+
+const PHONE_LAYOUT_KEY = "aquarium.projects.phoneLayout";
+
+function parseLayout(raw: string): ProjectsLayout | null {
+  return raw === "board" || raw === "list" ? raw : null;
 }

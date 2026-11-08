@@ -109,6 +109,8 @@ export default async function Page({
             initial={projects}
             categories={categories}
             initialFilters={phoneDefaultsToList(state, params, view.device)}
+            rememberLayout={view.device === "phone"}
+            layoutInUrl={params.has("layout")}
           />
         </ProjectsModeView>
       )}

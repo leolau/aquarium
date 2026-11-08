@@ -4,6 +4,7 @@ import { useCallback, useState, type ComponentType } from "react";
 
 import { ChevronDownIcon } from "@/components/ui/icons";
 import { useT } from "@/i18n";
+import { usePersistentState } from "@/lib/use-persistent-state";
 
 import { AddToProjectSheet } from "@/components/projects/AddToProjectSheet";
 import { EditBriefSheet } from "@/components/projects/EditBriefSheet";
@@ -201,7 +202,14 @@ export function ProjectDetailView({
   };
   const needsYou = blockedCount + triageCount;
   const liveRun = project.runs.find((run) => run.status === "running" || run.status === "waiting");
-  const [statusOpen, setStatusOpen] = useState(() => needsYou > 0 || Boolean(liveRun));
+  // A saved open/closed choice (this browser) wins over the live-run default.
+  const [savedStatus, saveStatus] = usePersistentState<StatusPref>(
+    STATUS_OPEN_KEY,
+    null,
+    parseStatusPref,
+    String,
+  );
+  const statusOpen = savedStatus ? savedStatus === "open" : needsYou > 0 || Boolean(liveRun);
   const statusLine = [
     liveRun ? `Run ${liveRun.run_no} ${liveRun.status}` : project.status,
     needsYou === 1 ? t("needsYouOne") : needsYou > 1 ? t("needsYou", { count: needsYou }) : null,
@@ -255,7 +263,7 @@ export function ProjectDetailView({
           type="button"
           data-action="toggle-project-status"
           aria-expanded={statusOpen}
-          onClick={() => setStatusOpen((open) => !open)}
+          onClick={() => saveStatus(statusOpen ? "closed" : "open")}
           className="flex min-h-11 w-full items-center gap-2 text-left lg:hidden"
         >
           <span className="text-sm font-semibold">{t("status")}</span>
@@ -510,4 +518,12 @@ export function ProjectUsageLine({ usage }: { usage: ProjectUsage }) {
       )}
     </p>
   );
+}
+
+type StatusPref = "open" | "closed" | null;
+
+const STATUS_OPEN_KEY = "aquarium.projects.statusOpen";
+
+function parseStatusPref(raw: string): StatusPref {
+  return raw === "open" || raw === "closed" ? raw : null;
 }

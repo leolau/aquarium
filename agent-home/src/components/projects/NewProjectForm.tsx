@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { InfoTip } from "@/components/ui/InfoTip";
 import { useT } from "@/i18n";
@@ -42,6 +42,7 @@ import {
 } from "@/components/projects/useProjectAction";
 import { markJourneyHintPending } from "@/components/projects/dashboard/journeyHint";
 import { BusyRegion } from "@/components/ui/BusyRegion";
+import { useConfirm } from "@/components/ui/useConfirm";
 import { useAction } from "@/lib/use-action";
 import type { MemoryRow, ProjectAutonomy, ProjectCadence } from "@/types";
 
@@ -344,6 +345,23 @@ export function NewProjectForm({
 
   const busy = submitting || create.busy;
   const created = createdSlug !== null;
+  const dirty =
+    !created &&
+    !busy &&
+    (step > 1 ||
+      [goal, description, name, ...outputs].some((value) => value.trim() !== "") ||
+      hasAnyInput(tally));
+  const discard = useConfirm();
+  const askDiscard = discard.ask;
+  useUnsavedGuard(dirty, () =>
+    askDiscard({
+      title: tp("wizard.discardTitle"),
+      body: tp("wizard.discardBody"),
+      confirmLabel: tp("wizard.discardConfirm"),
+      cancelLabel: tp("wizard.discardKeep"),
+      tone: "danger",
+    }),
+  );
 
   const primaryLabel =
     step === 1
@@ -834,7 +852,11 @@ export function NewProjectForm({
           </p>
         ) : null}
 
-        <div className="flex flex-wrap items-center justify-between gap-2">
+        {/* Sticky footer: stays above the floating launcher on phones. */}
+        <div
+          data-component="WizardFooter"
+          className="sticky bottom-[calc(var(--coral-clearance)+var(--safe-bottom))] z-10 -mx-4 -mb-4 flex flex-wrap items-center justify-between gap-2 rounded-b-2xl border-t border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 lg:bottom-0"
+        >
           {step > 1 && !created ? (
             <button
               type="button"
@@ -875,8 +897,49 @@ export function NewProjectForm({
           </div>
         </div>
       </form>
+      {discard.dialog}
     </BusyRegion>
   );
+}
+
+/**
+ * While the wizard holds unsaved answers: in-app links ask before leaving
+ * (the shell Back, breadcrumbs, the top bar) and a reload or tab close gets
+ * the browser's own prompt.
+ */
+function useUnsavedGuard(active: boolean, confirmLeave: () => Promise<boolean>) {
+  const router = useRouter();
+  const confirmRef = useRef(confirmLeave);
+  useEffect(() => {
+    confirmRef.current = confirmLeave;
+  });
+  useEffect(() => {
+    if (!active) return;
+    const onClick = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0) return;
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const anchor = (event.target as Element | null)?.closest?.("a[href]");
+      if (!(anchor instanceof HTMLAnchorElement) || anchor.target === "_blank") return;
+      const url = new URL(anchor.href, window.location.href);
+      if (url.origin !== window.location.origin) return;
+      if (url.pathname === window.location.pathname && url.search === window.location.search) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void confirmRef.current().then((ok) => {
+        if (ok) router.push(`${url.pathname}${url.search}${url.hash}`);
+      });
+    };
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    document.addEventListener("click", onClick, true);
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      document.removeEventListener("click", onClick, true);
+      window.removeEventListener("beforeunload", onBeforeUnload);
+    };
+  }, [active, router]);
 }
 
 interface CreateAnswer {
