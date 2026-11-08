@@ -100,7 +100,7 @@ function highlightText(text: string, term: string): ReactNode {
     parts.push(
       <mark
         key={key++}
-        className="rounded bg-[var(--color-accent)] px-0.5 text-[var(--color-accent-fg)]"
+        className="rounded bg-[var(--color-warn)] px-0.5 text-[var(--color-bg)]"
       >
         {text.slice(idx, idx + term.length)}
       </mark>,
