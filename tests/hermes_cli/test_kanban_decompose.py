@@ -372,3 +372,220 @@ def test_decompose_no_aux_client_configured(kanban_home):
 
     assert outcome.ok is False
     assert "no auxiliary client" in outcome.reason
+
+
+# ---------------------------------------------------------------------------
+# FG-34: capability roster + assignment reasons
+# ---------------------------------------------------------------------------
+
+
+def _make_skilled_profile(name: str, skills: tuple[str, ...]) -> None:
+    from hermes_cli import profiles
+
+    home = profiles.get_profile_dir(name)
+    for skill in skills:
+        d = home / "skills" / skill
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SKILL.md").write_text(f"---\nname: {skill.split('/')[-1]}\n---\n")
+
+
+def _record_finished_run(profile: str, title: str, outcome: str = "completed") -> None:
+    import time
+
+    now = int(time.time())
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title=title)
+        conn.execute(
+            "INSERT INTO task_runs (task_id, profile, status, started_at, ended_at, outcome)"
+            " VALUES (?, ?, 'done', ?, ?, ?)",
+            (tid, profile, now - 120, now - 60, outcome),
+        )
+        conn.commit()
+
+
+def _run_decompose(tid, llm_payload, names, cfg=None):
+    patches = _patch_list_profiles(names)
+    for p in patches:
+        p.start()
+    client = _mock_client_returning(llm_payload)
+    try:
+        with patch(
+            "agent.auxiliary_client.get_text_auxiliary_client",
+            return_value=(client, "test-model"),
+        ), _patch_extra_body(), patch(
+            "hermes_cli.kanban_decompose._load_config",
+            return_value=cfg or {"kanban": {"default_assignee": "fallback"}},
+        ):
+            outcome = decomp.decompose_task(tid, author="me")
+    finally:
+        for p in patches:
+            p.stop()
+    messages = client.chat.completions.create.call_args.kwargs["messages"]
+    return outcome, messages
+
+
+def _assignment_of(task_id):
+    from hermes_cli import projects_run
+
+    with kb.connect() as conn:
+        record = projects_run.card_assignment(kb.list_events(conn, task_id))
+        comments = [c.body for c in kb.list_comments(conn, task_id)]
+    return record, comments
+
+
+def test_roster_carries_skills_and_track_record(kanban_home):
+    _make_skilled_profile("researcher", ("research/web-research", "research/citation"))
+    _record_finished_run("researcher", "Collect EU pricing")
+
+    patches = _patch_list_profiles(["orchestrator", "researcher"])
+    for p in patches:
+        p.start()
+    try:
+        roster, valid = decomp._build_roster()
+    finally:
+        for p in patches:
+            p.stop()
+
+    assert valid == {"orchestrator", "researcher"}
+    by_name = {c["name"]: c for c in roster}
+    researcher = by_name["researcher"]
+    assert {"name": "web-research", "category": "research"} in researcher["skills"]
+    assert researcher["track_record"]["completed"] == 1
+    # Listed description survives when the profile dir has no profile.yaml.
+    assert researcher["description"] == "desc for researcher"
+    assert researcher["has_description"] is True
+
+    block = decomp._format_roster(roster)
+    assert "research/web-research" in block
+    assert "1 completed" in block
+    assert '"Collect EU pricing"' in block
+
+
+def test_good_pick_kept_with_reason_recorded_on_child(kanban_home):
+    _make_skilled_profile("researcher", ("research/web-research",))
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="price report", triage=True)
+
+    llm_payload = jsonlib.dumps({
+        "fanout": True,
+        "rationale": "split",
+        "tasks": [{
+            "title": "Collect competitor pricing",
+            "body": "find prices",
+            "assignee": "researcher",
+            "assignee_reason": "Has web-research and finished similar cards.",
+            "fit": "strong",
+            "matched_skills": ["web-research", "research/web-research", "invented-skill"],
+            "parents": [],
+        }],
+    })
+    outcome, messages = _run_decompose(
+        tid, llm_payload, ["orchestrator", "researcher", "fallback"],
+    )
+
+    assert outcome.ok, outcome.reason
+    system, user = messages[0]["content"], messages[1]["content"]
+    assert "assignee_reason" in system and "TRACK RECORD" in system
+    assert "research/web-research" in user
+
+    child_id = outcome.child_ids[0]
+    with kb.connect() as conn:
+        assert kb.get_task(conn, child_id).assignee == "researcher"
+    record, comments = _assignment_of(child_id)
+    assert record == {
+        "assignee": "researcher",
+        "assignee_reason": "Has web-research and finished similar cards.",
+        "fit": "strong",
+        "matched_skills": ["web-research"],
+        "assigned_by": "planner",
+    }
+    assert any(
+        "Assigned to researcher (strong fit)" in c and "finished similar cards" in c
+        for c in comments
+    )
+
+
+def test_unknown_pick_routes_to_default_with_reason(kanban_home):
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="x", triage=True)
+    llm_payload = jsonlib.dumps({
+        "fanout": True,
+        "rationale": "t",
+        "tasks": [{
+            "title": "do X", "body": "", "assignee": "made_up",
+            "assignee_reason": "made_up is great", "fit": "strong",
+            "matched_skills": ["anything"], "parents": [],
+        }],
+    })
+    outcome, _ = _run_decompose(tid, llm_payload, ["orchestrator", "fallback"])
+
+    assert outcome.ok, outcome.reason
+    child_id = outcome.child_ids[0]
+    with kb.connect() as conn:
+        assert kb.get_task(conn, child_id).assignee == "fallback"
+    record, comments = _assignment_of(child_id)
+    assert record["assignee"] == "fallback"
+    assert record["assigned_by"] == "fallback"
+    assert record["fit"] == "none"
+    assert record["matched_skills"] == []
+    assert "'made_up'" in record["assignee_reason"]
+    assert "not an available profile" in record["assignee_reason"]
+    assert any("Assigned to fallback (fallback)" in c for c in comments)
+
+
+def test_no_fit_keeps_the_models_explanation(kanban_home):
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="email the client", triage=True)
+    llm_payload = jsonlib.dumps({
+        "fanout": True,
+        "rationale": "t",
+        "tasks": [{
+            "title": "Send to the client", "body": "", "assignee": None,
+            "assignee_reason": "No profile has an email skill.", "fit": "none",
+            "suggested_profile": "mailer", "parents": [],
+        }],
+    })
+    outcome, _ = _run_decompose(tid, llm_payload, ["orchestrator", "fallback"])
+
+    assert outcome.ok, outcome.reason
+    record, _ = _assignment_of(outcome.child_ids[0])
+    assert record["assigned_by"] == "fallback"
+    assert record["suggested_profile"] == "mailer"
+    assert "No profile has an email skill" in record["assignee_reason"]
+    assert "default assignee fallback" in record["assignee_reason"]
+    assert len(record["assignee_reason"]) <= 240
+
+
+def test_single_task_records_assignment_reason(kanban_home):
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="one thing", triage=True)
+    llm_payload = jsonlib.dumps({
+        "fanout": False,
+        "rationale": "single",
+        "title": "One thing",
+        "body": "do it",
+        "assignee": "researcher",
+        "assignee_reason": "Researcher has the right tools.",
+        "fit": "partial",
+    })
+    outcome, _ = _run_decompose(tid, llm_payload, ["orchestrator", "researcher"])
+
+    assert outcome.ok, outcome.reason
+    record, comments = _assignment_of(tid)
+    assert record["assignee"] == "researcher"
+    assert record["assigned_by"] == "planner"
+    assert record["fit"] == "partial"
+    assert any("Researcher has the right tools." in c for c in comments)
+
+
+def test_single_task_keeps_existing_assignee_without_record(kanban_home):
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="mine", triage=True, assignee="orchestrator")
+    llm_payload = jsonlib.dumps({
+        "fanout": False, "title": "Mine", "body": "b", "assignee": "researcher",
+    })
+    outcome, _ = _run_decompose(tid, llm_payload, ["orchestrator", "researcher"])
+
+    assert outcome.ok, outcome.reason
+    record, _ = _assignment_of(tid)
+    assert record is None

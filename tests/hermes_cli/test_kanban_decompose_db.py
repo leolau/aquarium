@@ -228,3 +228,16 @@ def test_decompose_per_child_workspace_override(kanban_home):
         inh = kb.get_task(conn, child_ids[1])
     assert over.workspace_path == "/other/repo"
     assert inh.workspace_path == proj
+
+
+def test_children_without_assignment_get_no_assignment_record(kanban_home):
+    with kb.connect() as conn:
+        root = kb.create_task(conn, title="root", triage=True)
+        child_ids = kb.decompose_triage_task(
+            conn, root, root_assignee=None,
+            children=[{"title": "a", "assignee": "x"}], author="me",
+        )
+        kinds = [e.kind for e in kb.list_events(conn, child_ids[0])]
+        comments = kb.list_comments(conn, child_ids[0])
+    assert "assignment" not in kinds
+    assert comments == []

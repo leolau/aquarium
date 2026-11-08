@@ -5575,6 +5575,40 @@ def auto_retry_timed_blocks(
     return retried
 
 
+# FG-34: a card's assignment record is the latest ``assignment`` task event
+# (read back by ``projects_run.card_assignment``); a comment makes the reason
+# visible in the card's timeline.
+ASSIGNMENT_EVENT = "assignment"
+
+
+def _assignment_comment(assignment: dict) -> str:
+    assignee = assignment.get("assignee") or "?"
+    if assignment.get("assigned_by") == "fallback":
+        head = f"Assigned to {assignee} (fallback)"
+    elif assignment.get("fit"):
+        head = f"Assigned to {assignee} ({assignment['fit']} fit)"
+    else:
+        head = f"Assigned to {assignee}"
+    reason = str(assignment.get("assignee_reason") or "").strip()
+    text = f"{head}: {reason}" if reason else head
+    skills = [s for s in assignment.get("matched_skills") or [] if s]
+    if skills:
+        text += " Matched: " + ", ".join(skills) + "."
+    return text
+
+
+def _record_assignment_inline(
+    conn: sqlite3.Connection, task_id: str, assignment: dict, author: str, now: int
+) -> None:
+    """Assignment event + timeline comment, inside the caller's write txn."""
+    _append_event(conn, task_id, ASSIGNMENT_EVENT, assignment)
+    conn.execute(
+        "INSERT INTO task_comments (task_id, author, body, created_at) "
+        "VALUES (?, ?, ?, ?)",
+        (task_id, author, _assignment_comment(assignment), now),
+    )
+
+
 def specify_triage_task(
     conn: sqlite3.Connection,
     task_id: str,
@@ -5583,6 +5617,7 @@ def specify_triage_task(
     body: Optional[str] = None,
     assignee: Optional[str] = None,
     author: Optional[str] = None,
+    assignment: Optional[dict] = None,
 ) -> bool:
     """Flesh out a triage task and promote it to ``todo``.
 
@@ -5599,6 +5634,10 @@ def specify_triage_task(
     ``author`` is recorded on an audit comment only when at least one of
     ``title`` / ``body`` / ``assignee`` actually changed — avoids noisy
     comment spam for status-only promotions.
+
+    ``assignment`` (FG-34) explains who picked ``assignee`` and why; it is
+    recorded as an ``assignment`` event plus a comment when ``assignee``
+    is set.
     """
     if title is not None and not title.strip():
         raise ValueError("title cannot be blank")
@@ -5657,6 +5696,11 @@ def specify_triage_task(
             "specified",
             {"changed_fields": changed_fields} if changed_fields else None,
         )
+        if assignee is not None and isinstance(assignment, dict):
+            _record_assignment_inline(
+                conn, task_id, {"assignee": assignee, **assignment},
+                (author or "decomposer").strip() or "decomposer", int(time.time()),
+            )
     # Outside the write_txn above, so we don't nest BEGIN IMMEDIATE — the
     # ready-promotion pass opens its own IMMEDIATE txn. This runs the same
     # logic the dispatcher would on its next tick, so a specified task
@@ -5780,6 +5824,7 @@ def decompose_triage_task(
             "body": "...",                     # optional
             "assignee": "profile-name",        # optional, None -> default fallback
             "parents": [0, 2],                 # indices into this same children list
+            "assignment": {...},               # optional FG-34 reason for the pick
         }
 
     Returns the list of created child task ids (in input order) on
@@ -5908,6 +5953,11 @@ def decompose_triage_task(
                 conn, new_id, "created",
                 {"by": author or "decomposer", "from_decompose_of": task_id},
             )
+            if isinstance(child.get("assignment"), dict):
+                _record_assignment_inline(
+                    conn, new_id, {"assignee": assignee, **child["assignment"]},
+                    (author or "decomposer").strip() or "decomposer", now,
+                )
             child_ids.append(new_id)
 
         # Link children to their sibling parents (within the decomposed graph).
