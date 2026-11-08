@@ -670,6 +670,9 @@ class TestWebServerEndpoints:
             def get_tags_for_sessions(self, session_ids):
                 return {}
 
+            def get_pins(self, user_id):
+                return {}
+
             def close(self):
                 pass
 
