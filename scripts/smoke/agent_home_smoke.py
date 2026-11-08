@@ -124,6 +124,7 @@ PAGES: Tuple[PageSpec, ...] = (
     PageSpec("/files/browse", ("BrowseView", "FilesTabs")),
     PageSpec("/files/bridge", ("FilesTabs",)),
     PageSpec("/bridge"),
+    PageSpec("/system", ("SystemHub", "HubCard")),
     PageSpec("/memory", ("MemoryView",), quick=True),
     PageSpec("/graph", ("GtsCentreView",)),
     PageSpec("/core", ("CoreAreaView",)),
@@ -137,6 +138,8 @@ PAGES: Tuple[PageSpec, ...] = (
     PageSpec("/settings/account", ("SettingsView", "AccountSecurity")),
     PageSpec("/settings/tools", ("ToolsSettings", "RoleLimitsSection")),
     PageSpec("/settings/get-ready", ("GetReadyView",)),
+    # Smoke accounts are never the owner, so GoogleClientSetup (owner-only) does not render.
+    PageSpec("/settings/in-out/google", ("ConnectGooglePage", "ConnectedAccounts")),
     PageSpec(
         "/settings/upgrade",
         admin_markers=("SoftwareUpgradeView",),
