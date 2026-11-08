@@ -121,13 +121,20 @@ W5 Plan UI (contracts C-2/C-3 only, mocked API in tests) ─┴──> W6 cross-
 
 ## Checklist
 
-- [ ] W1 capability cards + access set + assignable-profiles API
-- [ ] W2 project planner + re-plan + activation attach
-- [ ] W3 kanban decomposer
-- [ ] W4 card persistence + manual marker
-- [ ] W5 Plan and card UI
-- [ ] W6 cross-review, all suites green on `develop`
+- [x] W1 capability cards + access set + assignable-profiles API (#763)
+- [x] W2 project planner + re-plan + activation attach (#770)
+- [x] W3 kanban decomposer (#769)
+- [x] W4 card persistence + manual marker (#765)
+- [x] W5 Plan and card UI (#764)
+- [x] W6 cross-review (#775); pre-existing `develop` failures fixed in #767, #768
 - [ ] Live check on a real project (draft a plan with ≥ 2 accessible profiles; confirm picks, reasons and the summary)
+
+## Known limits (after W1–W6)
+
+- Track records count runs on the project's own board (or the default board), not every board on the box.
+- The access set includes attached profiles whose directory no longer exists; `check_step_assignees` stays the final check.
+- After a hand edit, `assignee_reason` and `suggested_profile` still describe the planner's original pick; a step that fell back to the host (assignee null) gets no `planner_assignee`.
+- The no-description hint shows in plan views only, not on the card view.
 
 ## Non-goals
 
