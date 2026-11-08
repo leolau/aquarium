@@ -147,6 +147,11 @@ export function SkillUsagePanel({
         summary: applyRating(d.summary, event, after),
         events: d.events.map((e) => (e.id === event.id ? after : e)),
       }));
+      // Per-version rates can't be recomputed locally (the server sends rates,
+      // not counts), so reload them from the ledger.
+      getJson<SkillUsageDetail>(`/api/skills/usage/detail?${base}&days=${days}&limit=1`)
+        .then((fresh) => patch((d) => ({ ...d, by_version: fresh.by_version })))
+        .catch(() => undefined);
     } catch (err) {
       setMessage(errorText(err));
     }
