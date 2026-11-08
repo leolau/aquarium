@@ -12,5 +12,7 @@
   },
   "loadError": "無法載入你的對話",
   "loadErrorHint": "你的對話安全無損，請稍後再試。",
-  "tryAgain": "再試一次"
+  "tryAgain": "再試一次",
+  "pinnedToast": "已釘選對話",
+  "unpinnedToast": "已取消釘選對話"
 }

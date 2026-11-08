@@ -12,5 +12,7 @@
   },
   "loadError": "Couldn't load your conversations",
   "loadErrorHint": "Your chats are safe. Try again in a moment.",
-  "tryAgain": "Try again"
+  "tryAgain": "Try again",
+  "pinnedToast": "Chat pinned",
+  "unpinnedToast": "Chat unpinned"
 }
