@@ -45,6 +45,7 @@ import {
   SESSION_ORDER_STORAGE_KEY,
 } from "@/lib/chat/session-order";
 import { withProfileBody, withProfileQuery } from "@/lib/chat/profile";
+import { mayGetAutoTitle, waitForAutoTitle } from "@/lib/landing/titles";
 import { useSearchShortcut } from "@/lib/chat/search-shortcut";
 import { fetchSessionList } from "@/lib/chat/session-list-fetch";
 import {
@@ -574,6 +575,13 @@ export function ChatPane({
       // leave a blank reply bubble behind.
       if (onThisSession()) setMessages(dropTrailingEmptyAssistant);
       void refreshSessions();
+      // The backend auto-titles a new chat a few seconds after its first reply.
+      const titledId = landed || turnSessionId;
+      if (titledId && mayGetAutoTitle(sessions.find((x) => x.id === titledId))) {
+        void waitForAutoTitle(titledId, { profile }).then((t) => {
+          if (t) void refreshSessions();
+        });
+      }
       return true;
     } catch (err) {
       const aborted = err instanceof DOMException && err.name === "AbortError";
