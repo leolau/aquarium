@@ -18,6 +18,7 @@ Behaviour contracts:
 from __future__ import annotations
 
 import json
+import threading
 
 import pytest
 
@@ -56,7 +57,18 @@ class _FakeApprovalStore:
 APPROVALS = _FakeApprovalStore()
 
 
+_REAL_THREAD = threading.Thread
+
+
 class _InlineThread:
+    """Runs the projects job inline; any other thread (asyncio's executor
+    workers) is a real one."""
+
+    def __new__(cls, *args, kwargs=None, **kw):
+        if kwargs is None:
+            return _REAL_THREAD(*args, **kw)
+        return super().__new__(cls)
+
     def __init__(self, *, target, kwargs, **_):
         self._run = lambda: target(**kwargs)
 

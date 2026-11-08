@@ -45,6 +45,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import functools
 import json
 import logging
 import re
@@ -1250,12 +1251,18 @@ def _derive_task_brief(request_text: str) -> dict:
     return brief
 
 
-def _launch_task_sync(project_id: str, rev: Optional[int], principal) -> dict:
+def _launch_task_sync(
+    project_id: str, rev: Optional[int], principal,
+    accessible: Optional[list[str]] = None,
+) -> dict:
     """Activate ``rev`` (when given), make the project active and start run 1
     — the three steps a lead takes by hand in Project mode. Pressing Start
     also approves the run's cards (``auto_approve``), so the task runs
-    without a second "Approve all"."""
+    without a second "Approve all". Profiles the plan names from the
+    starter's ``accessible`` set are attached first (FG-34)."""
     with projects_db.connect_closing() as conn:
+        if accessible is not None:
+            _attach_plan_profiles_sync(conn, project_id, rev, principal, accessible)
         if rev is not None:
             if not projects_db.activate_playbook_rev(
                 conn, project_id, rev, note="activated by Start task"
@@ -1273,11 +1280,13 @@ def _launch_task_sync(project_id: str, rev: Optional[int], principal) -> dict:
                 trigger="manual",
                 triggered_by=principal.user_id,
                 auto_approve=True,
+                accessible=accessible,
             )
 
 
 def _quick_task_job(
-    *, project_id: str, request_text: str, principal, check_plan_first: bool
+    *, project_id: str, request_text: str, principal, check_plan_first: bool,
+    accessible: Optional[list[str]] = None,
 ) -> None:
     """Background: word the brief, draft the plan, then (unless the person
     asked to check the plan first) activate it and start run 1. Progress and
@@ -1303,7 +1312,9 @@ def _quick_task_job(
                 outputs = projects_db.get_project_outputs(conn, project_id)
             project = projects_db.get_project(conn, project_id)
             profiles = projects_db.get_project_profiles(conn, project_id)
-        _plan_draft_job(**_plan_draft_job_kwargs(project, outputs, profiles, principal))
+        _plan_draft_job(**_plan_draft_job_kwargs(
+            project, outputs, profiles, principal, accessible=accessible
+        ))
     except Exception as exc:  # noqa: BLE001 — surfaced to the UI, not raised
         logger.warning("task setup failed for project %s: %s", project_id, exc)
         _set(status="failed", detail=str(exc), finished_at=int(time.time()))
@@ -1313,14 +1324,19 @@ def _quick_task_job(
     if state.get("status") != "done" or check_plan_first:
         return
     try:
-        started = _launch_task_sync(project_id, state.get("rev"), principal)
+        started = _launch_task_sync(
+            project_id, state.get("rev"), principal, accessible
+        )
         _set(launch={"status": "started", "run_no": (started.get("run") or {}).get("run_no")})
     except Exception as exc:  # noqa: BLE001 — surfaced to the UI, not raised
         logger.warning("task start failed for project %s: %s", project_id, exc)
         _set(launch={"status": "failed", "detail": str(exc)})
 
 
-def _start_quick_task_job(project, request_text: str, principal, check_plan_first: bool) -> dict:
+def _start_quick_task_job(
+    project, request_text: str, principal, check_plan_first: bool,
+    accessible: Optional[list[str]] = None,
+) -> dict:
     started = _claim_plan_draft(project)
     threading.Thread(
         target=_quick_task_job,
@@ -1329,6 +1345,7 @@ def _start_quick_task_job(project, request_text: str, principal, check_plan_firs
             "request_text": request_text,
             "principal": principal,
             "check_plan_first": check_plan_first,
+            "accessible": accessible,
         },
         name=f"quick-task-{project.slug}",
         daemon=True,
@@ -1398,7 +1415,10 @@ async def create_quick_task_route(request: Request) -> dict[str, Any]:
         project = await asyncio.to_thread(_create_sync)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
-    draft = _start_quick_task_job(project, request_text, principal, check_plan_first)
+    accessible = await _accessible_profiles(principal, project)
+    draft = _start_quick_task_job(
+        project, request_text, principal, check_plan_first, accessible
+    )
     return _project_payload(
         project, extra={"draft": draft, "check_plan_first": check_plan_first}
     )
@@ -1428,16 +1448,20 @@ async def start_quick_task_route(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=409, detail="the task is already running")
     active = next((r for r in revs if r.get("active")), None)
     newest = revs[0] if revs else None
+    accessible = await _accessible_profiles(principal, project)
     if newest is None:
         return {
             "status": "drafting",
             "draft": _start_quick_task_job(
-                project, project.description or project.goal or "", principal, False
+                project, project.description or project.goal or "", principal,
+                False, accessible,
             ),
         }
     rev = None if active is not None and newest["rev"] <= active["rev"] else newest["rev"]
     try:
-        started = await asyncio.to_thread(_launch_task_sync, project.id, rev, principal)
+        started = await asyncio.to_thread(
+            _launch_task_sync, project.id, rev, principal, accessible
+        )
     except (projects_db.RunAlreadyOpen, projects_run.ScheduledRunSkipped) as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     except ValueError as exc:
@@ -2513,6 +2537,59 @@ async def delete_link(request: Request) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _roster_host(project, profiles) -> Optional[str]:
+    return project.host_profile or next(
+        (p["profile"] for p in profiles if p.get("role") == "host"), None
+    )
+
+
+def _assignable_roster(project, profiles, names) -> list[dict]:
+    """Capability cards for ``names``: host first, then the project's
+    profiles, then the rest by name; track records from the project's
+    board."""
+    from hermes_cli import profile_capabilities
+
+    attached = {p["profile"] for p in profiles}
+    host = _roster_host(project, profiles)
+    ordered = sorted(set(names), key=lambda n: (n != host, n not in attached, n))
+    try:
+        with _board_conn(project) as bconn:
+            return profile_capabilities.capability_roster(ordered, board_conn=bconn)
+    except Exception:  # noqa: BLE001 — no board → cards without a record
+        logger.debug("projects: board unavailable for roster", exc_info=True)
+        return profile_capabilities.capability_roster(ordered, board_conn=None)
+
+
+async def _accessible_profiles(principal, project) -> list[str]:
+    """The FG-34 access set: the profiles ``principal`` may assign a step
+    to or attach to ``project`` by approving a plan."""
+    from hermes_cli import profile_capabilities
+
+    return await profile_capabilities.accessible_profile_names(
+        principal, project=project
+    )
+
+
+def _attach_plan_profiles_sync(
+    conn, project_id: str, rev: Optional[int], principal, accessible
+) -> list[str]:
+    """Attach the profiles plan ``rev`` (the active one when None) names
+    that the project lacks, as ``principal`` — before any
+    ``check_step_assignees``. One the approver cannot access is a 403
+    and attaches nothing."""
+    project = projects_db.get_project(conn, project_id)
+    playbook = projects_db.get_playbook(conn, project_id, rev=rev)
+    if project is None or playbook is None:
+        return []
+    try:
+        return projects_run.attach_plan_profiles(
+            conn, project, playbook.get("steps") or [],
+            accessible=accessible, added_by=getattr(principal, "user_id", None),
+        )
+    except projects_run.AssigneeNotAccessible as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+
 @router.get("/{slug}/assignable-profiles")
 async def assignable_profiles(request: Request) -> dict[str, Any]:
     """Capability cards for every profile the caller may assign a plan step
@@ -2525,25 +2602,8 @@ async def assignable_profiles(request: Request) -> dict[str, Any]:
         principal, project=project
     )
     attached = {p["profile"] for p in profiles}
-    host = project.host_profile or next(
-        (p["profile"] for p in profiles if p.get("role") == "host"), None
-    )
-    ordered = sorted(
-        set(names),
-        key=lambda n: (n != host, n not in attached, n),
-    )
-
-    def _roster_sync() -> list[dict]:
-        try:
-            with _board_conn(project) as bconn:
-                return profile_capabilities.capability_roster(
-                    ordered, board_conn=bconn
-                )
-        except Exception:  # noqa: BLE001 — no board → cards without a record
-            logger.debug("projects: board unavailable for roster", exc_info=True)
-            return profile_capabilities.capability_roster(ordered, board_conn=None)
-
-    roster = await asyncio.to_thread(_roster_sync)
+    host = _roster_host(project, profiles)
+    roster = await asyncio.to_thread(_assignable_roster, project, profiles, names)
     return {
         "profiles": [
             {**card, "in_project": card["name"] in attached, "is_host": card["name"] == host}
@@ -3293,7 +3353,10 @@ _PLAN_DRAFT_SYSTEM = (
     '{"body": "<2-4 sentences: the approach>", "steps": [{"key": "<kebab-case, '
     'unique>", "title": "<imperative, one line>", "body": "<what done looks '
     'like, 1-2 sentences>", "depends_on": ["<key>"], "checkpoint": <bool>, '
-    '"toolsets": ["<toolset name>"]}]}. '
+    '"toolsets": ["<toolset name>"], "assignee": "<profile name or null>", '
+    '"assignee_reason": "<one sentence>", "fit": "strong|partial|none", '
+    '"matched_skills": ["<skill or toolset>"], "suggested_profile": '
+    '"<role name, only with fit none>"}]}. '
     "Write 3-7 concrete steps that together deliver every listed output; set "
     "checkpoint=true on a step whose result the user should review before "
     "the agent continues (typically before anything is sent or published). "
@@ -3302,6 +3365,15 @@ _PLAN_DRAFT_SYSTEM = (
     "terminal for document work, web + browser for research); every omitted "
     "toolset shrinks the worker's prompt and speeds it up. Omit the field "
     "only when a step genuinely needs the full tool surface. "
+    'When a profile roster is listed, set each step\'s "assignee" to the '
+    "roster profile best equipped for it: judge by skills, tools, "
+    "description and track record, not by the name, and prefer a profile "
+    "whose track record shows it completes this kind of work. Put the "
+    'skills/tools that justify the pick in "matched_skills" (only names '
+    'from that profile\'s entry) and name them in "assignee_reason". When '
+    'no profile fits, set "assignee": null, "fit": "none", say in '
+    '"assignee_reason" what is missing, and optionally put a short role '
+    'name in "suggested_profile". '
     "Do not invent outputs, people or tools that are not in the brief."
 )
 
@@ -3312,11 +3384,14 @@ def _plan_draft_prompt(
     *,
     clarify_lines: Optional[list[str]] = None,
     enabled_toolsets: Optional[list[str]] = None,
+    roster_block: Optional[str] = None,
 ) -> str:
     """The plan drafter's user message. ``clarify_lines`` (the agreed
     scope) is read from the store when not given. ``enabled_toolsets``
     is the host profile's tool surface — the only names a step's
-    ``toolsets`` may usefully name."""
+    ``toolsets`` may usefully name. ``roster_block`` is the FG-34
+    capability roster (``profile_capabilities.roster_prompt_block``) of
+    the profiles a step may be assigned to."""
     if clarify_lines is None:
         from hermes_cli import projects_clarify_context
 
@@ -3347,6 +3422,13 @@ def _plan_draft_prompt(
             "Toolsets the step workers may use (a step's \"toolsets\" may "
             "name only these):",
             ", ".join(enabled_toolsets),
+        ]
+    if roster_block:
+        lines += [
+            "",
+            "Profiles a step may be assigned to (\"assignee\" must be one "
+            "of these names, or null):",
+            roster_block,
         ]
     if clarify_lines:
         from hermes_cli.projects_clarify_context import has_confirmed_scope
@@ -3386,9 +3468,15 @@ def _normalise_draft_steps(
     assignee: Optional[str],
     profile_names: set[str],
     enabled_toolsets: Optional[list[str]] = None,
+    roster: Optional[list[dict]] = None,
 ) -> list[dict]:
+    """Clean the model's steps onto the playbook schema. With ``roster``
+    (the FG-34 capability cards of ``profile_names``) every card step also
+    gets the C-3 assignment fields: a pick outside ``profile_names`` falls
+    back to ``assignee`` (the host) with a reason saying why."""
     if not isinstance(raw_steps, list) or not raw_steps:
         raise ValueError("the model returned no steps")
+    cards = {c.get("name"): c for c in roster or [] if c.get("name")}
     def _slug(raw: Any, fallback: str) -> str:
         key = re.sub(r"[^a-z0-9]+", "-", str(raw or "").lower()).strip("-")
         return key[:40] or fallback
@@ -3413,7 +3501,8 @@ def _normalise_draft_steps(
             key_map[original] = key
         key_map[_slug(original or title, key)] = key
         deps = step.get("depends_on") or step.get("needs") or []
-        who = step.get("assignee")
+        picked = step.get("assignee")
+        who = picked
         if not (isinstance(who, str) and who in profile_names):
             who = assignee
         raw_ts = step.get("toolsets")
@@ -3437,6 +3526,11 @@ def _normalise_draft_steps(
                 "depends_on": [str(d) for d in deps] if isinstance(deps, list) else [],
                 "checkpoint": bool(step.get("checkpoint")),
                 "toolsets": step_ts,
+                **(
+                    _draft_step_assignment(step, picked, who, cards)
+                    if roster is not None and step.get("mode") != "inline"
+                    else {}
+                ),
             }
         )
     # Dependencies name the model's keys; map them onto the cleaned keys
@@ -3447,6 +3541,67 @@ def _normalise_draft_steps(
             d for d in dict.fromkeys(mapped) if d in seen and d != step["key"]
         ]
     return projects_db.validate_playbook_steps(steps)
+
+
+def _card_skill_names(card: dict) -> dict[str, str]:
+    """Every spelling of a card's skills/toolsets the model may echo back
+    (``name``, ``category/name``), mapped to the stored name."""
+    names: dict[str, str] = {}
+    for skill in card.get("skills") or []:
+        name = str(skill.get("name") or "")
+        if name:
+            names[name] = name
+            if skill.get("category"):
+                names[f"{skill['category']}/{name}"] = name
+    for toolset in card.get("toolsets") or []:
+        names.setdefault(str(toolset), str(toolset))
+    return names
+
+
+def _draft_step_assignment(
+    step: dict, picked: Any, who: Optional[str], cards: dict[str, dict]
+) -> dict:
+    """The C-3 fields for one drafted step whose assignee resolved to
+    ``who`` from the model's ``picked``."""
+    reason = " ".join(str(step.get("assignee_reason") or "").split())
+    if isinstance(picked, str) and picked.strip() and picked == who:
+        fit = step.get("fit") if step.get("fit") in ("strong", "partial") else "partial"
+        known = _card_skill_names(cards.get(who) or {})
+        raw = step.get("matched_skills")
+        matched = list(dict.fromkeys(
+            known[str(s).strip()] for s in (raw if isinstance(raw, list) else [])
+            if isinstance(s, str) and str(s).strip() in known
+        ))
+        return {
+            "assignee_reason": (reason or f"Picked by the planner for {who}.")[
+                : projects_db.STEP_REASON_MAX
+            ],
+            "fit": fit,
+            "matched_skills": matched,
+            "assigned_by": "planner",
+            "suggested_profile": None,
+        }
+    host = who or "the host profile"
+    if isinstance(picked, str) and picked.strip():
+        why = (
+            f"The planner picked {picked.strip()[:60]!r}, which is not a "
+            f"profile this plan may use, so {host} (the host) takes it."
+        )
+    else:
+        why = f"No available profile fits this step, so {host} (the host) takes it."
+    if reason:
+        why = f"{why} {reason}"
+    suggested = step.get("suggested_profile")
+    return {
+        "assignee_reason": why[: projects_db.STEP_REASON_MAX],
+        "fit": "none",
+        "matched_skills": [],
+        "assigned_by": "fallback",
+        "suggested_profile": (
+            suggested.strip()[:80]
+            if isinstance(suggested, str) and suggested.strip() else None
+        ),
+    }
 
 
 def _call_plan_model(prompt: str) -> str:
@@ -3642,6 +3797,7 @@ def _plan_draft_job(
     profile_names: set[str],
     created_by: Optional[str],
     enabled_toolsets: Optional[list[str]] = None,
+    roster: Optional[list[dict]] = None,
     note: str = "drafted by the agent",
     on_saved: Optional[Callable[[int], None]] = None,
     on_failed: Optional[Callable[[str], None]] = None,
@@ -3659,6 +3815,7 @@ def _plan_draft_job(
             assignee=assignee,
             profile_names=profile_names,
             enabled_toolsets=enabled_toolsets,
+            roster=roster,
         )
         with projects_db.connect_closing() as conn:
             rev = projects_db.save_playbook_rev(
@@ -3681,12 +3838,28 @@ def _plan_draft_job(
         on_saved(rev)
 
 
-def _plan_draft_job_kwargs(project, outputs, profiles, principal) -> dict:
-    """The arguments :func:`_plan_draft_job` drafts ``project``'s plan with."""
-    profile_names = {p["profile"] for p in profiles}
+def _plan_draft_job_kwargs(
+    project, outputs, profiles, principal, *, accessible: Optional[list[str]] = None
+) -> dict:
+    """The arguments :func:`_plan_draft_job` drafts ``project``'s plan with.
+
+    ``accessible`` is the FG-34 access set of whoever asked for the plan
+    (``profile_capabilities.accessible_profile_names``); when not given it
+    is read for ``principal.user_id`` — the project owner's set when that
+    is None (background re-plans). The drafter sees those profiles'
+    capability roster and may assign a step to any of them."""
+    from hermes_cli import profile_capabilities
+
+    project_names = {p["profile"] for p in profiles}
     assignee = project.host_profile or (
-        sorted(profile_names)[0] if profile_names else None
+        sorted(project_names)[0] if project_names else None
     )
+    if accessible is None:
+        accessible = profile_capabilities.accessible_profile_names_for_user(
+            getattr(principal, "user_id", None), project=project
+        )
+    profile_names = set(accessible) | project_names
+    roster = _assignable_roster(project, profiles, profile_names)
     enabled_toolsets: Optional[list[str]] = None
     if assignee:
         try:
@@ -3701,12 +3874,14 @@ def _plan_draft_job_kwargs(project, outputs, profiles, principal) -> dict:
     return {
         "project_id": project.id,
         "prompt": _plan_draft_prompt(
-            project, outputs, enabled_toolsets=enabled_toolsets
+            project, outputs, enabled_toolsets=enabled_toolsets,
+            roster_block=profile_capabilities.roster_prompt_block(roster),
         ),
         "assignee": assignee,
         "profile_names": profile_names,
         "created_by": principal.user_id,
         "enabled_toolsets": enabled_toolsets,
+        "roster": roster,
     }
 
 
@@ -3725,12 +3900,15 @@ def _claim_plan_draft(project) -> dict:
         return dict(state)
 
 
-def start_plan_draft(project, profiles, principal) -> dict:
+def start_plan_draft(
+    project, profiles, principal, *, accessible: Optional[list[str]] = None
+) -> dict:
     """Start the background plan draft for ``project``; returns the job state.
 
     Raises ``HTTPException`` 409 while a draft is already running or when
     the project declares no outputs. Shared by the draft route and the
-    scope-confirm route (``projects_clarify_api``)."""
+    scope-confirm route (``projects_clarify_api``), which pass the
+    requester's ``accessible`` profile set (FG-34)."""
     with _PLAN_DRAFTS_LOCK:
         current = _PLAN_DRAFTS.get(project.id)
         if current and current.get("status") == "running":
@@ -3744,7 +3922,9 @@ def start_plan_draft(project, profiles, principal) -> dict:
             status_code=409,
             detail="declare at least one output before drafting a plan",
         )
-    kwargs = _plan_draft_job_kwargs(project, outputs, profiles, principal)
+    kwargs = _plan_draft_job_kwargs(
+        project, outputs, profiles, principal, accessible=accessible
+    )
     started = _claim_plan_draft(project)
     threading.Thread(
         target=_plan_draft_job,
@@ -3769,8 +3949,9 @@ def start_replan_draft(
 
     Same job, same Plan-panel draft state, same inactive revision a lead
     activates (§7.2) — only the prompt carries ``context`` and the revision
-    ``note``. Returns False without starting while another draft is running;
-    raises ``HTTPException`` 409 when the project declares no outputs.
+    ``note``. With no requester, the planner picks from the project
+    owner's accessible profiles (FG-34). Returns False without starting
+    while another draft is running; raises ``HTTPException`` 409 when the project declares no outputs.
     ``on_claimed`` runs before the job starts, then exactly one of
     ``on_saved(rev)`` / ``on_failed(detail)`` from the job's thread.
     """
@@ -3782,8 +3963,13 @@ def start_replan_draft(
             status_code=409,
             detail="declare at least one output before drafting a plan",
         )
+    from hermes_cli import profile_capabilities
+
     kwargs = _plan_draft_job_kwargs(
-        project, outputs, profiles, SimpleNamespace(user_id=None)
+        project, outputs, profiles, SimpleNamespace(user_id=None),
+        accessible=profile_capabilities.accessible_profile_names_for_user(
+            None, project=project
+        ),
     )
     kwargs["prompt"] = f"{kwargs['prompt']}\n{context}"
     try:
@@ -3811,7 +3997,12 @@ async def draft_playbook_route(request: Request) -> dict[str, Any]:
         request, judgement=True
     )
     _refuse_if_archived(project, "drafting its plan")
-    return await asyncio.to_thread(start_plan_draft, project, profiles, principal)
+    accessible = await _accessible_profiles(principal, project)
+    return await asyncio.to_thread(
+        functools.partial(
+            start_plan_draft, project, profiles, principal, accessible=accessible
+        )
+    )
 
 
 @router.get("/{slug}/playbook/draft")
@@ -3827,13 +4018,18 @@ async def activate_playbook_route(request: Request, rev: int) -> dict[str, Any]:
     """Human-only activation (§7.2): lead/admin AND a verified session,
     records ``activated_at`` + ``note``. A mid-flight run is unaffected —
     it keeps its pinned rev."""
-    project, _role, _profiles, _principal = await _require_write(request)
+    project, _role, _profiles, principal = await _require_write(request)
     _refuse_if_archived(project, "activating a plan")
     subject = await _require_human(request, "activating a playbook revision")
     body = await request.json() if request.headers.get("content-length") else {}
+    accessible = await _accessible_profiles(principal, project)
 
     def _activate_sync() -> dict:
         with projects_db.connect_closing() as conn:
+            if projects_db.get_playbook(conn, project.id, rev=rev) is not None:
+                _attach_plan_profiles_sync(
+                    conn, project.id, rev, principal, accessible
+                )
             ok = projects_db.activate_playbook_rev(
                 conn, project.id, rev, note=body.get("note")
             )
@@ -4259,6 +4455,7 @@ async def start_run_route(request: Request) -> dict[str, Any]:
     )
     _refuse_if_archived(project, "running it")
     body = await request.json() if request.headers.get("content-length") else {}
+    accessible = await _accessible_profiles(principal, project)
     trigger = str(body.get("trigger") or "manual").strip()
     if trigger not in projects_db.VALID_RUN_TRIGGERS:
         raise HTTPException(
@@ -4277,7 +4474,10 @@ async def start_run_route(request: Request) -> dict[str, Any]:
                         trigger=trigger,
                         triggered_by=principal.user_id,
                         playbook_rev=body.get("playbook_rev"),
+                        accessible=accessible,
                     )
+                except projects_run.AssigneeNotAccessible as exc:
+                    raise HTTPException(status_code=403, detail=str(exc))
                 except (
                     projects_db.RunAlreadyOpen, projects_run.ScheduledRunSkipped
                 ) as exc:

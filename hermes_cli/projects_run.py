@@ -572,6 +572,61 @@ def check_step_assignees(pconn, project: projects_db.Project, steps: Sequence[di
             )
 
 
+class AssigneeNotAccessible(ValueError):
+    """A plan names a profile the project lacks and the approver cannot
+    access, so approving it may not attach that profile (FG-34)."""
+
+
+def plan_profiles_to_attach(
+    pconn, project: projects_db.Project, steps: Sequence[dict], accessible: Sequence[str]
+) -> List[str]:
+    """The profiles ``steps`` assign that ``project`` lacks, all of which
+    the approver can access (``accessible``); raises
+    :class:`AssigneeNotAccessible` naming the first one they cannot."""
+    attached = {
+        p["profile"] for p in projects_db.get_project_profiles(pconn, project.id)
+    }
+    host = host_profile_name(pconn, project.id)
+    allowed = set(accessible)
+    missing: List[str] = []
+    for step in steps:
+        if step.get("mode") == "inline":
+            continue
+        name = step.get("assignee") or host
+        if not name or name in attached or name in missing:
+            continue
+        if name not in allowed:
+            raise AssigneeNotAccessible(
+                f"step {step.get('key')!r} is assigned to profile {name!r}, which "
+                "is not part of this project and which you cannot access — "
+                "assign the step to another profile, or ask a box admin to "
+                "add the profile to the project"
+            )
+        missing.append(name)
+    return missing
+
+
+def attach_plan_profiles(
+    pconn,
+    project: projects_db.Project,
+    steps: Sequence[dict],
+    *,
+    accessible: Sequence[str],
+    added_by: Optional[str],
+) -> List[str]:
+    """Attach every profile ``steps`` assign that ``project`` lacks, as the
+    approver ``added_by`` (FG-34 decision 1). Checks all of them first, so
+    an inaccessible one (:class:`AssigneeNotAccessible`) attaches nothing.
+    Returns the names attached. Runs before :func:`check_step_assignees`."""
+    names = plan_profiles_to_attach(pconn, project, steps, accessible)
+    for name in names:
+        projects_db.add_project_profile(
+            pconn, project_id=project.id, profile=name, role="member",
+            added_by=added_by,
+        )
+    return names
+
+
 _ASSIGNMENT_EVENT = "assignment"
 
 
@@ -1107,8 +1162,15 @@ def start_run(
     spawn_inline: Optional[Callable] = None,
     cost_reader: Optional[Callable] = None,
     auto_approve: bool = False,
+    accessible: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
     """Open a run and bring up its cards + guidance (§6 pipeline).
+
+    ``accessible`` (FG-34) is the starter's profile access set: profiles
+    the plan names that the project lacks are attached first, as
+    ``triggered_by`` (:func:`attach_plan_profiles` raises
+    :class:`AssigneeNotAccessible` for one outside it). Without it the
+    plan must use the project's own profiles.
 
     ``auto_approve`` (Task mode's Start) records that the person approved
     every card of the run by starting it. Cards the concurrency cap keeps
@@ -1151,6 +1213,10 @@ def start_run(
     steps = playbook.get("steps") or []
     if not steps:
         raise ValueError("the playbook has no steps")
+    if accessible is not None:
+        attach_plan_profiles(
+            pconn, project, steps, accessible=accessible, added_by=triggered_by
+        )
 
     host = host_profile_name(pconn, project.id)
     if not host:
@@ -1895,9 +1961,13 @@ def _step_signature(step: dict, host: Optional[str]) -> tuple:
     )
 
 
-def _replan_refusal(pconn, bconn, *, project, run, task, playbook) -> Optional[str]:
+def _replan_refusal(
+    pconn, bconn, *, project, run, task, playbook, accessible=None
+) -> Optional[str]:
     """Why an autonomous project must leave this re-plan to a person, or
-    None when it can be activated and the run moved onto it."""
+    None when it can be activated and the run moved onto it. A step may
+    name a profile the project lacks when it is in ``accessible`` (the
+    project owner's FG-34 access set); adopting attaches it."""
     if project.archived:
         return "the project is archived"
     if run is None or run.get("status") != "running":
@@ -1920,7 +1990,13 @@ def _replan_refusal(pconn, bconn, *, project, run, task, playbook) -> Optional[s
         if any(_step_signature(s, host) == sig for s in steps):
             return f"it still contains the stuck step \"{task.title}\" unchanged"
     try:
-        check_step_assignees(pconn, project, steps)
+        to_attach = set(
+            plan_profiles_to_attach(pconn, project, steps, accessible or ())
+        )
+        check_step_assignees(
+            pconn, project,
+            [s for s in steps if (s.get("assignee") or host) not in to_attach],
+        )
     except ValueError as exc:
         return str(exc)
     return None
@@ -2031,9 +2107,14 @@ def adopt_replan(
                     return None
                 task = kanban_db.get_task(bconn, task_id)
                 playbook = projects_db.get_playbook(pconn, project.id, rev=rev)
+                from hermes_cli import profile_capabilities
+
+                accessible = profile_capabilities.accessible_profile_names_for_user(
+                    None, project=project
+                )
                 refusal = _replan_refusal(
                     pconn, bconn, project=project, run=run, task=task,
-                    playbook=playbook,
+                    playbook=playbook, accessible=accessible,
                 )
                 if refusal:
                     kanban_db.append_event(
@@ -2048,6 +2129,10 @@ def adopt_replan(
                     )
                     return "replan_held"
                 title = task.title or task_id
+                attach_plan_profiles(
+                    pconn, project, playbook.get("steps") or [],
+                    accessible=accessible, added_by=project.owner_user_id,
+                )
                 projects_db.activate_playbook_rev(
                     pconn, project.id, rev,
                     note=(

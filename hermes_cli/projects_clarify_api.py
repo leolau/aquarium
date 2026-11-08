@@ -612,6 +612,10 @@ async def confirm_clarify(request: Request) -> dict[str, Any]:
             detail=f"Keep the summary under {UNDERSTANDING_MAX_LEN} characters.",
         )
     draft_plan = body.get("draft_plan") is True
+    accessible = (
+        await projects_api._accessible_profiles(principal, project)
+        if draft_plan else None
+    )
 
     def _confirm_sync() -> dict:
         if _job_running(project.id):
@@ -632,7 +636,9 @@ async def confirm_clarify(request: Request) -> dict[str, Any]:
         plan_draft: Optional[dict] = None
         if draft_plan:
             try:
-                plan_draft = projects_api.start_plan_draft(project, profiles, principal)
+                plan_draft = projects_api.start_plan_draft(
+                    project, profiles, principal, accessible=accessible
+                )
             except HTTPException as exc:
                 plan_draft = {"status": "refused", "detail": str(exc.detail)}
         return {"state": clarify_state(project.id), "plan_draft": plan_draft}
