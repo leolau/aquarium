@@ -2,7 +2,7 @@ import { MobileShell } from "@/components/MobileShell";
 import { PageSkeleton } from "@/components/ui/PageSkeleton";
 
 /**
- * Route-level loading UI for **Core area**.
+ * Route-level loading UI for **Core**.
  *
  * The page is a `force-dynamic` server component, so navigating to it blocks on
  * the upstream reads. Without this file the browser kept showing the page the
@@ -11,7 +11,7 @@ import { PageSkeleton } from "@/components/ui/PageSkeleton";
  */
 export default function Loading() {
   return (
-    <MobileShell title="Core area">
+    <MobileShell title="Core">
       <PageSkeleton rows={3} />
     </MobileShell>
   );

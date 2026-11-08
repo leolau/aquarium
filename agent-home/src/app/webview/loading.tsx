@@ -11,7 +11,7 @@ import { PageSkeleton } from "@/components/ui/PageSkeleton";
  */
 export default function Loading() {
   return (
-    <MobileShell title="Agent webview">
+    <MobileShell title="Agent web browser">
       <PageSkeleton rows={3} />
     </MobileShell>
   );

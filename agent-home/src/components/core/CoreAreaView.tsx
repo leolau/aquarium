@@ -1,25 +1,27 @@
+"use client";
+
 import type { ReactNode } from "react";
 
+import { AdvancedSwitch, useAdvanced } from "@/components/system/Advanced";
+import { InlineAlert } from "@/components/ui/InlineAlert";
 import { Pill } from "@/components/ui/Pill";
+import { useT } from "@/i18n/client";
 import type { Change, CoreManifestResponse } from "@/types";
 
 /**
- * FG-20 Wave B2 — mobile-first Core-area view (read-only, C7).
+ * FG-20 Wave B2 — Core view (read-only, C7), Figma 32:3259.
  *
  * The permanent window on the FG-14 Core boundary the runtime agent may never
- * cross: the active `core_manifest.yaml` globs, boundary health
- * (`fallback_active` → running on the baked-in fail-closed set), the durable
- * Core-write denial audit tail, and the FG-12 change log. It is the mobile face
- * of `web/`'s `CorePage`; Core is immutable to the runtime agent and changes
- * only through the human repo/PR flow, so nothing here mutates state.
+ * cross: protected paths, boundary health (`fallback_active` → the built-in
+ * safe list), blocked attempts and the FG-12 change log. Core changes only
+ * through the human repo/PR flow, so nothing here mutates state. File paths,
+ * actors and change ids sit behind Advanced.
  */
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section data-component="CoreSection" className="mt-4 first:mt-0">
-      <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
-        {title}
-      </h2>
+    <section data-component="CoreSection" className="flex min-w-0 flex-col gap-2">
+      <h2 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">{title}</h2>
       {children}
     </section>
   );
@@ -29,34 +31,48 @@ function Card({ children }: { children: ReactNode }) {
   return (
     <div
       data-component="CoreCard"
-      className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
+      className="min-w-0 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
     >
       {children}
     </div>
   );
 }
 
-function BoundaryHealth({ manifest }: { manifest: CoreManifestResponse }) {
+const Muted = ({ children }: { children: ReactNode }) => (
+  <p className="text-sm text-[var(--color-muted)]">{children}</p>
+);
+
+function BoundaryHealth({ manifest, advanced }: { manifest: CoreManifestResponse; advanced: boolean }) {
+  const t = useT("system");
   return (
     <Card>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="font-medium">Core boundary</span>
+        <span className="font-medium">{t("core.boundary")}</span>
         <Pill tone={manifest.fallback_active ? "warning" : "success"}>
-          {manifest.fallback_active ? "fail-closed fallback" : "manifest active"}
+          {manifest.fallback_active ? t("core.fallback") : t("core.protected")}
         </Pill>
-        {manifest.self_protected ? <Pill tone="muted">self-protected</Pill> : null}
+        {advanced && manifest.self_protected ? <Pill tone="muted">{t("core.selfProtected")}</Pill> : null}
       </div>
+      {manifest.fallback_active ? (
+        <div className="mt-3">
+          <InlineAlert tone="warn">{t("core.fallbackHelp")}</InlineAlert>
+        </div>
+      ) : null}
       <p className="mt-2 text-sm text-[var(--color-muted)]">
-        <code>{manifest.manifest_path}</code> defines{" "}
-        <strong>{manifest.glob_count}</strong> Core globs. The runtime agent can
-        never write these paths; Core changes only through the human repo/PR flow.
+        <strong className="text-[var(--color-fg)]">{t("core.paths", { count: manifest.glob_count })}</strong> ·{" "}
+        {t("core.pathsBody")}
       </p>
+      {advanced ? (
+        <p className="mt-1 text-xs text-[var(--color-muted)] [overflow-wrap:anywhere]">
+          {t("core.manifest", { path: manifest.manifest_path })}
+        </p>
+      ) : null}
       {manifest.globs.length > 0 ? (
-        <ul className="mt-3 grid grid-cols-1 gap-1">
+        <ul className="mt-3 grid grid-cols-1 gap-1 sm:grid-cols-2">
           {manifest.globs.map((glob) => (
             <li
               key={glob}
-              className="rounded-lg bg-[var(--color-surface-2)] px-2 py-1 font-mono text-xs"
+              className="rounded-[var(--radius-md)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-xs [overflow-wrap:anywhere]"
             >
               {glob}
             </li>
@@ -71,84 +87,86 @@ export function CoreAreaView({
   manifest,
   changes,
   changesConfigured,
+  initialAdvanced = false,
 }: {
   manifest: CoreManifestResponse | null;
   changes: Change[];
   changesConfigured: boolean;
+  initialAdvanced?: boolean;
 }) {
+  const t = useT("system");
+  const [advanced, setAdvanced] = useAdvanced("core", initialAdvanced);
   return (
-    <div data-component="CoreAreaView" className="flex flex-col">
-      <Section title="Boundary health">
-        {manifest ? (
-          <BoundaryHealth manifest={manifest} />
-        ) : (
-          <p className="text-sm text-[var(--color-muted)]">
-            Core boundary unavailable.
-          </p>
-        )}
+    <div data-component="CoreAreaView" className="flex flex-col gap-5 pb-24 lg:pb-8">
+      <div className="flex justify-end">
+        <AdvancedSwitch on={advanced} onChange={setAdvanced} />
+      </div>
+      <Section title={t("core.health")}>
+        {manifest ? <BoundaryHealth manifest={manifest} advanced={advanced} /> : <Muted>{t("core.unavailable")}</Muted>}
       </Section>
 
-      <Section title="Boundary denials">
-        {manifest && manifest.denials.length > 0 ? (
-          <ul className="flex flex-col gap-2">
-            {manifest.denials.map((denial) => (
-              <li key={denial.id}>
-                <Card>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Pill tone="warning">{denial.mode}</Pill>
-                    <span className="text-xs text-[var(--color-muted)]">
-                      {denial.actor_user_id}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-sm">{denial.summary}</p>
-                </Card>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-sm text-[var(--color-muted)]">
-            No Core-write denials recorded — the agent has not attempted to cross
-            the boundary.
-          </p>
-        )}
-      </Section>
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+        <Section title={t("core.blocked")}>
+          {manifest && manifest.denials.length > 0 ? (
+            <ul className="flex flex-col gap-2">
+              {manifest.denials.map((denial) => (
+                <li key={denial.id}>
+                  <Card>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Pill tone="warning">{denial.mode}</Pill>
+                      {advanced ? (
+                        <span className="text-xs text-[var(--color-muted)] [overflow-wrap:anywhere]">{denial.actor_user_id}</span>
+                      ) : null}
+                    </div>
+                    <p className="mt-1 text-sm [overflow-wrap:anywhere]">{denial.summary}</p>
+                  </Card>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <Card>
+              <Muted>{t("core.noBlocked")}</Muted>
+            </Card>
+          )}
+        </Section>
 
-      <Section title="Change log (FG-12)">
-        {!changesConfigured ? (
-          <p className="text-sm text-[var(--color-muted)]">
-            Change log not configured (needs the application datastore).
-          </p>
-        ) : changes.length === 0 ? (
-          <p className="text-sm text-[var(--color-muted)]">
-            No changes visible in your scope.
-          </p>
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {changes.map((change) => (
-              <li key={change.id}>
-                <Card>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Pill tone="muted">{change.mode}</Pill>
-                    <Pill tone="muted">{change.target_kind}</Pill>
-                    {change.reversible ? <Pill tone="muted">reversible</Pill> : null}
-                    {change.undone ? <Pill tone="warning">undone</Pill> : null}
-                    <span className="text-xs text-[var(--color-muted)]">
-                      {change.actor_user_id ?? "—"}
-                    </span>
-                  </div>
-                  <code className="mt-1 block text-xs text-[var(--color-muted)]">
-                    {change.id.slice(0, 24)}
-                  </code>
-                </Card>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Section>
+        <Section title={t("core.changelog")}>
+          {!changesConfigured ? (
+            <Card>
+              <Muted>{t("core.changelogOff")}</Muted>
+            </Card>
+          ) : changes.length === 0 ? (
+            <Card>
+              <Muted>{t("core.noChanges")}</Muted>
+            </Card>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {changes.map((change) => (
+                <li key={change.id}>
+                  <Card>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Pill tone="muted">{change.mode}</Pill>
+                      <Pill tone="muted">{change.target_kind}</Pill>
+                      {change.reversible ? <Pill tone="muted">{t("core.reversible")}</Pill> : null}
+                      {change.undone ? <Pill tone="warning">{t("core.undone")}</Pill> : null}
+                      {advanced ? (
+                        <span className="text-xs text-[var(--color-muted)]">{change.actor_user_id ?? "—"}</span>
+                      ) : null}
+                    </div>
+                    {advanced ? (
+                      <code className="mt-1 block text-xs text-[var(--color-muted)] [overflow-wrap:anywhere]">
+                        {change.id.slice(0, 24)}
+                      </code>
+                    ) : null}
+                  </Card>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Section>
+      </div>
 
-      <p className="mt-4 text-xs text-[var(--color-muted)]">
-        Read-only · Core (C7). The boundary is exposed here, never mutated.
-      </p>
+      <p className="text-xs text-[var(--color-muted)]">{t("core.readOnly")}</p>
     </div>
   );
 }

@@ -1,0 +1,159 @@
+{
+  "title": "System",
+  "subtitle": "How this Aquarium works: the models, tools, skills and memory your agents use.",
+  "info": "What is System?",
+  "infoBody": "Everything that powers your agents lives here. Open a card to see or change it; nothing on this page changes anything by itself.",
+  "adminView": "You’re seeing the admin view. Core and the agent web browser are shown to admins only — everyone else sees them locked.",
+  "groups": {
+    "knowledge": "Agents & knowledge",
+    "running": "Running this Aquarium"
+  },
+  "admin": "Admin",
+  "locked": "Admins only",
+  "lockedBody": "Ask the owner or an admin if you need something checked here.",
+  "unknown": "—",
+  "settingsLead": "Looking for your preferences, theme or integrations?",
+  "settingsLink": "Open Settings",
+  "cards": {
+    "profiles": {
+      "name": "Profiles",
+      "desc": "Agents on this box — each with its own model, skills and memory.",
+      "meta": "{profiles} profiles · {suggestions} suggestions"
+    },
+    "skills": {
+      "name": "Skills",
+      "desc": "What each agent knows. Turn skills on or off, edit them, or install from the hub.",
+      "meta": "{installed} installed · {enabled} on"
+    },
+    "memory": {
+      "name": "Memory",
+      "desc": "What your agents remember, mapped by topic.",
+      "meta": "{memories} memories · {documents} documents"
+    },
+    "graph": {
+      "name": "Graph",
+      "desc": "Goals → tasks → skills your agents work through. Read-only.",
+      "meta": "{goals} goals · {tasks} tasks"
+    },
+    "models": {
+      "name": "Models",
+      "desc": "Brains per slot: the main model, helper roles, speed and cost.",
+      "meta": "Main: {model}"
+    },
+    "tools": {
+      "name": "Tools",
+      "desc": "Apps the agent built for you, and the helpers it uses.",
+      "meta": "{apps} apps · {enabled} on"
+    },
+    "core": {
+      "name": "Core",
+      "desc": "The protected boundary agents can never change: health, blocked attempts and change log.",
+      "meta": "{state} · {denials} blocked attempts",
+      "healthy": "Boundary healthy",
+      "fallback": "Using the built-in safe list",
+      "lockedWhy": "Core shows the parts of Aquarium the agent can never change. Only the owner and admins can open it."
+    },
+    "webview": {
+      "name": "Agent web browser",
+      "desc": "Watch and approve what the agent does in its own web browser.",
+      "meta": "{state}",
+      "open": "A session is open",
+      "idle": "No session open",
+      "lockedWhy": "The agent web browser drives real websites for the agent. Only the owner and admins can open it."
+    }
+  },
+  "advanced": "Advanced",
+  "advancedInfo": "What does Advanced show?",
+  "lockedPage": {
+    "core": {
+      "title": "Core is for admins",
+      "body": "Core shows the parts of Aquarium the agent can never change. Only the owner and admins can open it."
+    },
+    "webview": {
+      "title": "The agent web browser is for admins",
+      "body": "It lets the agent drive real websites under your consent. Only the owner and admins can open it."
+    },
+    "hint": "Ask the owner if you need something checked.",
+    "back": "Back to System"
+  },
+  "error": {
+    "retry": "Try again",
+    "details": "Technical details"
+  },
+  "advancedHelp": "Shows the technical details engineers use: ids, file paths, scoring rules and raw states. It changes nothing, and this device remembers your choice.",
+  "core": {
+    "subtitle": "The parts of Aquarium agents can never change. Read-only.",
+    "info": "What is Core?",
+    "infoBody": "Core is a protected list of paths. Agents can never write to them; Core changes only through a reviewed change made by a person.",
+    "health": "Boundary health",
+    "boundary": "Core boundary",
+    "protected": "Protected",
+    "fallback": "Using the built-in safe list",
+    "fallbackHelp": "The protected-paths file couldn’t be read, so Aquarium is using its built-in safe list. Agents still can’t change Core.",
+    "selfProtected": "self-protected",
+    "paths": "{count} protected paths",
+    "pathsBody": "Agents can never write these paths.",
+    "manifest": "Defined in {path}",
+    "unavailable": "Core boundary unavailable.",
+    "blocked": "Blocked attempts",
+    "noBlocked": "No blocked attempts — no agent has tried to change Core.",
+    "changelog": "Change log",
+    "changelogOff": "Change log not configured — it needs the application datastore.",
+    "noChanges": "No changes visible in your scope.",
+    "reversible": "reversible",
+    "undone": "undone",
+    "readOnly": "Read-only. Core is shown here, never changed.",
+    "loadError": "Couldn’t load Core"
+  },
+  "graph": {
+    "subtitle": "The goals your agents work toward, the tasks under them and the skills they use. Read-only.",
+    "info": "How to read the graph",
+    "infoBody": "Each card is a goal with a 0–100 score. Tasks sit under their goal, with the skills they use. Sub-goals are nested one level in.",
+    "notConfigured": "The graph needs the application datastore. Set {dsn}, then create goals with {cmd}.",
+    "empty": "No goals visible in your scope yet.",
+    "readOnly": "Read-only · Graph. Assignment: {scheme}{watchers}.",
+    "watchers": " (assignee + watchers)",
+    "showTasks": "Show {count} more tasks",
+    "hideTasks": "Show fewer tasks",
+    "loadError": "Couldn’t load the graph"
+  },
+  "webview": {
+    "subtitle": "Watch and approve what the agent does in its own web browser.",
+    "loadError": "Couldn’t load the agent web browser"
+  },
+  "pages": {
+    "models": {
+      "subtitle": "Which brains your agents use for each job, and how they’re doing.",
+      "info": "What is a model slot?",
+      "infoBody": "The main model answers chats and runs scheduled jobs. Helper roles do smaller jobs like titles or summaries; Auto uses the main model.",
+      "advancedHelp": "Shows model family, context size, backup chains, every helper role and the per-call performance table. It changes nothing.",
+      "loadError": "Couldn’t load model settings"
+    },
+    "tools": {
+      "subtitle": "Apps the agent built for you, and the helpers it uses.",
+      "buildApp": "Build an app",
+      "buildPrompt": "I’d like you to build me an app. Here’s what it should do: ",
+      "loadError": "Couldn’t load the list of apps"
+    },
+    "tool": {
+      "loadError": "Couldn’t load this app",
+      "notFound": "That app doesn’t exist, or you can’t see it."
+    },
+    "skills": {
+      "subtitle": "What each agent knows. Turn skills on or off, edit them, or install new ones from the hub."
+    },
+    "skillEdit": {
+      "title": "Edit {name}"
+    },
+    "profiles": {
+      "subtitle": "Agents on this box — each with its own model, skills and memory."
+    },
+    "suggestions": {
+      "title": "Profile suggestions",
+      "subtitle": "Aquarium suggests a new profile when it spots a pattern in your work. Adopt it or dismiss it."
+    },
+    "memory": {
+      "subtitle": "What your agents remember, mapped by topic. Your search is never stored."
+    }
+  }
+}

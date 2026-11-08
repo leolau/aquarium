@@ -5,6 +5,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ModelPerformance } from "@/components/models/ModelPerformance";
 import { ModelPickerSheet } from "@/components/models/ModelPickerSheet";
+import { AdvancedSwitch, useAdvanced } from "@/components/system/Advanced";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import { useT } from "@/i18n/client";
 import { Pill } from "@/components/ui/Pill";
 import { Spinner } from "@/components/ui/Spinner";
 import { withProfileBody, withProfileQuery } from "@/lib/chat/profile";
@@ -106,10 +109,14 @@ function BackupLine({ backups }: { backups?: FallbackModel[] }) {
 export function ModelsView({
   initial,
   profile,
+  initialAdvanced = false,
 }: {
   initial: ModelsOverviewResponse;
   profile?: string;
+  initialAdvanced?: boolean;
 }) {
+  const ts = useT("system");
+  const [advanced, setAdvanced] = useAdvanced("models", initialAdvanced);
   const [data, setData] = useState(initial);
   const [slot, setSlot] = useState<ModelSlot | null>(null);
   const [showAllRoles, setShowAllRoles] = useState(false);
@@ -249,7 +256,7 @@ export function ModelsView({
     return map;
   }, [data.auxiliary.tasks]);
 
-  const roles = showAllRoles ? AUX_ROLES : AUX_ROLES.filter((r) => r.top);
+  const roles = advanced && showAllRoles ? AUX_ROLES : AUX_ROLES.filter((r) => r.top);
   const hiddenCount = AUX_ROLES.length - AUX_ROLES.filter((r) => r.top).length;
   const usage = useMemo(
     () =>
@@ -263,7 +270,10 @@ export function ModelsView({
   const ctx = formatContext(data.info.effective_context_length);
 
   return (
-    <div data-component="ModelsView" className="flex flex-col gap-5">
+    <div data-component="ModelsView" className="flex flex-col gap-5 pb-24 lg:pb-8">
+      <div className="flex justify-end">
+        <AdvancedSwitch on={advanced} onChange={setAdvanced} help={ts("pages.models.advancedHelp")} />
+      </div>
       {/* ── Main model ── */}
       <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
         <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
@@ -274,13 +284,13 @@ export function ModelsView({
         </div>
         <div className="mt-0.5 text-xs text-[var(--color-muted)]">
           {data.info.provider || "no provider"}
-          {ctx ? ` · ${ctx}` : ""}
+          {advanced && ctx ? ` · ${ctx}` : ""}
         </div>
         <div className="mt-2.5 flex flex-wrap gap-1.5">
           {caps.supports_tools ? <Pill tone="success">tools</Pill> : null}
           {caps.supports_vision ? <Pill tone="success">vision</Pill> : null}
           {caps.supports_reasoning ? <Pill tone="success">reasoning</Pill> : null}
-          {caps.model_family ? <Pill tone="muted">{caps.model_family}</Pill> : null}
+          {advanced && caps.model_family ? <Pill tone="muted">{caps.model_family}</Pill> : null}
         </div>
         <div className="mt-3 flex items-center gap-2">
           <button
@@ -300,16 +310,9 @@ export function ModelsView({
           </ActionButton>
         </div>
         {testResult ? (
-          <p
-            className={`mt-2 rounded-lg px-3 py-1.5 text-xs ${
-              testResult.ok
-                ? "bg-[var(--color-surface-2)] text-[var(--color-muted)]"
-                : "bg-red-500/10 text-red-300"
-            }`}
-          >
-            {testResult.ok ? "✓ " : "✗ "}
-            {testResult.text}
-          </p>
+          <div className="mt-2">
+            <InlineAlert tone={testResult.ok ? "success" : "danger"}>{testResult.text}</InlineAlert>
+          </div>
         ) : null}
       </section>
 
@@ -335,7 +338,7 @@ export function ModelsView({
               <span className="block truncate text-[11px] text-[var(--color-muted)]">
                 {data.info.provider}
               </span>
-              <BackupLine backups={fallbacks} />
+              {advanced ? <BackupLine backups={fallbacks} /> : null}
             </span>
             <span className="text-[var(--color-muted)]">›</span>
           </button>
@@ -368,13 +371,13 @@ export function ModelsView({
                      
                     </span>
                   ) : null}
-                  <BackupLine backups={a?.fallback_chain} />
+                  {advanced ? <BackupLine backups={a?.fallback_chain} /> : null}
                 </span>
                 <span className="text-[var(--color-muted)]">›</span>
               </button>
             );
           })}
-          {!showAllRoles && hiddenCount > 0 ? (
+          {advanced && !showAllRoles && hiddenCount > 0 ? (
             <button
               type="button"
               onClick={() => setShowAllRoles(true)}
@@ -398,7 +401,7 @@ export function ModelsView({
       </section>
 
       {/* ── Performance (per-call telemetry) ── */}
-      <ModelPerformance perf={perf} />
+      {advanced ? <ModelPerformance perf={perf} /> : null}
 
       {/* ── In use ── */}
       <section>

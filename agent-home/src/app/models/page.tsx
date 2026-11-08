@@ -1,5 +1,8 @@
 import { MobileShell } from "@/components/MobileShell";
 import { ModelsView } from "@/components/models/ModelsView";
+import { LoadError } from "@/components/system/LoadError";
+import { InfoTip } from "@/components/ui/InfoTip";
+import { getT } from "@/i18n/server";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
 import type { ModelsOverviewResponse } from "@/types";
 
@@ -19,6 +22,7 @@ export default async function Page({
   searchParams: Promise<{ profile?: string }>;
 }) {
   await requirePrincipal();
+  const t = await getT("system");
   const { profile: requestedProfile } = await searchParams;
   const profile = (requestedProfile ?? "").trim() || undefined;
 
@@ -45,14 +49,14 @@ export default async function Page({
   }
 
   return (
-    <MobileShell title="Models">
+    <MobileShell
+      title={t("cards.models.name")}
+      subtitle={t("pages.models.subtitle")}
+      info={<InfoTip label={t("pages.models.info")}>{t("pages.models.infoBody")}</InfoTip>}
+      wide
+    >
       {error || !data ? (
-        <div
-          data-component="ModelsError"
-          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
-        >
-          Couldn&apos;t load model settings ({error ?? "no data"}).
-        </div>
+        <LoadError component="ModelsError" title={t("pages.models.loadError")} details={error ?? "no data"} />
       ) : (
         <ModelsView initial={data} profile={profile} />
       )}

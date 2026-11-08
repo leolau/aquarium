@@ -1,6 +1,7 @@
 import { MemoryHeaderActions } from "@/components/memory/MemoryHeaderActions";
 import { MobileShell } from "@/components/MobileShell";
 import { MemoryView } from "@/components/memory/MemoryView";
+import { getT } from "@/i18n/server";
 import { HermesApiError } from "@/lib/api/client";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
 import type { MemoryRowsResponse, MemorySummary } from "@/types";
@@ -24,6 +25,7 @@ export default async function Page({
   searchParams: Promise<{ document?: string }>;
 }) {
   await requirePrincipal();
+  const t = await getT("system");
   // `?document=<id>` arrives from a citation link: open on that document's
   // passages instead of the whole memory list.
   const { document } = await searchParams;
@@ -55,6 +57,7 @@ export default async function Page({
   return (
     <MobileShell
       title="Memory"
+      subtitle={t("pages.memory.subtitle")}
       wide
       actions={
         noPrincipal || error || !summary || !first ? null : (

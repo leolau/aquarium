@@ -38,6 +38,9 @@ export function AccountMenu({ name }: { name?: string | null }) {
           <Link role="menuitem" href="/settings" className="block rounded-[var(--radius-sm)] px-2 py-1.5 hover:bg-[var(--color-surface-2)]">
             Settings
           </Link>
+          <Link role="menuitem" href="/system" className="block rounded-[var(--radius-sm)] px-2 py-1.5 hover:bg-[var(--color-surface-2)]">
+            System
+          </Link>
           <LogoutButton />
         </div>
       ) : null}
