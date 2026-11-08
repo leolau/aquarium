@@ -15,6 +15,7 @@
 import "server-only";
 
 import { activeEnrolments } from "@/lib/api/my-profiles";
+import type { SkillVersionDetail, SkillVersionDiff, SkillVersionList } from "@/lib/skills/versions";
 import { hermesApiBaseUrl } from "@/lib/env";
 import type { SecurityBasicsResult } from "@/lib/api/security-basics";
 import type { PinResponse, PinSuggestionsResponse } from "@/types/landing";
@@ -482,6 +483,24 @@ export class HermesApiClient {
 
   async updateSkillContent(name: string, content: string): Promise<{ success: boolean; message?: string }> {
     return this.request("/api/skills/content", { method: "PUT", json: { name, content } });
+  }
+
+  async skillVersions(name: string): Promise<SkillVersionList> {
+    return this.request(`/api/skills/versions?name=${encodeURIComponent(name)}`);
+  }
+
+  async skillVersionDetail(name: string, id: string): Promise<SkillVersionDetail> {
+    return this.request(`/api/skills/versions/detail?name=${encodeURIComponent(name)}&id=${encodeURIComponent(id)}`);
+  }
+
+  async skillVersionDiff(name: string, a: string, b: string): Promise<SkillVersionDiff> {
+    return this.request(
+      `/api/skills/versions/diff?name=${encodeURIComponent(name)}&a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`,
+    );
+  }
+
+  async activateSkillVersion(input: { name: string; id: string; trial: boolean }): Promise<SkillVersionList> {
+    return this.request("/api/skills/versions/activate", { method: "POST", json: input });
   }
 
   async skillHubSources(): Promise<SkillHubSourcesResponse> {

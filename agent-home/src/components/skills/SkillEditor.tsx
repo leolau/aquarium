@@ -84,6 +84,7 @@ export function SkillEditor({
   installed,
   categories,
   initialView = "structured",
+  draft,
 }: {
   name: string;
   profile: string;
@@ -92,6 +93,8 @@ export function SkillEditor({
   installed: string[];
   categories: string[];
   initialView?: EditorView;
+  /** Editing a saved draft version: saving adds a new draft and leaves the live skill alone. */
+  draft?: { id: string; n: number };
 }) {
   const router = useRouter();
   const [original, setOriginal] = useState(content);
@@ -107,7 +110,7 @@ export function SkillEditor({
   const leaving = useRef(false);
   const { ask: askConfirm, dialog: leaveDialog } = useConfirm();
   const q = profileQuery(profile);
-  const viewHref = skillHref(name, profile);
+  const viewHref = draft ? skillHref(name, profile, "", "tab=versions") : skillHref(name, profile);
 
   const parsed = useMemo(() => parseSkill(doc), [doc]);
   const body = useMemo(() => getBody(doc), [doc]);
@@ -180,7 +183,16 @@ export function SkillEditor({
   async function save() {
     setSaveError(null);
     try {
-      await sendJson("/api/skills/content", "PUT", { name, content: doc, ...(q ? { profile } : {}) });
+      if (draft) {
+        await sendJson("/api/skills/versions/draft", "POST", {
+          name,
+          content: doc,
+          message: `Edited from v${draft.n}`,
+          ...(q ? { profile } : {}),
+        });
+      } else {
+        await sendJson("/api/skills/content", "PUT", { name, content: doc, ...(q ? { profile } : {}) });
+      }
       leaving.current = true;
       setOriginal(doc);
       setReviewing(false);
@@ -437,6 +449,7 @@ export function SkillEditor({
           name={name}
           profile={profile}
           builtin={skill?.source === "builtin"}
+          draft={draft}
           ops={ops}
           checks={checks}
           error={saveError}
@@ -455,6 +468,7 @@ function ReviewDialog({
   name,
   profile,
   builtin,
+  draft,
   ops,
   checks,
   error,
@@ -464,6 +478,7 @@ function ReviewDialog({
   name: string;
   profile: string;
   builtin: boolean;
+  draft?: { id: string; n: number };
   ops: ReturnType<typeof diffLines>;
   checks: Check[];
   error: string | null;
@@ -487,10 +502,12 @@ function ReviewDialog({
     >
       <div className="flex max-h-[90vh] w-full flex-col rounded-t-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:w-[min(680px,100%)] sm:rounded-2xl">
         <h2 id="skill-review-title" className="text-[17px] font-semibold">
-          Save changes to {name}?
+          {draft ? `Save as a new draft of ${name}?` : `Save changes to ${name}?`}
         </h2>
         <p className="mb-2.5 mt-1 text-xs text-[var(--color-muted)]">
-          {builtin
+          {draft
+            ? `Saving adds a new draft based on v${draft.n}. The live skill doesn't change until you try or restore a version.`
+            : builtin
             ? `Saving changes this built-in skill's copy in profile ${profile}. Other profiles keep theirs, and Hermes updates will no longer replace this one.`
             : `Saving replaces SKILL.md in profile ${profile}. Other profiles keep their own copy.`}
         </p>

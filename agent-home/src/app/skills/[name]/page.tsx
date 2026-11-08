@@ -1,6 +1,9 @@
 import { MobileShell } from "@/components/MobileShell";
 import { SkillPage } from "@/components/skills/SkillPage";
 
+import { apiClientForRequest } from "@/lib/auth/principal";
+import { activeVersion, toVersionList } from "@/lib/skills/versions";
+
 import { loadSkill } from "../load-skill";
 
 export const dynamic = "force-dynamic";
@@ -15,6 +18,10 @@ export default async function Page({
 }) {
   const [{ name: raw }, { profile: requested, tab }] = await Promise.all([params, searchParams]);
   const { name, profile, content, skill, skills, details } = await loadSkill(raw, requested, true);
+  // Version history is optional: older backends simply have none.
+  const client = await apiClientForRequest({ profile: profile === "default" ? undefined : profile });
+  const versions = await client.skillVersions(name).then((d) => toVersionList(d, name), () => null);
+  const active = activeVersion(versions);
   return (
     <MobileShell
       title={name}
@@ -31,6 +38,7 @@ export default async function Page({
         details={details}
         installed={skills.map((s) => s.name)}
         initialTab={tab}
+        activeVersion={active ? { n: active.n, trial: Boolean(active.trial_of) } : null}
       />
     </MobileShell>
   );

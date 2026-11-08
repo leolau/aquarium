@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CopyButton, downloadText } from "@/components/skills/CopyButton";
 import { SkillImprovePanel } from "@/components/skills/SkillImprovePanel";
 import { SkillMarkdown } from "@/components/skills/SkillMarkdown";
+import { SkillVersionsPanel } from "@/components/skills/SkillVersionsPanel";
 import { skillHref, skillInitials, skillsListHref } from "@/components/skills/skill-links";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { errorText, profileQuery, sendJson } from "@/lib/admin-fetch";
@@ -18,8 +19,8 @@ import { useAction } from "@/lib/use-action";
 import { useHydrated } from "@/lib/use-hydrated";
 import type { SkillDetails, SkillInfo } from "@/types";
 
-type Tab = "instructions" | "files" | "improve" | "used";
-const TABS: readonly Tab[] = ["instructions", "files", "improve", "used"];
+type Tab = "instructions" | "files" | "versions" | "improve" | "used";
+const TABS: readonly Tab[] = ["instructions", "files", "versions", "improve", "used"];
 const isTab = (value: string | undefined): value is Tab => !!value && (TABS as readonly string[]).includes(value);
 
 export const chipClass =
@@ -59,6 +60,7 @@ export function SkillPage({
   details,
   installed,
   initialTab,
+  activeVersion,
 }: {
   name: string;
   profile: string;
@@ -69,6 +71,8 @@ export function SkillPage({
   installed: string[];
   /** `?tab=` deep link; unknown values open Instructions. */
   initialTab?: string;
+  /** The live version from version history, when there is one. */
+  activeVersion?: { n: number; trial: boolean } | null;
 }) {
   const router = useRouter();
   const parsed = useMemo(() => parseSkill(content), [content]);
@@ -245,7 +249,11 @@ export function SkillPage({
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-1.5">
                 <h1 className="mr-1 break-all text-xl font-semibold">{name}</h1>
-                {meta.version ? <span className={chipClass}>{`v${meta.version}`}</span> : null}
+                {activeVersion ? (
+                  <span className={chipClass}>{`v${activeVersion.n} · active${activeVersion.trial ? " (trial)" : ""}`}</span>
+                ) : meta.version ? (
+                  <span className={chipClass}>{`v${meta.version}`}</span>
+                ) : null}
                 {skill ? <span className={accentChipClass}>{sourceBadge(skill.source)}</span> : null}
               </div>
               {description ? <p className="mt-0.5 text-sm text-[var(--color-muted)]">{description}</p> : null}
@@ -326,6 +334,7 @@ export function SkillPage({
         <div role="tablist" aria-label="Skill sections" className="mb-3.5 mt-4 flex gap-0.5 overflow-x-auto border-b border-[var(--color-border)]">
           {tabButton("instructions", "Instructions")}
           {tabButton("files", "Files", details ? String(files.length) : undefined)}
+          {tabButton("versions", "Versions")}
           {tabButton("improve", "Improve")}
           {tabButton("used", "Used by", details ? `${usedBy.length} ${usedBy.length === 1 ? "profile" : "profiles"}` : undefined)}
         </div>
@@ -405,6 +414,8 @@ export function SkillPage({
               ) : null}
             </aside>
           </div>
+        ) : tab === "versions" ? (
+          <SkillVersionsPanel name={name} profile={profile} />
         ) : tab === "files" ? (
           <div className="max-w-2xl">
             {details ? (
