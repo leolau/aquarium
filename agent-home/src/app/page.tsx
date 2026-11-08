@@ -1,124 +1,62 @@
 import { LogoutButton } from "@/components/LogoutButton";
 import { MobileShell } from "@/components/MobileShell";
+import { LandingComposer } from "@/components/landing/LandingComposer";
+import { LandingLayout } from "@/components/landing/LandingLayout";
 import { ProjectsHomeCard } from "@/components/projects/ProjectsHomeCard";
+import { ActivityStrip } from "@/components/ui/ActivityStrip";
+import { StatusStrip } from "@/components/ui/StatusStrip";
+import { activeEnrolments } from "@/lib/api/my-profiles";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
-import { scopedSelect } from "@/lib/supabase/context";
-import type { ProjectCategory, ProjectListItem } from "@/types";
+import { readSession } from "@/lib/auth/session";
+import type { ProfileSummary, ProjectCategory, ProjectListItem } from "@/types";
 
-// The seam proof reads the live principal (cookie) + Supabase, so it must
-// render per-request, never at build time.
 export const dynamic = "force-dynamic";
 
-interface ScopedRow extends Record<string, unknown> {
-  id: string;
-  title?: string | null;
-  visibility?: string | null;
-}
-
 /**
- * Wave-A seam proof (NOT a feature panel): shows the logged-in C1 principal
- * and one RLS-scoped read from Supabase, proving the bridge end-to-end
- * (principal → `hermes.principal_*` GUCs → FORCE'd RLS). Wave B/C replace this
- * with the real GTS/chat panels.
+ * The landing page (docs/design/landing-redesign): top bar, chats sidebar,
+ * the centre composer, and the needs-you / background-work panel. Every read
+ * is best-effort so one failing upstream never blanks the page.
  */
 export default async function HomePage() {
-  const principal = await requirePrincipal();
+  await requirePrincipal();
+  const currentProfile = (await readSession())?.profile ?? "default";
 
-  let rows: ScopedRow[] = [];
-  let readError: string | null = null;
-  try {
-    rows = await scopedSelect<ScopedRow>(principal, "goals", {
-      columns: "id, title, visibility",
-      limit: 5,
-    });
-  } catch (err) {
-    readError = err instanceof Error ? err.message : "scoped read failed";
-  }
-
-  // The first-class Projects card (§13): active projects with their health
-  // and next run. Best-effort like the nav badge — a projects fetch failure
-  // must not blank Home, so the card simply stays absent.
-  // Categories name and colour each card's tag; failing to read them only
-  // hides the tags.
+  let profiles: ProfileSummary[] = [];
   let activeProjects: ProjectListItem[] | null = null;
   let projectCategories: ProjectCategory[] = [];
   try {
     const client = await apiClientForRequest();
-    const [response, categoriesRes] = await Promise.all([
-      client.projects({ status: "active", limit: 5 }),
+    const [mine, projects, categories] = await Promise.all([
+      client.myProfiles().catch(() => null),
+      client.projects({ status: "active", limit: 5 }).catch(() => null),
       client.projectCategories().catch(() => ({ items: [] })),
     ]);
-    activeProjects = response.items;
-    projectCategories = categoriesRes.items ?? [];
+    profiles = mine ? activeEnrolments(mine) : [];
+    activeProjects = projects?.items ?? null;
+    projectCategories = categories.items ?? [];
   } catch {
-    activeProjects = null;
+    // The composer still works without profiles or projects.
   }
 
   return (
-    <MobileShell title="Aquarium">
-      <section
-        data-component="PrincipalCard"
-        className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
-      >
-        <p className="text-xs uppercase tracking-wide text-[var(--color-muted)]">
-          Signed in as
-        </p>
-        <p className="mt-1 text-lg font-semibold">{principal.display}</p>
-        <div className="mt-2 flex flex-wrap gap-2 text-xs">
-          <span className="rounded-full bg-[var(--color-surface-2)] px-2 py-1">
-            {principal.user_id}
-          </span>
-          <span className="rounded-full bg-[var(--color-accent)] px-2 py-1 text-[var(--color-accent-fg)]">
-            {principal.role}
-          </span>
-          {principal.is_owner ? (
-            <span className="rounded-full bg-[var(--color-surface-2)] px-2 py-1">
-              owner
-            </span>
-          ) : null}
-        </div>
-      </section>
-
-      <section
-        data-component="ScopedReadCard"
-        className="mt-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
-      >
-        <p className="text-xs uppercase tracking-wide text-[var(--color-muted)]">
-          RLS-scoped read · goals
-        </p>
-        {readError ? (
-          <p className="mt-2 text-sm text-[var(--color-muted)]">
-            Seam wired; live read unavailable here ({readError}).
-          </p>
-        ) : rows.length === 0 ? (
-          <p className="mt-2 text-sm text-[var(--color-muted)]">
-            No rows visible to this principal (RLS returned an empty set).
-          </p>
-        ) : (
-          <ul className="mt-2 space-y-2">
-            {rows.map((row) => (
-              <li
-                key={row.id}
-                className="rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-sm"
-              >
-                <span className="block truncate">{row.title ?? row.id}</span>
-                <span className="text-xs text-[var(--color-muted)]">
-                  {row.visibility ?? "—"}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-        <p className="mt-3 text-xs text-[var(--color-muted)]">
-          Rows are filtered by Postgres FORCE&apos;d RLS using the bound
-          <code className="mx-1">hermes.principal_*</code>GUCs — the browser
-          never sees rows it may not.
-        </p>
-      </section>
-
-      {activeProjects ? <ProjectsHomeCard items={activeProjects} categories={projectCategories} /> : null}
-
-      <LogoutButton />
+    <MobileShell title="Aquarium" bare>
+      <LandingLayout
+        topBar={
+          <div className="border-b border-[var(--color-border)] bg-[var(--color-bg)]/90 backdrop-blur">
+            <StatusStrip />
+            <ActivityStrip />
+          </div>
+        }
+        main={<LandingComposer profiles={profiles} currentProfile={currentProfile} />}
+        aside={
+          <div className="flex flex-col gap-4">
+            {activeProjects ? (
+              <ProjectsHomeCard items={activeProjects} categories={projectCategories} />
+            ) : null}
+            <LogoutButton />
+          </div>
+        }
+      />
     </MobileShell>
   );
 }
