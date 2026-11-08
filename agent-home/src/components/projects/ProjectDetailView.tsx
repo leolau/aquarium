@@ -162,7 +162,7 @@ export function ProjectDetailView({
     const url = new URL(window.location.href);
     if (!value || value === "overview" || value === "dashboard") url.searchParams.delete("tab");
     else url.searchParams.set("tab", value);
-    window.history.replaceState(window.history.state, "", url.toString());
+    window.history.replaceState(null, "", url.toString());
   };
   const selectTab = useCallback((next: ProjectTab) => {
     setTab(next);

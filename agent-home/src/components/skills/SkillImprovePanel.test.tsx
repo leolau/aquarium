@@ -209,4 +209,25 @@ describe("SkillImprovePanel", () => {
     expect(await screen.findByText("draft conflict")).toBeTruthy();
     expect(bodyOf(callsTo("POST /api/skills/versions/draft")[0])).toMatchObject({ message: "Currency handling", session_id: "imp-old" });
   });
+  it("replays a past chat without the hidden context or tool-call-only turns", async () => {
+    routes["GET /api/chat/messages"] = ok({
+      messages: [
+        {
+          id: 1,
+          role: "user",
+          content: 'You are helping me improve the skill "invoice-parser".\n\n=== Skill context ===\nSECRET-CONTEXT\n\n## My message\nMake it handle USD',
+        },
+        { id: 2, role: "assistant", content: "" },
+        { id: 3, role: "tool", content: "{}" },
+        { id: 4, role: "assistant", content: "   " },
+        { id: 5, role: "assistant", content: "Proposal:\n```skill-draft\n" + PROPOSED + "```" },
+      ],
+    });
+    panel();
+    fireEvent.click(await screen.findByText("Currency handling"));
+    expect(await screen.findByText("Make it handle USD")).toBeTruthy();
+    expect(screen.queryByText(/SECRET-CONTEXT/)).toBeNull();
+    expect(screen.queryAllByText("Here is a proposed SKILL.md.")).toHaveLength(0);
+    expect(screen.getByText("Proposal:")).toBeTruthy();
+  });
 });
