@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/projects/mou/cards/t1",
   useRouter: () => ({ refresh: () => {}, push: () => {} }),
 }));
 

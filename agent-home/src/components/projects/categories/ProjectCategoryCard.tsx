@@ -4,6 +4,7 @@ import type { DragEvent } from "react";
 
 import { ActionError } from "@/components/projects/ActionError";
 import { ProjectCardBody } from "@/components/projects/ProjectRow";
+import { useT } from "@/i18n";
 import type { ProjectCategory, ProjectListItem } from "@/types";
 
 /** The drag payload type: a project slug, distinct from plain text drops. */
@@ -23,6 +24,8 @@ export interface ProjectCategoryCardProps {
     busy: boolean;
     retry: () => Promise<unknown>;
   } | null;
+  /** Opens the Move to… sheet (shown on touch screens, where drag is off). */
+  onMoveTo?: () => void;
 }
 
 /**
@@ -36,7 +39,9 @@ export function ProjectCategoryCard({
   busy,
   disabled,
   failure,
+  onMoveTo,
 }: ProjectCategoryCardProps) {
+  const t = useT("projects");
   const locked = busy || disabled;
   const onDragStart = (e: DragEvent<HTMLLIElement>) => {
     e.dataTransfer.setData(PROJECT_DRAG_TYPE, project.slug);
@@ -59,6 +64,18 @@ export function ProjectCategoryCard({
 
       {busy ? (
         <p className="mt-2 text-xs text-[var(--color-muted)]">Moving…</p>
+      ) : null}
+
+      {onMoveTo ? (
+        <button
+          type="button"
+          data-action="move-to"
+          disabled={locked}
+          onClick={onMoveTo}
+          className="mt-2 hidden min-h-9 items-center rounded-[var(--radius-md)] border border-[var(--color-border)] px-3 text-xs disabled:opacity-60 max-lg:inline-flex pointer-coarse:inline-flex"
+        >
+          {t("moveTo")}
+        </button>
       ) : null}
 
       {failure ? (

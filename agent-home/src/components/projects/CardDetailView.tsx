@@ -243,12 +243,6 @@ export function CardDetailView({
             />
           </>
         ) : null}
-        <Link
-          href={`/projects/${encodeURIComponent(slug)}`}
-          className="mt-2 inline-block text-xs text-[var(--color-accent)]"
-        >
-          ‹ Back to the project
-        </Link>
       </header>
 
       {isRunning ? (

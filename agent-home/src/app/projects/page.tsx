@@ -1,4 +1,9 @@
+import Link from "next/link";
+
 import { MobileShell } from "@/components/MobileShell";
+import { ProjectsLoadError } from "@/components/projects/ProjectsLoadError";
+import { InfoTip } from "@/components/ui/InfoTip";
+import { getT } from "@/i18n/server";
 import { ProjectsList } from "@/components/projects/ProjectsList";
 import { ProjectsModeView } from "@/components/projects/task/ProjectsModeView";
 import {
@@ -10,7 +15,8 @@ import {
   filtersToParams,
 } from "@/components/projects/filters";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
-import type { ProjectCategory, ProjectsResponse } from "@/types";
+import type { ProjectsFilterState } from "@/components/projects/filters";
+import type { ProjectCategory, ProjectsResponse, ViewDevice } from "@/types";
 
 // Reads the live principal (cookie) + the caller's readable projects per
 // request — never at build time.
@@ -78,21 +84,33 @@ export default async function Page({
     error = err instanceof Error ? err.message : "Failed to load your projects";
   }
 
+  const t = await getT("projects");
   return (
-    <MobileShell title="Projects">
-      {error ? (
-        <div
-          data-component="ProjectsPageError"
-          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
+    <MobileShell
+      title="Projects"
+      subtitle={t("subtitle")}
+      info={<InfoTip label={t("infoLabel")}>{t("info")}</InfoTip>}
+      actions={
+        <Link
+          href="/projects/new"
+          data-component="NewProjectAction"
+          className="inline-flex min-h-10 items-center rounded-[var(--radius-md)] bg-[var(--color-accent)] px-4 text-sm font-medium text-[var(--color-accent-fg)]"
         >
-          Couldn&apos;t load your projects ({error}).
-        </div>
+          {t("newProject")}
+        </Link>
+      }
+      wide
+    >
+      {error ? (
+        <ProjectsLoadError component="ProjectsPageError" details={`Couldn't load your projects (${error}).`} />
       ) : (
         <ProjectsModeView mode="project" device={view.device}>
           <ProjectsList
             initial={projects}
             categories={categories}
-            initialFilters={state}
+            initialFilters={phoneDefaultsToList(state, params, view.device)}
+            rememberLayout={view.device === "phone"}
+            layoutInUrl={params.has("layout")}
           />
         </ProjectsModeView>
       )}
@@ -123,12 +141,7 @@ async function TaskModePage({ view, canStart }: { view: ViewContext; canStart: b
   return (
     <MobileShell title="Projects">
       {error ? (
-        <div
-          data-component="ProjectsPageError"
-          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
-        >
-          Couldn&apos;t load your tasks ({error}).
-        </div>
+        <ProjectsLoadError component="ProjectsPageError" details={`Couldn't load your tasks (${error}).`} />
       ) : (
         <ProjectsModeView
           mode="task"
@@ -138,4 +151,13 @@ async function TaskModePage({ view, canStart }: { view: ViewContext; canStart: b
       )}
     </MobileShell>
   );
+}
+
+/** Phones open the list (Figma "Projects — List — Phone"); the board stays a tap away. */
+function phoneDefaultsToList(
+  state: ProjectsFilterState,
+  params: URLSearchParams,
+  device: ViewDevice,
+): ProjectsFilterState {
+  return device === "phone" && !params.has("layout") ? { ...state, layout: "list" } : state;
 }

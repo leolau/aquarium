@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-libra
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/projects",
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
 }));
 

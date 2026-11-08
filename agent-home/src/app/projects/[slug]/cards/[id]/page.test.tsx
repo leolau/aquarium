@@ -7,6 +7,8 @@ const projectCardMock = vi.hoisted(() => vi.fn());
 const projectMock = vi.hoisted(() => vi.fn());
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/projects/draft-a-new-quotation/cards/task_1",
+  useRouter: () => ({ refresh: () => {}, push: () => {}, back: () => {} }),
   notFound: () => {
     throw new Error("NEXT_NOT_FOUND");
   },
@@ -21,8 +23,19 @@ vi.mock("@/lib/auth/principal", () => ({
 }));
 
 vi.mock("@/components/MobileShell", () => ({
-  MobileShell: ({ children }: { children: React.ReactNode }) => (
-    <div>{children}</div>
+  // The shell's PageHeader owns Back; record what the page hands it.
+  MobileShell: ({
+    children,
+    title,
+    labels,
+  }: {
+    children: React.ReactNode;
+    title: string;
+    labels?: Record<string, string>;
+  }) => (
+    <div data-testid="shell" data-title={title} data-labels={JSON.stringify(labels ?? null)}>
+      {children}
+    </div>
   ),
 }));
 
@@ -44,7 +57,7 @@ afterEach(() => {
 });
 
 describe("card page", () => {
-  it("links back to the project by name", async () => {
+  it("names the parent project for the shell's Back", async () => {
     projectCardMock.mockResolvedValue({
       id: "t_700dc12b",
       title: "Present the draft",
@@ -54,15 +67,18 @@ describe("card page", () => {
       archived: false,
       profiles: [],
     });
-    const { getByRole } = render(await Page({ params }));
-    const back = getByRole("link", { name: "← Back to Draft a new quotation" });
-    expect(back.getAttribute("href")).toBe("/projects/draft-a-new-quotation");
+    const { getByTestId } = render(await Page({ params }));
+    // The shell's Back / breadcrumb names the parent project.
+    expect(JSON.parse(getByTestId("shell").getAttribute("data-labels")!)).toEqual({
+      "/projects/draft-a-new-quotation": "Draft a new quotation",
+    });
   });
 
-  it("still links back when the project or the card can't load", async () => {
+  it("falls back to the default label when the card can't load", async () => {
     projectCardMock.mockRejectedValue(new Error("down"));
-    const { getByRole } = render(await Page({ params }));
-    const back = getByRole("link", { name: "← Back to project" });
-    expect(back.getAttribute("href")).toBe("/projects/draft-a-new-quotation");
+    const { container, getByTestId } = render(await Page({ params }));
+    // No name to show: the shell falls back to its own "Project" label.
+    expect(getByTestId("shell").getAttribute("data-labels")).toBe("null");
+    expect(container.querySelector('[data-component="CardPageError"] [data-component="ErrorState"]')).toBeTruthy();
   });
 });

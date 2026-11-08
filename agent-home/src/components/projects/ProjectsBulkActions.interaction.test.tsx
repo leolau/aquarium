@@ -8,6 +8,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/projects",
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
 }));
 

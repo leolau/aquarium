@@ -10,7 +10,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const router = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
-vi.mock("next/navigation", () => ({ useRouter: () => router }));
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/projects", useRouter: () => router }));
 
 import { IDEMPOTENCY_HEADER } from "@/components/projects/useProjectAction";
 import type { ProjectBoardTask, ProjectBoardView, ProjectDetail } from "@/types";

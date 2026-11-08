@@ -1,13 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { usePersistentState } from "@/lib/use-persistent-state";
 
 /** How often the visible list re-reads its first page — project statuses,
  * health and next-run move without anyone touching this page. */
 const AUTO_REFRESH_MS = 30_000;
 
 import { ProjectRow } from "@/components/projects/ProjectRow";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import { useT } from "@/i18n";
 import { ProjectsBulkBar } from "@/components/projects/ProjectsBulkBar";
 import { ProjectsFilters } from "@/components/projects/ProjectsFilters";
 import {
@@ -63,12 +67,18 @@ export function ProjectsList({
   initial,
   categories: initialCategories = [],
   initialFilters,
+  rememberLayout = false,
+  layoutInUrl = false,
 }: {
   initial: ProjectsResponse;
   /** The board's columns, in any order (the board sorts by `position`). */
   categories?: ProjectCategory[];
   /** The server's parse of the same URL, so SSR renders the same layout. */
   initialFilters?: ProjectsFilterState;
+  /** Phones: remember the Board/List pick in this browser when the URL has none. */
+  rememberLayout?: boolean;
+  /** The URL names a layout, which beats the remembered one. */
+  layoutInUrl?: boolean;
 }) {
   const [items, setItems] = useState<ProjectListItem[]>(initial.items);
   const [cursor, setCursor] = useState<string | null>(initial.next_cursor);
@@ -77,10 +87,28 @@ export function ProjectsList({
   const [managing, setManaging] = useState(false);
   // The server rendered from the same URL, so the state starts from the
   // address bar rather than from an effect that would flash the default view.
-  const [filters, setFilters] = useState<ProjectsFilterState>(() =>
+  const [addressFilters, setFilters] = useState<ProjectsFilterState>(() =>
     typeof window === "undefined"
       ? (initialFilters ?? EMPTY_FILTERS)
-      : filtersFromParams(new URLSearchParams(window.location.search)),
+      : fromAddressBar(new URLSearchParams(window.location.search), initialFilters),
+  );
+  // Phones remember Board/List in this browser; it applies until the first
+  // filter change (which then carries it) and never over a URL `layout`.
+  const [savedLayout, saveLayout] = usePersistentState<ProjectsLayout | null>(
+    PHONE_LAYOUT_KEY,
+    null,
+    parseLayout,
+    String,
+  );
+  const [filtersTouched, setFiltersTouched] = useState(false);
+  const applySaved =
+    rememberLayout && !layoutInUrl && !filtersTouched && savedLayout !== null;
+  const filters = useMemo<ProjectsFilterState>(
+    () =>
+      applySaved && savedLayout !== addressFilters.layout
+        ? { ...addressFilters, layout: savedLayout, categoryIds: [] }
+        : addressFilters,
+    [applySaved, savedLayout, addressFilters],
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -224,6 +252,7 @@ export function ProjectsList({
   // A new view starts on page 1 with nothing ticked: a tick the person can
   // no longer see must never be archived by accident.
   const changeFilters = useCallback((next: ProjectsFilterState) => {
+    setFiltersTouched(true);
     setFilters(next);
     setPage(1);
     setSelected(new Set());
@@ -278,6 +307,7 @@ export function ProjectsList({
     [filters, fetchPage],
   );
 
+  const t = useT("projects");
   return (
     <div data-component="ProjectsList" className="flex flex-col gap-3">
       {/* The create door (§13): the feature is unreachable if its only
@@ -294,9 +324,10 @@ export function ProjectsList({
               key={option.layout}
               type="button"
               aria-pressed={filters.layout === option.layout}
-              onClick={() =>
-                changeFilters({ ...filters, layout: option.layout, categoryIds: [] })
-              }
+              onClick={() => {
+                if (rememberLayout) saveLayout(option.layout);
+                changeFilters({ ...filters, layout: option.layout, categoryIds: [] });
+              }}
               className={`rounded-lg px-3 py-1.5 ${
                 filters.layout === option.layout
                   ? "bg-[var(--color-surface-2)] font-medium text-[var(--color-fg)]"
@@ -307,13 +338,6 @@ export function ProjectsList({
             </button>
           ))}
         </div>
-        <Link
-          href="/projects/new"
-          data-component="NewProjectAction"
-          className="rounded-xl bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent-fg)]"
-        >
-          New project
-        </Link>
       </div>
 
       <ProjectsFilters value={filters} onChange={changeFilters} />
@@ -327,12 +351,25 @@ export function ProjectsList({
       )}
 
       {error ? (
-        <p
-          data-component="ProjectsError"
-          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
-        >
-          {error}
-        </p>
+        <div data-component="ProjectsError">
+          <InlineAlert
+            tone="danger"
+            title={t("loadError")}
+            action={
+              <button
+                type="button"
+                data-action="projects-retry"
+                disabled={loading}
+                onClick={() => void fetchPage(filters)}
+                className="min-h-9 rounded-[var(--radius-md)] border border-[var(--color-border)] px-3 text-xs disabled:opacity-60"
+              >
+                {t("retry")}
+              </button>
+            }
+          >
+            {error}
+          </InlineAlert>
+        </div>
       ) : null}
 
       {board ? (
@@ -371,25 +408,42 @@ export function ProjectsList({
             />
           ) : null}
         </>
+      ) : items.length === 0 && !loading && (narrowed || filters.q) ? (
+        <div data-component="ProjectsEmpty" data-kind="no-match">
+          <InlineAlert
+            tone="info"
+            title={t("noMatchTitle")}
+            action={
+              <button
+                type="button"
+                data-action="clear-filters"
+                onClick={() => changeFilters({ ...EMPTY_FILTERS, layout: filters.layout })}
+                className="min-h-9 rounded-[var(--radius-md)] border border-[var(--color-border)] px-3 text-xs"
+              >
+                {t("clearFilters")}
+              </button>
+            }
+          >
+            {t("noMatchBody")}
+          </InlineAlert>
+        </div>
       ) : items.length === 0 && !loading ? (
         <div
           data-component="ProjectsEmpty"
-          className="flex flex-col gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
+          data-kind="empty"
+          className="flex flex-col items-center gap-3 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-8 text-center"
         >
-          <p>
-            {narrowed || filters.q
-              ? "Nothing matches that view."
-              : "No projects yet. Anything the agent works on over time — a deliverable, a recurring job, a standing duty — lives here. Create one, let the agent draft its plan, and run it from this app."}
+          <h2 className="text-base font-semibold">{t("emptyTitle")}</h2>
+          <p className="max-w-md text-sm text-[var(--color-muted)]">
+            {t("emptyBody")}
           </p>
-          {!narrowed && !filters.q ? (
-            <Link
-              href="/projects/new"
-              data-component="NewProjectAction"
-              className="self-start rounded-xl bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent-fg)]"
-            >
-              New project
-            </Link>
-          ) : null}
+          <Link
+            href="/projects/new"
+            data-component="NewProjectAction"
+            className="inline-flex min-h-10 items-center rounded-[var(--radius-md)] bg-[var(--color-accent)] px-4 text-sm font-medium text-[var(--color-accent-fg)]"
+          >
+            New project
+          </Link>
         </div>
       ) : (
         <>
@@ -441,4 +495,16 @@ export function ProjectsList({
       )}
     </div>
   );
+}
+
+/** The address bar's filters; with no `layout` there, the server's pick (phones open the list). */
+function fromAddressBar(params: URLSearchParams, initialFilters?: ProjectsFilterState): ProjectsFilterState {
+  const parsed = filtersFromParams(params);
+  return params.has("layout") || !initialFilters ? parsed : { ...parsed, layout: initialFilters.layout };
+}
+
+const PHONE_LAYOUT_KEY = "aquarium.projects.phoneLayout";
+
+function parseLayout(raw: string): ProjectsLayout | null {
+  return raw === "board" || raw === "list" ? raw : null;
 }

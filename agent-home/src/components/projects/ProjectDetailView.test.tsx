@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 // ProjectDetailView + RunView use next/navigation — stub the router hooks
 // so SSR rendering works.
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/projects/monday-digest/cards/task_3",
   useRouter: () => ({ refresh: () => {}, push: () => {} }),
 }));
 
@@ -591,7 +592,8 @@ describe("ProjectDetailView", () => {
       />,
     );
     expect(html).toContain('data-component="ProjectDetailView"');
-    expect(html).toContain("Send the Monday digest");
+    // The name is the page title (MobileShell's PageHeader), not repeated here.
+    expect(html).not.toContain("<h1");
     // A waiting run: the journey bar's one button is Continue.
     expect(bar(html)).toContain("Continue run 14");
     expect(bar(html)).toContain('data-phase="running"');
@@ -600,12 +602,13 @@ describe("ProjectDetailView", () => {
     expect(html).toContain("Where this stands");
     expect(html).toContain("Summarised");
     expect(html).toContain("Update summary");
-    // Dashboard + tabs: every section is one tab away, the Dashboard leads.
+    // Four tabs group the eight sections; Overview (the Dashboard) leads.
     expect(html).toContain('data-component="ProjectTabsNav"');
-    for (const label of ["Dashboard", "Board", "Outputs", "Iterations", "Inputs", "Plan", "Settings"]) {
+    for (const label of ["Overview", "Work", "Files", "Setup"]) {
       expect(html).toContain(`>${label}`);
     }
     expect(html).toContain('data-active-tab="dashboard"');
+    expect(html).toContain('data-active-group="overview"');
     expect(html).not.toContain('data-component="PanelAnchors"');
   });
 
@@ -690,11 +693,9 @@ describe("ProjectDetailView", () => {
       const head = header(html);
       expect(head).not.toMatch(/<button[^>]*>(Run now|Activate|Continue run \d+|Start iteration \d+)<\/button>/);
       expect(head).not.toContain('data-action="run-now"');
-      // Title, then the journey bar, then the toolbar (Add / Edit /
+      // The journey bar (status rail), then the toolbar (Add / Edit /
       // Summarise) and the collapsible About.
       const at = (marker: string) => html.indexOf(marker);
-      expect(at("<h1")).toBeGreaterThan(-1);
-      expect(at("<h1")).toBeLessThan(at('data-component="JourneyBar"'));
       expect(at('data-component="JourneyBar"')).toBeLessThan(at('data-component="ProjectToolbar"'));
       expect(at('data-component="ProjectToolbar"')).toBeLessThan(at('data-component="ProjectAbout"'));
       expect(head).not.toContain('data-component="ProjectToolbar"');
@@ -1112,7 +1113,8 @@ describe("CardDetailView", () => {
     expect(html).toContain("Draft the digest");
     expect(html).toContain("Write the thing.");
     expect(html).toContain("Done — sent to the channel.");
-    expect(html).toContain("/projects/monday-digest");
+    // Back to the project is the shell's PageHeader, not a second in-card link.
+    expect(html).not.toContain("Back to the project");
   });
 });
 
@@ -1151,5 +1153,52 @@ describe("boundary expectations", () => {
     const format = await import("@/components/projects/format");
     expect(filters.DEFAULT_VIEW).toBe("active");
     expect(format.dayDistance(NOW + 3_600)).toBe("today");
+  });
+});
+
+describe("ProjectDetailView — four tabs", () => {
+  const render = (initialTab?: string) =>
+    renderToStaticMarkup(
+      <ProjectDetailView
+        project={PROJECT}
+        board={BOARD}
+        playbook={null}
+        directives={null}
+        callerUserId="leo"
+        isInstanceAdmin={false}
+        initialTab={initialTab}
+      />,
+    );
+
+  it("maps every older ?tab= value onto the tab that now holds it", () => {
+    const cases: Array<[string, string]> = [
+      ["dashboard", "overview"],
+      ["board", "work"],
+      ["iterations", "work"],
+      ["outputs", "files"],
+      ["inputs", "files"],
+      ["scope", "setup"],
+      ["plan", "setup"],
+      ["settings", "setup"],
+    ];
+    for (const [legacy, group] of cases) {
+      const html = render(legacy);
+      expect(html).toContain(`data-active-group="${group}"`);
+      expect(html).toContain(`data-section="${legacy}"`);
+    }
+  });
+
+  it("opens a tab by its own name and shows all of its sections", () => {
+    const html = render("setup");
+    expect(html).toContain('data-active-group="setup"');
+    for (const section of ["scope", "plan", "settings"]) {
+      expect(html).toContain(`id="project-section-${section}"`);
+    }
+    expect(html).not.toContain('data-section="dashboard"');
+  });
+
+  it("keeps the phone Status section on Overview only", () => {
+    expect(render()).toMatch(/data-component="ProjectStatus"[^>]*class="[^"]*lg:col-start-2 [^"]*"/);
+    expect(render("work")).toMatch(/data-component="ProjectStatus"[^>]*class="[^"]*max-lg:hidden/);
   });
 });

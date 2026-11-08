@@ -1,8 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
+import { InfoTip } from "@/components/ui/InfoTip";
+import { useT } from "@/i18n";
 import { ActionButton } from "@/components/projects/ActionButton";
 import { CategoryPicker, findCategory } from "@/components/projects/categories/CategoryPicker";
 import { useProjectCategories } from "@/components/projects/categories/useProjectCategories";
@@ -40,6 +42,7 @@ import {
 } from "@/components/projects/useProjectAction";
 import { markJourneyHintPending } from "@/components/projects/dashboard/journeyHint";
 import { BusyRegion } from "@/components/ui/BusyRegion";
+import { useConfirm } from "@/components/ui/useConfirm";
 import { useAction } from "@/lib/use-action";
 import type { MemoryRow, ProjectAutonomy, ProjectCadence } from "@/types";
 
@@ -130,6 +133,7 @@ export function NewProjectForm({
   memoryFetch?: typeof fetch;
 }) {
   const router = useRouter();
+  const tp = useT("projects");
   const [step, setStep] = useState<WizardStep>(1);
   const [goal, setGoal] = useState("");
   const [description, setDescription] = useState("");
@@ -341,6 +345,23 @@ export function NewProjectForm({
 
   const busy = submitting || create.busy;
   const created = createdSlug !== null;
+  const dirty =
+    !created &&
+    !busy &&
+    (step > 1 ||
+      [goal, description, name, ...outputs].some((value) => value.trim() !== "") ||
+      hasAnyInput(tally));
+  const discard = useConfirm();
+  const askDiscard = discard.ask;
+  useUnsavedGuard(dirty, () =>
+    askDiscard({
+      title: tp("wizard.discardTitle"),
+      body: tp("wizard.discardBody"),
+      confirmLabel: tp("wizard.discardConfirm"),
+      cancelLabel: tp("wizard.discardKeep"),
+      tone: "danger",
+    }),
+  );
 
   const primaryLabel =
     step === 1
@@ -370,26 +391,74 @@ export function NewProjectForm({
           goNext();
         }}
       >
-        <header data-component="WizardStepHeader" className="flex flex-col gap-1">
+        <header data-component="WizardStepHeader" className="flex flex-col gap-2">
           <p className="text-xs uppercase tracking-wide text-[var(--color-muted)]">
             Step {step} of 4 · {stepLabel(step)}
           </p>
-          <ol className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+          {/* Phone: four progress segments under the step line. */}
+          <div aria-hidden className="grid grid-cols-4 gap-1 sm:hidden">
             {WIZARD_STEPS.map((s) => (
-              <li
+              <span
                 key={s.step}
-                aria-current={s.step === step ? "step" : undefined}
-                className={
-                  s.step === step
-                    ? "font-semibold text-[var(--color-accent)]"
-                    : s.step < step
-                      ? "text-[var(--color-text)]"
-                      : "text-[var(--color-muted)]"
-                }
-              >
-                {s.step} {s.label}
-              </li>
+                className={`h-1 rounded-[var(--radius-full)] ${
+                  s.step <= step ? "bg-[var(--color-accent)]" : "bg-[var(--color-surface-2)]"
+                }`}
+              />
             ))}
+          </div>
+          {/* Numbered steps; a finished one is a button back to it. */}
+          <ol className="hidden flex-wrap items-center gap-2 text-xs sm:flex">
+            {WIZARD_STEPS.map((s) => {
+              const current = s.step === step;
+              const done = s.step < step;
+              const body = (
+                <>
+                  <span
+                    aria-hidden
+                    className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-[var(--radius-full)] border text-[11px] font-semibold ${
+                      current
+                        ? "border-[var(--color-accent)] text-[var(--color-accent)]"
+                        : done
+                          ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-accent-fg)]"
+                          : "border-[var(--color-border)] text-[var(--color-muted)]"
+                    }`}
+                  >
+                    {s.step}
+                  </span>
+                  <span>{s.label}</span>
+                </>
+              );
+              return (
+                <li
+                  key={s.step}
+                  aria-current={current ? "step" : undefined}
+                  className={`flex items-center gap-2 rounded-[var(--radius-full)] px-2 py-1 ${
+                    current
+                      ? "border border-[var(--color-accent)] font-semibold text-[var(--color-accent)]"
+                      : done
+                        ? "text-[var(--color-text)]"
+                        : "text-[var(--color-muted)]"
+                  }`}
+                >
+                  {done && !busy && !created ? (
+                    <button
+                      type="button"
+                      data-action="wizard-go-to-step"
+                      data-step={s.step}
+                      onClick={() => {
+                        setError(null);
+                        setStep(s.step);
+                      }}
+                      className="flex items-center gap-2 hover:underline"
+                    >
+                      {body}
+                    </button>
+                  ) : (
+                    body
+                  )}
+                </li>
+              );
+            })}
           </ol>
         </header>
 
@@ -448,7 +517,10 @@ export function NewProjectForm({
             />
 
             <div className="flex flex-col gap-1 text-sm">
-              <span>Outputs — what it delivers * </span>
+              <span className="flex items-center gap-1">
+                Outputs — what it delivers *
+                <InfoTip label={tp("wizard.outputsInfoLabel")}>{tp("wizard.outputsInfo")}</InfoTip>
+              </span>
               {outputs.map((title, index) => (
                 <div key={index} className="flex gap-2">
                   <input
@@ -780,7 +852,11 @@ export function NewProjectForm({
           </p>
         ) : null}
 
-        <div className="flex flex-wrap items-center justify-between gap-2">
+        {/* Sticky footer: stays above the floating launcher on phones. */}
+        <div
+          data-component="WizardFooter"
+          className="sticky bottom-[calc(var(--coral-clearance)+var(--safe-bottom))] z-10 -mx-4 -mb-4 flex flex-wrap items-center justify-between gap-2 rounded-b-2xl border-t border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 lg:bottom-0"
+        >
           {step > 1 && !created ? (
             <button
               type="button"
@@ -821,8 +897,49 @@ export function NewProjectForm({
           </div>
         </div>
       </form>
+      {discard.dialog}
     </BusyRegion>
   );
+}
+
+/**
+ * While the wizard holds unsaved answers: in-app links ask before leaving
+ * (the shell Back, breadcrumbs, the top bar) and a reload or tab close gets
+ * the browser's own prompt.
+ */
+function useUnsavedGuard(active: boolean, confirmLeave: () => Promise<boolean>) {
+  const router = useRouter();
+  const confirmRef = useRef(confirmLeave);
+  useEffect(() => {
+    confirmRef.current = confirmLeave;
+  });
+  useEffect(() => {
+    if (!active) return;
+    const onClick = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0) return;
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const anchor = (event.target as Element | null)?.closest?.("a[href]");
+      if (!(anchor instanceof HTMLAnchorElement) || anchor.target === "_blank") return;
+      const url = new URL(anchor.href, window.location.href);
+      if (url.origin !== window.location.origin) return;
+      if (url.pathname === window.location.pathname && url.search === window.location.search) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void confirmRef.current().then((ok) => {
+        if (ok) router.push(`${url.pathname}${url.search}${url.hash}`);
+      });
+    };
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    document.addEventListener("click", onClick, true);
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      document.removeEventListener("click", onClick, true);
+      window.removeEventListener("beforeunload", onBeforeUnload);
+    };
+  }, [active, router]);
 }
 
 interface CreateAnswer {

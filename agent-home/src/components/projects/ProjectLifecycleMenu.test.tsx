@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 // The menu uses next/navigation — stub the router hook so SSR rendering works.
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/projects",
   useRouter: () => ({ refresh: () => {}, push: () => {} }),
 }));
 

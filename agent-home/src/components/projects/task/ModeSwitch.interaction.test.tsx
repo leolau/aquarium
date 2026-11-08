@@ -8,6 +8,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/projects",
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }),
 }));
 vi.mock("./TaskView", () => ({
@@ -66,15 +67,17 @@ describe("ProjectViewSwitch", () => {
     const fetchFn = fetchSpy();
     page("one_off");
     expect(screen.getByTestId("task-view")).toBeTruthy();
-    fireEvent.click(screen.getByRole("radio", { name: "Project mode" }));
+    // The Task view shows no switch; its own link opens the full project.
+    expect(screen.queryByRole("radio", { name: "Project mode" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open in Project mode →" }));
     expect(screen.getByTestId("project-view")).toBeTruthy();
     expect(screen.queryByTestId("task-view")).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: "Task mode" }));
+    expect(screen.getByTestId("task-view")).toBeTruthy();
     const [path, init] = fetchFn.mock.calls[0] as [string, RequestInit];
     expect(path).toBe("/api/me/project-view-mode");
     expect(init.method).toBe("PUT");
-    expect(JSON.parse(String(init.body))).toEqual({ device: "phone", mode: "project" });
-    fireEvent.click(screen.getByRole("radio", { name: "Task mode" }));
-    expect(screen.getByTestId("task-view")).toBeTruthy();
+    expect(JSON.parse(String(init.body))).toEqual({ device: "phone", mode: "task" });
   });
 
   it("opens in Project mode from the task's details link", () => {
@@ -88,7 +91,8 @@ describe("ProjectViewSwitch", () => {
     for (const cadence of ["repeatable", "standing"] as const) {
       page(cadence, "task");
       expect(screen.getByTestId("project-view")).toBeTruthy();
-      expect(screen.getByRole("radio", { name: "Task mode" })).toHaveProperty("disabled", true);
+      // Only a one-off has a Task view, so there is no switch to offer.
+      expect(screen.queryByRole("radio", { name: "Task mode" })).toBeNull();
       cleanup();
     }
   });

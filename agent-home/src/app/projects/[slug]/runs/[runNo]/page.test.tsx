@@ -13,6 +13,7 @@ const projectRunMock = vi.hoisted(() => vi.fn());
 const projectMock = vi.hoisted(() => vi.fn());
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/projects/monday-digest",
   useRouter: () => router,
   notFound: () => {
     throw new Error("NEXT_NOT_FOUND");
@@ -29,8 +30,19 @@ vi.mock("@/lib/auth/principal", () => ({
 
 // The shell's navs are irrelevant to the loader under test.
 vi.mock("@/components/MobileShell", () => ({
-  MobileShell: ({ children }: { children: React.ReactNode }) => (
-    <div>{children}</div>
+  // The shell's PageHeader owns Back; record what the page hands it.
+  MobileShell: ({
+    children,
+    title,
+    labels,
+  }: {
+    children: React.ReactNode;
+    title: string;
+    labels?: Record<string, string>;
+  }) => (
+    <div data-testid="shell" data-title={title} data-labels={JSON.stringify(labels ?? null)}>
+      {children}
+    </div>
   ),
 }));
 
@@ -101,20 +113,20 @@ describe("the run page's project fetch", () => {
     expect(queryByText(/Couldn't load run/)).toBeNull();
   });
 
-  it("links back to its project, by name", async () => {
+  it("names its project for the shell's Back", async () => {
     projectRunMock.mockResolvedValue(RUN);
     projectMock.mockResolvedValue({ archived: false, name: "Monday digest" });
-    const { getByRole } = render(await Page({ params: PARAMS }));
-    const back = getByRole("link", { name: "← Back to Monday digest" });
-    expect(back.getAttribute("href")).toBe("/projects/monday-digest");
+    const { getByTestId } = render(await Page({ params: PARAMS }));
+    expect(JSON.parse(getByTestId("shell").getAttribute("data-labels")!)).toEqual({
+      "/projects/monday-digest": "Monday digest",
+    });
   });
 
-  it("still links back when the project fetch fails", async () => {
+  it("falls back to the default label when the project fetch fails", async () => {
     projectRunMock.mockResolvedValue(RUN);
     projectMock.mockRejectedValue(new HermesApiError(500, "upstream blew up"));
-    const { getByRole } = render(await Page({ params: PARAMS }));
-    const back = getByRole("link", { name: "← Back to project" });
-    expect(back.getAttribute("href")).toBe("/projects/monday-digest");
+    const { getByTestId } = render(await Page({ params: PARAMS }));
+    expect(getByTestId("shell").getAttribute("data-labels")).toBe("null");
   });
 
   it("404s when the run itself is missing", async () => {

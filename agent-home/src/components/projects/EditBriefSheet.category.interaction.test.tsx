@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/projects",
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
 }));
 

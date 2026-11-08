@@ -6,7 +6,10 @@ import {
   PROJECT_DRAG_TYPE,
   ProjectCategoryCard,
 } from "@/components/projects/categories/ProjectCategoryCard";
+import { MoveToCategorySheet } from "@/components/projects/categories/MoveToCategorySheet";
 import { useProjectAction } from "@/components/projects/useProjectAction";
+import { useUndoToast } from "@/components/ui/UndoToast";
+import { useT } from "@/i18n";
 import type { Project, ProjectCategory, ProjectListItem } from "@/types";
 
 export interface CategoryColumn {
@@ -72,6 +75,11 @@ export function ProjectsCategoryBoard({
   const [dropOver, setDropOver] = useState<string | null | undefined>(
     undefined,
   );
+  const t = useT("projects");
+  const undo = useUndoToast();
+  // The card whose Move to… sheet is open, and the category it is saving to.
+  const [moveFor, setMoveFor] = useState<ProjectListItem | null>(null);
+  const [moveTo, setMoveTo] = useState<string | null | undefined>(undefined);
   const columns = groupProjectsByCategory(items, categories);
   const ordered = columns.flatMap((c) => (c.category ? [c.category] : []));
   const columnOf = new Map<string, string | null>();
@@ -81,16 +89,39 @@ export function ProjectsCategoryBoard({
     }
   }
 
-  const move = (slug: string, categoryId: string | null) => {
-    if (action.busy) return;
-    setTarget(slug);
-    void action.run(`/api/projects/${encodeURIComponent(slug)}`, {
+  const nameOf = (categoryId: string | null) =>
+    categories.find((c) => c.id === categoryId)?.name ?? t("uncategorized");
+
+  const patch = (slug: string, categoryId: string | null) =>
+    action.run(`/api/projects/${encodeURIComponent(slug)}`, {
       method: "PATCH",
       body: { category_id: categoryId },
       skipRefresh: true,
       onSuccess: (project) =>
         onMoved(slug, project.category_id ?? categoryId ?? null),
     });
+
+  // A move is reversible, so it lands at once with an Undo toast.
+  const move = async (slug: string, categoryId: string | null) => {
+    if (action.busy) return;
+    const from = columnOf.get(slug) ?? null;
+    setTarget(slug);
+    const result = await patch(slug, categoryId);
+    if (result?.ok) {
+      undo.show(t("movedTo", { name: nameOf(categoryId) }), () => {
+        setTarget(slug);
+        return patch(slug, from);
+      });
+    }
+    return result;
+  };
+
+  const pickMoveTo = async (categoryId: string | null) => {
+    if (!moveFor || moveTo !== undefined) return;
+    setMoveTo(categoryId);
+    await move(moveFor.slug, categoryId);
+    setMoveTo(undefined);
+    setMoveFor(null);
   };
 
   const dragOver = (e: DragEvent<HTMLElement>, columnId: string | null) => {
@@ -107,7 +138,7 @@ export function ProjectsCategoryBoard({
     const slug = e.dataTransfer.getData(PROJECT_DRAG_TYPE);
     if (!slug || !columnOf.has(slug)) return;
     e.preventDefault();
-    if (columnOf.get(slug) !== columnId) move(slug, columnId);
+    if (columnOf.get(slug) !== columnId) void move(slug, columnId);
   };
 
   return (
@@ -123,7 +154,7 @@ export function ProjectsCategoryBoard({
       ) : null}
       <div
         data-component="ProjectsCategoryGrid"
-        className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3"
+        className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4"
       >
         {columns.map((column) => {
           const columnId = column.category?.id ?? null;
@@ -196,6 +227,7 @@ export function ProjectsCategoryBoard({
                         busy={mine && action.busy}
                         disabled={action.busy && !mine}
                         failure={mine && action.error ? action : null}
+                        onMoveTo={() => setMoveFor(project)}
                       />
                     );
                   })}
@@ -205,6 +237,17 @@ export function ProjectsCategoryBoard({
           );
         })}
       </div>
+      {moveFor ? (
+        <MoveToCategorySheet
+          project={moveFor}
+          categories={ordered}
+          current={columnOf.get(moveFor.slug) ?? null}
+          pending={moveTo}
+          onPick={(categoryId) => void pickMoveTo(categoryId)}
+          onClose={() => setMoveFor(null)}
+        />
+      ) : null}
+      {undo.toast}
     </div>
   );
 }
