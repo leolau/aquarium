@@ -82,7 +82,7 @@ export function ProjectsList({
   const [filters, setFilters] = useState<ProjectsFilterState>(() =>
     typeof window === "undefined"
       ? (initialFilters ?? EMPTY_FILTERS)
-      : filtersFromParams(new URLSearchParams(window.location.search)),
+      : fromAddressBar(new URLSearchParams(window.location.search), initialFilters),
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -467,4 +467,10 @@ export function ProjectsList({
       )}
     </div>
   );
+}
+
+/** The address bar's filters; with no `layout` there, the server's pick (phones open the list). */
+function fromAddressBar(params: URLSearchParams, initialFilters?: ProjectsFilterState): ProjectsFilterState {
+  const parsed = filtersFromParams(params);
+  return params.has("layout") || !initialFilters ? parsed : { ...parsed, layout: initialFilters.layout };
 }
