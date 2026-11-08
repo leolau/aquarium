@@ -150,7 +150,7 @@ describe("GtsCentreView", () => {
       assignment: { enabled: true, scheme: "per-user" },
     };
 
-    const html = renderToStaticMarkup(<GtsCentreView graph={graph} />);
+    const html = renderToStaticMarkup(<GtsCentreView graph={graph} initialAdvanced />);
     // Goal + nested sub-goal + linked task + skill all render.
     expect(html).toContain("Ship agent-home");
     expect(html).toContain("Sub goal");
@@ -165,5 +165,21 @@ describe("GtsCentreView", () => {
     expect(html).toContain("did the seam ship?");
     // Read-only marker.
     expect(html).toContain("Read-only");
+  });
+
+  it("keeps the engineer-facing detail behind Advanced (off by default)", () => {
+    const graph: GtsGraphResponse = {
+      configured: true,
+      goals: [],
+      tasks: [],
+      skills: [],
+      task_goals: [],
+      task_skills: [],
+      assignment: { enabled: true, scheme: "per-user" },
+    };
+    const html = renderToStaticMarkup(<GtsCentreView graph={graph} />);
+    expect(html).toContain('role="switch"');
+    expect(html).toContain('aria-checked="false"');
+    expect(html).not.toContain("per-user");
   });
 });

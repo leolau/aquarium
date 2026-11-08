@@ -19,7 +19,7 @@ export function FilesTabs() {
     <nav
       data-component="FilesTabs"
       aria-label={t("tabs.label")}
-      className="mb-4 inline-flex gap-1 self-start rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-1 text-sm"
+      className="mb-4 grid w-full grid-cols-3 gap-1 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-1 text-sm sm:inline-grid sm:w-auto"
     >
       {TABS.map((tab) => {
         const active = pathname === tab.href;
@@ -30,8 +30,8 @@ export function FilesTabs() {
             aria-current={active ? "page" : undefined}
             className={
               active
-                ? "rounded-lg bg-[var(--color-accent)] px-3 py-1.5 text-[var(--color-accent-fg)]"
-                : "rounded-lg px-3 py-1.5 text-[var(--color-muted)] hover:text-[var(--color-text)]"
+                ? "flex min-h-10 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-accent)] px-3 text-center font-semibold text-[var(--color-accent-fg)]"
+                : "flex min-h-10 items-center justify-center rounded-[var(--radius-md)] px-3 text-center text-[var(--color-muted)] hover:text-[var(--color-fg)]"
             }
           >
             {t(tab.key)}

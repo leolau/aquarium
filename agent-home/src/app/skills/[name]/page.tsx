@@ -16,7 +16,12 @@ export default async function Page({
   const [{ name: raw }, { profile: requested }] = await Promise.all([params, searchParams]);
   const { name, profile, content, skill, skills, details } = await loadSkill(raw, requested, true);
   return (
-    <MobileShell title="Skills" wide>
+    <MobileShell
+      title={name}
+      subtitle={skill?.description || undefined}
+      labels={{ [`/skills/${encodeURIComponent(name)}`]: name }}
+      wide
+    >
       <SkillPage
         key={`${profile}:${name}`}
         name={name}

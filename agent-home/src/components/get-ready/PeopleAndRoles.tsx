@@ -20,7 +20,7 @@ import type {
 export const ROLE_IDS = ["owner", "admin", "member", "viewer"] as const;
 
 const CELL_CLASS: Record<GetReadyConnectionCell["state"], string> = {
-  set: "text-emerald-300",
+  set: "text-[var(--color-success)]",
   waiting: "text-[var(--color-warn-text)]",
   not_set: "text-[var(--color-muted)]",
   coming: "text-[var(--color-muted)] italic",
@@ -108,7 +108,7 @@ export function PeopleAndRoles({
                 <span className="font-normal text-[var(--color-muted)]">· {t(`role.${role}.for`)}</span>
               </p>
               <p className="mt-1">
-                <span className="text-emerald-300">{t("roles.canLabel")}</span> {t(`role.${role}.can`)}
+                <span className="text-[var(--color-success)]">{t("roles.canLabel")}</span> {t(`role.${role}.can`)}
               </p>
               <p className="mt-1 text-[var(--color-muted)]">
                 <span className="text-[var(--color-warn-text)]">{t("roles.cannotLabel")}</span>{" "}

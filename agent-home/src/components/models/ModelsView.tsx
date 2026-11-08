@@ -5,6 +5,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ModelPerformance } from "@/components/models/ModelPerformance";
 import { ModelPickerSheet } from "@/components/models/ModelPickerSheet";
+import { AdvancedSwitch, useAdvanced } from "@/components/system/Advanced";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import { useT } from "@/i18n/client";
 import { Pill } from "@/components/ui/Pill";
 import { Spinner } from "@/components/ui/Spinner";
 import { withProfileBody, withProfileQuery } from "@/lib/chat/profile";
@@ -106,10 +109,17 @@ function BackupLine({ backups }: { backups?: FallbackModel[] }) {
 export function ModelsView({
   initial,
   profile,
+  initialAdvanced = false,
+  canAdmin = true,
 }: {
   initial: ModelsOverviewResponse;
   profile?: string;
+  initialAdvanced?: boolean;
+  /** Owner/admin: may change, test and refresh models. Everyone else gets a read-only view. */
+  canAdmin?: boolean;
 }) {
+  const ts = useT("system");
+  const [advanced, setAdvanced] = useAdvanced("models", initialAdvanced);
   const [data, setData] = useState(initial);
   const [slot, setSlot] = useState<ModelSlot | null>(null);
   const [showAllRoles, setShowAllRoles] = useState(false);
@@ -249,7 +259,7 @@ export function ModelsView({
     return map;
   }, [data.auxiliary.tasks]);
 
-  const roles = showAllRoles ? AUX_ROLES : AUX_ROLES.filter((r) => r.top);
+  const roles = advanced && showAllRoles ? AUX_ROLES : AUX_ROLES.filter((r) => r.top);
   const hiddenCount = AUX_ROLES.length - AUX_ROLES.filter((r) => r.top).length;
   const usage = useMemo(
     () =>
@@ -263,7 +273,10 @@ export function ModelsView({
   const ctx = formatContext(data.info.effective_context_length);
 
   return (
-    <div data-component="ModelsView" className="flex flex-col gap-5">
+    <div data-component="ModelsView" className="flex flex-col gap-5 pb-24 lg:pb-8">
+      <div className="flex justify-end">
+        <AdvancedSwitch on={advanced} onChange={setAdvanced} help={ts("pages.models.advancedHelp")} />
+      </div>
       {/* ── Main model ── */}
       <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
         <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
@@ -274,14 +287,15 @@ export function ModelsView({
         </div>
         <div className="mt-0.5 text-xs text-[var(--color-muted)]">
           {data.info.provider || "no provider"}
-          {ctx ? ` · ${ctx}` : ""}
+          {advanced && ctx ? ` · ${ctx}` : ""}
         </div>
         <div className="mt-2.5 flex flex-wrap gap-1.5">
           {caps.supports_tools ? <Pill tone="success">tools</Pill> : null}
           {caps.supports_vision ? <Pill tone="success">vision</Pill> : null}
           {caps.supports_reasoning ? <Pill tone="success">reasoning</Pill> : null}
-          {caps.model_family ? <Pill tone="muted">{caps.model_family}</Pill> : null}
+          {advanced && caps.model_family ? <Pill tone="muted">{caps.model_family}</Pill> : null}
         </div>
+        {canAdmin ? (
         <div className="mt-3 flex items-center gap-2">
           <button
             type="button"
@@ -299,17 +313,11 @@ export function ModelsView({
             {testing ? "Testing…" : "Test"}
           </ActionButton>
         </div>
+        ) : null}
         {testResult ? (
-          <p
-            className={`mt-2 rounded-lg px-3 py-1.5 text-xs ${
-              testResult.ok
-                ? "bg-[var(--color-surface-2)] text-[var(--color-muted)]"
-                : "bg-red-500/10 text-red-300"
-            }`}
-          >
-            {testResult.ok ? "✓ " : "✗ "}
-            {testResult.text}
-          </p>
+          <div className="mt-2">
+            <InlineAlert tone={testResult.ok ? "success" : "danger"}>{testResult.text}</InlineAlert>
+          </div>
         ) : null}
       </section>
 
@@ -321,8 +329,9 @@ export function ModelsView({
         <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3">
           <button
             type="button"
+            disabled={!canAdmin}
             onClick={() => setSlot({ kind: "main" })}
-            className="flex w-full items-center gap-3 border-b border-[var(--color-border)] py-3 text-left"
+            className="flex w-full items-center gap-3 border-b disabled:cursor-default border-[var(--color-border)] py-3 text-left"
           >
             <span className="min-w-0">
               <span className="block text-sm">Main</span>
@@ -335,9 +344,9 @@ export function ModelsView({
               <span className="block truncate text-[11px] text-[var(--color-muted)]">
                 {data.info.provider}
               </span>
-              <BackupLine backups={fallbacks} />
+              {advanced ? <BackupLine backups={fallbacks} /> : null}
             </span>
-            <span className="text-[var(--color-muted)]">›</span>
+            {canAdmin ? <span className="text-[var(--color-muted)]">›</span> : null}
           </button>
           {roles.map((role) => {
             const a = assignments.get(role.task);
@@ -347,8 +356,9 @@ export function ModelsView({
               <button
                 key={role.task}
                 type="button"
+                disabled={!canAdmin}
                 onClick={() => setSlot({ kind: "aux", task: role.task, label: role.label, hint: role.hint })}
-                className="flex w-full items-center gap-3 border-b border-[var(--color-border)] py-3 text-left last:border-b-0"
+                className="disabled:cursor-default flex w-full items-center gap-3 border-b border-[var(--color-border)] py-3 text-left last:border-b-0"
               >
                 <span className="min-w-0">
                   <span className="block text-sm">{role.label}</span>
@@ -368,13 +378,13 @@ export function ModelsView({
                      
                     </span>
                   ) : null}
-                  <BackupLine backups={a?.fallback_chain} />
+                  {advanced ? <BackupLine backups={a?.fallback_chain} /> : null}
                 </span>
-                <span className="text-[var(--color-muted)]">›</span>
+                {canAdmin ? <span className="text-[var(--color-muted)]">›</span> : null}
               </button>
             );
           })}
-          {!showAllRoles && hiddenCount > 0 ? (
+          {advanced && !showAllRoles && hiddenCount > 0 ? (
             <button
               type="button"
               onClick={() => setShowAllRoles(true)}
@@ -398,7 +408,7 @@ export function ModelsView({
       </section>
 
       {/* ── Performance (per-call telemetry) ── */}
-      <ModelPerformance perf={perf} />
+      {advanced ? <ModelPerformance perf={perf} /> : null}
 
       {/* ── In use ── */}
       <section>
@@ -472,6 +482,7 @@ export function ModelsView({
         </p>
       ) : null}
 
+      {canAdmin ? (
       <section
         data-component="ProviderKeys"
         className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
@@ -503,6 +514,7 @@ export function ModelsView({
           </p>
         ) : null}
       </section>
+      ) : null}
 
       <p className="px-1 text-xs text-[var(--color-muted)]">
         Changes apply to new sessions — running workers keep their current

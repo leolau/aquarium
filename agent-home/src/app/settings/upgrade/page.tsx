@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { MobileShell } from "@/components/MobileShell";
-import { SettingsBackLink } from "@/components/settings/SettingsBackLink";
+import { InfoTip } from "@/components/ui/InfoTip";
 import { SoftwareUpgradeView } from "@/components/settings/SoftwareUpgradeView";
 import { getT } from "@/i18n/server";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
@@ -26,9 +26,13 @@ export default async function Page() {
     initial = { available: false, error: err instanceof Error ? err.message : "" };
   }
   initial = { ...initial, can_upgrade: principal.role === "owner" };
+  const t = await getT("settings");
   return (
-    <MobileShell title={(await getT("upgrade"))("title")}>
-      <SettingsBackLink />
+    <MobileShell
+      title={(await getT("upgrade"))("title")}
+      subtitle={t("entry.upgrade.hint")}
+      info={<InfoTip label={t("upgrade.infoLabel")}>{t("upgrade.info")}</InfoTip>}
+    >
       <SoftwareUpgradeView initial={initial} />
     </MobileShell>
   );

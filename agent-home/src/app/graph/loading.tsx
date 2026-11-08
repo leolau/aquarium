@@ -11,7 +11,7 @@ import { PageSkeleton } from "@/components/ui/PageSkeleton";
  */
 export default function Loading() {
   return (
-    <MobileShell title="GTS Centre">
+    <MobileShell title="Graph">
       <PageSkeleton rows={4} />
     </MobileShell>
   );

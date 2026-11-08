@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { activationUrl } from "@/components/users/api";
+import { useT } from "@/i18n/client";
 
 /**
  * The one-and-only sighting of an activation link.
@@ -24,6 +25,7 @@ export function InvitationLink({
   expiresAt?: string | null;
   onDismiss: () => void;
 }) {
+  const t = useT("users");
   const [copied, setCopied] = useState(false);
   const url = activationUrl(path);
 
@@ -42,14 +44,13 @@ export function InvitationLink({
       className="rounded-2xl border border-[var(--color-accent)] bg-[var(--color-surface)] p-4"
     >
       <p className="text-xs uppercase tracking-wide text-[var(--color-muted)]">
-        Activation link for {label}
+        {t("inv.title", { label })}
       </p>
       <p className="mt-1 break-all font-mono text-xs">{url}</p>
       <p className="mt-2 text-xs text-[var(--color-muted)]">
-        Send it over a channel you trust. It is single-use, it expires
-        {expiresAt ? ` at ${new Date(expiresAt).toLocaleTimeString()}` : " shortly"},
-        and it is <strong>shown only now</strong> — the server keeps just a hash.
-        If it is lost or expires, use Regenerate.
+        {expiresAt
+          ? t("inv.bodyAt", { time: new Date(expiresAt).toLocaleTimeString() })
+          : t("inv.bodySoon")}
       </p>
       <div className="mt-3 flex gap-2">
         <button
@@ -57,14 +58,14 @@ export function InvitationLink({
           onClick={copy}
           className="rounded-lg bg-[var(--color-accent)] px-3 py-1 text-xs font-medium text-[var(--color-accent-fg)]"
         >
-          {copied ? "Copied" : "Copy link"}
+          {copied ? t("inv.copied") : t("inv.copy")}
         </button>
         <button
           type="button"
           onClick={onDismiss}
           className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 text-xs"
         >
-          Done
+          {t("inv.done")}
         </button>
       </div>
     </div>

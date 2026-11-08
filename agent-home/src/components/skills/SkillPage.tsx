@@ -12,6 +12,7 @@ import { errorText, profileQuery, sendJson } from "@/lib/admin-fetch";
 import { formatSize, lineCount } from "@/lib/skills/editor-state";
 import { getBody, parseSkill } from "@/lib/skills/frontmatter";
 import { extractHeadings } from "@/lib/skills/outline";
+import { useUndoToast } from "@/components/ui/UndoToast";
 import { useAction } from "@/lib/use-action";
 import { useHydrated } from "@/lib/use-hydrated";
 import type { SkillDetails, SkillInfo } from "@/types";
@@ -84,12 +85,24 @@ export function SkillPage({
   const files = details?.files ?? [];
   const usedBy = details?.used_by ?? [];
 
+  const undo = useUndoToast();
+  const applyEnabled = async (next: boolean) => {
+    await sendJson("/api/skills/toggle", "PUT", { name, enabled: next, ...scoped });
+    setEnabled(next);
+    router.refresh();
+  };
   const toggle = useAction(async () => {
     setMessage(null);
+    const next = !enabled;
     try {
-      await sendJson("/api/skills/toggle", "PUT", { name, enabled: !enabled, ...scoped });
-      setEnabled(!enabled);
-      router.refresh();
+      await applyEnabled(next);
+      undo.show(`${name} turned ${next ? "on" : "off"} for new chats`, async () => {
+        try {
+          await applyEnabled(!next);
+        } catch (err) {
+          setMessage(errorText(err));
+        }
+      });
     } catch (err) {
       setMessage(errorText(err));
     }
@@ -242,7 +255,7 @@ export function SkillPage({
               className="flex h-11 w-12 shrink-0 items-center justify-center disabled:opacity-60"
             >
               <span className={`relative block h-[22px] w-[38px] rounded-full transition-colors ${enabled ? "bg-[var(--color-accent)]" : "bg-[var(--color-surface-2)]"}`}>
-                <span className={`absolute top-[3px] h-4 w-4 rounded-full bg-white transition-all ${enabled ? "left-[19px]" : "left-[3px]"}`} />
+                <span className={`absolute top-[3px] h-4 w-4 rounded-full bg-[var(--color-fg)] transition-all ${enabled ? "left-[19px]" : "left-[3px]"}`} />
               </span>
             </button>
             <Link href={skillHref(name, profile, "edit")} role="button" className={`${toolButtonClass} inline-flex items-center`}>
@@ -410,6 +423,7 @@ export function SkillPage({
         )}
       </div>
 
+      {undo.toast}
       {confirmUninstall ? (
         <ConfirmDialog
           title={`Uninstall ${name}?`}

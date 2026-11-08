@@ -79,11 +79,16 @@ export function ProfileSuggestionsView({
   }
 
   return (
-    <div data-component="ProfileSuggestionsView" className="space-y-4">
+    <div data-component="ProfileSuggestionsView" className="mx-auto max-w-2xl space-y-4 pb-24 lg:pb-8">
       {open.length > 0 ? (
-        open.map((s) => (
-          <SuggestionCard key={s.id} suggestion={s} isOwner={isOwner} />
-        ))
+        <>
+          <SuggestionCard key={open[0].id} suggestion={open[0]} isOwner={isOwner} />
+          {open.length > 1 ? (
+            <p data-component="SuggestionsMore" className="text-xs text-[var(--color-muted)]">
+              {open.length - 1} more waiting — the next one shows here once you adopt or dismiss this one.
+            </p>
+          ) : null}
+        </>
       ) : (
         <p className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]">
           Nothing waiting for you. The next suggestion appears here when a new

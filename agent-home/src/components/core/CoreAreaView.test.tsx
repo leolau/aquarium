@@ -39,10 +39,10 @@ describe("CoreAreaView", () => {
       },
     ];
     const html = renderToStaticMarkup(
-      <CoreAreaView manifest={MANIFEST} changes={changes} changesConfigured />,
+      <CoreAreaView manifest={MANIFEST} changes={changes} changesConfigured initialAdvanced />,
     );
     expect(html).toContain('data-component="CoreAreaView"');
-    expect(html).toContain("manifest active");
+    expect(html).toContain("Protected");
     expect(html).toContain("self-protected");
     expect(html).toContain("agent/**");
     expect(html).toContain("refused write to agent/core_boundary.py");
@@ -59,7 +59,7 @@ describe("CoreAreaView", () => {
         changesConfigured
       />,
     );
-    expect(html).toContain("fail-closed fallback");
+    expect(html).toContain("Using the built-in safe list");
     expect(html).toContain("No changes visible in your scope");
   });
 
@@ -72,6 +72,6 @@ describe("CoreAreaView", () => {
       />,
     );
     expect(html).toContain("Change log not configured");
-    expect(html).toContain("No Core-write denials recorded");
+    expect(html).toContain("No blocked attempts");
   });
 });

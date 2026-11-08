@@ -199,7 +199,7 @@ function OAuthSheet({
         ) : null}
 
         {flow?.status === "success" ? (
-          <p className="mt-3 text-sm text-emerald-400">
+          <p className="mt-3 text-sm text-[var(--color-success)]">
             Signed in —{" "}
             {flow.tools ? `${flow.tools} tool(s) available.` : "token stored."}
           </p>
@@ -280,7 +280,7 @@ function McpServerRow({
       </p>
       {testResult ? (
         <p
-          className={`mt-2 text-xs ${testResult.ok ? "text-emerald-400" : "text-[var(--color-danger)]"}`}
+          className={`mt-2 text-xs ${testResult.ok ? "text-[var(--color-success)]" : "text-[var(--color-danger)]"}`}
         >
           {testResult.detail}
         </p>
@@ -496,7 +496,7 @@ export function ToolsSettings({
         </p>
       ) : null}
       {error ? (
-        <p className="rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-400">
+        <p className="rounded-xl border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 px-3 py-2 text-sm text-[var(--color-danger)]">
           {error}
         </p>
       ) : null}

@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { withProfileQuery } from "@/lib/profile";
 import type { DirectoryEntry, DirectoryResponse } from "@/types";
+import { useT } from "@/i18n/client";
 
 /**
  * Who else is in this profile — visible to **every** enrolled principal.
@@ -24,6 +25,7 @@ export function DirectoryPanel({
   profile?: string;
   searchable?: boolean;
 }) {
+  const t = useT("users");
   const [entries, setEntries] = useState<DirectoryEntry[]>(initial.entries);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
@@ -52,17 +54,17 @@ export function DirectoryPanel({
       className="flex flex-col gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
     >
       <div className="flex items-baseline justify-between gap-2">
-        <h2 className="text-sm font-medium">Directory</h2>
+        <h2 className="text-sm font-medium">{t("dir.title")}</h2>
         <span className="text-xs text-[var(--color-muted)]">
           {initial.profile ? `${initial.profile} · ` : ""}
-          {entries.length} of {initial.total}
+          {t("dir.count", { shown: entries.length, total: initial.total })}
         </span>
       </div>
       {searchable ? (
         <input
           type="search"
-          aria-label="Search the directory"
-          placeholder="Search people"
+          aria-label={t("dir.search")}
+          placeholder={t("dir.searchPlaceholder")}
           value={query}
           onChange={(e) => search(e.target.value)}
           className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
@@ -85,7 +87,7 @@ export function DirectoryPanel({
         ))}
         {entries.length === 0 ? (
           <li className="text-sm text-[var(--color-muted)]">
-            {loading ? "Searching…" : "Nobody else is enrolled in this profile yet."}
+            {loading ? t("dir.searching") : t("dir.none")}
           </li>
         ) : null}
       </ul>

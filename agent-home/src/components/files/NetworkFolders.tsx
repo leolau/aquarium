@@ -434,9 +434,9 @@ export function NetworkFolders() {
               const { status } = folder;
               const failed = !!status.error || status.last_check?.ok === false;
               const dot = status.mounted
-                ? "bg-emerald-400"
+                ? "bg-[var(--color-success)]"
                 : failed
-                  ? "bg-red-400"
+                  ? "bg-[var(--color-danger)]"
                   : "bg-[var(--color-muted)]";
               const b = busy[folder.name];
               return (
@@ -456,7 +456,7 @@ export function NetworkFolders() {
                   </span>
                   <span
                     data-vpn-chip={status.vpn_state}
-                    className={`${chipCls} ${status.vpn_state === "connected" ? "text-emerald-400" : status.vpn_state === "error" ? "text-[var(--color-danger)]" : ""}`}
+                    className={`${chipCls} ${status.vpn_state === "connected" ? "text-[var(--color-success)]" : status.vpn_state === "error" ? "text-[var(--color-danger)]" : ""}`}
                   >
                     {VPN_CHIP[status.vpn_state] ?? status.vpn_state}
                   </span>
@@ -501,7 +501,7 @@ export function NetworkFolders() {
                 key={e}
                 role="alert"
                 data-component="NetworkFolderError"
-                className="rounded-lg border border-red-400/60 bg-red-500/10 px-3 py-2 text-xs text-red-300"
+                className="rounded-lg border border-[var(--color-danger)]/60 bg-[var(--color-danger)]/10 px-3 py-2 text-xs text-[var(--color-danger)]"
               >
                 {e}
               </p>
@@ -644,7 +644,7 @@ export function NetworkFolders() {
               data-ok={result.ok ? "true" : "false"}
               className={`mt-3 rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-sm ${result.ok ? "" : "text-[var(--color-danger)]"}`}
             >
-              <span aria-hidden className={result.ok ? "text-emerald-400" : ""}>
+              <span aria-hidden className={result.ok ? "text-[var(--color-success)]" : ""}>
                 {result.ok ? "✓ " : "✗ "}
               </span>
               {result.text}

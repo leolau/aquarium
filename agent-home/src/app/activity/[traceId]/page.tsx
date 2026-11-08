@@ -1,5 +1,7 @@
 import { TraceDetail } from "@/components/activity/TraceDetail";
 import { MobileShell } from "@/components/MobileShell";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { getT } from "@/i18n/server";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
 import type { TraceDetailResponse } from "@/types";
 
@@ -31,14 +33,12 @@ export default async function Page({
     error = err instanceof Error ? err.message : "Failed to load trace";
   }
 
+  const t = await getT("settings");
   return (
-    <MobileShell title="Trace">
+    <MobileShell title={`Trace ${traceId.slice(0, 12)}`} subtitle={t("trace.subtitle")} wide>
       {error ? (
-        <div
-          data-component="TraceDetailError"
-          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
-        >
-          Couldn&apos;t load this trace ({error}).
+        <div data-component="TraceDetailError">
+          <ErrorState kind="error" details={error} />
         </div>
       ) : (
         <TraceDetail detail={detail} />
