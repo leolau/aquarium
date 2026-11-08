@@ -1308,6 +1308,40 @@ def apply_skill_pending(payload: Dict[str, Any]) -> str:
         _skill_gate_bypass.reset(token)
 
 
+_VERSIONED_ACTIONS = {
+    "create": "create",
+    "edit": "edit",
+    "patch": "patch",
+    "write_file": "patch",
+    "remove_file": "patch",
+}
+
+
+def _version_baseline(name: str) -> None:
+    """Record the pre-write state of ``name`` in its version history (best-effort)."""
+    try:
+        from tools import skill_versions
+
+        skill_versions.safe_ensure_baseline(name)
+    except Exception:
+        logger.debug("skill version baseline failed for %s", name, exc_info=True)
+
+
+def _version_snapshot(name: str, action: str) -> None:
+    """Record the post-write state of ``name`` as a new version (best-effort)."""
+    try:
+        from tools import skill_versions
+
+        skill_versions.safe_snapshot(
+            name,
+            author=skill_versions.current_agent_author(),
+            message=f"skill_manage {action}",
+            source=_VERSIONED_ACTIONS[action],
+        )
+    except Exception:
+        logger.debug("skill version snapshot failed for %s", name, exc_info=True)
+
+
 def skill_manage(
     action: str,
     name: str,
@@ -1341,6 +1375,9 @@ def skill_manage(
     )
     if gate_result is not None:
         return gate_result
+
+    if action in _VERSIONED_ACTIONS and action != "create":
+        _version_baseline(name)
 
     if action == "create":
         if not content:
@@ -1383,6 +1420,8 @@ def skill_manage(
             clear_skills_system_prompt_cache(clear_snapshot=True)
         except Exception:
             pass
+        if action in _VERSIONED_ACTIONS:
+            _version_snapshot(name, action)
         # Curator telemetry: bump patch_count on edit/patch/write_file (the actions
         # that mutate an existing skill's guidance), drop the record on delete.
         # Only mark a skill as agent-created when the background self-improvement
