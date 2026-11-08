@@ -39,12 +39,15 @@ function Question({
   en,
   invalid = false,
   children,
+  footer,
 }: {
   id: string;
   zh: ReactNode;
   en: ReactNode;
   invalid?: boolean;
   children: ReactNode;
+  /** Rendered after the "Required" hint, e.g. an optional extra choice. */
+  footer?: ReactNode;
 }) {
   return (
     <section
@@ -70,6 +73,7 @@ function Question({
           請填寫 Required
         </p>
       ) : null}
+      {footer}
     </section>
   );
 }
@@ -309,7 +313,30 @@ export function SurveyForm({ token }: { token: string }) {
           </div>
         </Question>
 
-        <Question id="survey-name" zh="姓名 *" en="Name *" invalid={invalid("name")}>
+        <Question
+          id="survey-name"
+          zh="姓名 *"
+          en="Name *"
+          invalid={invalid("name")}
+          footer={
+            <label className={`${choiceRow} items-start`}>
+              <input
+                type="checkbox"
+                name="stay_in_touch"
+                checked={stayInTouch}
+                onChange={(e) => setStayInTouch(e.target.checked)}
+                className={`${nativeChoice} mt-0.5`}
+              />
+              <span className="min-w-0">
+                <span className="font-medium">保持聯絡 Stay in touch</span>
+                <span className="block text-[var(--color-muted)]">
+                  我同意 AI&amp;I 透過 WhatsApp／電郵通知我日後的課程及工作坊。 Yes, AI&amp;I may
+                  contact me by WhatsApp / email about future classes and workshops.
+                </span>
+              </span>
+            </label>
+          }
+        >
           <input
             type="text"
             name="name"
@@ -326,22 +353,6 @@ export function SurveyForm({ token }: { token: string }) {
             autoComplete="name"
             className={`${field} ${invalid("name") ? "border-[var(--color-danger)]" : "border-[var(--color-border)]"}`}
           />
-          <label className={`${choiceRow} items-start`}>
-            <input
-              type="checkbox"
-              name="stay_in_touch"
-              checked={stayInTouch}
-              onChange={(e) => setStayInTouch(e.target.checked)}
-              className={`${nativeChoice} mt-0.5`}
-            />
-            <span className="min-w-0">
-              <span className="font-medium">保持聯絡 Stay in touch</span>
-              <span className="block text-[var(--color-muted)]">
-                我同意 AI&amp;I 透過 WhatsApp／電郵通知我日後的課程及工作坊。 Yes, AI&amp;I may
-                contact me by WhatsApp / email about future classes and workshops.
-              </span>
-            </span>
-          </label>
         </Question>
       </fieldset>
 

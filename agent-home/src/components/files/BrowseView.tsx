@@ -513,9 +513,10 @@ export function BrowseView() {
 
   const crumbs = path ? path.split("/") : [];
   // A network folder can take seconds per level: say so above the list.
+  const openingPlace = places.find((p) => opening === `place:${p.key}`) ?? place;
   const openingSelf =
     opening !== null && (!opening.startsWith("entry:") || place?.kind === "network");
-  const slowHint = place?.kind === "network" ? t("openingSlow") : t("opening");
+  const slowHint = openingPlace?.kind === "network" ? t("openingSlow") : t("opening");
 
   return (
     <div
@@ -600,9 +601,9 @@ export function BrowseView() {
         aria-busy={busy}
       >
         {!place ? (
-          placesLoading ? (
+          placesLoading || opening !== null ? (
             <>
-              {openingSlow(true, t("opening"))}
+              {openingSlow(true, slowHint)}
               <BrowseSkeleton />
             </>
           ) : (

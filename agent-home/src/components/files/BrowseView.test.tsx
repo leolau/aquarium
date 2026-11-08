@@ -213,4 +213,21 @@ describe("sorting and pages", () => {
     await screen.findAllByText("offer.pdf");
     expect(document.querySelector('[data-component="BrowseSkeleton"]')).toBeNull();
   });
+
+  it("shows the slow-folder hint over skeleton rows on the first open of a network place", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const base = fetch as unknown as (url: string, init?: RequestInit) => Promise<Response>;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.startsWith("/api/browse/list")) await gate;
+      return base(url, init);
+    }));
+    render(<BrowseView />);
+    fireEvent.click((await screen.findAllByRole("button", { name: /Jensen-New/ }))[0]);
+    await waitFor(() => expect(document.querySelector('[data-component="BrowseSkeleton"]')).not.toBeNull());
+    expect(screen.getByText(/network folders can take up to 15 s/)).toBeTruthy();
+    release();
+    await screen.findAllByText("Offers");
+    expect(document.querySelector('[data-component="BrowseSkeleton"]')).toBeNull();
+  });
 });
