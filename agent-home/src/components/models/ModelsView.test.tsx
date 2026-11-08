@@ -131,3 +131,19 @@ describe("ModelsView", () => {
     expect(html).toContain("new sessions");
   });
 });
+
+describe("ModelsView role gating", () => {
+  it("hides Change, Test and Refresh keys from non-admins", () => {
+    const html = renderToStaticMarkup(<ModelsView initial={overview()} profile="default" canAdmin={false} />);
+    expect(html).not.toContain(">Change<");
+    expect(html).not.toContain(">Test<");
+    expect(html).not.toContain("Refresh keys");
+    expect(html).not.toContain('data-component="ProviderKeys"');
+  });
+
+  it("shows them to admins", () => {
+    const html = renderToStaticMarkup(<ModelsView initial={overview()} profile="default" canAdmin />);
+    expect(html).toContain(">Change<");
+    expect(html).toContain("Refresh keys");
+  });
+});

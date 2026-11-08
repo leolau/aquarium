@@ -4,6 +4,7 @@ import { LoadError } from "@/components/system/LoadError";
 import { InfoTip } from "@/components/ui/InfoTip";
 import { getT } from "@/i18n/server";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
+import { canAdminister } from "@/lib/auth/roles";
 import type { ModelsOverviewResponse } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -21,7 +22,7 @@ export default async function Page({
 }: {
   searchParams: Promise<{ profile?: string }>;
 }) {
-  await requirePrincipal();
+  const principal = await requirePrincipal();
   const t = await getT("system");
   const { profile: requestedProfile } = await searchParams;
   const profile = (requestedProfile ?? "").trim() || undefined;
@@ -58,7 +59,7 @@ export default async function Page({
       {error || !data ? (
         <LoadError component="ModelsError" title={t("pages.models.loadError")} details={error ?? "no data"} />
       ) : (
-        <ModelsView initial={data} profile={profile} />
+        <ModelsView initial={data} profile={profile} canAdmin={canAdminister(principal)} />
       )}
     </MobileShell>
   );

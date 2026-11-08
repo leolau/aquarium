@@ -191,7 +191,15 @@ export function SkillEditor({
     }
   }
 
-  function discard() {
+  async function discard() {
+    const ok = await askConfirm({
+      title: "Discard your changes?",
+      body: "Your unsaved edits to this skill will be lost.",
+      confirmLabel: "Discard",
+      cancelLabel: "Keep editing",
+      tone: "danger",
+    });
+    if (!ok) return;
     leaving.current = true;
     setDoc(original);
     router.push(viewHref);
@@ -406,16 +414,16 @@ export function SkillEditor({
       {dirty ? (
         <div
           data-component="SkillSaveBar"
-          className="sticky bottom-2 z-10 flex flex-wrap items-center gap-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2.5 shadow-[0_-4px_16px_#0000001a]"
+          className="sticky bottom-2 z-10 flex flex-wrap items-center gap-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2.5 shadow-lg"
         >
-          <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-px text-[11px] text-[var(--color-warn-text)]">
+          <span className="inline-flex items-center gap-1 rounded-full border border-[var(--color-warn)]/40 bg-[var(--color-warn)]/10 px-2.5 py-px text-[11px] text-[var(--color-warn-text)]">
             ● Unsaved changes · {changed} {changed === 1 ? "line" : "lines"}
           </span>
           <span className="hidden flex-1 text-xs text-[var(--color-muted)] sm:inline">
             Changes apply to new chats; chats already running keep the version they started with.
           </span>
           <span className="flex-1 sm:hidden" />
-          <button type="button" className={secondaryButtonClass} onClick={discard}>
+          <button type="button" className={secondaryButtonClass} onClick={() => void discard()}>
             Discard
           </button>
           <button type="button" className={primaryButtonClass} onClick={() => setReviewing(true)}>
@@ -474,7 +482,7 @@ function ReviewDialog({
       role="dialog"
       aria-modal="true"
       aria-labelledby="skill-review-title"
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-[var(--color-bg)]/70 p-0 sm:items-center sm:p-4"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className="flex max-h-[90vh] w-full flex-col rounded-t-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:w-[min(680px,100%)] sm:rounded-2xl">

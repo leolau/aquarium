@@ -110,10 +110,13 @@ export function ModelsView({
   initial,
   profile,
   initialAdvanced = false,
+  canAdmin = true,
 }: {
   initial: ModelsOverviewResponse;
   profile?: string;
   initialAdvanced?: boolean;
+  /** Owner/admin: may change, test and refresh models. Everyone else gets a read-only view. */
+  canAdmin?: boolean;
 }) {
   const ts = useT("system");
   const [advanced, setAdvanced] = useAdvanced("models", initialAdvanced);
@@ -292,6 +295,7 @@ export function ModelsView({
           {caps.supports_reasoning ? <Pill tone="success">reasoning</Pill> : null}
           {advanced && caps.model_family ? <Pill tone="muted">{caps.model_family}</Pill> : null}
         </div>
+        {canAdmin ? (
         <div className="mt-3 flex items-center gap-2">
           <button
             type="button"
@@ -309,6 +313,7 @@ export function ModelsView({
             {testing ? "Testing…" : "Test"}
           </ActionButton>
         </div>
+        ) : null}
         {testResult ? (
           <div className="mt-2">
             <InlineAlert tone={testResult.ok ? "success" : "danger"}>{testResult.text}</InlineAlert>
@@ -324,8 +329,9 @@ export function ModelsView({
         <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3">
           <button
             type="button"
+            disabled={!canAdmin}
             onClick={() => setSlot({ kind: "main" })}
-            className="flex w-full items-center gap-3 border-b border-[var(--color-border)] py-3 text-left"
+            className="flex w-full items-center gap-3 border-b disabled:cursor-default border-[var(--color-border)] py-3 text-left"
           >
             <span className="min-w-0">
               <span className="block text-sm">Main</span>
@@ -350,8 +356,9 @@ export function ModelsView({
               <button
                 key={role.task}
                 type="button"
+                disabled={!canAdmin}
                 onClick={() => setSlot({ kind: "aux", task: role.task, label: role.label, hint: role.hint })}
-                className="flex w-full items-center gap-3 border-b border-[var(--color-border)] py-3 text-left last:border-b-0"
+                className="disabled:cursor-default flex w-full items-center gap-3 border-b border-[var(--color-border)] py-3 text-left last:border-b-0"
               >
                 <span className="min-w-0">
                   <span className="block text-sm">{role.label}</span>
@@ -475,6 +482,7 @@ export function ModelsView({
         </p>
       ) : null}
 
+      {canAdmin ? (
       <section
         data-component="ProviderKeys"
         className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
@@ -506,6 +514,7 @@ export function ModelsView({
           </p>
         ) : null}
       </section>
+      ) : null}
 
       <p className="px-1 text-xs text-[var(--color-muted)]">
         Changes apply to new sessions — running workers keep their current

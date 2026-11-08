@@ -23,7 +23,7 @@ async function meta(load: () => Promise<string>): Promise<string | null> {
  * `/system` — the System hub (Figma "Inner — System hub" 20:2060). One card
  * per System destination, in two groups; each card's counts load on their
  * own. Admin-only destinations: Profiles and Skills disappear for members
- * (they are menu-locked), Core and the agent web browser show a locked card.
+ * (they are menu-locked); Core and the agent web browser are hidden (their URLs show a friendly "for admins" page).
  */
 export default async function Page() {
   const principal = await requirePrincipal();
@@ -83,7 +83,6 @@ export default async function Page() {
     ...extra,
   });
   const visible = (c: HubCard) => !hidden.includes(c.id);
-  const locked = (id: string) => (admin ? { adminChip: true } : { locked: { why: t(`cards.${id}.lockedWhy`) } });
 
   const groups: HubGroup[] = [
     {
@@ -102,8 +101,9 @@ export default async function Page() {
       cards: [
         card("models", "/models", models),
         card("tools", "/tools", tools),
-        card("core", "/core", core, locked("core")),
-        card("webview", "/webview", webview, locked("webview")),
+        ...(admin
+          ? [card("core", "/core", core, { adminChip: true }), card("webview", "/webview", webview, { adminChip: true })]
+          : []),
       ].filter(visible),
     },
   ];
