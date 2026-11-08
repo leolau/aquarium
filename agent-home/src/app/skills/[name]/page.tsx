@@ -11,9 +11,9 @@ export default async function Page({
   searchParams,
 }: {
   params: Promise<{ name: string }>;
-  searchParams: Promise<{ profile?: string }>;
+  searchParams: Promise<{ profile?: string; tab?: string }>;
 }) {
-  const [{ name: raw }, { profile: requested }] = await Promise.all([params, searchParams]);
+  const [{ name: raw }, { profile: requested, tab }] = await Promise.all([params, searchParams]);
   const { name, profile, content, skill, skills, details } = await loadSkill(raw, requested, true);
   return (
     <MobileShell
@@ -30,6 +30,7 @@ export default async function Page({
         skill={skill}
         details={details}
         installed={skills.map((s) => s.name)}
+        initialTab={tab}
       />
     </MobileShell>
   );

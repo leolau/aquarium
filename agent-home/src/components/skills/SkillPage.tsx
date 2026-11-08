@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { CopyButton, downloadText } from "@/components/skills/CopyButton";
+import { SkillImprovePanel } from "@/components/skills/SkillImprovePanel";
 import { SkillMarkdown } from "@/components/skills/SkillMarkdown";
 import { skillHref, skillInitials, skillsListHref } from "@/components/skills/skill-links";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
@@ -17,7 +18,9 @@ import { useAction } from "@/lib/use-action";
 import { useHydrated } from "@/lib/use-hydrated";
 import type { SkillDetails, SkillInfo } from "@/types";
 
-type Tab = "instructions" | "files" | "used";
+type Tab = "instructions" | "files" | "improve" | "used";
+const TABS: readonly Tab[] = ["instructions", "files", "improve", "used"];
+const isTab = (value: string | undefined): value is Tab => !!value && (TABS as readonly string[]).includes(value);
 
 export const chipClass =
   "inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2.5 py-px text-[11px] text-[var(--color-muted)]";
@@ -55,6 +58,7 @@ export function SkillPage({
   skill,
   details,
   installed,
+  initialTab,
 }: {
   name: string;
   profile: string;
@@ -63,13 +67,15 @@ export function SkillPage({
   details: SkillDetails | null;
   /** Names of every skill in this profile (related skills link only to these). */
   installed: string[];
+  /** `?tab=` deep link; unknown values open Instructions. */
+  initialTab?: string;
 }) {
   const router = useRouter();
   const parsed = useMemo(() => parseSkill(content), [content]);
   const { meta } = parsed;
   const body = useMemo(() => getBody(content), [content]);
   const headings = useMemo(() => extractHeadings(body), [body]);
-  const [tab, setTab] = useState<Tab>("instructions");
+  const [tab, setTab] = useState<Tab>(isTab(initialTab) ? initialTab : "instructions");
   const [enabled, setEnabled] = useState(skill?.enabled ?? true);
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmUninstall, setConfirmUninstall] = useState(false);
@@ -150,6 +156,17 @@ export function SkillPage({
     return () => observer.disconnect();
   }, [headings, tab]);
 
+  /** Switch tabs and keep `?tab=` in the address so a reload or shared link lands here. */
+  function selectTab(id: string) {
+    if (!isTab(id)) return;
+    setTab(id);
+    const url = new URL(window.location.href);
+    if (id === "instructions") url.searchParams.delete("tab");
+    else url.searchParams.set("tab", id);
+    url.hash = "";
+    history.replaceState(history.state, "", url);
+  }
+
   function jump(id: string) {
     setActive(id);
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -184,7 +201,7 @@ export function SkillPage({
       type="button"
       role="tab"
       aria-selected={tab === id}
-      onClick={() => setTab(id)}
+      onClick={() => selectTab(id)}
       className={`-mb-px flex items-center gap-1.5 whitespace-nowrap border-b-2 px-3.5 text-sm ${
         tab === id ? "border-[var(--color-accent)] font-semibold text-[var(--color-fg)]" : "border-transparent text-[var(--color-muted)]"
       }`}
@@ -309,6 +326,7 @@ export function SkillPage({
         <div role="tablist" aria-label="Skill sections" className="mb-3.5 mt-4 flex gap-0.5 overflow-x-auto border-b border-[var(--color-border)]">
           {tabButton("instructions", "Instructions")}
           {tabButton("files", "Files", details ? String(files.length) : undefined)}
+          {tabButton("improve", "Improve")}
           {tabButton("used", "Used by", details ? `${usedBy.length} ${usedBy.length === 1 ? "profile" : "profiles"}` : undefined)}
         </div>
 
@@ -399,6 +417,8 @@ export function SkillPage({
               <p className="text-sm text-[var(--color-muted)]">The file list couldn&apos;t be loaded.</p>
             )}
           </div>
+        ) : tab === "improve" ? (
+          <SkillImprovePanel name={name} profile={profile} content={content} onOpenTab={selectTab} />
         ) : (
           <div className="max-w-2xl">
             {details ? (

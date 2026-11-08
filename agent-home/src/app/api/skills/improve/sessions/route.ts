@@ -1,0 +1,24 @@
+/** GET /api/skills/improve/sessions — past improve chats for one skill (owner/admin). */
+import { badRequest, refuse, str, upstream } from "@/lib/api/admin-route";
+import { apiClientForRequest, getPrincipal } from "@/lib/auth/principal";
+import { canAdminister } from "@/lib/auth/roles";
+import { profileFromUrl } from "@/lib/chat/profile";
+import type { ImproveSession } from "@/lib/skills/improve";
+
+export async function GET(request: Request) {
+  const principal = await getPrincipal();
+  if (!principal || !canAdminister(principal)) return refuse(principal);
+  const name = str(new URL(request.url).searchParams.get("name"));
+  if (!name) return badRequest("name is required.");
+  const client = await apiClientForRequest({ profile: profileFromUrl(request.url) });
+  return upstream(
+    () => client.request<ImproveSession[]>(`/api/skills/improve/sessions?name=${encodeURIComponent(name)}`),
+    (data): ImproveSession[] =>
+      (Array.isArray(data) ? data : []).map((s) => ({
+        session_id: String(s.session_id),
+        title: typeof s.title === "string" ? s.title : null,
+        started_at: s.started_at ?? null,
+        drafts: Number(s.drafts) || 0,
+      })),
+  );
+}
