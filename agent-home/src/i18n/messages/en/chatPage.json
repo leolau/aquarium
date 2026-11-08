@@ -1,0 +1,16 @@
+{
+  "chats": "Chats",
+  "newChat": "New chat",
+  "categories": "Chat categories",
+  "categoryEmpty": "No chats in this category yet.",
+  "category": {
+    "all": "All",
+    "kanban": "Kanban",
+    "daily": "Daily",
+    "scheduled": "Scheduled",
+    "others": "Others"
+  },
+  "loadError": "Couldn't load your conversations",
+  "loadErrorHint": "Your chats are safe. Try again in a moment.",
+  "tryAgain": "Try again"
+}

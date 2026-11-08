@@ -2,6 +2,7 @@ import { ChatHeaderActions } from "@/components/chat/ChatHeaderActions";
 import { ChatPane } from "@/components/chat/ChatPane";
 import { SwitchOnArrival } from "@/components/SwitchOnArrival";
 import { MobileShell } from "@/components/MobileShell";
+import { ErrorState } from "@/components/ui/ErrorState";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
 import { readSession } from "@/lib/auth/session";
 import { storageConfigured } from "@/lib/env";
@@ -84,17 +85,23 @@ export default async function Page({
     error = err instanceof Error ? err.message : "Failed to load conversations";
   }
 
+  const active = sessionId ? sessions.find((s) => s.id === sessionId) : undefined;
+  const activeTitle = active?.title?.trim() || (sessionId ? "Chat" : "New chat");
+
   return (
-    <MobileShell title="Chat" fill actions={error ? null : <ChatHeaderActions />}>
+    <MobileShell
+      title={activeTitle}
+      wide
+      fill
+      actions={error ? null : <ChatHeaderActions />}
+    >
       {error ? (
-        <div
-          data-component="ChatError"
-          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
-        >
-          Couldn&apos;t load your conversations ({error}).
+        <div data-component="ChatError" className="mx-auto w-full max-w-lg">
+          <ErrorState kind="error" details={error} />
         </div>
       ) : (
         <ChatPane
+          key={sessionId ?? "new"}
           initialSessions={sessions}
           initialSessionId={sessionId}
           initialMessages={messages}

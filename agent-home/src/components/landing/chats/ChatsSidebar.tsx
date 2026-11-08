@@ -7,10 +7,13 @@ import { ChatsPanel, type ChatsPanelProps } from "./ChatsPanel";
  * `LandingLayout`'s `sidebar` slot, which supplies the `<aside>`, width and
  * border; ⌘K focuses its search.
  */
-export function ChatsSidebar(props: ChatsPanelProps) {
+export function ChatsSidebar({
+  searchShortcut = true,
+  ...props
+}: ChatsPanelProps & { searchShortcut?: boolean }) {
   return (
     <div data-component="ChatsSidebar" className="flex h-full min-h-0 flex-col px-3 py-4">
-      <ChatsPanel {...props} searchShortcut searchId="landing-sidebar-chat-search" />
+      <ChatsPanel {...props} searchShortcut={searchShortcut} searchId="landing-sidebar-chat-search" />
     </div>
   );
 }

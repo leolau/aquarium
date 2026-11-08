@@ -14,6 +14,12 @@ import { PinSuggestionCard } from "./PinSuggestionCard";
 import { SessionRow } from "./SessionRow";
 import { SessionSearch } from "./SessionSearch";
 import { useLandingChats } from "./useLandingChats";
+import { useT } from "@/i18n";
+import {
+  CHAT_CATEGORY_ORDER,
+  categorizeSession,
+  type ChatCategory,
+} from "@/lib/chat/categorize";
 
 /** Recent rows shown before "All chats" takes over. */
 export const RECENT_LIMIT = 30;
@@ -30,6 +36,8 @@ export interface ChatsPanelProps {
   /** Where "All chats" goes. */
   allChatsHref?: string;
   fetchImpl?: typeof fetch;
+  /** Show category chips (All / Kanban / Daily / Scheduled / Others) that filter the list. */
+  categoryFilter?: boolean;
 }
 
 function SectionHeader({ label, count }: { label: string; count?: number }) {
@@ -90,6 +98,7 @@ export function ChatsPanel({
   searchShortcut = false,
   onNavigate,
   searchId,
+  categoryFilter = false,
 }: ChatsPanelProps & {
   searchShortcut?: boolean;
   onNavigate?: () => void;
@@ -117,7 +126,22 @@ export function ChatsPanel({
     () => (searching ? [...chats.pinned, ...chats.recent].filter((s) => matchesQuery(s, query)) : []),
     [searching, chats.pinned, chats.recent, query],
   );
-  const recent = chats.recent.slice(0, RECENT_LIMIT);
+  const t = useT("chatPage");
+  const [category, setCategory] = useState<ChatCategory | "all">("all");
+  const inCategory = (s: LandingSession) =>
+    !categoryFilter || category === "all" || categorizeSession(s) === category;
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = { all: 0 };
+    if (!categoryFilter) return counts;
+    for (const s of [...chats.pinned, ...chats.recent]) {
+      counts.all += 1;
+      const c = categorizeSession(s);
+      counts[c] = (counts[c] ?? 0) + 1;
+    }
+    return counts;
+  }, [categoryFilter, chats.pinned, chats.recent]);
+  const pinned = chats.pinned.filter(inCategory);
+  const recent = chats.recent.filter(inCategory).slice(0, RECENT_LIMIT);
   const empty = !chats.loading && chats.sessions.filter((s) => !s.archived).length === 0;
 
   const row = (s: LandingSession) => (
@@ -139,6 +163,34 @@ export function ChatsPanel({
     <div data-component="ChatsPanel" className="flex min-h-0 flex-1 flex-col gap-2">
       <NewChatButton currentProfile={profile} profiles={profiles} onStarted={onNavigate} fetchImpl={fetchImpl} />
       <SessionSearch value={query} onChange={setQuery} shortcut={searchShortcut} id={searchId} />
+
+      {categoryFilter && !searching ? (
+        <div
+          role="group"
+          aria-label={t("categories")}
+          data-component="ChatCategoryFilter"
+          className="flex flex-wrap gap-1.5"
+        >
+          {(["all", ...CHAT_CATEGORY_ORDER] as const).map((c) => (
+            <button
+              key={c}
+              type="button"
+              data-action="filter-category"
+              data-category={c}
+              aria-pressed={category === c}
+              onClick={() => setCategory(c)}
+              className={`inline-flex h-8 items-center gap-1 rounded-full border px-2.5 text-xs font-medium ${
+                category === c
+                  ? "border-[var(--color-accent)] bg-[var(--color-surface-2)] text-[var(--color-fg)]"
+                  : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-muted)]"
+              }`}
+            >
+              {t(`category.${c}`)}
+              <span className="tabular-nums opacity-70">{categoryCounts[c] ?? 0}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       {chats.error ? (
         <div
@@ -184,10 +236,10 @@ export function ChatsPanel({
           </>
         ) : (
           <>
-            {chats.pinned.length ? (
+            {pinned.length ? (
               <section aria-label="Pinned chats" className="flex flex-col">
-                <SectionHeader label="Pinned" count={chats.pinned.length} />
-                <ul className="flex flex-col">{chats.pinned.map(row)}</ul>
+                <SectionHeader label="Pinned" count={pinned.length} />
+                <ul className="flex flex-col">{pinned.map(row)}</ul>
               </section>
             ) : null}
             {recent.length ? (
@@ -195,6 +247,9 @@ export function ChatsPanel({
                 <SectionHeader label="Recent" />
                 <ul className="flex flex-col">{recent.map(row)}</ul>
               </section>
+            ) : null}
+            {categoryFilter && !pinned.length && !recent.length ? (
+              <p className="px-3 py-2 text-xs text-[var(--color-muted)]">{t("categoryEmpty")}</p>
             ) : null}
           </>
         )}

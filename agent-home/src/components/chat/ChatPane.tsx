@@ -1,10 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAction } from "@/lib/use-action";
+import { useT } from "@/i18n";
 
 
-import { ApprovalModal } from "@/components/chat/ApprovalModal";
+import { ApprovalCard } from "@/components/chat/thread/ApprovalCard";
+import { ChatsDrawer, ChatsSidebar } from "@/components/landing/chats";
+import { MessageIcon, PlusIcon } from "@/components/ui/icons";
 import { ArchivedModal } from "@/components/chat/ArchivedModal";
 import {
   CHAT_FILTERS_OPEN_STORAGE_KEY,
@@ -18,7 +21,6 @@ import { MessageBubble } from "@/components/chat/MessageBubble";
 import { Composer } from "@/components/chat/Composer";
 import { SessionModal } from "@/components/chat/SessionModal";
 import { SessionSearchBar } from "@/components/chat/SessionSearchBar";
-import { SessionTabs } from "@/components/chat/SessionTabs";
 import {
   StatusIndicator,
   type ChatActivity,
@@ -136,7 +138,7 @@ export function ChatPane({
   // The user's manual left-to-right ordering of the tabs, persisted per-device
   // as a JSON string (a stable snapshot for useSyncExternalStore). The array is
   // derived and applied to whatever the server most recently returned.
-  const [orderRaw, setOrderRaw] = usePersistentState<string>(
+  const [orderRaw] = usePersistentState<string>(
     SESSION_ORDER_STORAGE_KEY,
     "",
     (raw) => raw,
@@ -150,6 +152,9 @@ export function ChatPane({
   const [messages, setMessages] = useState<ChatMessage[]>(visible(initialMessages));
   const [detailsSession, setDetailsSession] = useState<SessionSummary | null>(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+  const t = useT("chatPage");
   const [loadingThread, setLoadingThread] = useState(false);
   // Per-session state, keyed by session id (or NEW_KEY). Turns run per session
   // so the user can switch conversations at any time without cancelling or
@@ -286,12 +291,17 @@ export function ChatPane({
   useEffect(() => {
     chatHeaderActionsRef.current.startNew = startNewConversation;
     chatHeaderActionsRef.current.openArchived = () => setArchivedOpen(true);
+    chatHeaderActionsRef.current.openDetails = () => {
+      const active = sessions.find((s) => s.id === sessionId);
+      if (active) void onOpenDetails(active);
+    };
   });
   useEffect(() => {
     return () => {
       chatHeaderActionsRef.current = {
         startNew: () => {},
         openArchived: () => {},
+        openDetails: () => {},
       };
     };
   }, []);
@@ -683,10 +693,6 @@ export function ChatPane({
     }
   }
 
-  function reorderSessions(orderedIds: string[]) {
-    setOrderRaw(JSON.stringify(orderedIds));
-  }
-
   async function refreshSessions() {
     try {
       const params = new URLSearchParams();
@@ -964,7 +970,15 @@ export function ChatPane({
   }
 
   return (
-    <div data-component="ChatPane" className="flex min-h-0 flex-1 flex-col">
+    <div data-component="ChatPane" className="flex min-h-0 flex-1 gap-6">
+      <aside
+        data-component="chat-sidebar"
+        aria-label="Chats"
+        className="hidden w-[288px] shrink-0 overflow-y-auto border-r border-[var(--color-border)] pr-3 lg:flex lg:flex-col"
+      >
+        <ChatsSidebar profile={profile} activeSessionId={sessionId} initialSessions={sessions} categoryFilter searchShortcut={false} />
+      </aside>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <ChatFiltersPanel
         open={filtersOpen}
         onToggle={() => setFiltersOpen(!filtersOpen)}
@@ -1041,16 +1055,6 @@ export function ChatPane({
       </div>
       </ChatFiltersPanel>
 
-      <SessionTabs
-        sessions={orderedSessions}
-        activeId={sessionId}
-        busyKeys={sendingKeys}
-        onSelect={openConversation}
-        onOpenDetails={onOpenDetails}
-        onNew={startNewConversation}
-        onReorder={reorderSessions}
-      />
-
       <div
         ref={threadRef}
         className="min-h-0 flex-1 space-y-3 overflow-y-auto rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3"
@@ -1098,6 +1102,13 @@ export function ChatPane({
           quietMs={selTurn ? now - selTurn.lastEventAt : undefined}
           hasOutput={!assistantIsEmpty(messages)}
         />
+        {selApproval ? (
+          <ApprovalCard
+            request={selApproval}
+            busy={resolvingApproval}
+            onResolve={resolveApprovalOnce}
+          />
+        ) : null}
       </div>
 
       {error ? (
@@ -1114,6 +1125,36 @@ export function ChatPane({
         onSend={send}
         onStop={() => void stopTurn()}
         stopping={selTurn?.stopping ?? false}
+      />
+
+      <div data-component="chat-dock" className="mt-2 flex gap-2 lg:hidden">
+        <button
+          type="button"
+          data-action="open-chats"
+          onClick={() => setDrawerOpen(true)}
+          className="flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-medium text-[var(--color-fg)]"
+        >
+          <MessageIcon size={16} />
+          <span className="truncate">{t("chats")}</span>
+        </button>
+        <button
+          type="button"
+          data-action="new-chat"
+          onClick={startNewConversation}
+          className="flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-[var(--radius-lg)] bg-[var(--color-accent)] text-sm font-medium text-[var(--color-accent-fg)]"
+        >
+          <PlusIcon size={16} />
+          {t("newChat")}
+        </button>
+      </div>
+      </div>
+      <ChatsDrawer
+        open={drawerOpen}
+        onClose={closeDrawer}
+        profile={profile}
+        activeSessionId={sessionId}
+        initialSessions={sessions}
+        categoryFilter
       />
 
       {detailsSession ? (
@@ -1146,13 +1187,6 @@ export function ChatPane({
         />
       ) : null}
 
-      {selApproval ? (
-        <ApprovalModal
-          request={selApproval}
-          busy={resolvingApproval}
-          onResolve={resolveApprovalOnce}
-        />
-      ) : null}
     </div>
   );
 }
