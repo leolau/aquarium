@@ -1,12 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useAction } from "@/lib/use-action";
 import { useT } from "@/i18n";
 
 
 import { ApprovalCard } from "@/components/chat/thread/ApprovalCard";
 import { ChatsDrawer, ChatsSidebar } from "@/components/landing/chats";
+import { chatHref } from "@/components/landing/chats/chatsApi";
 import type { MessageSearchHit } from "@/components/landing/chats/MessageSearch";
 import { MessageIcon, PlusIcon } from "@/components/ui/icons";
 import { ArchivedModal } from "@/components/chat/ArchivedModal";
@@ -91,6 +93,9 @@ export interface ChatPaneProps {
   /** Send `initialDraft` as the first turn on arrival (the landing page's
    * composer already had the user press send). */
   autoSend?: boolean;
+  /** Words to highlight on arrival (`?find=`): a message-search result opened
+   * from another chat. */
+  initialHighlight?: string;
 }
 
 /** Idle-watch cadence for turns started on other surfaces. */
@@ -128,7 +133,9 @@ export function ChatPane({
   profile,
   initialDraft,
   autoSend = false,
+  initialHighlight,
 }: ChatPaneProps) {
+  const router = useRouter();
   // Every client read below carries the selected profile, because a profile is
   // a whole HERMES_HOME: reading the default profile's sessions while the turn
   // runs in another is what files one profile's reply in another's history.
@@ -193,8 +200,8 @@ export function ChatPane({
   const [matchMode, setMatchMode] = useState<"any" | "all">("any");
 
   // ── Search state ──
-  const [inSearchOpen, setInSearchOpen] = useState(false);
-  const [highlightTerm, setHighlightTerm] = useState<string | undefined>();
+  const [inSearchOpen, setInSearchOpen] = useState(initialHighlight !== undefined);
+  const [highlightTerm, setHighlightTerm] = useState<string | undefined>(initialHighlight);
   const highlightCallbackRef = useRef<((msgIndex: number, term: string) => void) | null>(null);
 
   // Profile, tag filters and searches live behind one toggle, collapsed by
@@ -629,6 +636,16 @@ export function ChatPane({
     }
   }
 
+  useEffect(() => {
+    if (initialHighlight === undefined) return;
+    // Drop `?find=` so a reload or shared link opens the chat without it.
+    const url = new URL(window.location.href);
+    url.searchParams.delete("find");
+    window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+    // Once, on arrival.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const autoSentRef = useRef(false);
   useEffect(() => {
     if (!autoSend || autoSentRef.current || !initialDraft) return;
@@ -956,12 +973,11 @@ export function ChatPane({
     return body.results ?? [];
   }
 
-  async function jumpToSearchResult(
+  function jumpToSearchResult(
     result: { session_id: string; snippet: string },
   ) {
-    await openConversation(result.session_id);
-    // After loading, highlight the matched words (`>>>…<<<`) in the message
-    // list; a snippet without markers falls back to its opening text.
+    // Highlight the matched words (`>>>…<<<`); a snippet without markers falls
+    // back to its opening text.
     const marked = />>>([\s\S]+?)<<</.exec(result.snippet)?.[1]?.trim();
     const term =
       marked ||
@@ -970,6 +986,12 @@ export function ChatPane({
         .replace(/<<</g, "")
         .trim()
         .slice(0, 30);
+    if (result.session_id !== sessionId) {
+      // Another chat: navigate like a sidebar row, so the title, address and
+      // Back all follow; the chat page re-opens with `?find=` highlighted.
+      router.push(`${chatHref(result.session_id, profile)}&find=${encodeURIComponent(term)}`);
+      return;
+    }
     setHighlightTerm(term);
     setInSearchOpen(true);
   }
@@ -989,7 +1011,7 @@ export function ChatPane({
           categoryFilter
           searchShortcut="hint"
           messageSearch={crossSessionSearch}
-          onOpenMessageHit={(hit) => void jumpToSearchResult(hit)}
+          onOpenMessageHit={jumpToSearchResult}
         />
       </aside>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -1145,7 +1167,7 @@ export function ChatPane({
         initialSessions={sessions}
         categoryFilter
         messageSearch={crossSessionSearch}
-        onOpenMessageHit={(hit) => void jumpToSearchResult(hit)}
+        onOpenMessageHit={jumpToSearchResult}
       />
 
       {detailsSession ? (

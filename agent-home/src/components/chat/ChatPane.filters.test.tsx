@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CHAT_FILTERS_OPEN_STORAGE_KEY } from "@/components/chat/ChatFiltersPanel";
 import { ChatPane } from "@/components/chat/ChatPane";
 import type { ChatMessage, SessionSummary } from "@/types";
 
+const push = vi.hoisted(() => vi.fn());
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+  useRouter: () => ({ push, replace: vi.fn(), refresh: vi.fn() }),
 }));
 
 const TAGS = [
@@ -178,12 +179,26 @@ describe("ChatPane filters & search panel", () => {
     expect(fetchedUrls().some((u) => u.includes("/api/chat/sessions/search?q=kenobi"))).toBe(true);
     expect(within(hit).getByText("kenobi").tagName).toBe("MARK");
 
+    // Another chat: navigate like a sidebar row, so the title and address follow.
     fireEvent.click(hit);
-    await waitFor(() =>
-      expect(fetchedUrls().some((u) => u.includes("/api/chat/messages?sessionId=s2"))).toBe(true),
+    expect(push).toHaveBeenCalledWith("/chat?session=s2&find=kenobi");
+  });
+
+  it("opens with `?find=` highlighted and drops it from the address", () => {
+    push.mockClear();
+    window.history.replaceState(null, "", "/chat?session=s1&find=hello");
+    render(
+      <ChatPane
+        initialSessions={SESSIONS}
+        initialSessionId="s1"
+        initialMessages={MESSAGES}
+        storageEnabled={false}
+        profile="default"
+        initialHighlight="hello"
+      />,
     );
-    await waitFor(() =>
-      expect(document.querySelector('[data-component="MessageBubble"] mark')?.textContent).toBe("kenobi"),
-    );
+    expect(document.querySelector('[data-component="MessageBubble"] mark')?.textContent).toBe("hello");
+    expect(window.location.search).toBe("?session=s1");
+    expect(push).not.toHaveBeenCalled();
   });
 });
