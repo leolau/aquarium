@@ -406,6 +406,7 @@ from hermes_cli.projects_outputs_api import router as _projects_outputs_router  
 from hermes_cli.projects_live_api import router as _projects_live_router  # noqa: E402
 from hermes_cli.projects_changes_api import router as _projects_changes_router  # noqa: E402
 from hermes_cli.projects_board_api import router as _projects_board_router  # noqa: E402
+from hermes_cli.skills_improve_api import router as _skills_improve_router  # noqa: E402
 
 app.include_router(_memory_oauth_router)
 app.include_router(_memory_explorer_router)
@@ -437,6 +438,7 @@ app.include_router(_projects_outputs_router)
 app.include_router(_projects_live_router)
 app.include_router(_projects_changes_router)
 app.include_router(_projects_board_router)
+app.include_router(_skills_improve_router)
 try:  # FG-33 1.6 quota policy router; absent until that item lands
     from hermes_cli.quotas_api import router as _quotas_router  # noqa: E402
 except ImportError:
