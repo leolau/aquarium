@@ -407,6 +407,7 @@ from hermes_cli.projects_live_api import router as _projects_live_router  # noqa
 from hermes_cli.projects_changes_api import router as _projects_changes_router  # noqa: E402
 from hermes_cli.projects_board_api import router as _projects_board_router  # noqa: E402
 from hermes_cli.skills_improve_api import router as _skills_improve_router  # noqa: E402
+from hermes_cli.skills_versions_api import router as _skills_versions_router  # noqa: E402
 
 app.include_router(_memory_oauth_router)
 app.include_router(_memory_explorer_router)
@@ -439,6 +440,7 @@ app.include_router(_projects_live_router)
 app.include_router(_projects_changes_router)
 app.include_router(_projects_board_router)
 app.include_router(_skills_improve_router)
+app.include_router(_skills_versions_router)
 try:  # FG-33 1.6 quota policy router; absent until that item lands
     from hermes_cli.quotas_api import router as _quotas_router  # noqa: E402
 except ImportError:
@@ -16081,8 +16083,11 @@ def _disable_unselected_skills(profile_dir: Path, keep: List[str]) -> int:
         installed: List[str] = []
         skills_root = profile_dir / "skills"
         if skills_root.is_dir():
+            from agent.skill_utils import is_excluded_skill_path
+
             for md in skills_root.rglob("SKILL.md"):
-                installed.append(md.parent.name)
+                if not is_excluded_skill_path(md):
+                    installed.append(md.parent.name)
         cfg = load_config()
         disabled = get_disabled_skills(cfg)
         for name in installed:
@@ -16892,7 +16897,7 @@ async def get_skill_content(name: str, profile: Optional[str] = None):
 
 
 @app.post("/api/skills", dependencies=_ADMIN)
-async def create_skill(body: SkillCreate):
+async def create_skill(body: SkillCreate, request: Request):
     """Create a new custom skill (SKILL.md) from the dashboard editor.
 
     Calls the same validated write path as the agent's ``skill_manage``
@@ -16901,9 +16906,13 @@ async def create_skill(body: SkillCreate):
     a write from the authenticated dashboard IS the user acting directly.
     """
     from tools.skill_manager_tool import _create_skill
+    from hermes_cli import skills_versions_api as _versions
 
+    author = await _versions.acting_author(request)
     with _profile_scope(body.profile):
         result = _create_skill(body.name, body.content, body.category or None)
+        if result.get("success"):
+            _versions.record_dashboard_write(body.name, author=author, source="create")
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error", "Failed to create skill."))
     _clear_skills_prompt_cache()
@@ -16911,12 +16920,17 @@ async def create_skill(body: SkillCreate):
 
 
 @app.put("/api/skills/content", dependencies=_ADMIN)
-async def update_skill_content(body: SkillContentUpdate):
+async def update_skill_content(body: SkillContentUpdate, request: Request):
     """Replace the SKILL.md of an existing skill (full rewrite) from the editor."""
     from tools.skill_manager_tool import _edit_skill
+    from hermes_cli import skills_versions_api as _versions
 
+    author = await _versions.acting_author(request)
     with _profile_scope(body.profile):
+        _versions.record_dashboard_baseline(body.name)
         result = _edit_skill(body.name, body.content)
+        if result.get("success"):
+            _versions.record_dashboard_write(body.name, author=author, source="edit")
     if not result.get("success"):
         err = result.get("error", "Failed to update skill.")
         status = 404 if "not found" in str(err).lower() else 400

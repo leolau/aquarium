@@ -3480,6 +3480,9 @@ def install_from_quarantine(
     install_dir = _resolve_lock_install_path(install_rel_path, safe_skill_name)
 
     if install_dir.exists():
+        from tools.skill_versions import safe_ensure_baseline
+
+        safe_ensure_baseline(safe_skill_name, skill_dir=install_dir)
         shutil.rmtree(install_dir)
 
     # Warn (but don't block) if SKILL.md is very large
@@ -3534,6 +3537,16 @@ def install_from_quarantine(
         "INSTALL", safe_skill_name, bundle.source,
         bundle.trust_level, scan_result.verdict,
         content_hash(install_dir),
+    )
+
+    from tools.skill_versions import safe_snapshot
+
+    safe_snapshot(
+        safe_skill_name,
+        author="hub",
+        message=f"Installed from {bundle.source}: {bundle.identifier}",
+        source="import",
+        skill_dir=install_dir,
     )
 
     return install_dir

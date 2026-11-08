@@ -1360,7 +1360,11 @@ async def _offer_skills_for_promotion(
     skills_dir = profile_dir / "skills"
     if not skills_dir.is_dir():
         return
+    from agent.skill_utils import is_excluded_skill_path
+
     for skill_md in sorted(skills_dir.rglob("SKILL.md")):
+        if is_excluded_skill_path(skill_md):
+            continue
         skill_name = skill_md.parent.name
         try:
             await promotions.propose(

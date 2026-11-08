@@ -358,8 +358,11 @@ def register_shared_dir() -> bool:
 def _iter_skill_files(root: Path):
     if not root.exists():
         return
+    from agent.skill_utils import is_excluded_skill_path
+
     for path in sorted(root.rglob("SKILL.md")):
-        yield path
+        if not is_excluded_skill_path(path):
+            yield path
 
 
 def find_local_skill(skill_name: str) -> Optional[Path]:

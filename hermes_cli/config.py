@@ -2399,6 +2399,10 @@ DEFAULT_CONFIG = {
     # always goes to ~/.hermes/skills/.
     "skills": {
         "external_dirs": [],   # e.g. ["~/.agents/skills", "/shared/team-skills"]
+        # Version history kept under skills/.versions/<name>/. Oldest
+        # versions beyond this cap are pruned; drafts and the active
+        # version are never pruned.
+        "versions": {"max_per_skill": 50},
         # Substitute ${HERMES_SKILL_DIR} and ${HERMES_SESSION_ID} in SKILL.md
         # content with the absolute skill directory and the active session id
         # before the agent sees it.  Lets skill authors reference bundled
