@@ -657,7 +657,7 @@ export function BrowseView() {
                       sortHeader("size", t("col.size")),
                       sortHeader("modified", t("col.modified")),
                     ]}
-                    initialWidths={[340, 100, 200]}
+                    initialWidths={[300, 90, 140]}
                   >
                     {pageEntries.map((e) => (
                       <tr
@@ -667,7 +667,7 @@ export function BrowseView() {
                           selected?.path === e.path ? "bg-[var(--color-accent)]/10" : ""
                         }`}
                       >
-                        <td className="truncate px-3 py-2">
+                        <td className="break-words px-3 py-2">
                           <button
                             type="button"
                             disabled={busy}

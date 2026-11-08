@@ -25,7 +25,6 @@ export default async function Page() {
       subtitle={ts("files.subtitle")}
       info={<InfoTip label={ts("files.infoLabel")}>{ts("files.info")}</InfoTip>}
       wide
-      back={{ href: "/", label: "Home" }}
     >
       <FilesTabs />
       <BrowseView />
