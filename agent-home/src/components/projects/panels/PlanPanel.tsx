@@ -182,6 +182,8 @@ export function PlanPanel({
   const { proposed, earlier } = splitRevisions(playbook);
 
   const [editing, setEditing] = useState(false);
+  /** The revision the editor was opened from; the server carries its step assignments. */
+  const [baseRev, setBaseRev] = useState<number | null>(null);
   const [body, setBody] = useState("");
   const [steps, setSteps] = useState<StepDraft[]>([{ ...EMPTY_STEP }]);
   const saveAction = useProjectAction();
@@ -280,6 +282,7 @@ export function PlanPanel({
     setActivatedRev(null);
     setBody(from?.body ?? "");
     setSteps(draftsFromRev(from));
+    setBaseRev(from?.rev ?? null);
     setError(null);
     saveAction.clearError();
     setEditing(true);
@@ -293,7 +296,11 @@ export function PlanPanel({
     }
     setError(null);
     void saveAction.run(`${slugPath}/playbook`, {
-      body: { body: body.trim(), steps: payload },
+      body: {
+        body: body.trim(),
+        steps: payload,
+        ...(baseRev != null ? { base_rev: baseRev } : {}),
+      },
       onSuccess: () => setEditing(false),
     });
   };

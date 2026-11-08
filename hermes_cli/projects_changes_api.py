@@ -33,7 +33,13 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
-from hermes_cli import kanban_db, projects_api, projects_db, projects_run
+from hermes_cli import (
+    kanban_db,
+    profile_capabilities,
+    projects_api,
+    projects_db,
+    projects_run,
+)
 from hermes_cli.sqlite_util import write_txn
 
 logger = logging.getLogger(__name__)
@@ -159,8 +165,12 @@ def _change_prompt(
     plan: Optional[dict],
     change: dict,
     kinds: list[str],
+    *,
+    roster_block: Optional[str] = None,
 ) -> str:
-    lines = [projects_api._plan_draft_prompt(project, outputs)]
+    lines = [
+        projects_api._plan_draft_prompt(project, outputs, roster_block=roster_block)
+    ]
     lines += ["", "Current requirements (standing instructions):"]
     if requirements:
         for d in requirements:
@@ -171,7 +181,10 @@ def _change_prompt(
         lines += ["", f"Current plan (rev {plan['rev']}):"]
         for i, step in enumerate(plan["steps"], 1):
             extra = f" — {step['body']}" if step.get("body") else ""
-            lines.append(f"{i}. [{step.get('key')}] {step.get('title')}{extra}")
+            who = f" (assignee: {step['assignee']})" if step.get("assignee") else ""
+            lines.append(
+                f"{i}. [{step.get('key')}] {step.get('title')}{who}{extra}"
+            )
     lines += [
         "",
         "Requirement change from the user"
@@ -233,6 +246,7 @@ def _change_draft_job(
     assignee: Optional[str],
     profile_names: set[str],
     created_by: Optional[str],
+    roster: Optional[list[dict]] = None,
 ) -> None:
     def _set(**fields: Any) -> None:
         with projects_api._PLAN_DRAFTS_LOCK:
@@ -243,7 +257,8 @@ def _change_draft_job(
     try:
         data = projects_api._extract_json_object(projects_api._call_plan_model(prompt))
         steps = projects_api._normalise_draft_steps(
-            data.get("steps"), assignee=assignee, profile_names=profile_names
+            data.get("steps"), assignee=assignee, profile_names=profile_names,
+            roster=roster,
         )
         reading = _normalise_reading(
             data.get("reading"), text=text, outputs=outputs, requirements=requirements
@@ -287,18 +302,25 @@ def _precheck_draft(conn, project) -> list[dict]:
 
 def _start_change_draft(
     conn, project, profiles, change: dict, kinds: list[str], user_id: str,
-    outputs: list[dict],
+    outputs: list[dict], *, accessible: Optional[list[str]] = None,
 ) -> dict:
+    """Start drafting the revised plan for ``change``. ``accessible`` is the
+    requester's FG-34 access set: the drafter sees those profiles'
+    capability roster (plus the project's own) and writes the C-3
+    assignment fields, like a plan draft."""
     requirements = [
         d
         for d in projects_db.list_project_directives(conn, project.id)
         if d["kind"] == "directive" and d["id"] != change["id"]
     ]
     plan = projects_db.get_playbook(conn, project.id)
-    profile_names = {p["profile"] for p in profiles}
+    project_names = {p["profile"] for p in profiles}
     assignee = project.host_profile or (
-        sorted(profile_names)[0] if profile_names else None
+        sorted(project_names)[0] if project_names else None
     )
+    profile_names = project_names | set(accessible or [])
+    roster = projects_api._assignable_roster(project, profiles, profile_names)
+    roster_block = profile_capabilities.roster_prompt_block(roster)
     state = {
         "status": "running",
         "started_at": int(time.time()),
@@ -319,13 +341,15 @@ def _start_change_draft(
             "change_id": change["id"],
             "text": change["body"],
             "prompt": _change_prompt(
-                project, outputs, requirements, plan, change, kinds
+                project, outputs, requirements, plan, change, kinds,
+                roster_block=roster_block,
             ),
             "outputs": outputs,
             "requirements": requirements,
             "assignee": assignee,
             "profile_names": profile_names,
             "created_by": user_id,
+            "roster": roster,
         },
         name=f"change-draft-{project.slug}",
         daemon=True,
@@ -436,6 +460,10 @@ async def create_change_route(request: Request) -> dict[str, Any]:
     body = await _json_body(request)
     text, kinds, apply = _parse_change_body(body)
     key = _idempotency_key(request)
+    accessible = (
+        await projects_api._accessible_profiles(principal, project)
+        if apply != "record" else None
+    )
 
     def _create_sync() -> dict:
         with _CHANGES_LOCK, projects_db.connect_closing() as conn:
@@ -492,7 +520,7 @@ async def create_change_route(request: Request) -> dict[str, Any]:
             if apply != "record":
                 draft = _start_change_draft(
                     conn, project, profiles, change, kinds, principal.user_id,
-                    outputs,
+                    outputs, accessible=accessible,
                 )
             return {
                 "change": _change_payload(change),
@@ -512,6 +540,7 @@ async def redraft_change_route(request: Request, change_id: str) -> dict[str, An
         request, judgement=True
     )
     projects_api._refuse_if_archived(project, "drafting its plan")
+    accessible = await projects_api._accessible_profiles(principal, project)
 
     def _redraft_sync() -> dict:
         with _CHANGES_LOCK, projects_db.connect_closing() as conn:
@@ -522,7 +551,7 @@ async def redraft_change_route(request: Request, change_id: str) -> dict[str, An
             outputs = _precheck_draft(conn, project)
             draft = _start_change_draft(
                 conn, project, profiles, change, list(meta.get("kinds") or []),
-                principal.user_id, outputs,
+                principal.user_id, outputs, accessible=accessible,
             )
             return {"change": _change_payload(change), "draft": draft}
 

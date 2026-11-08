@@ -2505,7 +2505,7 @@ export class HermesApiClient {
   /** Propose revision N+1 (inactive). Cycle-checked; assignees must be profiles. */
   async saveProjectPlaybook(
     slug: string,
-    payload: { body?: string; steps: unknown[]; note?: string },
+    payload: { body?: string; steps: unknown[]; note?: string; base_rev?: number },
   ): Promise<{ rev: number; active: false }> {
     return this.request(
       `/api/registry/projects/${encodeURIComponent(slug)}/playbook`,

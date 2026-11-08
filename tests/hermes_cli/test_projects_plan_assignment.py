@@ -234,3 +234,26 @@ def test_replan_uses_the_project_owners_set(env, monkeypatch):
     with projects_db.connect_closing() as conn:
         (step,) = projects_db.get_playbook(conn, project["id"], rev=1)["steps"]
     assert (step["assignee"], step["assigned_by"]) == ("secret", "planner")
+
+
+def test_hand_saved_plan_may_name_an_accessible_profile_not_yet_attached(env):
+    """The plan editor offers every accessible profile (C-2), so saving a
+    step assigned to one the project lacks is allowed; activation attaches
+    it. A profile the editor cannot access is still refused."""
+    client, _state = env
+    project = _lead_project(env)
+    url = f"/api/registry/projects/{project['slug']}/playbook"
+    ok = client.post(url, json={"steps": [
+        {"key": "a", "title": "Write it", "assignee": "writer",
+         "assigned_by": "manual", "planner_assignee": "default"},
+    ]})
+    assert ok.status_code == 200, ok.text
+    assert "writer" not in _project_profiles(project)
+    with projects_db.connect_closing() as conn:
+        (step,) = projects_db.get_playbook(conn, project["id"], rev=ok.json()["rev"])["steps"]
+    assert (step["assignee"], step["assigned_by"]) == ("writer", "manual")
+    refused = client.post(url, json={"steps": [
+        {"key": "a", "title": "Operate", "assignee": "secret"},
+    ]})
+    assert refused.status_code == 422
+    assert "'secret'" in refused.json()["detail"]
