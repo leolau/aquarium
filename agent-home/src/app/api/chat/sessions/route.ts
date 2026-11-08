@@ -47,6 +47,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     tags: url.searchParams.get("tags") ?? undefined,
     excludeTags: url.searchParams.get("exclude_tags") ?? undefined,
     tagMatch: url.searchParams.get("tag_match") ?? undefined,
+    pinned: url.searchParams.get("pinned") === "only" ? ("only" as const) : undefined,
   };
   try {
     const client = await apiClientForRequest({ profile: profileFromUrl(request.url) });

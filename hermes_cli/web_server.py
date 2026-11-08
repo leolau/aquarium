@@ -6414,6 +6414,29 @@ async def get_action_status(name: str, lines: int = 200):
     }
 
 
+_LOCAL_PIN_USER = "local"
+
+
+async def _pin_user_id(request: Request, profile: Optional[str]) -> str:
+    """Whose pins a call reads/writes: the principal in the addressed profile.
+
+    A single-user install without the user directory pins as one local user.
+    """
+    try:
+        return (await _chat_principal(request, profile)).user_id or _LOCAL_PIN_USER
+    except _CommsNotConfigured:
+        return _LOCAL_PIN_USER
+
+
+async def _session_list_pin_user(request: Request) -> Optional[str]:
+    """Dependency for list views: the pin owner, or ``None`` when unresolvable
+    (the list then simply reports nothing pinned)."""
+    try:
+        return await _pin_user_id(request, await _requested_chat_profile(request))
+    except Exception:
+        return None
+
+
 @app.get("/api/sessions")
 def get_sessions(
     limit: int = 20,
@@ -6428,12 +6451,17 @@ def get_sessions(
     tags: str = None,
     exclude_tags: str = None,
     tag_match: str = "any",
+    pinned: str = "any",
     scope: Optional[str] = Depends(_chat_scope),
+    pin_user: Optional[str] = Depends(_session_list_pin_user),
 ):
     """List sessions.
 
     A login limited to its own chats (see :func:`_chat_scope`) only lists the
     conversations it owns.
+
+    Every row carries the caller's ``pinned_at`` (null when not pinned);
+    ``pinned=only`` lists just the caller's pinned chats, whatever their age.
 
     ``archived`` controls how soft-archived sessions are treated:
     ``exclude`` (default) hides them, ``only`` returns just the archived ones
@@ -6455,12 +6483,15 @@ def get_sessions(
             status_code=400,
             detail="order must be one of: created, recent",
         )
+    if pinned not in ("any", "only"):
+        raise HTTPException(status_code=400, detail="pinned must be one of: any, only")
     profile_name: Optional[str] = None
     if profile:
         profile_name, _ = _cron_profile_home(profile)
     try:
         db = _open_session_db_for_profile(profile)
         try:
+            pins = db.get_pins(pin_user) if pin_user else {}
             min_message_count = max(0, min_messages)
             archived_only = archived == "only"
             include_archived = archived == "include"
@@ -6493,11 +6524,12 @@ def get_sessions(
                 archived_only=archived_only,
                 order_by_last_active=order == "recent",
                 user_id=scope,
+                root_ids=list(pins) if pinned == "only" else None,
             )
             if filtered_ids is not None:
                 id_set = set(filtered_ids)
                 sessions = [s for s in sessions if s["id"] in id_set]
-            total = db.session_count(
+            total = len(sessions) if pinned == "only" else db.session_count(
                 source=source or None,
                 cwd_prefix=(cwd_prefix or None),
                 exclude_sources=exclude_list or None,
@@ -6524,6 +6556,7 @@ def get_sessions(
                 # SQLite stores the flag as 0/1; expose a real JSON boolean.
                 s["archived"] = bool(s.get("archived"))
                 s["tags"] = tags_by_session.get(s["id"], [])
+                s["pinned_at"] = pins.get(s.get("_lineage_root_id") or s["id"])
                 # Tens of KB per row and unused by list views; a whole list
                 # would otherwise weigh tens of MB.
                 s.pop("system_prompt", None)
@@ -7233,6 +7266,7 @@ _AUX_TASK_SLOTS: Tuple[str, ...] = (
     "approval",
     "mcp",
     "title_generation",
+    "session_review",
     "triage_specifier",
     "kanban_decomposer",
     "profile_describer",
@@ -11627,6 +11661,94 @@ async def get_lead_session(request: Request, profile: Optional[str] = None):
             "resume_session_id": db.resolve_resume_session_id(sid),
             "created": created,
         }
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Session pins + pin suggestions (agent-home landing). Pins are per user and,
+# because they live in each profile's own state.db, per profile.
+# ---------------------------------------------------------------------------
+
+class SessionPinBody(BaseModel):
+    pinned: bool
+    profile: Optional[str] = None
+
+
+class PinSuggestionDismissBody(BaseModel):
+    session_ids: List[str]
+    profile: Optional[str] = None
+
+
+@app.post("/api/sessions/{session_id}/pin")
+async def set_session_pin(
+    session_id: str,
+    body: SessionPinBody,
+    request: Request,
+    scope: Optional[str] = Depends(_chat_scope),
+):
+    """Pin or unpin a chat for the caller (idempotent either way).
+
+    Pins key on the compression root, so a chat stays pinned after it
+    auto-compresses. Returns ``{session_id, pinned_at}`` (null once unpinned).
+    """
+    user_id = await _pin_user_id(request, body.profile)
+    db = _open_session_db_for_profile(body.profile)
+    try:
+        _require_chat_access(db, session_id, scope)
+        if db.get_session(session_id) is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if body.pinned:
+            try:
+                pinned_at = db.pin_session(user_id, session_id)
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc))
+        else:
+            db.unpin_session(user_id, session_id)
+            pinned_at = None
+        return {"session_id": session_id, "pinned_at": pinned_at}
+    finally:
+        db.close()
+
+
+@app.get("/api/sessions/pin-suggestions")
+async def get_pin_suggestions(
+    request: Request,
+    profile: Optional[str] = None,
+    scope: Optional[str] = Depends(_chat_scope),
+):
+    """Chats the agent suggests pinning (landing "review").
+
+    Served from a per-user cache; a due model review runs in the background
+    (``pending: true``) and never touches any conversation. Gated by
+    ``landing.pin_suggestions`` in config.yaml.
+    """
+    from hermes_cli import session_pins
+
+    user_id = await _pin_user_id(request, profile)
+    db = _open_session_db_for_profile(profile)
+    try:
+        return session_pins.get_suggestions(db, scope, user_id)
+    finally:
+        db.close()
+
+
+@app.post("/api/sessions/pin-suggestions/dismiss")
+async def dismiss_pin_suggestions(
+    body: PinSuggestionDismissBody,
+    request: Request,
+    scope: Optional[str] = Depends(_chat_scope),
+):
+    """Dismiss suggestions for good; ids the caller cannot see are ignored."""
+    user_id = await _pin_user_id(request, body.profile)
+    db = _open_session_db_for_profile(body.profile)
+    try:
+        ids = [
+            sid for sid in dict.fromkeys(body.session_ids[:100])
+            if sid and (scope is None or db.session_owner_user_id(sid) == scope)
+        ]
+        db.dismiss_pin_suggestions(user_id, ids)
+        return {"dismissed": ids}
     finally:
         db.close()
 

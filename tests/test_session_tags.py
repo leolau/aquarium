@@ -312,7 +312,7 @@ class TestSchemaMigration:
         names = {r[0] for r in cursor.fetchall()}
         assert "session_tags" in names
         assert "session_tag_map" in names
-        # Schema version is 18
+        # Tag tables arrived in v18; later migrations keep them.
         row = db._conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
-        assert row[0] == 18
+        assert row[0] >= 18
         db.close()
