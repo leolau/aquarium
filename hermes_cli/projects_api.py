@@ -3284,7 +3284,8 @@ async def save_playbook_route(request: Request) -> dict[str, Any]:
     Open to the ``member`` role — the agent proposes the method; only a
     lead/admin may activate it. Cycle-checked at save time with the
     offending keys named (§7.1), and a step ``assignee`` must be one of
-    the project's profiles.
+    the project's profiles or one the caller may attach by approving the
+    plan (FG-34 decision 1).
     """
     project, _role, profiles, principal = await _require_write(
         request, judgement=True
@@ -3292,9 +3293,10 @@ async def save_playbook_route(request: Request) -> dict[str, Any]:
     _refuse_if_archived(project, "revising its plan")
     body = await request.json()
     steps = body.get("steps") or []
+    accessible = await _accessible_profiles(principal, project)
 
     def _save_sync() -> dict:
-        profile_names = {p["profile"] for p in profiles}
+        profile_names = {p["profile"] for p in profiles} | set(accessible)
         try:
             cleaned = projects_db.validate_playbook_steps(steps)
         except ValueError as exc:
@@ -3306,7 +3308,7 @@ async def save_playbook_route(request: Request) -> dict[str, Any]:
                     status_code=422,
                     detail=(
                         f"step {step['key']!r}: assignee {assignee!r} is not "
-                        f"one of the project's profiles {sorted(profile_names)}"
+                        f"a profile you can assign {sorted(profile_names)}"
                     ),
                 )
         with projects_db.connect_closing() as conn:

@@ -172,7 +172,9 @@ describe("PlanPanel — the step editor's assignee picker", () => {
       expect(fetchMock.mock.calls.some(([url, init]) => url === SAVE_URL && init?.method === "POST")).toBe(true),
     );
     const [, init] = fetchMock.mock.calls.find(([url, i]) => url === SAVE_URL && i?.method === "POST")!;
-    const sent = JSON.parse(String(init!.body)) as { steps: Record<string, unknown>[] };
+    const sent = JSON.parse(String(init!.body)) as { steps: Record<string, unknown>[]; base_rev?: number };
+    // The revision the editor opened from, so the server carries its assignments.
+    expect(sent.base_rev).toBe(3);
     expect(sent.steps[0]).toMatchObject({ assignee: "researcher", assigned_by: "manual", planner_assignee: "default" });
     expect(sent.steps[0]).not.toHaveProperty("fit");
     expect(sent.steps[0]).not.toHaveProperty("assignee_reason");

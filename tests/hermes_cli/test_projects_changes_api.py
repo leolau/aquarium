@@ -493,3 +493,54 @@ def test_approve_validation_and_permissions(cenv, model):
     state["actor"] = OWNER
     state["subject"] = ""
     assert client.post(url, json={"rev": rev}).status_code in (401, 403)
+
+
+def test_change_draft_sees_the_roster_and_writes_assignment_fields(cenv, monkeypatch):
+    """FG-34: a change draft is a re-plan, so it sees the capability
+    roster and the current steps' assignees, and its steps carry the C-3
+    fields like any drafted plan (a pick outside the set falls back)."""
+    client, _ = cenv
+    project = _active_project(cenv)
+    _save_and_activate_playbook(cenv, project)
+    seen: dict = {}
+
+    def fake_model(prompt):
+        seen["prompt"] = prompt
+        return json.dumps({"body": "Revised.", "steps": [
+            {"key": "gather", "title": "Collect arrivals", "assignee": "default",
+             "assignee_reason": "Only profile here.", "fit": "partial"},
+            {"key": "send", "title": "Send", "assignee": "ghost", "fit": "strong"},
+        ]})
+
+    monkeypatch.setattr(projects_api, "_call_plan_model", fake_model)
+    assert _change(client, project, "next").status_code == 200
+    state = _wait_draft(client, project)
+    assert state["status"] == "done", state
+    assert "Profiles a step may be assigned to" in seen["prompt"]
+    with projects_db.connect_closing() as conn:
+        steps = {
+            s["key"]: s
+            for s in projects_db.get_playbook(conn, project["id"], rev=state["rev"])["steps"]
+        }
+    assert (steps["gather"]["assigned_by"], steps["gather"]["fit"]) == ("planner", "partial")
+    assert steps["send"]["assignee"] == "default"
+    assert (steps["send"]["assigned_by"], steps["send"]["fit"]) == ("fallback", "none")
+    assert "'ghost'" in steps["send"]["assignee_reason"]
+
+
+def test_change_prompt_shows_each_current_steps_assignee():
+    project = types.SimpleNamespace(
+        name="Digest", goal="", description="", target_audience="",
+        cadence="weekly", autonomy="manual", id="p1",
+    )
+    plan = {"rev": 2, "steps": [
+        {"key": "gather", "title": "Collect", "assignee": "researcher"},
+        {"key": "send", "title": "Send"},
+    ]}
+    prompt = projects_changes_api._change_prompt(
+        project, [], [], plan, {"body": "Add a Chinese edition"}, [],
+        roster_block="- researcher: Finds sources.",
+    )
+    assert "1. [gather] Collect (assignee: researcher)" in prompt
+    assert "2. [send] Send (assignee" not in prompt
+    assert "- researcher: Finds sources." in prompt

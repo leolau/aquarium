@@ -34,6 +34,7 @@ export async function POST(
       body: body.body !== undefined ? String(body.body) : undefined,
       steps,
       note: body.note !== undefined ? String(body.note) : undefined,
+      base_rev: Number.isInteger(body.base_rev) ? (body.base_rev as number) : undefined,
     }),
   );
 }
