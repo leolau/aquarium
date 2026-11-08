@@ -127,6 +127,7 @@
   "POST /api/projects/[slug]/archive": "signed-in",
   "GET /api/projects/[slug]/artifacts": "signed-in",
   "GET /api/projects/[slug]/artifacts/[artifactId]/content": "signed-in",
+  "GET /api/projects/[slug]/assignable-profiles": "signed-in",
   "POST /api/projects/[slug]/ask": "signed-in",
   "PATCH /api/projects/[slug]/autonomy": "signed-in",
   "GET /api/projects/[slug]/board": "signed-in",

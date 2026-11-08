@@ -15,6 +15,7 @@ import { liveState, openRunOf } from "@/components/projects/live/liveState";
 import { DeliverableCard, type AcceptEnvelope } from "@/components/projects/outputs/DeliverableCard";
 import { useProjectArtifacts } from "@/components/projects/outputs/useProjectArtifacts";
 import { DRAFT_POLL_MS } from "@/components/projects/panels/PlanPanel";
+import { AssignmentDetails, WhoDoesWhat } from "@/components/projects/plan/StepAssignment";
 import { ProjectLifecycleMenu } from "@/components/projects/ProjectLifecycleMenu";
 import { useProjectAction } from "@/components/projects/useProjectAction";
 import { useProjectEvents } from "@/components/projects/useProjectEvents";
@@ -297,6 +298,9 @@ export function TaskView({
           <section data-component="TaskPlan" aria-label="Plan" className={CARD}>
             <h2 className="mb-2 text-sm font-semibold">Plan</h2>
             {plan?.steps && plan.steps.length > 0 ? (
+              <WhoDoesWhat steps={plan.steps} hostProfile={project.host_profile} />
+            ) : null}
+            {plan?.steps && plan.steps.length > 0 ? (
               <ol className="flex flex-col gap-1.5 text-sm">
                 {plan.steps.map((step, i) => {
                   const state = stepStates[i] ?? "todo";
@@ -319,6 +323,11 @@ export function TaskView({
                             {live.label}
                           </span>
                         ) : null}
+                        <AssignmentDetails
+                          assignment={step}
+                          assignee={step.assignee}
+                          hostProfile={project.host_profile}
+                        />
                       </span>
                     </li>
                   );

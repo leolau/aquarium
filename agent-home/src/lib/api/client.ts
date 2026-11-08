@@ -104,6 +104,7 @@ import type {
   ProjectOutput,
   ProjectPlaybookDraftState,
   ProjectPlaybookResponse,
+  AssignableProfilesResponse,
   ProjectRun,
   ProjectScheduleResult,
   ProjectsDoctorResponse,
@@ -2491,6 +2492,13 @@ export class HermesApiClient {
   async projectPlaybook(slug: string): Promise<ProjectPlaybookResponse> {
     return this.request(
       `/api/registry/projects/${encodeURIComponent(slug)}/playbook`,
+    );
+  }
+
+  /** Profiles the caller may assign plan steps to, with what each can do (FG-34 C-2). */
+  async projectAssignableProfiles(slug: string): Promise<AssignableProfilesResponse> {
+    return this.request(
+      `/api/registry/projects/${encodeURIComponent(slug)}/assignable-profiles`,
     );
   }
 

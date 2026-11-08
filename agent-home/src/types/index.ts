@@ -2066,7 +2066,57 @@ export interface PlaybookStep {
    * plus the core floor). Absent = the worker gets the assignee
    * profile's full tool surface. */
   toolsets?: string[];
+  assignee_reason?: string | null;
+  fit?: AssignmentFit | null;
+  matched_skills?: string[] | null;
+  assigned_by?: AssignedBy | null;
+  suggested_profile?: string | null;
+  /** The planner's pick before a hand edit replaced it (`assigned_by: "manual"`). */
+  planner_assignee?: string | null;
   [extra: string]: unknown;
+}
+
+/** FG-34 C-3: how well the chosen profile fits a step, in the planner's view. */
+export type AssignmentFit = "strong" | "partial" | "none";
+export type AssignedBy = "planner" | "fallback" | "manual";
+
+/** FG-34 C-3: why a step/card went to its profile. Every field may be absent. */
+export interface StepAssignment {
+  assignee?: string | null;
+  assignee_reason?: string | null;
+  fit?: AssignmentFit | null;
+  matched_skills?: string[] | null;
+  assigned_by?: AssignedBy | null;
+  suggested_profile?: string | null;
+  planner_assignee?: string | null;
+}
+
+/** FG-34 C-1: what a profile can do, for picking an assignee. */
+export interface ProfileCapabilityCard {
+  name: string;
+  display_name?: string | null;
+  description?: string | null;
+  description_auto?: boolean;
+  skills?: { name: string; category?: string | null }[];
+  toolsets?: string[];
+  model?: string | null;
+  track_record?: {
+    window_days?: number;
+    completed?: number;
+    blocked?: number;
+    failed?: number;
+    recent?: { title: string; outcome: string; ended_at: number | null }[];
+  } | null;
+}
+
+/** FG-34 C-2: `GET /{slug}/assignable-profiles` row. */
+export interface AssignableProfile extends ProfileCapabilityCard {
+  in_project: boolean;
+  is_host: boolean;
+}
+
+export interface AssignableProfilesResponse {
+  profiles: AssignableProfile[];
 }
 
 export interface PlaybookRev {
@@ -2289,6 +2339,8 @@ export interface ProjectBoardTask {
    * assignee profile's enabled set, plus the core floor. Null/absent =
    * the worker loads the profile's full tool surface. */
   toolsets?: string[] | null;
+  /** FG-34 C-3: why the card went to its assignee; absent on older cards. */
+  assignment?: StepAssignment | null;
   [extra: string]: unknown;
 }
 
