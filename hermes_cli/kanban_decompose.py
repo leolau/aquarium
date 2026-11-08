@@ -18,11 +18,11 @@ Design notes
   client import inside the function, lenient response parse, never
   raises on expected failure modes.
 
-* The system prompt sees the *configured* profile roster — names plus
-  descriptions plus the default fallback. Profiles without a
-  description are still listed (with a note) so the decomposer can
-  match on name as a fallback, but the user has an obvious incentive
-  to describe them.
+* The system prompt sees the *configured* profile roster as FG-34
+  capability cards (``profile_capabilities.roster_prompt_block``):
+  description, installed skills, toolsets, model and 90-day track
+  record, plus the default fallback. Profiles without a description
+  are still listed so the decomposer can match on skills or name.
 
 * ``fanout=false`` collapses to the same effect as ``kanban specify``:
   we tighten the body and flip ``triage -> todo`` as a single task,
@@ -32,6 +32,10 @@ Design notes
 * If the LLM picks an assignee that doesn't exist as a profile, we
   rewrite it to the configured ``default_assignee`` (or the default
   profile if unset). A child task NEVER ends up with ``assignee=None``.
+
+* Every pick carries a reason (``assignee_reason``, ``fit``,
+  ``matched_skills``, ``assigned_by``: FG-34 contract C-3), recorded on
+  the task as an ``assignment`` event and a comment. A fallback says why.
 """
 
 from __future__ import annotations
@@ -45,6 +49,7 @@ from typing import Optional
 
 from hermes_cli import kanban_db as kb
 from hermes_cli import profiles as profiles_mod
+from hermes_cli.profile_capabilities import capability_roster, roster_prompt_block
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +62,8 @@ matching profile from the available roster.
 
 You will be given:
   - The original task title and body
-  - The list of available profiles (each with name + description)
+  - The list of available profiles: name, description, skills, tools and
+    track record (card runs completed / blocked / failed, recent titles)
   - The fallback "default_assignee" used when no profile fits
 
 Output a single JSON object with this exact shape:
@@ -70,6 +76,9 @@ Output a single JSON object with this exact shape:
         "title": "<concrete task title, imperative voice, <= 80 chars>",
         "body":  "<detailed spec for the worker on this child task>",
         "assignee": "<profile name from the roster, or null for default>",
+        "assignee_reason": "<one sentence: the skill/tool/track record that fits, or what is missing>",
+        "fit": "strong" | "partial" | "none",
+        "matched_skills": ["<skill or tool names from that profile's card>"],
         "parents": [<int>, ...]
       },
       ...
@@ -84,9 +93,11 @@ Rules:
     them no parents so the dispatcher fans them out at once.
   - Use 2-6 tasks for normal work. Don't create 20 tiny tasks. Don't
     cram everything into 1 task.
-  - Pick assignees from the roster by matching the task to the profile's
-    DESCRIPTION (not just the name). When nothing matches well, use null
-    and the system will route to the default_assignee.
+  - Pick assignees from the roster by matching the task to each profile's
+    SKILLS, TOOLS, DESCRIPTION and TRACK RECORD (not the name). Prefer a
+    profile whose track record shows it completes this kind of work. When
+    nothing fits, use null with "fit": "none" and say in "assignee_reason"
+    what is missing; the system will route to the default_assignee.
   - Each child task body is what a fresh worker will read with no other
     context — be specific about goal, approach, and acceptance criteria.
 
@@ -98,7 +109,10 @@ return:
     "rationale": "<one sentence>",
     "title": "<tightened title>",
     "body":  "<concrete spec for a single worker>",
-    "assignee": "<profile name from the roster, or null for default>"
+    "assignee": "<profile name from the roster, or null for default>",
+    "assignee_reason": "<one sentence>",
+    "fit": "strong" | "partial" | "none",
+    "matched_skills": ["<skill or tool names>"]
   }
 
 In that case the task stays as one work item, just with a tightened spec and
@@ -214,12 +228,12 @@ def _resolve_default_assignee(cfg: dict) -> str:
         return "default"
 
 
-def _build_roster() -> tuple[list[dict], set[str]]:
+def _build_roster(board_conn=None) -> tuple[list[dict], set[str]]:
     """Return (roster_for_prompt, valid_assignee_names).
 
-    Each roster entry is ``{name, description, has_description}``. The
-    valid-set is used after the LLM responds to rewrite invalid
-    assignees to the default fallback.
+    Each roster entry is a capability card (``profile_capabilities``)
+    plus ``has_description``. The valid-set is used after the LLM
+    responds to rewrite invalid assignees to the default fallback.
     """
     roster: list[dict] = []
     valid: set[str] = set()
@@ -228,25 +242,24 @@ def _build_roster() -> tuple[list[dict], set[str]]:
     except Exception as exc:
         logger.warning("decompose: failed to list profiles: %s", exc)
         return roster, valid
-    for p in all_profiles:
-        desc = (p.description or "").strip()
-        roster.append({
-            "name": p.name,
-            "description": desc or f"(no description; profile named {p.name!r})",
-            "has_description": bool(desc),
-        })
-        valid.add(p.name)
+    names = [p.name for p in all_profiles]
+    listed = {p.name: (p.description or "").strip() for p in all_profiles}
+    try:
+        cards = capability_roster(names, board_conn=board_conn)
+    except Exception as exc:  # noqa: BLE001 — capability_roster should not raise
+        logger.warning("decompose: capability roster failed: %s", exc)
+        cards = [{"name": n} for n in dict.fromkeys(names)]
+    for card in cards:
+        desc = (card.get("description") or "").strip() or listed.get(card["name"], "")
+        roster.append({**card, "description": desc, "has_description": bool(desc)})
+        valid.add(card["name"])
     return roster, valid
 
 
 def _format_roster(roster: list[dict]) -> str:
     if not roster:
         return "  (no profiles installed — decomposer cannot route work)"
-    lines = []
-    for entry in roster:
-        tag = "" if entry["has_description"] else " ⚠ undescribed"
-        lines.append(f"  - {entry['name']}{tag}: {entry['description']}")
-    return "\n".join(lines)
+    return roster_prompt_block(roster)
 
 
 def _normalize_assignee_choice(
@@ -266,6 +279,89 @@ def _normalize_assignee_choice(
     if chosen not in valid_names:
         return default_assignee
     return chosen
+
+
+_REASON_MAX = 240
+_FITS = ("strong", "partial", "none")
+
+
+def _card_capabilities(card: Optional[dict]) -> dict[str, str]:
+    """Lower-cased skill/toolset names (and ``category/skill``) → card name."""
+    names: dict[str, str] = {}
+    for skill in (card or {}).get("skills") or []:
+        name = str(skill.get("name") or "").strip()
+        if not name:
+            continue
+        names[name.lower()] = name
+        if skill.get("category"):
+            names[f"{skill['category']}/{name}".lower()] = name
+    for toolset in (card or {}).get("toolsets") or []:
+        if toolset:
+            names[str(toolset).lower()] = str(toolset)
+    return names
+
+
+def _assignment_choice(
+    entry: dict,
+    *,
+    default_assignee: str,
+    valid_names: set[str],
+    cards: dict[str, dict],
+) -> tuple[str, dict]:
+    """Return ``(assignee, assignment)`` for one decomposer pick.
+
+    ``assignment`` holds the FG-34 C-3 fields. A valid pick keeps the
+    model's reason, fit and the ``matched_skills`` that are on the chosen
+    profile's card; anything else routes to ``default_assignee`` with a
+    reason saying why.
+    """
+    raw = entry.get("assignee")
+    picked = raw.strip() if isinstance(raw, str) else ""
+    chosen = _normalize_assignee_choice(
+        raw, default_assignee=default_assignee, valid_names=valid_names,
+    )
+    reason = entry.get("assignee_reason")
+    reason = " ".join(reason.split()) if isinstance(reason, str) else ""
+    if picked and chosen == picked:
+        fit = entry.get("fit") if entry.get("fit") in _FITS else None
+        known = _card_capabilities(cards.get(chosen))
+        matched = list(dict.fromkeys(
+            known[s.strip().lower()]
+            for s in (entry.get("matched_skills") or [])
+            if isinstance(s, str) and s.strip().lower() in known
+        )) if isinstance(entry.get("matched_skills"), list) else []
+        if not reason:
+            reason = (
+                f"Picked for its {', '.join(matched)}." if matched
+                else f"Picked {chosen} from the roster."
+            )
+        assignment: dict = {
+            "assignee_reason": _truncate(reason, _REASON_MAX),
+            "fit": fit,
+            "matched_skills": matched,
+            "assigned_by": "planner",
+        }
+        return chosen, assignment
+
+    if picked:
+        why = (
+            f"The decomposer picked {picked!r}, which is not an available "
+            f"profile; routed to the default assignee {default_assignee}."
+        )
+    elif reason:
+        why = f"No good fit: {reason.rstrip('.')}. Routed to the default assignee {default_assignee}."
+    else:
+        why = f"No profile in the roster fits this task; routed to the default assignee {default_assignee}."
+    suggested = entry.get("suggested_profile")
+    assignment = {
+        "assignee_reason": _truncate(why, _REASON_MAX),
+        "fit": "none",
+        "matched_skills": [],
+        "assigned_by": "fallback",
+    }
+    if isinstance(suggested, str) and suggested.strip():
+        assignment["suggested_profile"] = suggested.strip()[:80]
+    return chosen, assignment
 
 
 def decompose_task(
@@ -300,6 +396,7 @@ def decompose_task(
     kanban_cfg = cfg.get("kanban", {}) if isinstance(cfg, dict) else {}
     auto_promote = bool(kanban_cfg.get("auto_promote_children", True))
     roster, valid_names = _build_roster()
+    cards = {card["name"]: card for card in roster}
 
     try:
         from agent.auxiliary_client import (  # type: ignore
@@ -364,11 +461,13 @@ def decompose_task(
         title_val = new_title.strip() if isinstance(new_title, str) and new_title.strip() else None
         body_val = new_body if isinstance(new_body, str) and new_body.strip() else None
         assignee_val = None
+        assignment_val = None
         if not task.assignee:
-            assignee_val = _normalize_assignee_choice(
-                parsed.get("assignee"),
+            assignee_val, assignment_val = _assignment_choice(
+                parsed,
                 default_assignee=default_assignee,
                 valid_names=valid_names,
+                cards=cards,
             )
         if title_val is None and body_val is None:
             return DecomposeOutcome(
@@ -382,6 +481,7 @@ def decompose_task(
                 body=body_val,
                 assignee=assignee_val,
                 author=audit_author,
+                assignment=assignment_val,
             )
         if not ok:
             return DecomposeOutcome(
@@ -415,10 +515,11 @@ def decompose_task(
         if not isinstance(body, str):
             body = ""
         assignee = entry.get("assignee")
-        chosen = _normalize_assignee_choice(
-            assignee,
+        chosen, assignment = _assignment_choice(
+            entry,
             default_assignee=default_assignee,
             valid_names=valid_names,
+            cards=cards,
         )
         if (
             isinstance(assignee, str)
@@ -440,6 +541,7 @@ def decompose_task(
             "body": body.strip(),
             "assignee": chosen,
             "parents": clean_parents,
+            "assignment": assignment,
         })
 
     try:
