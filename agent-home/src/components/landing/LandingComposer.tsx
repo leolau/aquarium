@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 
 import { AquariumLoader } from "@/components/brand/AquariumLoader";
+import { useAction } from "@/lib/use-action";
 import type { ProfileSummary } from "@/types";
 
 import { chatHandOffUrl, greetingFor } from "./startChat";
@@ -34,7 +35,9 @@ export function LandingComposer({
   const router = useRouter();
   const [text, setText] = useState("");
   const [profile, setProfile] = useState(currentProfile);
-  const [pending, setPending] = useState(false);
+  // Stays true after a successful hand-off so the button keeps its busy look
+  // until the chat page replaces this one.
+  const [leaving, setLeaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -43,26 +46,30 @@ export function LandingComposer({
   const greeting = greetingFor(new Date().getHours());
   const trimmed = text.trim();
 
-  async function submit() {
-    if (!trimmed || pending) return;
-    setPending(true);
+  const start = useAction(async (message: string, target: string) => {
     setError(null);
     try {
-      if (profile !== currentProfile) {
+      if (target !== currentProfile) {
         // A profile is a whole HERMES_HOME: switch the session first so the
         // chat page, its history and the reply all belong to it.
         const res = await fetch("/api/session/profile", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ profile }),
+          body: JSON.stringify({ profile: target }),
         });
-        if (!res.ok) throw new Error(`Couldn't switch to ${profile}.`);
+        if (!res.ok) throw new Error(`Couldn't switch to ${target}.`);
       }
-      router.push(chatHandOffUrl(trimmed));
+      setLeaving(true);
+      router.push(chatHandOffUrl(message));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't start the chat.");
-      setPending(false);
     }
+  });
+  const pending = start.pending || leaving;
+
+  function submit() {
+    if (!trimmed || pending) return;
+    void start.run(trimmed, profile);
   }
 
   const hello = name ? `${greeting}, ${name}` : greeting;
@@ -87,7 +94,7 @@ export function LandingComposer({
         className="w-full rounded-[var(--radius-2xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-sm focus-within:border-[var(--color-accent)]"
         onSubmit={(e) => {
           e.preventDefault();
-          void submit();
+          submit();
         }}
       >
         <label htmlFor="landing-message" className="sr-only">
@@ -101,7 +108,7 @@ export function LandingComposer({
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
-              void submit();
+              submit();
             }
           }}
           rows={3}
