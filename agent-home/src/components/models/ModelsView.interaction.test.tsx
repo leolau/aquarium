@@ -75,7 +75,7 @@ describe("ModelsView pinned cards", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const { findByText, container } = render(<ModelsView initial={OVERVIEW} />);
+    const { findByText, container } = render(<ModelsView initialAdvanced initial={OVERVIEW} />);
     await findByText("Generate slide 118");
     expect(container.textContent).toContain("Canva deck · blocked");
     expect(container.textContent).toContain("deepseek-chat");
@@ -87,7 +87,7 @@ describe("ModelsView pinned cards", () => {
     const fetchMock = pinnedFetch({ pinned: [] });
     vi.stubGlobal("fetch", fetchMock);
 
-    const { container } = render(<ModelsView initial={OVERVIEW} />);
+    const { container } = render(<ModelsView initialAdvanced initial={OVERVIEW} />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(container.textContent).not.toContain("Pinned cards");
   });
@@ -96,7 +96,7 @@ describe("ModelsView pinned cards", () => {
     const fetchMock = vi.fn().mockRejectedValue(new Error("down"));
     vi.stubGlobal("fetch", fetchMock);
 
-    const { container } = render(<ModelsView initial={OVERVIEW} />);
+    const { container } = render(<ModelsView initialAdvanced initial={OVERVIEW} />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     await waitFor(() =>
       expect(container.textContent).not.toContain("Pinned cards"),
@@ -124,7 +124,7 @@ describe("ModelsView test button", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const { container, findByText } = render(<ModelsView initial={OVERVIEW} />);
+    const { container, findByText } = render(<ModelsView initialAdvanced initial={OVERVIEW} />);
     fireEvent.click(await findByText("Test"));
 
     await waitFor(() =>
@@ -144,7 +144,7 @@ describe("ModelsView test button", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const { container, findByText } = render(<ModelsView initial={OVERVIEW} />);
+    const { container, findByText } = render(<ModelsView initialAdvanced initial={OVERVIEW} />);
     fireEvent.click(await findByText("Test"));
 
     await waitFor(() =>

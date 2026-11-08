@@ -1,5 +1,8 @@
 import { GtsCentreView } from "@/components/gts/GtsCentreView";
 import { MobileShell } from "@/components/MobileShell";
+import { LoadError } from "@/components/system/LoadError";
+import { InfoTip } from "@/components/ui/InfoTip";
+import { getT } from "@/i18n/server";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
 import type { GtsGraphResponse } from "@/types";
 
@@ -18,12 +21,13 @@ const EMPTY_GRAPH: GtsGraphResponse = {
 };
 
 /**
- * FG-20 Wave B1 — GTS Centre tab. BFF: the server resolves the principal, calls
+ * FG-20 Wave B1 — Graph (formerly GTS Centre). BFF: the server resolves the principal, calls
  * the Python API `/api/gts/graph` (C2 + item_grants RLS enforced upstream), and
  * renders the mobile-first read-only graph. The browser never touches Supabase.
  */
 export default async function Page() {
   await requirePrincipal();
+  const t = await getT("system");
 
   let graph = EMPTY_GRAPH;
   let error: string | null = null;
@@ -35,14 +39,14 @@ export default async function Page() {
   }
 
   return (
-    <MobileShell title="GTS Centre">
+    <MobileShell
+      title={t("cards.graph.name")}
+      subtitle={t("graph.subtitle")}
+      info={<InfoTip label={t("graph.info")}>{t("graph.infoBody")}</InfoTip>}
+      wide
+    >
       {error ? (
-        <div
-          data-component="GtsError"
-          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
-        >
-          Couldn&apos;t load the GTS graph ({error}).
-        </div>
+        <LoadError component="GtsError" title={t("graph.loadError")} details={error} />
       ) : (
         <GtsCentreView graph={graph} />
       )}

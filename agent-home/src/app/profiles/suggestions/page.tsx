@@ -1,3 +1,4 @@
+import { getT } from "@/i18n/server";
 import { MobileShell } from "@/components/MobileShell";
 import { ProfileSuggestionsView } from "@/components/profiles/ProfileSuggestionsView";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
@@ -28,6 +29,7 @@ export const dynamic = "force-dynamic";
  */
 export default async function Page() {
   const principal = await requirePrincipal();
+  const t = await getT("system");
 
   let suggestions: ProfileSuggestion[] = [];
   let reviewed: ProfileSuggestionSummary[] = [];
@@ -42,7 +44,7 @@ export default async function Page() {
   }
 
   return (
-    <MobileShell title="Profile suggestions">
+    <MobileShell title={t("pages.suggestions.title")} subtitle={t("pages.suggestions.subtitle")}>
       <ProfileSuggestionsView
         role={principal.role}
         suggestions={suggestions}

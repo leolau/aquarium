@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { MobileShell } from "@/components/MobileShell";
 import { SkillsView } from "@/components/skills/SkillsView";
+import { getT } from "@/i18n/server";
 import { toProfileInfo } from "@/lib/api/profile-info";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
 import { canAdminister } from "@/lib/auth/roles";
@@ -20,6 +21,7 @@ export default async function Page({
   searchParams: Promise<{ profile?: string; view?: string }>;
 }) {
   const principal = await requirePrincipal();
+  const t = await getT("system");
   if (!canAdminister(principal)) redirect("/not-available?app=skills");
   const { profile: requested, view } = await searchParams;
 
@@ -39,7 +41,7 @@ export default async function Page({
       : null;
 
   return (
-    <MobileShell title="Skills" wide>
+    <MobileShell title={t("cards.skills.name")} subtitle={t("pages.skills.subtitle")} wide>
       <SkillsView
         key={`${profile}:${view ?? ""}`}
         profiles={profiles.map((p) => p.name)}

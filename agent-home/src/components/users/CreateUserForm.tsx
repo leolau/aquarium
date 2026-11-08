@@ -4,6 +4,7 @@ import { type FormEvent, useState } from "react";
 
 import type { Role } from "@/types";
 import { useAction } from "@/lib/use-action";
+import { useT } from "@/i18n/client";
 
 /** Roles assignable here — never `owner` (ownership moves via the CLI). */
 export const ASSIGNABLE_ROLES: readonly Role[] = ["admin", "member", "viewer"] as const;
@@ -45,6 +46,7 @@ export function CreateUserForm({
     role: Role;
   }) => Promise<void>;
 }) {
+  const t = useT("users");
   const [email, setEmail] = useState("");
   const [display, setDisplay] = useState("");
   const [role, setRole] = useState<Role>("member");
@@ -68,11 +70,11 @@ export function CreateUserForm({
       onSubmit={(evt) => void submitOnce(evt)}
       className="flex flex-col gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
     >
-      <p className="text-sm font-medium">Add a user</p>
+      <p className="text-sm font-medium">{t("create.title")}</p>
       <input
         type="email"
         required
-        aria-label="Email address"
+        aria-label={t("create.email")}
         placeholder="email@example.com"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
@@ -80,34 +82,34 @@ export function CreateUserForm({
       />
       <input
         type="text"
-        aria-label="Display name"
-        placeholder="Display name (optional)"
+        aria-label={t("create.display")}
+        placeholder={t("create.displayPlaceholder")}
         value={display}
         onChange={(e) => setDisplay(e.target.value)}
         className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
       />
       <label className="flex items-center justify-between gap-2 text-sm">
-        <span className="text-[var(--color-muted)]">Role</span>
+        <span className="text-[var(--color-muted)]">{t("create.role")}</span>
         <select
-          aria-label="Role"
+          aria-label={t("create.role")}
           value={role}
           onChange={(e) => setRole(e.target.value as Role)}
           className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
         >
           {ASSIGNABLE_ROLES.map((r) => (
             <option key={r} value={r}>
-              {r}
+              {t(`role.${r}`)}
             </option>
           ))}
         </select>
       </label>
       {options.length > 1 ? (
         <label className="flex items-center justify-between gap-2 text-sm">
-          <span className="text-[var(--color-muted)]">Profile</span>
+          <span className="text-[var(--color-muted)]">{t("create.profile")}</span>
           <select
             required
             name="profile"
-            aria-label="Profile"
+            aria-label={t("create.profile")}
             value={target}
             disabled={busy}
             onChange={(e) => setTarget(e.target.value)}
@@ -124,18 +126,17 @@ export function CreateUserForm({
       <p className="text-xs text-[var(--color-muted)]">
         {options.length > 1 ? null : (
           <>
-            Creating in <code>{target}</code>.{" "}
+            {t("create.creatingIn")} <code>{target}</code>.{" "}
           </>
         )}
-        New accounts start locked and are opened by the activation link this
-        returns; somebody who already has an account keeps their password.
+        {t("create.help")}
       </p>
       <button
         type="submit"
         disabled={busy || disabled}
         className="rounded-lg bg-[var(--color-accent)] px-3 py-2 text-sm font-medium text-[var(--color-accent-fg)] disabled:opacity-50"
       >
-        {busy ? "Creating…" : "Create user"}
+        {busy ? t("create.creating") : t("create.submit")}
       </button>
     </form>
   );

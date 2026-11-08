@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
+import { InfoTip } from "@/components/ui/InfoTip";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import { CheckIcon } from "@/components/ui/icons";
 import { Spinner } from "@/components/ui/Spinner";
+import { useConfirm } from "@/components/ui/useConfirm";
 import {
   useGoogleClientT,
   type GoogleClientKey,
@@ -110,10 +114,29 @@ function ConsoleLink({ href, t }: { href: string; t: GoogleClientT }) {
   );
 }
 
+function StepChip({ n, done, current }: { n: number | string; done: boolean; current: boolean }) {
+  const tone = done
+    ? "bg-[var(--color-success)] text-[var(--color-bg)]"
+    : current
+      ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]"
+      : "bg-[var(--color-surface-2)] text-[var(--color-muted)]";
+  return (
+    <span
+      aria-hidden
+      className={`mt-0.5 inline-flex h-5 min-w-8 shrink-0 items-center justify-center rounded-[var(--radius-full)] px-1.5 text-[11px] font-semibold ${tone}`}
+    >
+      {done ? <CheckIcon size={12} /> : n}
+    </span>
+  );
+}
+
 function Step({
   n,
   title,
   done,
+  current,
+  open,
+  onReopen,
   onToggle,
   disabled,
   t,
@@ -122,6 +145,9 @@ function Step({
   n: number;
   title: string;
   done: boolean;
+  current: boolean;
+  open: boolean;
+  onReopen: () => void;
   onToggle?: () => unknown;
   disabled?: boolean;
   t: GoogleClientT;
@@ -129,27 +155,41 @@ function Step({
 }) {
   return (
     <li
+      id={`google-step-${n}`}
       data-step={n}
-      className={`rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 ${done ? "opacity-80" : ""}`}
+      className={`scroll-mt-24 rounded-[var(--radius-lg)] border bg-[var(--color-surface)] p-4 md:p-5 ${current ? "border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}
     >
-      <div className="flex items-start gap-2.5">
-        <button
-          type="button"
-          role="checkbox"
-          aria-checked={done}
-          aria-label={t("markDone", { n })}
-          onClick={onToggle}
-          disabled={disabled || !onToggle}
-          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 text-sm ${done ? "border-emerald-500 bg-emerald-500 text-emerald-950" : "border-[var(--color-border)]"}`}
-        >
-          {done ? "✓" : ""}
-        </button>
+      <div className="flex items-start gap-3">
+        <StepChip n={n} done={done} current={current} />
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold">
+          <h3 className="text-base font-semibold">
             {n}. {title}
-          </p>
-          {children}
+          </h3>
+          {open ? (
+            children
+          ) : (
+            <button
+              type="button"
+              onClick={onReopen}
+              className="mt-1 min-h-9 text-xs text-[var(--color-accent)]"
+            >
+              {t("reopen")}
+            </button>
+          )}
         </div>
+        {onToggle ? (
+          <button
+            type="button"
+            role="checkbox"
+            aria-checked={done}
+            aria-label={t("markDone", { n })}
+            onClick={onToggle}
+            disabled={disabled}
+            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-md)] border-2 ${done ? "border-[var(--color-success)] bg-[var(--color-success)] text-[var(--color-bg)]" : "border-[var(--color-border)]"}`}
+          >
+            {done ? <CheckIcon size={14} /> : null}
+          </button>
+        ) : null}
       </div>
     </li>
   );
@@ -173,6 +213,43 @@ export function GoogleClientSetup() {
   const [clientSecret, setClientSecret] = useState("");
   const [dragging, setDragging] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const [reopened, setReopened] = useState<Set<number>>(new Set());
+  const { ask, dialog } = useConfirm();
+  const dirty = file !== null || clientId.trim() !== "" || clientSecret.trim() !== "";
+
+  // Unsaved client values: closing the tab or following a link asks first.
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    const onClick = (e: MouseEvent) => {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const a = (e.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+      if (!a || a.target === "_blank" || a.hasAttribute("download")) return;
+      const url = new URL(a.href, window.location.href);
+      if (url.origin !== window.location.origin) return;
+      if (url.pathname === window.location.pathname && url.hash) return;
+      e.preventDefault();
+      e.stopPropagation();
+      void ask({
+        title: t("leaveTitle"),
+        body: t("leaveBody"),
+        confirmLabel: t("leaveConfirm"),
+        cancelLabel: t("stay"),
+        tone: "danger",
+      }).then((ok) => {
+        if (ok) window.location.assign(url.href);
+      });
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    document.addEventListener("click", onClick, true);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      document.removeEventListener("click", onClick, true);
+    };
+  }, [dirty, ask, t]);
 
   useEffect(() => {
     let live = true;
@@ -290,29 +367,32 @@ export function GoogleClientSetup() {
   const canSave = !busy && (file !== null || (clientId.trim() && clientSecret.trim()));
 
   const notice = message && (
-    <p
-      role="status"
-      className={`mt-2 rounded-lg border px-2.5 py-2 text-[13px] ${message.tone === "ok" ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-200" : "border-red-400/40 bg-red-400/10 text-red-300"}`}
-    >
-      {t(message.key)}
-    </p>
+    <div className="mt-2">
+      <InlineAlert tone={message.tone === "ok" ? "success" : "danger"}>{t(message.key)}</InlineAlert>
+    </div>
   );
 
   const stepB = (
     <div
-      className={`mt-3 flex flex-col gap-1 rounded-lg border border-[var(--color-surface-2)] p-2 ${status.configured ? "" : "opacity-60"}`}
+      data-component="GoogleStepB"
+      className={`rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4 ${status.configured ? "" : "opacity-70"}`}
     >
-      <p className="text-sm font-semibold">{t("stepB")}</p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm font-semibold">{t("stepB")}</p>
+        {status.configured ? null : (
+          <span className="rounded-[var(--radius-full)] bg-[var(--color-surface-2)] px-2 py-0.5 text-xs text-[var(--color-muted)]">
+            {t("stepBLocked")}
+          </span>
+        )}
+      </div>
       {status.configured ? (
-        <p className="text-xs text-[var(--color-muted)]">
+        <p className="mt-1 text-xs text-[var(--color-muted)]">
           {t("stepBOpen")}{" "}
           <a href="#connected-accounts" className="text-[var(--color-accent)]">
             {t("stepBLink")}
           </a>
         </p>
-      ) : (
-        <p className="text-xs text-[var(--color-muted)]">{t("stepBLocked")}</p>
-      )}
+      ) : null}
     </div>
   );
 
@@ -327,8 +407,8 @@ export function GoogleClientSetup() {
     return (
       <section data-component="GoogleClientSetup" data-state="done">
         <h2 className="text-sm font-semibold">{t("title")}</h2>
-        <div className="mt-2 rounded-xl border border-emerald-500/35 bg-emerald-500/5 p-3">
-          <p className="text-sm font-semibold text-emerald-200">✓ {t("doneTitle")}</p>
+        <div className="mt-2 rounded-xl border border-[var(--color-success)]/35 bg-[var(--color-success)]/5 p-3">
+          <p className="text-sm font-semibold text-[var(--color-success)]">✓ {t("doneTitle")}</p>
           <p className="mt-1 text-xs text-[var(--color-muted)]">
             {t(kind, { id: status.client_id_hint ?? "" })}
             {status.source === "env" ? ` ${t("doneEnv")}` : ""}
@@ -363,163 +443,249 @@ export function GoogleClientSetup() {
           {notice}
         </div>
         <p className="mt-2 text-xs text-[var(--color-muted)]">{t("note")}</p>
-        {stepB}
+        <div className="mt-3">{stepB}</div>
       </section>
     );
   }
 
-  return (
-    <section data-component="GoogleClientSetup" data-state="guide">
-      <h2 className="text-sm font-semibold">{t("title")}</h2>
-      <p className="mt-1 text-xs text-[var(--color-muted)]">{t("intro")}</p>
-      <div className="mt-3 flex flex-col gap-1">
-        <div className="h-2 overflow-hidden rounded-full bg-[var(--color-surface-2)]">
-          <i
-            className="block h-full bg-emerald-500"
-            style={{ width: `${(doneCount / 6) * 100}%` }}
-          />
-        </div>
-        <p className="text-xs text-[var(--color-muted)]">
-          {t("progress", { done: doneCount })}
-        </p>
-      </div>
-      <p className="mt-2 text-xs text-[var(--color-muted)]">{t("tick")}</p>
+  const STEP_NUMS = [1, 2, 3, 4, 5, 6] as const;
+  const isDone = (n: number) => (n === 6 ? status.configured && !replacing : status.steps[String(n) as TickStep]);
+  const current = STEP_NUMS.find((n) => !isDone(n)) ?? 6;
+  const isOpen = (n: number) => !isDone(n) || reopened.has(n);
+  const jump = (n: number) => {
+    setReopened((prev) => new Set(prev).add(n));
+    window.requestAnimationFrame(() =>
+      document.getElementById(`google-step-${n}`)?.scrollIntoView({ behavior: "smooth", block: "start" }),
+    );
+  };
+  const discard = () => {
+    setFile(null);
+    setClientId("");
+    setClientSecret("");
+    setMessage(null);
+  };
+  const stepProps = (n: number) => ({
+    n,
+    done: isDone(n),
+    current: n === current,
+    open: isOpen(n),
+    onReopen: () => jump(n),
+    t,
+  });
 
-      <ol className="mt-3 flex flex-col gap-3">
-        <Step n={1} title={t("step1")} done={status.steps["1"]} onToggle={() => toggle("1")} t={t}>
-          <p className="text-xs text-[var(--color-muted)]">{t("step1Body")}</p>
-          <ConsoleLink href={CONSOLE.project} t={t} />
-        </Step>
-        <Step n={2} title={t("step2")} done={status.steps["2"]} onToggle={() => toggle("2")} t={t}>
-          <p className="text-xs text-[var(--color-muted)]">{t("step2Body")}</p>
-          <ConsoleLink href={CONSOLE.apis} t={t} />
-        </Step>
-        <Step n={3} title={t("step3")} done={status.steps["3"]} onToggle={() => toggle("3")} t={t}>
-          <p className="mt-1 text-xs text-[var(--color-muted)]">{t("step3Body")}</p>
-          <div className="mt-2 flex flex-col gap-2">
-            <CopyBox value="Aquarium" label={t("appName")} t={t} />
-            <p className="text-xs text-[var(--color-muted)]">
-              {t("supportEmail")} · {t("developerEmail")}: {t("yourEmail")}
-            </p>
+  const saveBar = dirty ? (
+    <div
+      data-component="SaveBar"
+      role="region"
+      aria-label={t("unsaved")}
+      className="sticky bottom-[calc(var(--coral-clearance)+var(--safe-bottom)+0.5rem)] z-20 flex flex-wrap items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-warn)] bg-[var(--color-surface)] p-3 shadow-lg lg:bottom-4"
+    >
+      <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-[var(--color-warn)]" />
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-semibold text-[var(--color-warn-text)]">{t("unsaved")}</p>
+        <p className="text-xs text-[var(--color-muted)]">{t("unsavedBody")}</p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={discard}
+          disabled={busy !== null}
+          className="min-h-11 rounded-[var(--radius-lg)] px-3 text-sm disabled:opacity-50"
+        >
+          {t("discard")}
+        </button>
+        <ActionButton
+          busyLabel={t("checking")}
+          onAction={save}
+          disabled={!canSave}
+          aria-busy={busy === "save"}
+          className="inline-flex min-h-11 items-center gap-2 rounded-[var(--radius-lg)] bg-[var(--color-accent)] px-4 text-sm font-semibold text-[var(--color-accent-fg)] disabled:opacity-60"
+        >
+          {busy === "save" && <Spinner />}
+          {busy === "save" ? t("checking") : t("saveAndTest")}
+        </ActionButton>
+      </div>
+    </div>
+  ) : null;
+
+  return (
+    <section
+      data-component="GoogleClientSetup"
+      data-state="guide"
+      className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:items-start"
+    >
+      {dialog}
+      <div className="flex min-w-0 flex-col gap-4 lg:sticky lg:top-4">
+        <nav
+          aria-label={t("title")}
+          className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
+        >
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <h2 className="min-w-0 flex-1 text-sm font-semibold">{t("title")}</h2>
+            <span className="rounded-[var(--radius-full)] bg-[var(--color-surface-2)] px-2 py-0.5 text-xs text-[var(--color-accent)]">
+              {t("progress", { done: doneCount })}
+            </span>
           </div>
-          <p className="mt-2 text-xs">{t("audience")}</p>
-          <p className="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-xs text-[var(--color-warn-text)]">
-            {t("unverified")}
-          </p>
-          <ConsoleLink href={CONSOLE.branding} t={t} />
-        </Step>
-        <Step n={4} title={t("step4")} done={status.steps["4"]} onToggle={() => toggle("4")} t={t}>
-          <p className="mt-1 text-xs text-[var(--color-muted)]">{t("step4Body")}</p>
-          <div className="mt-2">
-            <CopyBox value={status.scopes.join("\n")} multiline t={t} />
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--color-surface-2)]">
+            <i className="block h-full bg-[var(--color-success)]" style={{ width: `${(doneCount / 6) * 100}%` }} />
           </div>
-          <ConsoleLink href={CONSOLE.scopes} t={t} />
-        </Step>
-        <Step n={5} title={t("step5")} done={status.steps["5"]} onToggle={() => toggle("5")} t={t}>
-          <p className="mt-1 text-xs text-[var(--color-muted)]">{t("step5Body")}</p>
-          <p className="mt-2 text-xs text-[var(--color-muted)]">{t("redirect")}</p>
-          <div className="mt-1">
-            <CopyBox value={status.redirect_uri} t={t} />
-          </div>
-          <ConsoleLink href={CONSOLE.client} t={t} />
-        </Step>
-        <Step n={6} title={t("step6")} done={status.configured} t={t}>
-          {replacing && (
-            <p className="mt-1 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-xs text-[var(--color-warn-text)]">
-              {t("replaceIntro")}
-              {status.source === "env" ? ` ${t("replaceEnv")}` : ""}
-            </p>
-          )}
-          <p className="mt-1 text-xs text-[var(--color-muted)]">{t("step6Body")}</p>
-          <button
-            type="button"
-            onClick={() => fileInput.current?.click()}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragging(false);
-              void readFile(e.dataTransfer.files[0]);
-            }}
-            disabled={busy !== null}
-            className={`mt-2 w-full rounded-[10px] border-2 border-dashed p-4 text-center text-[13px] ${dragging ? "border-[var(--color-accent)]" : "border-[var(--color-border)]"} ${file ? "text-[var(--color-fg)]" : "text-[var(--color-muted)]"}`}
-          >
-            {file ? t("fileChosen", { name: file.name }) : `⬆ ${t("drop")}`}
-          </button>
-          <input
-            ref={fileInput}
-            type="file"
-            accept=".json,application/json"
-            className="hidden"
-            data-testid="google-client-file"
-            onChange={(e) => void readFile(e.target.files?.[0])}
-          />
-          <p className="mt-2 text-center text-xs text-[var(--color-muted)]">{t("or")}</p>
-          <div className="mt-1 grid gap-2 sm:grid-cols-2">
-            <label className="flex flex-col gap-1 text-xs text-[var(--color-muted)]">
-              {t("clientId")}
-              <input
-                value={clientId}
-                onChange={(e) => {
-                  setClientId(e.target.value);
-                  setFile(null);
-                }}
-                disabled={busy !== null}
-                autoComplete="off"
-                spellCheck={false}
-                placeholder="1234567890-abc….apps.googleusercontent.com"
-                className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 font-mono text-sm text-[var(--color-fg)]"
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-xs text-[var(--color-muted)]">
-              {t("clientSecret")}
-              <input
-                type="password"
-                value={clientSecret}
-                onChange={(e) => {
-                  setClientSecret(e.target.value);
-                  setFile(null);
-                }}
-                disabled={busy !== null}
-                autoComplete="off"
-                spellCheck={false}
-                placeholder="GOCSPX-…"
-                className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 font-mono text-sm text-[var(--color-fg)]"
-              />
-            </label>
-          </div>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <ActionButton busyLabel={t("checking")}
-              onAction={save}
-              disabled={!canSave}
-              aria-busy={busy === "save"}
-              className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-[var(--color-accent)] px-3 text-sm font-medium text-[var(--color-accent-fg)] disabled:opacity-50"
+          <p className="mt-2 text-xs text-[var(--color-muted)]">{t("stepsHint")}</p>
+          <ol className="mt-2 flex flex-col">
+            {STEP_NUMS.map((n) => (
+              <li key={n}>
+                <button
+                  type="button"
+                  data-stepper={n}
+                  aria-current={n === current ? "step" : undefined}
+                  onClick={() => jump(n)}
+                  className="flex min-h-11 w-full items-start gap-3 rounded-[var(--radius-md)] p-2 text-left hover:bg-[var(--color-surface-2)]"
+                >
+                  <StepChip n={n} done={isDone(n)} current={n === current} />
+                  <span className="min-w-0 text-sm font-semibold">{t(`step${n}` as GoogleClientKey)}</span>
+                </button>
+              </li>
+            ))}
+          </ol>
+        </nav>
+        {stepB}
+      </div>
+
+      <div className="flex min-w-0 flex-col gap-3">
+        <p className="text-sm text-[var(--color-muted)]">{t("intro")}</p>
+        <p className="text-xs text-[var(--color-muted)]">{t("tick")}</p>
+        <ol className="flex flex-col gap-3">
+          <Step {...stepProps(1)} title={t("step1")} onToggle={() => toggle("1")}>
+            <p className="mt-1 text-sm text-[var(--color-muted)]">{t("step1Body")}</p>
+            <ConsoleLink href={CONSOLE.project} t={t} />
+          </Step>
+          <Step {...stepProps(2)} title={t("step2")} onToggle={() => toggle("2")}>
+            <p className="mt-1 text-sm text-[var(--color-muted)]">{t("step2Body")}</p>
+            <ConsoleLink href={CONSOLE.apis} t={t} />
+          </Step>
+          <Step {...stepProps(3)} title={t("step3")} onToggle={() => toggle("3")}>
+            <p className="mt-1 text-sm text-[var(--color-muted)]">{t("step3Body")}</p>
+            <div className="mt-2 flex flex-col gap-2">
+              <CopyBox value="Aquarium" label={t("appName")} t={t} />
+              <p className="text-xs text-[var(--color-muted)]">
+                {t("supportEmail")} · {t("developerEmail")}: {t("yourEmail")}
+              </p>
+            </div>
+            <p className="mt-2 text-xs">{t("audience")}</p>
+            <div className="mt-2">
+              <InlineAlert tone="warn">{t("unverified")}</InlineAlert>
+            </div>
+            <ConsoleLink href={CONSOLE.branding} t={t} />
+          </Step>
+          <Step {...stepProps(4)} title={t("step4")} onToggle={() => toggle("4")}>
+            <p className="mt-1 text-sm text-[var(--color-muted)]">{t("step4Body")}</p>
+            <div className="mt-2">
+              <CopyBox value={status.scopes.join("\n")} multiline t={t} />
+            </div>
+            <ConsoleLink href={CONSOLE.scopes} t={t} />
+          </Step>
+          <Step {...stepProps(5)} title={t("step5")} onToggle={() => toggle("5")}>
+            <p className="mt-1 text-sm text-[var(--color-muted)]">{t("step5Body")}</p>
+            <p className="mt-2 text-xs text-[var(--color-muted)]">{t("redirect")}</p>
+            <div className="mt-1">
+              <CopyBox value={status.redirect_uri} t={t} />
+            </div>
+            <ConsoleLink href={CONSOLE.client} t={t} />
+          </Step>
+          <Step {...stepProps(6)} title={t("step6")}>
+            {replacing && (
+              <div className="mt-2">
+                <InlineAlert tone="warn">
+                  {t("replaceIntro")}
+                  {status.source === "env" ? ` ${t("replaceEnv")}` : ""}
+                </InlineAlert>
+              </div>
+            )}
+            <p className="mt-1 text-sm text-[var(--color-muted)]">{t("step6Body")}</p>
+            <button
+              type="button"
+              onClick={() => fileInput.current?.click()}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragging(true);
+              }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragging(false);
+                void readFile(e.dataTransfer.files[0]);
+              }}
+              disabled={busy !== null}
+              className={`mt-3 w-full break-words rounded-[var(--radius-lg)] border-2 border-dashed p-4 text-center text-[13px] ${dragging ? "border-[var(--color-accent)]" : "border-[var(--color-border)]"} ${file ? "text-[var(--color-fg)]" : "text-[var(--color-muted)]"}`}
             >
-              {busy === "save" && <Spinner />}
-              {busy === "save" ? t("checking") : t("saveAndTest")}
-            </ActionButton>
+              {file ? t("fileChosen", { name: file.name }) : t("drop")}
+            </button>
+            <input
+              ref={fileInput}
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              data-testid="google-client-file"
+              onChange={(e) => void readFile(e.target.files?.[0])}
+            />
+            <p className="mt-2 text-xs text-[var(--color-muted)]">{t("or")}</p>
+            <div className="mt-1 flex flex-col gap-3">
+              <label className="flex flex-col gap-1 text-sm font-medium">
+                {t("clientId")}
+                <input
+                  value={clientId}
+                  onChange={(e) => {
+                    setClientId(e.target.value);
+                    setFile(null);
+                  }}
+                  disabled={busy !== null}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="1234567890-abc….apps.googleusercontent.com"
+                  className="min-h-11 w-full min-w-0 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg)] px-3 font-mono text-sm font-normal text-[var(--color-fg)]"
+                />
+              </label>
+              <div className="flex flex-col gap-1">
+                <span className="flex items-center gap-1 text-sm font-medium">
+                  <label htmlFor="google-client-secret">{t("clientSecret")}</label>
+                  <InfoTip label={t("secretTipLabel")}>{t("secretTip")}</InfoTip>
+                </span>
+                <input
+                  id="google-client-secret"
+                  type="password"
+                  value={clientSecret}
+                  onChange={(e) => {
+                    setClientSecret(e.target.value);
+                    setFile(null);
+                  }}
+                  disabled={busy !== null}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="GOCSPX-…"
+                  className="min-h-11 w-full min-w-0 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg)] px-3 font-mono text-sm text-[var(--color-fg)]"
+                />
+              </div>
+            </div>
             {replacing && (
               <button
                 type="button"
                 onClick={() => {
                   setReplacing(false);
-                  setMessage(null);
+                  discard();
                 }}
                 disabled={busy !== null}
-                className="min-h-11 rounded-lg px-2 text-sm text-[var(--color-accent)] disabled:opacity-50"
+                className="mt-2 min-h-11 rounded-[var(--radius-lg)] px-2 text-sm text-[var(--color-accent)] disabled:opacity-50"
               >
                 {t("cancel")}
               </button>
             )}
-          </div>
-          {notice}
-          <p className="mt-2 text-xs text-[var(--color-muted)]">{t("note")}</p>
-        </Step>
-      </ol>
-      {stepB}
+            <div className="mt-3">
+              <InlineAlert tone="info">{t("ownerOnly")}</InlineAlert>
+            </div>
+          </Step>
+        </ol>
+        {notice}
+        {saveBar}
+      </div>
     </section>
   );
 }

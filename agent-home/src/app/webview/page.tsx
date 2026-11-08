@@ -1,6 +1,10 @@
 import { MobileShell } from "@/components/MobileShell";
+import { LoadError } from "@/components/system/LoadError";
+import { LockedState } from "@/components/system/LockedState";
 import { WebviewConsole } from "@/components/webview/WebviewConsole";
+import { getT } from "@/i18n/server";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
+import { canAdminister } from "@/lib/auth/roles";
 import type { WebviewSession } from "@/types";
 
 // Reads the live principal (cookie) + the caller's ephemeral webview session
@@ -14,9 +18,25 @@ export const dynamic = "force-dynamic";
  * {@link WebviewConsole}. Opening/closing sessions, requesting actions, and
  * resolving C6 approvals all route back through `/api/webview/*` to the
  * consent-gated (C6), per-user-isolated (C2), traced (C8) Python endpoints.
+ * Admin-only: members get a friendly locked card instead.
  */
 export default async function Page() {
-  await requirePrincipal();
+  const principal = await requirePrincipal();
+  const t = await getT("system");
+  const title = t("cards.webview.name");
+
+  if (!canAdminister(principal)) {
+    return (
+      <MobileShell title={title}>
+        <LockedState
+          title={t("lockedPage.webview.title")}
+          body={t("lockedPage.webview.body")}
+          hint={t("lockedPage.hint")}
+          back={t("lockedPage.back")}
+        />
+      </MobileShell>
+    );
+  }
 
   let configured = false;
   let session: WebviewSession | null = null;
@@ -31,16 +51,13 @@ export default async function Page() {
   }
 
   return (
-    <MobileShell title="Agent webview">
+    <MobileShell title={title} subtitle={t("webview.subtitle")}>
       {error ? (
-        <div
-          data-component="WebviewError"
-          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
-        >
-          Couldn&apos;t load the agent webview ({error}).
-        </div>
+        <LoadError component="WebviewError" title={t("webview.loadError")} details={error} />
       ) : (
-        <WebviewConsole initialConfigured={configured} initialSession={session} />
+        <div className="pb-24 lg:pb-8">
+          <WebviewConsole initialConfigured={configured} initialSession={session} />
+        </div>
       )}
     </MobileShell>
   );

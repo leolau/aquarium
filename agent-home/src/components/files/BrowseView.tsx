@@ -19,6 +19,22 @@ import type { FolderPermission } from "@/lib/folder-bridge/types";
 import type { BrowseEntry, BrowsePlace, ChatAttachment } from "@/types";
 import { ActionButton } from "@/components/ui/ActionButton";
 import { useConfirm } from "@/components/ui/useConfirm";
+import { ChevronRightIcon } from "@/components/ui/icons";
+import { Sheet } from "@/components/ui/Sheet";
+
+/** Wide enough for the three-pane layout; without matchMedia (tests) assume yes. */
+function useThreePanes(): boolean {
+  const [wide, setWide] = useState(true);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia("(min-width: 1280px)");
+    const sync = () => setWide(mq.matches);
+    sync();
+    mq.addEventListener?.("change", sync);
+    return () => mq.removeEventListener?.("change", sync);
+  }, []);
+  return wide;
+}
 
 /** A place on the left: a folder on this computer, a network folder or the workspace. */
 export interface Place {
@@ -123,6 +139,7 @@ type Preview =
 export function BrowseView() {
   const { ask: askConfirm, dialog } = useConfirm();
   const t = useT("filesBrowse");
+  const threePanes = useThreePanes();
   const locale = useLocale();
   const router = useRouter();
 
@@ -439,6 +456,61 @@ export function BrowseView() {
     </button>
   );
 
+  function renderFilePanel(place: Place, selected: BrowseEntry, inSheet: boolean) {
+    return (
+          <div className={inSheet ? "" : "rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4"}>
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="break-all text-sm font-semibold">{selected.name}</div>
+                <div className="mt-1 text-xs text-[var(--color-muted)]">
+                  {formatSize(selected.size)} · {date(selected.modified_at)}
+                </div>
+              </div>
+              {inSheet ? null : (
+                <button
+                  type="button"
+                  onClick={clearSelection}
+                  className="text-xs text-[var(--color-muted)]"
+                >
+                  {t("file.close")}
+                </button>
+              )}
+            </div>
+            <div className="mt-3">{renderPreview(preview, t)}</div>
+            <div className="mt-3 flex flex-col gap-2">
+              <ActionButton busyLabel={t("file.attaching")}
+                disabled={action !== null}
+                onAction={() => ask(place, selected)}
+                className="rounded-lg bg-[var(--color-accent)] px-3 py-2 text-sm text-[var(--color-accent-fg)] disabled:opacity-60"
+              >
+                {action === "ask" ? t("file.attaching") : t("file.ask")}
+              </ActionButton>
+              <ActionButton busyLabel={t("file.saving")}
+                disabled={action !== null}
+                onAction={() => save(place, selected)}
+                className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm disabled:opacity-60"
+              >
+                {action === "save" ? t("file.saving") : t("file.save")}
+              </ActionButton>
+              {fileLinks(place, selected, localUrl, t)}
+            </div>
+            {notice ? (
+              <p
+                role="status"
+                className={`mt-3 text-xs ${notice.ok ? "text-[var(--color-success)]" : "text-[var(--color-warn-text)]"}`}
+              >
+                {notice.text}{" "}
+                {notice.ok ? (
+                  <Link href="/files" className="underline">
+                    {t("file.savedLink")}
+                  </Link>
+                ) : null}
+              </p>
+            ) : null}
+          </div>
+    );
+  }
+
   const crumbs = path ? path.split("/") : [];
   // A network folder can take seconds per level: say so above the list.
   const openingSelf =
@@ -448,11 +520,14 @@ export function BrowseView() {
   return (
     <div
       data-component="BrowseView"
-      className="grid gap-4 md:grid-cols-[220px_minmax(0,1fr)] lg:grid-cols-[220px_minmax(0,1fr)_300px]"
+      className={`grid gap-4 md:grid-cols-[240px_minmax(0,1fr)] ${threePanes ? "xl:grid-cols-[260px_minmax(0,1fr)_320px]" : ""}`}
     >
-      {dialog}
       {/* Places: a sidebar on a computer, chips on a phone. */}
-      <nav aria-label={t("places.label")} aria-busy={placesLoading} className="hidden md:block">
+      <nav
+        aria-label={t("places.label")}
+        aria-busy={placesLoading}
+        className="hidden self-start rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-3 md:block"
+      >
         {groups.map((g) => {
           const mine = places.filter((p) => p.kind === g.kind);
           return (
@@ -473,17 +548,18 @@ export function BrowseView() {
                     disabled={busy}
                     aria-current={p.key === placeKey ? "true" : undefined}
                     onClick={() => choosePlace(p)}
-                    className={`flex w-full items-start gap-2 rounded-lg p-2 text-left text-sm disabled:cursor-wait ${
+                    className={`mb-2 flex min-h-11 w-full items-center gap-2 rounded-[var(--radius-md)] border p-3 text-left text-sm disabled:cursor-wait ${
                       p.key === placeKey
-                        ? "bg-[var(--color-surface)] outline outline-1 outline-[var(--color-border)]"
-                        : "hover:bg-[var(--color-surface)]"
+                        ? "border-[var(--color-accent)] bg-[var(--color-bg)]"
+                        : "border-[var(--color-border)] hover:bg-[var(--color-bg)]"
                     }`}
                   >
                     <span aria-hidden>{iconOf(p)}</span>
-                    <span className="min-w-0">
-                      <span className="block truncate">{p.name}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block break-words font-medium">{p.name}</span>
                       <span className="block text-[11px] text-[var(--color-muted)]">{hint(p)}</span>
                     </span>
+                    <ChevronRightIcon size={14} aria-hidden className="shrink-0 text-[var(--color-muted)]" />
                   </button>
                 ))
               )}
@@ -497,25 +573,31 @@ export function BrowseView() {
         ) : null}
       </nav>
 
-      <div className="flex gap-2 overflow-x-auto md:hidden" aria-label={t("places.label")}>
-        {places.map((p) => (
-          <button
-            key={p.key}
-            type="button"
-            disabled={busy}
-            onClick={() => choosePlace(p)}
-            className={`shrink-0 rounded-full border px-3 py-1.5 text-xs ${
-              p.key === placeKey
-                ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-accent-fg)]"
-                : "border-[var(--color-border)] bg-[var(--color-surface)]"
-            }`}
-          >
-            <span aria-hidden>{iconOf(p)}</span> {p.name}
-          </button>
-        ))}
-      </div>
+      <label className="md:hidden">
+        <span className="sr-only">{t("places.label")}</span>
+        <select
+          data-component="BrowsePlaceSelect"
+          value={placeKey ?? ""}
+          disabled={busy}
+          onChange={(e) => {
+            const next = places.find((p) => p.key === e.target.value);
+            if (next) choosePlace(next);
+          }}
+          className="min-h-11 w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm"
+        >
+          {placeKey ? null : <option value="">{t("choose")}</option>}
+          {places.map((p) => (
+            <option key={p.key} value={p.key}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      </label>
 
-      <section className="min-w-0" aria-busy={busy}>
+      <section
+        className="min-w-0 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-3 md:p-4"
+        aria-busy={busy}
+      >
         {!place ? (
           <p className="text-sm text-[var(--color-muted)]">
             {placesLoading ? t("opening") : t("choose")}
@@ -575,7 +657,7 @@ export function BrowseView() {
                       sortHeader("size", t("col.size")),
                       sortHeader("modified", t("col.modified")),
                     ]}
-                    initialWidths={[340, 100, 200]}
+                    initialWidths={[300, 90, 140]}
                   >
                     {pageEntries.map((e) => (
                       <tr
@@ -585,7 +667,7 @@ export function BrowseView() {
                           selected?.path === e.path ? "bg-[var(--color-accent)]/10" : ""
                         }`}
                       >
-                        <td className="truncate px-3 py-2">
+                        <td className="break-words px-3 py-2">
                           <button
                             type="button"
                             disabled={busy}
@@ -593,7 +675,7 @@ export function BrowseView() {
                             className="flex w-full min-w-0 items-center gap-2 text-left disabled:cursor-wait"
                           >
                             <span aria-hidden>{fileIcon(e)}</span>
-                            <span className="truncate">{e.name}</span>
+                            <span className="min-w-0 break-words">{e.name}</span>
                           </button>
                         </td>
                         <td className="whitespace-nowrap px-3 py-2 text-[var(--color-muted)]">
@@ -643,7 +725,7 @@ export function BrowseView() {
                       >
                         <span aria-hidden>{fileIcon(e)}</span>
                         <span className="min-w-0">
-                          <span className="block truncate">{e.name}</span>
+                          <span className="block break-words">{e.name}</span>
                           <span className="block text-[11px] text-[var(--color-muted)]">
                             {opening === `entry:${e.path}`
                               ? t("opening")
@@ -700,64 +782,24 @@ export function BrowseView() {
         )}
       </section>
 
-      <aside
-        data-component="BrowseFilePanel"
-        className="min-w-0 md:col-start-2 lg:col-start-auto"
-        aria-busy={action !== null}
-      >
-        {place && selected ? (
-          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <div className="break-all text-sm font-semibold">{selected.name}</div>
-                <div className="mt-1 text-xs text-[var(--color-muted)]">
-                  {formatSize(selected.size)} · {date(selected.modified_at)}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={clearSelection}
-                className="text-xs text-[var(--color-muted)]"
-              >
-                {t("file.close")}
-              </button>
-            </div>
-            <div className="mt-3">{renderPreview(preview, t)}</div>
-            <div className="mt-3 flex flex-col gap-2">
-              <ActionButton busyLabel={t("file.attaching")}
-                disabled={action !== null}
-                onAction={() => ask(place, selected)}
-                className="rounded-lg bg-[var(--color-accent)] px-3 py-2 text-sm text-[var(--color-accent-fg)] disabled:opacity-60"
-              >
-                {action === "ask" ? t("file.attaching") : t("file.ask")}
-              </ActionButton>
-              <ActionButton busyLabel={t("file.saving")}
-                disabled={action !== null}
-                onAction={() => save(place, selected)}
-                className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm disabled:opacity-60"
-              >
-                {action === "save" ? t("file.saving") : t("file.save")}
-              </ActionButton>
-              {fileLinks(place, selected, localUrl, t)}
-            </div>
-            {notice ? (
-              <p
-                role="status"
-                className={`mt-3 text-xs ${notice.ok ? "text-emerald-400" : "text-[var(--color-warn-text)]"}`}
-              >
-                {notice.text}{" "}
-                {notice.ok ? (
-                  <Link href="/files" className="underline">
-                    {t("file.savedLink")}
-                  </Link>
-                ) : null}
-              </p>
-            ) : null}
-          </div>
-        ) : place && entries.length > 0 ? (
-          <p className="hidden text-sm text-[var(--color-muted)] lg:block">{t("file.select")}</p>
-        ) : null}
-      </aside>
+      {threePanes ? (
+        <aside
+          data-component="BrowseFilePanel"
+          className="min-w-0 md:col-start-2 xl:col-start-auto"
+          aria-busy={action !== null}
+        >
+          {place && selected ? (
+            renderFilePanel(place, selected, false)
+          ) : place && entries.length > 0 ? (
+            <p className="hidden text-sm text-[var(--color-muted)] xl:block">{t("file.select")}</p>
+          ) : null}
+        </aside>
+      ) : place && selected ? (
+        <Sheet title={selected.name} onClose={clearSelection} side component="BrowseFilePanel">
+          <div aria-busy={action !== null}>{renderFilePanel(place, selected, true)}</div>
+        </Sheet>
+      ) : null}
+      {dialog}
     </div>
   );
 }

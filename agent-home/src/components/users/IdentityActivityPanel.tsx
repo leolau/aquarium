@@ -6,6 +6,7 @@ import { errorMessage } from "@/components/users/api";
 import { withProfileQuery } from "@/lib/profile";
 import type { IdentityActivityResponse, IdentityEvent } from "@/types";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { useT } from "@/i18n/client";
 
 /**
  * Who did what to whom, read from the C5 change log rather than a private
@@ -16,6 +17,7 @@ import { ActionButton } from "@/components/ui/ActionButton";
  * token ever reaches a C5 payload, so nothing shown here can be replayed.
  */
 export function IdentityActivityPanel({ profile }: { profile: string }) {
+  const t = useT("users");
   const [events, setEvents] = useState<IdentityEvent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -33,7 +35,7 @@ export function IdentityActivityPanel({ profile }: { profile: string }) {
       if (!res.ok) throw new Error(body.detail ?? "The request was refused.");
       setEvents(body.events);
     } catch (err) {
-      setError(errorMessage(err, "Could not load the audit trail."));
+      setError(errorMessage(err, t("ida.failed")));
     } finally {
       setBusy(false);
     }
@@ -45,13 +47,13 @@ export function IdentityActivityPanel({ profile }: { profile: string }) {
       className="flex flex-col gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
     >
       <div className="flex items-baseline justify-between gap-2">
-        <h2 className="text-sm font-medium">Identity activity</h2>
+        <h2 className="text-sm font-medium">{t("ida.title")}</h2>
         <ActionButton
           disabled={busy}
           onAction={load}
           className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 text-xs disabled:opacity-50"
         >
-          {busy ? "Loading…" : events ? "Refresh" : "Load"}
+          {busy ? t("ida.loading") : events ? t("ida.refresh") : t("ida.load")}
         </ActionButton>
       </div>
       {error ? <p className="text-xs text-[var(--color-danger)]">{error}</p> : null}
@@ -62,13 +64,13 @@ export function IdentityActivityPanel({ profile }: { profile: string }) {
               key={event.change_ref}
               className="rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-xs"
             >
-              <span className="font-mono">{event.action}</span> · {event.user_id} · by{" "}
+              <span className="font-mono">{event.action}</span> · {event.user_id} · {t("ida.by")}{" "}
               {event.actor_user_id}
             </li>
           ))}
           {events.length === 0 ? (
             <li className="text-xs text-[var(--color-muted)]">
-              No identity changes recorded yet.
+              {t("ida.none")}
             </li>
           ) : null}
         </ul>

@@ -1,5 +1,6 @@
 import { MobileShell } from "@/components/MobileShell";
 import { SkillEditor } from "@/components/skills/SkillEditor";
+import { getT } from "@/i18n/server";
 
 import { loadSkill } from "../../load-skill";
 
@@ -15,8 +16,13 @@ export default async function Page({
 }) {
   const [{ name: raw }, { profile: requested, view }] = await Promise.all([params, searchParams]);
   const { name, profile, content, skill, skills } = await loadSkill(raw, requested, false);
+  const t = await getT("system");
   return (
-    <MobileShell title="Skills" wide>
+    <MobileShell
+      title={t("pages.skillEdit.title", { name })}
+      labels={{ [`/skills/${encodeURIComponent(name)}`]: name }}
+      wide
+    >
       <SkillEditor
         key={`${profile}:${name}`}
         name={name}

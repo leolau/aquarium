@@ -1,0 +1,159 @@
+{
+  "title": "系統",
+  "subtitle": "這個 Aquarium 如何運作：你的代理使用的模型、工具、技能和記憶。",
+  "info": "什麼是系統？",
+  "infoBody": "驅動你的代理的一切都在這裡。打開卡片即可查看或更改；這個頁面本身不會改動任何東西。",
+  "adminView": "你正在查看管理員視圖。核心和代理網頁瀏覽器只對管理員顯示，其他人會看到已鎖定。",
+  "groups": {
+    "knowledge": "代理與知識",
+    "running": "運行這個 Aquarium"
+  },
+  "admin": "管理員",
+  "locked": "僅限管理員",
+  "lockedBody": "如需檢查這裡的內容，請詢問擁有者或管理員。",
+  "unknown": "—",
+  "settingsLead": "想找你的偏好設定、主題或整合？",
+  "settingsLink": "打開設定",
+  "cards": {
+    "profiles": {
+      "name": "設定檔",
+      "desc": "這部機器上的代理，各有自己的模型、技能和記憶。",
+      "meta": "{profiles} 個設定檔 · {suggestions} 個建議"
+    },
+    "skills": {
+      "name": "技能",
+      "desc": "每個代理懂得什麼。開啟或關閉技能、編輯，或從技能庫安裝。",
+      "meta": "已安裝 {installed} · 已開啟 {enabled}"
+    },
+    "memory": {
+      "name": "記憶",
+      "desc": "你的代理記得什麼，按主題繪成地圖。",
+      "meta": "{memories} 條記憶 · {documents} 份文件"
+    },
+    "graph": {
+      "name": "圖譜",
+      "desc": "代理執行的目標 → 任務 → 技能。唯讀。",
+      "meta": "{goals} 個目標 · {tasks} 個任務"
+    },
+    "models": {
+      "name": "模型",
+      "desc": "每個位置的大腦：主模型、輔助角色、速度和成本。",
+      "meta": "主模型：{model}"
+    },
+    "tools": {
+      "name": "工具",
+      "desc": "代理為你構建的應用程式，以及它使用的輔助工具。",
+      "meta": "{apps} 個應用程式 · {enabled} 個已啟用"
+    },
+    "core": {
+      "name": "核心",
+      "desc": "代理永遠無法更改的受保護邊界：健康狀況、被阻擋的嘗試和變更記錄。",
+      "meta": "{state} · {denials} 次被阻擋",
+      "healthy": "邊界正常",
+      "fallback": "正在使用內建安全清單",
+      "lockedWhy": "核心顯示 Aquarium 中代理永遠無法更改的部分。只有擁有者和管理員可以打開。"
+    },
+    "webview": {
+      "name": "代理網頁瀏覽器",
+      "desc": "查看並批准代理在自己的網頁瀏覽器中所做的事。",
+      "meta": "{state}",
+      "open": "有一個工作階段開啟中",
+      "idle": "沒有開啟的工作階段",
+      "lockedWhy": "代理網頁瀏覽器會替代理操作真實網站。只有擁有者和管理員可以打開。"
+    }
+  },
+  "advanced": "進階",
+  "advancedInfo": "進階會顯示什麼？",
+  "lockedPage": {
+    "core": {
+      "title": "核心僅限管理員",
+      "body": "核心顯示 Aquarium 中代理永遠無法更改的部分。只有擁有者和管理員可以打開。"
+    },
+    "webview": {
+      "title": "代理網頁瀏覽器僅限管理員",
+      "body": "它讓代理在你同意下操作真實網站。只有擁有者和管理員可以打開。"
+    },
+    "hint": "如需檢查，請詢問擁有者。",
+    "back": "返回系統"
+  },
+  "error": {
+    "retry": "再試一次",
+    "details": "技術細節"
+  },
+  "advancedHelp": "顯示工程師使用的技術細節：ID、檔案路徑、評分規則和原始狀態。它不會改動任何東西，這部裝置會記住你的選擇。",
+  "core": {
+    "subtitle": "Aquarium 中代理永遠無法更改的部分。唯讀。",
+    "info": "什麼是核心？",
+    "infoBody": "核心是一份受保護的路徑清單。代理永遠無法寫入；核心只能透過人工審核的變更來更改。",
+    "health": "邊界健康狀況",
+    "boundary": "核心邊界",
+    "protected": "受保護",
+    "fallback": "正在使用內建安全清單",
+    "fallbackHelp": "無法讀取受保護路徑檔案，所以 Aquarium 正在使用內建安全清單。代理仍然無法更改核心。",
+    "selfProtected": "自我保護",
+    "paths": "{count} 個受保護路徑",
+    "pathsBody": "代理永遠無法寫入這些路徑。",
+    "manifest": "定義於 {path}",
+    "unavailable": "核心邊界無法使用。",
+    "blocked": "被阻擋的嘗試",
+    "noBlocked": "沒有被阻擋的嘗試 — 沒有代理嘗試更改核心。",
+    "changelog": "變更記錄",
+    "changelogOff": "變更記錄未設定 — 需要應用程式資料庫。",
+    "noChanges": "你的範圍內沒有可見的變更。",
+    "reversible": "可還原",
+    "undone": "已還原",
+    "readOnly": "唯讀。核心只在這裡顯示，從不更改。",
+    "loadError": "無法載入核心"
+  },
+  "graph": {
+    "subtitle": "你的代理努力達成的目標、其下的任務和使用的技能。唯讀。",
+    "info": "如何閱讀圖譜",
+    "infoBody": "每張卡片是一個目標，附 0–100 分數。任務位於其目標之下，並列出使用的技能。子目標向內嵌套一層。",
+    "notConfigured": "圖譜需要應用程式資料庫。設定 {dsn}，然後用 {cmd} 建立目標。",
+    "empty": "你的範圍內還沒有可見的目標。",
+    "readOnly": "唯讀 · 圖譜。分配方式：{scheme}{watchers}。",
+    "watchers": "（負責人 + 關注者）",
+    "showTasks": "再顯示 {count} 個任務",
+    "hideTasks": "顯示較少任務",
+    "loadError": "無法載入圖譜"
+  },
+  "webview": {
+    "subtitle": "查看並批准代理在自己的網頁瀏覽器中所做的事。",
+    "loadError": "無法載入代理網頁瀏覽器"
+  },
+  "pages": {
+    "models": {
+      "subtitle": "你的代理在每項工作中使用哪個大腦，以及它們的表現。",
+      "info": "什麼是模型位置？",
+      "infoBody": "主模型負責回答聊天和執行排程工作。輔助角色處理較小的工作，例如標題或摘要；「自動」使用主模型。",
+      "advancedHelp": "顯示模型系列、上下文大小、備用鏈、所有輔助角色和每次呼叫的效能表。它不會改動任何東西。",
+      "loadError": "無法載入模型設定"
+    },
+    "tools": {
+      "subtitle": "代理為你構建的應用程式，以及它使用的輔助工具。",
+      "buildApp": "構建應用程式",
+      "buildPrompt": "我想請你為我構建一個應用程式。它應該做到：",
+      "loadError": "無法載入應用程式清單"
+    },
+    "tool": {
+      "loadError": "無法載入這個應用程式",
+      "notFound": "該應用程式不存在，或你無法查看。"
+    },
+    "skills": {
+      "subtitle": "每個代理懂得什麼。開啟或關閉技能、編輯，或從技能庫安裝新技能。"
+    },
+    "skillEdit": {
+      "title": "編輯 {name}"
+    },
+    "profiles": {
+      "subtitle": "這部機器上的代理，各有自己的模型、技能和記憶。"
+    },
+    "suggestions": {
+      "title": "設定檔建議",
+      "subtitle": "當 Aquarium 在你的工作中發現規律時，會建議建立新的設定檔。你可以採用或忽略。"
+    },
+    "memory": {
+      "subtitle": "你的代理記得什麼，按主題繪成地圖。你的搜尋永遠不會被儲存。"
+    }
+  }
+}

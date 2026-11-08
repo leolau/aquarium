@@ -144,6 +144,7 @@
   "detail": {
     "back": "All tools",
     "allActions": "All actions",
+    "askAgent": "Ask the agent to change it",
     "status": "Status",
     "prodUrl": "Live address",
     "devUrl": "Test address",
@@ -164,5 +165,9 @@
     "feedbackLabel": "What should change next time the agent works on it?",
     "feedbackSend": "Send feedback",
     "feedbackSent": "Thanks — the agent will see this on its next build."
+  },
+  "undo": {
+    "shown": "{name} is back on the grid",
+    "hidden": "{name} hidden from the grid"
   }
 }

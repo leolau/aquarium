@@ -7,6 +7,7 @@ import { targetOptions } from "@/components/users/CreateUserForm";
 import { withProfileQuery } from "@/lib/profile";
 import type { MemberImportResponse } from "@/types";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { useT } from "@/i18n/client";
 
 /**
  * Bulk enrolment from `email,display,role` CSV.
@@ -37,6 +38,7 @@ export function CsvImportPanel({
   /** Told after an apply, with the profile it went into. */
   onApplied?: (target: string, result: MemberImportResponse) => unknown;
 }) {
+  const t = useT("users");
   const [target, setTarget] = useState(profile);
   const options = targetOptions(profile, profiles);
   const [csv, setCsv] = useState("");
@@ -67,12 +69,12 @@ export function CsvImportPanel({
       data-component="CsvImportPanel"
       className="flex flex-col gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
     >
-      <h2 className="text-sm font-medium">Bulk import</h2>
+      <h2 className="text-sm font-medium">{t("csv.title")}</h2>
       {options.length > 1 ? (
         <label className="flex items-center justify-between gap-2 text-xs">
-          <span className="text-[var(--color-muted)]">Import into</span>
+          <span className="text-[var(--color-muted)]">{t("csv.into")}</span>
           <select
-            aria-label="Import into profile"
+            aria-label={t("csv.intoLabel")}
             value={target}
             disabled={busy}
             onChange={(e) => {
@@ -91,11 +93,11 @@ export function CsvImportPanel({
         </label>
       ) : null}
       <p className="text-xs text-[var(--color-muted)]">
-        One <code>email,display,role</code> per line. Previewed against{" "}
-        <code>{target}</code> before anything is created.
+        {t("csv.helpBefore")} <code>email,display,role</code> {t("csv.helpMiddle")}{" "}
+        <code>{target}</code> {t("csv.helpAfter")}
       </p>
       <textarea
-        aria-label="CSV rows"
+        aria-label={t("csv.rows")}
         rows={4}
         value={csv}
         onChange={(e) => setCsv(e.target.value)}
@@ -108,23 +110,27 @@ export function CsvImportPanel({
           onAction={() => run(true)}
           className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 text-xs disabled:opacity-50"
         >
-          {busy ? "Working…" : "Preview"}
+          {busy ? t("csv.working") : t("csv.preview")}
         </ActionButton>
         <ActionButton
           disabled={busy || !result || !result.dry_run}
           onAction={() => run(false)}
           className="rounded-lg bg-[var(--color-accent)] px-3 py-1 text-xs font-medium text-[var(--color-accent-fg)] disabled:opacity-50"
         >
-          Apply
+          {t("csv.apply")}
         </ActionButton>
       </div>
       {error ? <p className="text-xs text-[var(--color-danger)]">{error}</p> : null}
       {result ? (
         <div data-component="CsvImportResult" className="flex flex-col gap-2">
           <p className="text-xs text-[var(--color-muted)]">
-            {result.dry_run ? "Preview" : "Applied"}: {result.total} row
-            {result.total === 1 ? "" : "s"}, {result.failed} problem
-            {result.failed === 1 ? "" : "s"}.
+            {t("csv.result", {
+              mode: result.dry_run ? t("csv.preview") : t("csv.applied"),
+              total: result.total,
+              rows: result.total === 1 ? t("csv.row") : t("csv.rowsWord"),
+              failed: result.failed,
+              problems: result.failed === 1 ? t("csv.problem") : t("csv.problems"),
+            })}
           </p>
           <ul className="flex flex-col gap-1">
             {result.rows.map((row) => (
@@ -132,7 +138,7 @@ export function CsvImportPanel({
                 key={`${row.line}-${row.email}`}
                 className="rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-xs"
               >
-                <span className="font-mono">{row.line}</span> {row.email || "(blank)"} ·{" "}
+                <span className="font-mono">{row.line}</span> {row.email || t("csv.blank")} ·{" "}
                 {row.error ? (
                   <span className="text-[var(--color-danger)]">{row.error}</span>
                 ) : (
