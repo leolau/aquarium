@@ -550,6 +550,7 @@ async def approve_change_route(request: Request, change_id: str) -> dict[str, An
     if not isinstance(raw_supersedes, list):
         raise HTTPException(status_code=422, detail="supersedes must be a list")
     supersedes = [str(s) for s in raw_supersedes]
+    accessible = await projects_api._accessible_profiles(principal, project)
 
     def _approve_sync() -> dict:
         with _CHANGES_LOCK, projects_db.connect_closing() as conn:
@@ -589,6 +590,9 @@ async def approve_change_route(request: Request, change_id: str) -> dict[str, An
                             "then start the next iteration."
                         ),
                     )
+            projects_api._attach_plan_profiles_sync(
+                conn, project.id, rev, principal, accessible
+            )
             projects_db.activate_playbook_rev(
                 conn, project.id, rev, note=f"approved with change {change_id}"
             )

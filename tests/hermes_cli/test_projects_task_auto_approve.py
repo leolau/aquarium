@@ -13,12 +13,12 @@ a checkpoint still holds its successors until Continue, and Project mode's
 from __future__ import annotations
 
 import json
+import threading
 import types
 
 import pytest
 
 from hermes_cli import kanban_db, projects_api, projects_board_api, projects_db
-
 from tests.hermes_cli.test_projects_api_runs import (  # noqa: F401
     OWNER,
     env,
@@ -33,7 +33,18 @@ PLAN = {"body": "Find, compare, report.", "steps": [
 ]}
 
 
+_REAL_THREAD = threading.Thread
+
+
 class _InlineThread:
+    """Runs the projects job inline; any other thread (asyncio's executor
+    workers) is a real one."""
+
+    def __new__(cls, *args, kwargs=None, **kw):
+        if kwargs is None:
+            return _REAL_THREAD(*args, **kw)
+        return super().__new__(cls)
+
     def __init__(self, *, target, kwargs, **_):
         self._run = lambda: target(**kwargs)
 
