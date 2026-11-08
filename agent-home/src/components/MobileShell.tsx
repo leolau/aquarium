@@ -4,6 +4,7 @@ import { AppMcpBridge } from "@/components/app-mcp/AppMcpBridge";
 import { CoralHost } from "@/components/coral/CoralHost";
 import { LeadChatHost } from "@/components/coral/LeadChatHost";
 import { ProfileSwitcher } from "@/components/ProfileSwitcher";
+import { ShellFrame } from "@/components/ShellFrame";
 import { ActivityStrip } from "@/components/ui/ActivityStrip";
 import { StatusStrip } from "@/components/ui/StatusStrip";
 import { getPrincipal } from "@/lib/auth/principal";
@@ -118,7 +119,6 @@ export async function MobileShell({
       // Best-effort: a facets failure must not blank the page.
     }
   }
-  const contentWidth = wide ? "lg:max-w-7xl" : "lg:max-w-5xl";
   if (bare) {
     return (
       <div data-component="MobileShell" data-variant="bare" className="min-h-dvh bg-[var(--color-bg)]">
@@ -130,47 +130,38 @@ export async function MobileShell({
     );
   }
   return (
-    <div data-component="MobileShell" className={`${fill ? "h-dvh" : "min-h-dvh"} bg-[var(--color-bg)]`}>
-      <div className={`mx-auto flex ${fill ? "h-dvh" : "min-h-dvh"} w-full max-w-md flex-col md:max-w-2xl lg:max-w-none`}>
-        <header
-          className="sticky top-0 z-20 border-b border-[var(--color-border)] bg-[var(--color-bg)]/90 px-4 py-3 backdrop-blur lg:px-8"
-          style={{ paddingTop: "calc(var(--safe-top) + 0.75rem)" }}
-        >
-          <div className={`mx-auto flex w-full max-w-2xl items-center justify-between gap-2 ${contentWidth}`}>
-            <h1 className="text-base font-semibold tracking-tight lg:text-lg">
-              {title}
-            </h1>
-            {enrolments.length > 1 || actions ? (
-              <div className="flex min-w-0 items-center gap-2">
-                <ProfileSwitcher profiles={enrolments} current={sessionProfile} />
-                {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
-              </div>
-            ) : null}
+    <ShellFrame
+      title={title}
+      wide={wide}
+      fill={fill}
+      clearLauncher={showCoral}
+      headerEnd={
+        enrolments.length > 1 || actions ? (
+          <div className="flex min-w-0 items-center gap-2">
+            <ProfileSwitcher profiles={enrolments} current={sessionProfile} />
+            {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
           </div>
-        </header>
-        {showCoral ? <StatusStrip /> : null}
-        {showCoral ? <ActivityStrip /> : null}
-        <main
-          className={`flex-1 px-4 py-4 lg:px-8 ${
-            fill ? "flex min-h-0 flex-col overflow-y-auto" : ""
-          } ${
-            showCoral
-              ? "pb-[calc(var(--coral-clearance)+var(--safe-bottom)+1rem)] lg:pb-8"
-              : "pb-[calc(var(--safe-bottom)+1rem)]"
-          }`}
-        >
-          <div
-            className={`mx-auto w-full max-w-2xl ${contentWidth} ${
-              fill ? "flex min-h-0 flex-1 flex-col" : ""
-            }`}
-          >
-            {children}
-          </div>
-        </main>
-        {showCoral ? <CoralHost badgeCounts={badgeCounts} hiddenApps={hiddenApps} /> : null}
-        {showCoral ? <LeadChatHost storageEnabled={storageConfigured()} /> : null}
-        {showCoral ? <AppMcpBridge /> : null}
-      </div>
-    </div>
+        ) : null
+      }
+      belowHeader={
+        showCoral ? (
+          <>
+            <StatusStrip />
+            <ActivityStrip />
+          </>
+        ) : null
+      }
+      overlays={
+        showCoral ? (
+          <>
+            <CoralHost badgeCounts={badgeCounts} hiddenApps={hiddenApps} />
+            <LeadChatHost storageEnabled={storageConfigured()} />
+            <AppMcpBridge />
+          </>
+        ) : null
+      }
+    >
+      {children}
+    </ShellFrame>
   );
 }

@@ -1,0 +1,13 @@
+{
+  "notFoundTitle": "找不到頁面",
+  "notFoundHeading": "找不到這個頁面",
+  "notFoundBody": "連結可能已過期，或頁面已被移動或刪除。",
+  "errorTitle": "出了點問題",
+  "errorHeading": "這個頁面發生問題",
+  "errorBody": "你的資料安全無恙。請再試一次，或返回繼續。",
+  "goBack": "返回",
+  "home": "首頁",
+  "retry": "再試一次",
+  "details": "技術細節",
+  "reference": "參考編號：{digest}"
+}
