@@ -245,6 +245,15 @@ the first being what "its own supabase database instance" means on this box.
 |----|-------|------|-----------------------|
 | [33](./feature-groups/FG-33-vibe-coded-apps-local-and-external.md) | Vibe-coded apps: local (own Next.js + Node process + own Postgres database; Supabase APIs per-app opt-in under the recommended B2, pending FG-33 open decisions 1–2) and external (Vercel/Railway/AWS/Alibaba Cloud + supabase.com), distinct icons on Tools | **P8** — **P8-0–P8-2 BUILT** (local apps; system tests open), **P8-3–P8-4 not started** (external hosting); phases P8-0 → P8-4 | `hermes_cli/tools_registry.py` + `tool_scaffold.py`/`tool_cmd.py` (FG-07), `hermes_cli/mcp_endpoints.py` (FG-11), `tools/personal_mcp.py`, `deploy/hermes-wa-bridge@.service` + `hermes-wa-bridge-add` + `hermes-vpn-helper` (root-helper pattern), `deploy/aquarium.py` backups, `hermes_cli/credential_store.py` (`materialize=False`), `hermes_cli/oss_acquisition.py::HostRunner` + `oss_host.py::SSHHostRunner` (FG-08), `hermes_cli/capacity.py` (FG-31), `hermes_cli/projects_db.py`/kanban (FG-32), agent-home `components/tools/` |
 
+
+### Phase 9 — FG-34 (skill-aware plan assignment)
+
+Project plans route each step to the profile best equipped for it — by skills, tools, description and past results — from the profiles the signed-in user can access, and the plan shows who does what and why.
+
+| FG | Title | Wave | Primary reuse anchors |
+|----|-------|------|-----------------------|
+| [34](./feature-groups/FG-34-skill-aware-plan-assignment.md) | Skill-aware plan assignment (best-suited profile per card, with the reason shown) | **P9-A** — PLAN | `projects_api` plan drafter, `kanban_decompose`, `profile_describer`, `task_runs`, `PlanPanel.tsx` |
+
 ---
 
 ## 4. Cross-cutting shared contracts (Wave 0 — must merge FIRST)
@@ -845,3 +854,4 @@ transient, and in-place-resize to 8/32 (same-family, ~5 min, no data migration
 | 2026-10-25 | 30 | devin (for Yan) | FG-33 | Yan answered FG-33 open decisions 1, 10, 13, 15: own Supabase database per local app (not instance); default provider accounts with default-or-own per external tool; spend caps per project and per account; `internal-coder` / `external-coder` profiles with per-tool override. | FG-33 §Decisions recorded |
 | 2026-10-25 | 31 | devin (for Yan) | FG-33 local-app decisions answered (all except external-only 11, 12): path routing, one dev + one prod Node per tool, separate dev Supabase instance, Settings panels for limits/storage/GitHub token, members act within limits, D21 accepted. | FG-33 §Decisions recorded |
 | 2026-10-25 | 32 | devin (for Leo) | FG-33 / D21 | **Added the missing locked-decision row D21 to §1** (the table stopped at D20 although D21 was accepted 2026-10-25). Wording taken from FG-33: local apps = in-house on the box (one Node process per app per mode; database per app per mode in the dedicated apps Postgres cluster); external apps = same unit template on approved providers (Vercel + supabase.com first, then Railway, AWS Amplify, Alibaba FC) with data on provider-hosted Supabase; D3 extended, D4 scoped to Aquarium-hosted data; C6-gated spend caps. Docs-only. | Leo/Yan: "D21 accepted; add the missing locked-decision row" |
+| 2026-11-08 | 33 | devin (for Yan) | FG-34 | **Phase 9 added: FG-34 skill-aware plan assignment, status PLAN.** Yan: the planner may pick any profile the signed-in user can access, and past results count as a signal. Work items W1–W6 in the FG doc. | The project planner had no profile roster, so every step fell to the host profile and the plan never said why. |
