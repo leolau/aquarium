@@ -348,6 +348,8 @@ async def _rows_with_query(
     store, principal, conn, q, owner, topic, kind, limit_val, offset_val
 ):
     """Semantic-search rows via ``store.query`` and enrich with uses/last_used."""
+    from hermes_cli.access import bind_elevated_reads, bind_principal
+
     records = await store.query(
         principal,
         q,
