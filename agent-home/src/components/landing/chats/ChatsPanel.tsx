@@ -12,6 +12,7 @@ import { isPinned, matchesQuery, type LandingSession } from "./model";
 import { NewChatButton, profileLabel } from "./NewChatButton";
 import { PinSuggestionCard } from "./PinSuggestionCard";
 import { SessionRow } from "./SessionRow";
+import { MessageSearchSection, type MessageSearchFn, type MessageSearchHit } from "./MessageSearch";
 import { SessionSearch } from "./SessionSearch";
 import { useLandingChats } from "./useLandingChats";
 import { useUndoToast } from "@/components/ui/UndoToast";
@@ -39,6 +40,10 @@ export interface ChatsPanelProps {
   fetchImpl?: typeof fetch;
   /** Show category chips (All / Kanban / Daily / Scheduled / Others) that filter the list. */
   categoryFilter?: boolean;
+  /** Also search inside every conversation's messages (needs `onOpenMessageHit`). */
+  messageSearch?: MessageSearchFn;
+  /** Opens the chat a message hit belongs to. */
+  onOpenMessageHit?: (hit: MessageSearchHit) => void;
 }
 
 function SectionHeader({ label, count }: { label: string; count?: number }) {
@@ -100,8 +105,10 @@ export function ChatsPanel({
   onNavigate,
   searchId,
   categoryFilter = false,
+  messageSearch,
+  onOpenMessageHit,
 }: ChatsPanelProps & {
-  searchShortcut?: boolean;
+  searchShortcut?: boolean | "hint";
   onNavigate?: () => void;
   searchId?: string;
 }) {
@@ -243,6 +250,14 @@ export function ChatsPanel({
             ) : (
               <p className="px-3 py-2 text-xs text-[var(--color-muted)]">No chats match “{query.trim()}”.</p>
             )}
+            {messageSearch && onOpenMessageHit ? (
+              <MessageSearchSection
+                query={query}
+                search={messageSearch}
+                onOpen={onOpenMessageHit}
+                onNavigate={onNavigate}
+              />
+            ) : null}
           </>
         ) : (
           <>

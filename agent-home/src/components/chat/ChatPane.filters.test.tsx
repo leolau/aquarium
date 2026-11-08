@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CHAT_FILTERS_OPEN_STORAGE_KEY } from "@/components/chat/ChatFiltersPanel";
@@ -28,6 +28,13 @@ const SESSIONS: SessionSummary[] = [
   },
 ];
 
+const HIT = {
+  session_id: "s2",
+  snippet: "hello >>>kenobi<<< there",
+  role: "assistant",
+  title: "Star wars",
+};
+
 const MESSAGES: ChatMessage[] = [
   { id: 1, role: "user", content: "hello there" },
   { id: 2, role: "assistant", content: "general kenobi" },
@@ -41,9 +48,13 @@ beforeEach(() => {
       const url = String(input);
       const body = url.includes("/api/chat/sessions/tags")
         ? { tags: TAGS }
-        : url.includes("/api/chat/active")
-          ? { runId: null }
-          : {};
+        : url.includes("/api/chat/sessions/search")
+          ? { results: [HIT] }
+          : url.includes("/api/chat/messages?sessionId=s2")
+            ? { messages: [{ id: 3, role: "user", content: "hello kenobi" }] }
+            : url.includes("/api/chat/active")
+              ? { runId: null }
+              : {};
       return new Response(JSON.stringify(body), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -71,6 +82,10 @@ function renderPane() {
 }
 
 const toggle = () => screen.getByRole("button", { name: /Filters & search/ });
+const sidebarSearch = () =>
+  document.getElementById("landing-sidebar-chat-search") as HTMLInputElement;
+const fetchedUrls = () =>
+  (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map(([u]) => String(u));
 const panel = () => document.getElementById(toggle().getAttribute("aria-controls")!)!;
 
 describe("ChatPane filters & search panel", () => {
@@ -118,27 +133,57 @@ describe("ChatPane filters & search panel", () => {
     expect(screen.getByRole("button", { name: "OR" })).toBeTruthy();
   });
 
-  it("/ and Ctrl+K expand the panel and focus the all-sessions search", async () => {
+  it("/ and Ctrl+K focus the chats sidebar's all-sessions search", () => {
     renderPane();
+    const search = sidebarSearch();
     act(() => {
       fireEvent.keyDown(document.body, { key: "/" });
     });
-    expect(toggle().getAttribute("aria-expanded")).toBe("true");
-    const search = screen.getByPlaceholderText("Search all sessions…");
-    await waitFor(() => expect(document.activeElement).toBe(search));
+    expect(document.activeElement).toBe(search);
+    // The old search strip is gone; the panel stays as the user left it.
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("button", { name: /All sessions/ })).toBeNull();
 
-    fireEvent.click(toggle());
-    (document.activeElement as HTMLElement | null)?.blur();
+    search.blur();
     act(() => {
       fireEvent.keyDown(document.body, { key: "k", ctrlKey: true });
     });
-    expect(toggle().getAttribute("aria-expanded")).toBe("true");
+    expect(document.activeElement).toBe(search);
+  });
+
+  it("opens the Chats drawer with its search focused when the sidebar is hidden", async () => {
+    renderPane();
+    // Below lg the sidebar is display:none, so focusing its input does nothing.
+    vi.spyOn(sidebarSearch(), "focus").mockImplementation(() => {});
+    act(() => {
+      fireEvent.keyDown(document.body, { key: "/" });
+    });
+    const drawer = await screen.findByRole("dialog", { name: "Chats" });
+    expect(document.activeElement).toBe(within(drawer).getByLabelText("Search chats"));
   });
 
   it("ignores / typed into the composer", () => {
     renderPane();
     const composer = screen.getByPlaceholderText(/Message your agent/);
+    composer.focus();
     fireEvent.keyDown(composer, { key: "/" });
-    expect(toggle().getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(composer);
+    expect(screen.queryByRole("dialog", { name: "Chats" })).toBeNull();
+  });
+
+  it("the sidebar search also finds messages in every chat and opens the hit highlighted", async () => {
+    renderPane();
+    fireEvent.change(sidebarSearch(), { target: { value: "kenobi" } });
+    const hit = await screen.findByRole("button", { name: /Star wars/ });
+    expect(fetchedUrls().some((u) => u.includes("/api/chat/sessions/search?q=kenobi"))).toBe(true);
+    expect(within(hit).getByText("kenobi").tagName).toBe("MARK");
+
+    fireEvent.click(hit);
+    await waitFor(() =>
+      expect(fetchedUrls().some((u) => u.includes("/api/chat/messages?sessionId=s2"))).toBe(true),
+    );
+    await waitFor(() =>
+      expect(document.querySelector('[data-component="MessageBubble"] mark')?.textContent).toBe("kenobi"),
+    );
   });
 });

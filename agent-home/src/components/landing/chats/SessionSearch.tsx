@@ -7,6 +7,7 @@ import { SearchIcon, XIcon } from "@/components/ui/icons";
 /**
  * Filters the sidebar's chats by title, preview or tag. ⌘K / Ctrl+K focuses
  * it when `shortcut` is on (desktop sidebar only, so two lists never fight).
+ * `"hint"` only shows the key: the page binds the shortcut itself.
  */
 export function SessionSearch({
   value,
@@ -16,7 +17,7 @@ export function SessionSearch({
 }: {
   value: string;
   onChange: (value: string) => void;
-  shortcut?: boolean;
+  shortcut?: boolean | "hint";
   id?: string;
 }) {
   const input = useRef<HTMLInputElement>(null);
@@ -24,7 +25,7 @@ export function SessionSearch({
     typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform ?? "");
 
   useEffect(() => {
-    if (!shortcut) return;
+    if (shortcut !== true) return;
     function onKey(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();

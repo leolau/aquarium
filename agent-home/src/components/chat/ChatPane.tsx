@@ -7,6 +7,7 @@ import { useT } from "@/i18n";
 
 import { ApprovalCard } from "@/components/chat/thread/ApprovalCard";
 import { ChatsDrawer, ChatsSidebar } from "@/components/landing/chats";
+import type { MessageSearchHit } from "@/components/landing/chats/MessageSearch";
 import { MessageIcon, PlusIcon } from "@/components/ui/icons";
 import { ArchivedModal } from "@/components/chat/ArchivedModal";
 import {
@@ -20,7 +21,6 @@ import { LiveActivity } from "@/components/chat/LiveActivity";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { Composer } from "@/components/chat/Composer";
 import { SessionModal } from "@/components/chat/SessionModal";
-import { SessionSearchBar } from "@/components/chat/SessionSearchBar";
 import {
   StatusIndicator,
   type ChatActivity,
@@ -153,7 +153,12 @@ export function ChatPane({
   const [detailsSession, setDetailsSession] = useState<SessionSummary | null>(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+  // Set when the search shortcut opened the drawer, so it focuses its search.
+  const [drawerFocusSearch, setDrawerFocusSearch] = useState(false);
+  const closeDrawer = useCallback(() => {
+    setDrawerOpen(false);
+    setDrawerFocusSearch(false);
+  }, []);
   const t = useT("chatPage");
   const [loadingThread, setLoadingThread] = useState(false);
   // Per-session state, keyed by session id (or NEW_KEY). Turns run per session
@@ -188,7 +193,6 @@ export function ChatPane({
   const [matchMode, setMatchMode] = useState<"any" | "all">("any");
 
   // ── Search state ──
-  const [crossSearchOpen, setCrossSearchOpen] = useState(false);
   const [inSearchOpen, setInSearchOpen] = useState(false);
   const [highlightTerm, setHighlightTerm] = useState<string | undefined>();
   const highlightCallbackRef = useRef<((msgIndex: number, term: string) => void) | null>(null);
@@ -201,18 +205,22 @@ export function ChatPane({
     parseFiltersOpen,
     serializeFiltersOpen,
   );
-  const filtersPanelRef = useRef<HTMLDivElement | null>(null);
 
-  // `/` or Ctrl/Cmd+K: open the panel and the all-sessions search, focused.
+  // `/` or Ctrl/Cmd+K: focus the chats sidebar's search (titles + every
+  // conversation's messages). Below `lg` the sidebar is hidden, so the focus
+  // does not take and the Chats drawer opens with its search focused instead.
+  const sidebarRef = useRef<HTMLElement | null>(null);
   useSearchShortcut(() => {
-    setFiltersOpen(true);
-    setCrossSearchOpen(true);
-    setInSearchOpen(false);
-    requestAnimationFrame(() => {
-      filtersPanelRef.current
-        ?.querySelector<HTMLInputElement>('[data-component="SessionSearchBar"] input')
-        ?.focus();
-    });
+    const input = sidebarRef.current?.querySelector<HTMLInputElement>(
+      '[data-component="SessionSearch"] input',
+    );
+    input?.focus();
+    if (input && document.activeElement === input) {
+      input.select();
+      return;
+    }
+    setDrawerFocusSearch(true);
+    setDrawerOpen(true);
   });
 
   // Wire the InSessionSearch callback so it sets the highlight term.
@@ -938,20 +946,13 @@ export function ChatPane({
 
   // ── Search handlers ──────────────────────────────────────────────
 
-  async function crossSessionSearch(q: string) {
+  async function crossSessionSearch(q: string, signal: AbortSignal): Promise<MessageSearchHit[]> {
     const res = await fetch(
       path(`/api/chat/sessions/search?q=${encodeURIComponent(q)}`),
-      { cache: "no-store" },
+      { cache: "no-store", signal },
     );
-    if (!res.ok) return [];
-    const body = (await res.json()) as {
-      results?: Array<{
-        session_id: string;
-        snippet: string;
-        role: string;
-        title?: string | null;
-      }>;
-    };
+    if (!res.ok) throw new Error("Message search failed.");
+    const body = (await res.json()) as { results?: MessageSearchHit[] };
     return body.results ?? [];
   }
 
@@ -959,12 +960,16 @@ export function ChatPane({
     result: { session_id: string; snippet: string },
   ) {
     await openConversation(result.session_id);
-    // After loading, highlight the snippet text in the message list.
-    const term = result.snippet
-      .replace(/>>>/g, "")
-      .replace(/<<</g, "")
-      .trim()
-      .slice(0, 30);
+    // After loading, highlight the matched words (`>>>…<<<`) in the message
+    // list; a snippet without markers falls back to its opening text.
+    const marked = />>>([\s\S]+?)<<</.exec(result.snippet)?.[1]?.trim();
+    const term =
+      marked ||
+      result.snippet
+        .replace(/>>>/g, "")
+        .replace(/<<</g, "")
+        .trim()
+        .slice(0, 30);
     setHighlightTerm(term);
     setInSearchOpen(true);
   }
@@ -972,11 +977,20 @@ export function ChatPane({
   return (
     <div data-component="ChatPane" className="flex min-h-0 flex-1 gap-6">
       <aside
+        ref={sidebarRef}
         data-component="chat-sidebar"
         aria-label="Chats"
         className="hidden w-[288px] shrink-0 overflow-y-auto border-r border-[var(--color-border)] pr-3 lg:flex lg:flex-col"
       >
-        <ChatsSidebar profile={profile} activeSessionId={sessionId} initialSessions={sessions} categoryFilter searchShortcut={false} />
+        <ChatsSidebar
+          profile={profile}
+          activeSessionId={sessionId}
+          initialSessions={sessions}
+          categoryFilter
+          searchShortcut="hint"
+          messageSearch={crossSessionSearch}
+          onOpenMessageHit={(hit) => void jumpToSearchResult(hit)}
+        />
       </aside>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <ChatFiltersPanel
@@ -984,9 +998,8 @@ export function ChatPane({
         onToggle={() => setFiltersOpen(!filtersOpen)}
         profile={profile}
         filterCount={includeTags.length + excludeTags.length}
-        searchActive={crossSearchOpen || inSearchOpen || highlightTerm !== undefined}
+        searchActive={inSearchOpen || highlightTerm !== undefined}
       >
-      <div ref={filtersPanelRef}>
       {/* Tag filter bar */}
       <TagFilterBar
         tags={allTags}
@@ -997,28 +1010,13 @@ export function ChatPane({
         onMatchModeChange={setMatchMode}
       />
 
-      {/* Search toggle buttons */}
-      <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-1">
-        <button
-          type="button"
-          onClick={() => {
-            setCrossSearchOpen((v) => !v);
-            setInSearchOpen(false);
-          }}
-          className={`rounded-lg px-2 py-0.5 text-xs ${
-            crossSearchOpen
-              ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]"
-              : "text-[var(--color-muted)] border border-[var(--color-border)]"
-          }`}
-        >
-          🔍 All sessions
-        </button>
-        {sessionId && (
+      {/* In-conversation search toggle (all-sessions search lives in the chats sidebar / drawer). */}
+      {sessionId && (
+        <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-1">
           <button
             type="button"
             onClick={() => {
               setInSearchOpen((v) => !v);
-              setCrossSearchOpen(false);
               setHighlightTerm(undefined);
             }}
             className={`rounded-lg px-2 py-0.5 text-xs ${
@@ -1029,16 +1027,7 @@ export function ChatPane({
           >
             🔍 In conversation
           </button>
-        )}
-      </div>
-
-      {/* Cross-session search bar */}
-      {crossSearchOpen && (
-        <SessionSearchBar
-          onSearch={crossSessionSearch}
-          onJumpToResult={(result) => void jumpToSearchResult(result)}
-          onClose={() => setCrossSearchOpen(false)}
-        />
+        </div>
       )}
 
       {/* In-session search bar */}
@@ -1052,7 +1041,6 @@ export function ChatPane({
           highlightRef={highlightCallbackRef}
         />
       )}
-      </div>
       </ChatFiltersPanel>
 
       <div
@@ -1151,10 +1139,13 @@ export function ChatPane({
       <ChatsDrawer
         open={drawerOpen}
         onClose={closeDrawer}
+        focusSearch={drawerFocusSearch}
         profile={profile}
         activeSessionId={sessionId}
         initialSessions={sessions}
         categoryFilter
+        messageSearch={crossSessionSearch}
+        onOpenMessageHit={(hit) => void jumpToSearchResult(hit)}
       />
 
       {detailsSession ? (

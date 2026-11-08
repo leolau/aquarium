@@ -14,5 +14,13 @@
   "loadErrorHint": "Your chats are safe. Try again in a moment.",
   "tryAgain": "Try again",
   "pinnedToast": "Chat pinned",
-  "unpinnedToast": "Chat unpinned"
+  "unpinnedToast": "Chat unpinned",
+  "messageSearch": {
+    "heading": "In messages",
+    "hint": "Type {min} or more letters to also search inside every conversation.",
+    "searching": "Searching every conversation…",
+    "failed": "Message search failed.",
+    "empty": "No messages match “{query}”.",
+    "untitled": "Untitled chat"
+  }
 }

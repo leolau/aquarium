@@ -9,20 +9,26 @@ import { XIcon } from "@/components/ui/icons";
  * Mobile Chats drawer (Figma `6:195`): the sidebar's contents in a
  * full-height panel from the left. Esc, ✕, the backdrop and opening a chat
  * all close it. Renders nothing while closed, so nothing is fetched.
+ * `focusSearch` puts the cursor in its search instead of on ✕ when it opens.
  */
 export function ChatsDrawer({
   open,
   onClose,
+  focusSearch = false,
   ...panel
-}: ChatsPanelProps & { open: boolean; onClose: () => void }) {
+}: ChatsPanelProps & { open: boolean; onClose: () => void; focusSearch?: boolean }) {
   const closeRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
     const previous = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const opener = document.activeElement as HTMLElement | null;
-    closeRef.current?.focus();
+    const search = focusSearch
+      ? panelRef.current?.querySelector<HTMLInputElement>('[data-component="SessionSearch"] input')
+      : null;
+    (search ?? closeRef.current)?.focus();
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
     }
@@ -32,7 +38,7 @@ export function ChatsDrawer({
       window.removeEventListener("keydown", onKey);
       opener?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open, onClose, focusSearch]);
 
   if (!open) return null;
 
@@ -46,6 +52,7 @@ export function ChatsDrawer({
       onClick={onClose}
     >
       <div
+        ref={panelRef}
         className="flex h-full w-full max-w-md flex-col gap-2 border-r border-[var(--color-border)] bg-[var(--color-bg)] px-3 pb-[calc(var(--safe-bottom,0px)+1rem)] pt-[calc(var(--safe-top,0px)+1rem)]"
         onClick={(e) => e.stopPropagation()}
       >
