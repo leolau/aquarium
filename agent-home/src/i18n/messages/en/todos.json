@@ -12,5 +12,10 @@
   "snoozed": "Snoozed “{title}”.",
   "detailMoved": "Moved “{title}” to {stage}.",
   "nextStep": "Next step",
-  "markDone": "Mark done"
+  "markDone": "Mark done",
+  "more": "More",
+  "moreHint": "More: Work on it · Add to project · Promote · Snooze",
+  "moreTitle": "More actions",
+  "workOnThis": "Work on this",
+  "snoozeFor": "Snooze for"
 }

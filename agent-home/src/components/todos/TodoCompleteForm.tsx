@@ -22,11 +22,16 @@ import type { TodoCompletion, TodoDetail, TodoProposal } from "@/types";
 export function TodoCompleteForm({
   todo,
   onDone,
+  defaultOpen = false,
+  onCancel,
 }: {
   todo: TodoDetail;
   onDone: (completed: TodoCompletion) => void;
+  /** Start with the form showing (the phone Mark-done sheet). */
+  defaultOpen?: boolean;
+  onCancel?: () => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [outcome, setOutcome] = useState("");
   const [draft, setDraft] = useState("");
   const [subject, setSubject] = useState(todo.source?.subject ?? "");
@@ -166,7 +171,10 @@ export function TodoCompleteForm({
         <button
           type="button"
           disabled={busy}
-          onClick={() => setOpen(false)}
+          onClick={() => {
+            setOpen(false);
+            onCancel?.();
+          }}
           className="rounded-lg border border-[var(--color-border)] px-2 py-1 text-[var(--color-muted)]"
         >
           Cancel

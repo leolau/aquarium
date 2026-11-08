@@ -12,5 +12,10 @@
   "snoozed": "已延後「{title}」。",
   "detailMoved": "已將「{title}」移至{stage}。",
   "nextStep": "下一步",
-  "markDone": "標為完成"
+  "markDone": "標為完成",
+  "more": "更多",
+  "moreHint": "更多：開始處理 · 加入專案 · 升級 · 延後",
+  "moreTitle": "更多操作",
+  "workOnThis": "處理這項",
+  "snoozeFor": "延後"
 }

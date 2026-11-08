@@ -11,6 +11,7 @@ import { useAction } from "@/lib/use-action";
 import { STAGE_LABEL, sourceGlyph } from "@/components/todos/TodoRow";
 import { formatWhen } from "@/components/files/FilesView";
 import type { Todo, TodoDetail, TodoStage } from "@/types";
+import { Sheet } from "@/components/ui/Sheet";
 import { InlineAlert } from "@/components/ui/InlineAlert";
 import { useUndoToast } from "@/components/ui/UndoToast";
 import { useT } from "@/i18n";
@@ -61,6 +62,8 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
   const [error, setError] = useState<string | null>(null);
   const [sessionLink, setSessionLink] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [doneOpen, setDoneOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   const post = (path: string, body: unknown) => exclusive(() => postNow(path, body));
 
@@ -87,6 +90,48 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
   }
 
   const source = current.source;
+
+
+  const startWork = () =>
+    exclusive(async () => {
+                setError(null);
+                setSessionLink(null);
+                try {
+                  const res = await fetch(
+                    `/api/todos/${encodeURIComponent(current.id)}/start`,
+                    {
+                      method: "POST",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ session: true }),
+                    },
+                  );
+                  const payload = (await res.json()) as Todo & {
+                    session_id?: string | null;
+                    spawned?: boolean;
+                    detail?: string;
+                  };
+                  if (!res.ok) {
+                    setError(payload.detail ?? "That didn’t stick — try again.");
+                  } else {
+                    setCurrent({ ...current, ...payload });
+                    if (payload.session_id) {
+                      setSessionLink(payload.session_id);
+                    }
+                  }
+                } catch {
+                  setError("Couldn’t reach the AI layer.");
+                }
+    });
+
+  const moveStage = (stage: TodoStage) =>
+    stage === "dismissed" ? dismissWithUndo() : post("/stage", { stage });
+
+  async function snoozeFor(hours: number) {
+    await post("/snooze", { until: hoursFromNow(hours) });
+    showUndo(t("snoozed", { title: current.title }), () =>
+      post("/snooze", { until: hoursFromNow(0) }),
+    );
+  }
 
   async function dismissWithUndo() {
     const before = current.stage;
@@ -233,9 +278,7 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
                 key={stage}
                 disabled={busy}
                 busyLabel="Saving…"
-                onAction={() =>
-                  stage === "dismissed" ? dismissWithUndo() : post("/stage", { stage })
-                }
+                onAction={() => moveStage(stage)}
                 className="rounded-lg border border-[var(--color-border)] px-2 py-1 text-[var(--color-muted)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
               >
                 {STAGE_VERB[stage]}
@@ -261,35 +304,7 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
           <div className="mt-2">
             <ActionButton
               disabled={busy}
-              onAction={() => exclusive(async () => {
-                setError(null);
-                setSessionLink(null);
-                try {
-                  const res = await fetch(
-                    `/api/todos/${encodeURIComponent(current.id)}/start`,
-                    {
-                      method: "POST",
-                      headers: { "content-type": "application/json" },
-                      body: JSON.stringify({ session: true }),
-                    },
-                  );
-                  const payload = (await res.json()) as Todo & {
-                    session_id?: string | null;
-                    spawned?: boolean;
-                    detail?: string;
-                  };
-                  if (!res.ok) {
-                    setError(payload.detail ?? "That didn’t stick — try again.");
-                  } else {
-                    setCurrent({ ...current, ...payload });
-                    if (payload.session_id) {
-                      setSessionLink(payload.session_id);
-                    }
-                  }
-                } catch {
-                  setError("Couldn’t reach the AI layer.");
-                }
-              })}
+              onAction={startWork}
               busyLabel="Starting…"
               className="rounded-lg border border-[var(--color-accent)] bg-[var(--color-accent)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-surface)] transition hover:opacity-90 disabled:opacity-50"
             >
@@ -341,16 +356,7 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
                 key={option.hours}
                 disabled={busy}
                 busyLabel="Snoozing…"
-                onAction={async () => {
-                  await post("/snooze", {
-                    until: new Date(
-                      Date.now() + option.hours * 3_600_000,
-                    ).toISOString(),
-                  });
-                  showUndo(t("snoozed", { title: current.title }), () =>
-                    post("/snooze", { until: new Date().toISOString() }),
-                  );
-                }}
+                onAction={() => snoozeFor(option.hours)}
                 className="rounded-lg border border-[var(--color-border)] px-2 py-1 transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
               >
                 {option.label}
@@ -361,6 +367,133 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
 
       </aside>
 
+      {current.stage !== "done" && current.stage !== "dismissed" ? (
+        <div
+          data-component="TodoDock"
+          className="sticky bottom-[calc(var(--coral-clearance)+var(--safe-bottom))] z-10 flex min-w-0 flex-col gap-2 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-lg lg:hidden"
+        >
+          <div className="flex gap-2">
+            {current.stage === "staged" || current.stage === "open" ? (
+              <ActionButton
+                data-action="work-on-this"
+                disabled={busy}
+                onAction={startWork}
+                busyLabel="Starting…"
+                className="h-11 min-w-0 flex-1 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 text-sm font-medium text-[var(--color-fg)] disabled:opacity-60"
+              >
+                {t("workOnThis")}
+              </ActionButton>
+            ) : null}
+            <button
+              type="button"
+              data-action="mark-done"
+              disabled={busy}
+              onClick={() => setDoneOpen(true)}
+              className="h-11 min-w-0 flex-1 rounded-[var(--radius-lg)] bg-[var(--color-accent)] px-3 text-sm font-medium text-[var(--color-accent-fg)] disabled:opacity-60"
+            >
+              {t("markDone")}
+            </button>
+          </div>
+          {sessionLink ? (
+            <Link
+              href={`/chat?session=${encodeURIComponent(sessionLink)}`}
+              className="text-center text-xs text-[var(--color-accent)]"
+            >
+              Session started →
+            </Link>
+          ) : null}
+          <button
+            type="button"
+            data-action="more-actions"
+            onClick={() => setMoreOpen(true)}
+            className="truncate text-center text-xs text-[var(--color-muted)]"
+          >
+            {t("moreHint")}
+          </button>
+        </div>
+      ) : null}
+
+      {doneOpen ? (
+        <Sheet title={t("markDone")} onClose={() => setDoneOpen(false)} component="TodoDoneSheet">
+          <TodoCompleteForm
+            todo={current}
+            defaultOpen
+            onCancel={() => setDoneOpen(false)}
+            onDone={(completed) => {
+              setCurrent({ ...current, ...completed });
+              if (!completed.proposal) setDoneOpen(false);
+            }}
+          />
+        </Sheet>
+      ) : null}
+
+      {moreOpen ? (
+        <Sheet title={t("moreTitle")} onClose={() => setMoreOpen(false)} component="TodoMoreSheet">
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap gap-2">
+              {NEXT_STAGES[current.stage]
+                .filter((stage) => stage !== "done")
+                .map((stage) => (
+                  <ActionButton
+                    key={stage}
+                    disabled={busy}
+                    busyLabel="Saving…"
+                    onAction={async () => {
+                      await moveStage(stage);
+                      setMoreOpen(false);
+                    }}
+                    className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-fg)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+                  >
+                    {STAGE_VERB[stage]}
+                  </ActionButton>
+                ))}
+              <button
+                type="button"
+                onClick={() => {
+                  setMoreOpen(false);
+                  setAddOpen(true);
+                }}
+                className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-fg)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+              >
+                Add to project
+              </button>
+              {current.stage === "staged" || current.stage === "open" ? (
+                <button
+                  type="button"
+                  data-action="promote"
+                  onClick={() => {
+                    setMoreOpen(false);
+                    setAddOpen(true);
+                  }}
+                  className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-fg)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+                >
+                  Promote to a project card
+                </button>
+              ) : null}
+            </div>
+            {current.stage === "staged" || current.stage === "open" ? (
+              <div className="flex flex-wrap items-center gap-2 text-sm text-[var(--color-muted)]">
+                <span>{t("snoozeFor")}</span>
+                {SNOOZES.map((option) => (
+                  <ActionButton
+                    key={option.hours}
+                    disabled={busy}
+                    busyLabel="Snoozing…"
+                    onAction={async () => {
+                      await snoozeFor(option.hours);
+                      setMoreOpen(false);
+                    }}
+                    className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-fg)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+                  >
+                    {option.label}
+                  </ActionButton>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </Sheet>
+      ) : null}
+
       {addOpen ? (
         <AddToProjectSheet
           onClose={() => setAddOpen(false)}
@@ -370,6 +503,10 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
       ) : null}
     </div>
   );
+}
+
+function hoursFromNow(hours: number): string {
+  return new Date(Date.now() + hours * 3_600_000).toISOString();
 }
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
