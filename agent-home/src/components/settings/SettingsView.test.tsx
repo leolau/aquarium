@@ -20,7 +20,8 @@ describe("SettingsView", () => {
     );
     const html = renderToStaticMarkup(<SettingsView section="theme" />);
     expect(html).toContain('data-component="SettingsView"');
-    expect(html).toContain('href="/settings"');
+    // Back to Settings is the shell PageHeader's job, not an in-body link.
+    expect(html).not.toContain('data-component="SettingsBackLink"');
   });
 
   it("renders the colour theme section", () => {

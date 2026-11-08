@@ -361,7 +361,7 @@ export function ConnectedAccounts() {
       </p>
 
       {error && <p className="mb-2 text-xs text-[var(--color-danger)]">{error}</p>}
-      {result && <p className="mb-2 text-xs text-green-400">{result}</p>}
+      {result && <p className="mb-2 text-xs text-[var(--color-success)]">{result}</p>}
 
       {loaded && entries.length === 0 && phase === "idle" && (
         <p className="mb-2 text-xs text-[var(--color-muted)]">

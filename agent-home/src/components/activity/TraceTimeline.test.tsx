@@ -35,12 +35,13 @@ describe("TraceTimeline", () => {
     const html = renderToStaticMarkup(
       <TraceTimeline traces={[]} configured={false} />,
     );
-    expect(html).toContain("Trace ledger not configured");
+    expect(html).toContain("isn&#x27;t switched on");
+    expect(html).toContain("Ask the owner");
   });
 
   it("shows the empty-scope state", () => {
     const html = renderToStaticMarkup(<TraceTimeline traces={[]} configured />);
-    expect(html).toContain("No traces visible in your scope yet");
+    expect(html).toContain("Nothing to show yet");
   });
 });
 
@@ -90,7 +91,9 @@ describe("TraceDetail", () => {
     expect(html).toContain("hello there");
     expect(html).toContain("tool_call");
     expect(html).toContain("4 events");
-    expect(html).toContain("All traces");
+    // Back to Activity is the shell PageHeader, not an in-body link.
+    expect(html).not.toContain("All traces");
+    expect(html).toContain("Copy trace ID");
   });
 
   it("shows the unconfigured state", () => {
@@ -101,6 +104,6 @@ describe("TraceDetail", () => {
       rollup: null,
     };
     const html = renderToStaticMarkup(<TraceDetail detail={detail} />);
-    expect(html).toContain("Trace ledger not configured");
+    expect(html).toContain("Ask the owner");
   });
 });

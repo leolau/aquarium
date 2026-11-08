@@ -87,7 +87,7 @@ const STATE_LABEL: Record<VpnState, string> = {
 };
 
 const STATE_COLOR: Record<VpnState, string> = {
-  connected: "text-green-400",
+  connected: "text-[var(--color-success)]",
   connecting: "text-[var(--color-warn-text)]",
   disconnected: "text-[var(--color-muted)]",
   error: "text-[var(--color-danger)]",

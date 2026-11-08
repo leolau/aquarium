@@ -1,8 +1,15 @@
+"use client";
+
+import type { ReactNode } from "react";
+
+import { InfoTip } from "@/components/ui/InfoTip";
+import { AlertIcon, CheckIcon } from "@/components/ui/icons";
+import { useT } from "@/i18n/client";
 import type { CapacityResponse, CpuHistory } from "@/types";
 
 const TONE: Record<CapacityResponse["state"], string> = {
   comfortable: "text-[var(--color-success)]",
-  watch: "text-[var(--color-warn)]",
+  watch: "text-[var(--color-warn-text)]",
   constrained: "text-[var(--color-danger)]",
 };
 
@@ -31,9 +38,10 @@ function seconds(value: number | null): string {
  * for no change.
  */
 export function CapacityView({ capacity }: { capacity: CapacityResponse }) {
+  const t = useT("settings");
   const ind = capacity.indicators;
   const binding = capacity.binding_constraint;
-  const rows: { label: string; value: string }[] = [
+  const rows: { label: string; value: string; tip?: ReactNode }[] = [
     {
       label: "Active conversations",
       value:
@@ -64,6 +72,7 @@ export function CapacityView({ capacity }: { capacity: CapacityResponse }) {
     },
     {
       label: "Write-lock waits",
+      tip: <InfoTip label={t("capacity.tip.writeLockLabel")}>{t("capacity.tip.writeLock")}</InfoTip>,
       value:
         ind.write_lock_waits_per_hour === null
           ? "unknown"
@@ -71,6 +80,7 @@ export function CapacityView({ capacity }: { capacity: CapacityResponse }) {
     },
     {
       label: "Reply latency",
+      tip: <InfoTip label={t("capacity.tip.latencyLabel")}>{t("capacity.tip.latency")}</InfoTip>,
       value:
         ind.turn_samples === 0
           ? "no turns yet"
@@ -81,11 +91,19 @@ export function CapacityView({ capacity }: { capacity: CapacityResponse }) {
 
   return (
     <div data-component="CapacityView" className="flex flex-col gap-4">
-      <section className="flex flex-col gap-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-        <p className="text-sm text-[var(--color-muted)]">{capacity.summary}</p>
-        <p className={`text-lg font-medium ${TONE[capacity.state]}`}>
+      <section
+        data-component="CapacityVerdict"
+        className="flex flex-col gap-2 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4 md:p-5"
+      >
+        <p className={`flex items-center gap-2 text-lg font-semibold ${TONE[capacity.state]}`}>
+          {capacity.state === "comfortable" ? (
+            <CheckIcon size={20} aria-hidden />
+          ) : (
+            <AlertIcon size={20} aria-hidden />
+          )}
           Headroom: {capacity.state}
         </p>
+        <p className="text-sm text-[var(--color-muted)]">{capacity.summary}</p>
         <p className="text-sm text-[var(--color-muted)]">{VERDICT_HINT[capacity.state]}</p>
         {binding && capacity.state !== "comfortable" ? (
           <p data-component="CapacityBinding" className="text-sm">
@@ -102,16 +120,20 @@ export function CapacityView({ capacity }: { capacity: CapacityResponse }) {
         ) : null}
       </section>
 
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
       <section
         data-component="CapacityIndicators"
-        className="flex flex-col gap-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
+        className="flex flex-col gap-2 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
       >
         <h2 className="text-sm font-medium">The reading</h2>
         <dl className="flex flex-col gap-2 text-sm">
           {rows.map((row) => (
-            <div key={row.label} className="flex items-baseline justify-between gap-3">
-              <dt className="text-[var(--color-muted)]">{row.label}</dt>
-              <dd className="text-right">{row.value}</dd>
+            <div key={row.label} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+              <dt className="flex items-center gap-1 text-[var(--color-muted)]">
+                {row.label}
+                {row.tip}
+              </dt>
+              <dd className="min-w-0 break-words text-right">{row.value}</dd>
             </div>
           ))}
         </dl>
@@ -130,12 +152,13 @@ export function CapacityView({ capacity }: { capacity: CapacityResponse }) {
         ) : null}
       </section>
 
+      <div className="flex flex-col gap-4">
       <CpuHistorySection history={capacity.cpu_history} />
 
       {capacity.recommendations.length > 0 ? (
         <section
           data-component="CapacityRecommendations"
-          className="flex flex-col gap-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
+          className="flex flex-col gap-2 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
         >
           <h2 className="text-sm font-medium">What to do, cheapest first</h2>
           <ul className="flex flex-col gap-2 text-sm">
@@ -147,6 +170,8 @@ export function CapacityView({ capacity }: { capacity: CapacityResponse }) {
           </ul>
         </section>
       ) : null}
+      </div>
+      </div>
     </div>
   );
 }
@@ -173,7 +198,7 @@ function CpuHistorySection({ history }: { history: CpuHistory | null }) {
   return (
     <section
       data-component="CapacityCpuHistory"
-      className="flex flex-col gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
+      className="flex flex-col gap-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
     >
       <h2 className="text-sm font-medium">CPU utilization</h2>
       {hasData ? (

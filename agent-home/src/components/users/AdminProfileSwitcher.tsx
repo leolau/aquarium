@@ -6,6 +6,7 @@ import { useTransition } from "react";
 import { ProfilePicker } from "@/components/chat/ProfilePicker";
 import { useAction } from "@/lib/use-action";
 import type { ProfileSummary } from "@/types";
+import { useT } from "@/i18n/client";
 
 /**
  * The Users screen for `profile`, keeping the rest of the URL. The session is
@@ -30,6 +31,7 @@ export function AdminProfileSwitcher(props: { profiles: ProfileSummary[]; curren
 }
 
 function Switcher({ profiles, current }: { profiles: ProfileSummary[]; current: string }) {
+  const t = useT("users");
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const { run: select, pending: busy } = useAction(async (next: string) => {
@@ -46,7 +48,7 @@ function Switcher({ profiles, current }: { profiles: ProfileSummary[]; current: 
         switching={busy || pending}
         compact
         id="users-admin-profile"
-        label="Administering"
+        label={t("aps.label")}
       />
     </div>
   );

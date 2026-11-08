@@ -52,7 +52,7 @@ export function whatsAppItemState(
 }
 
 const TONE: Record<WaBridgeStatus, string> = {
-  connected: "text-green-400",
+  connected: "text-[var(--color-success)]",
   waiting_for_qr: "text-[var(--color-warn-text)]",
   restarting: "text-[var(--color-warn-text)]",
   not_linked: "text-[var(--color-warn-text)]",
@@ -63,9 +63,9 @@ const TONE: Record<WaBridgeStatus, string> = {
 function StepNum({ n, state }: { n: number; state: "done" | "attention" | "todo" }) {
   const cls =
     state === "done"
-      ? "bg-emerald-500 text-[#06281d]"
+      ? "bg-[var(--color-success)] text-[var(--color-bg)]"
       : state === "attention"
-        ? "bg-[var(--color-warn)] text-[#2a1a00]"
+        ? "bg-[var(--color-warn)] text-[var(--color-bg)]"
         : "bg-[var(--color-surface-2)]";
   return (
     <span
@@ -411,14 +411,14 @@ export function WhatsAppBridges() {
         {sent !== null && (
           <p
             role="status"
-            className="rounded-lg border border-emerald-500/35 bg-emerald-500/10 px-3 py-2 text-[13px] text-emerald-200"
+            className="rounded-lg border border-[var(--color-success)]/35 bg-[var(--color-success)]/10 px-3 py-2 text-[13px] text-[var(--color-success)]"
           >
             ✓ {t("sent", { number: sent })}
           </p>
         )}
       </div>
 
-      <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-[var(--color-warn-text)]">
+      <p className="rounded-lg border border-[var(--color-warn)]/40 bg-[var(--color-warn)]/10 px-3 py-2 text-xs text-[var(--color-warn-text)]">
         ⚠ {t("warn")}
       </p>
 

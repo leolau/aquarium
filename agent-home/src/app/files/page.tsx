@@ -1,4 +1,7 @@
 import { MobileShell } from "@/components/MobileShell";
+import { InfoTip } from "@/components/ui/InfoTip";
+import { getT } from "@/i18n/server";
+
 import { FilesTabs } from "@/components/files/FilesTabs";
 import { FilesView } from "@/components/files/FilesView";
 import { HermesApiError } from "@/lib/api/client";
@@ -42,8 +45,15 @@ export default async function Page() {
     }
   }
 
+  const tf = await getT("filesBrowse");
+  const ts = await getT("settings");
   return (
-    <MobileShell title="Files">
+    <MobileShell
+      title={tf("title")}
+      subtitle={ts("files.subtitle")}
+      info={<InfoTip label={ts("files.infoLabel")}>{ts("files.info")}</InfoTip>}
+      wide
+    >
       <FilesTabs />
       {noPrincipal ? (
         <div

@@ -198,7 +198,7 @@ export function describe(check: SecurityCheck, t: Translate, lang: Lang): Row {
 }
 
 const ICON: Record<Row["tone"], { glyph: string; cls: string }> = {
-  ok: { glyph: "✓", cls: "text-emerald-400" },
+  ok: { glyph: "✓", cls: "text-[var(--color-success)]" },
   warn: { glyph: "!", cls: "text-[var(--color-warn-text)]" },
   unknown: { glyph: "?", cls: "text-[var(--color-muted)]" },
   muted: { glyph: "–", cls: "text-[var(--color-muted)]" },
@@ -207,9 +207,9 @@ const ICON: Record<Row["tone"], { glyph: string; cls: string }> = {
 function StatusPill({ status, t }: { status: SecurityBasicsResult["status"]; t: Translate }) {
   const cls =
     status === "done"
-      ? "bg-emerald-500/15 text-emerald-300"
+      ? "bg-[var(--color-success)]/15 text-[var(--color-success)]"
       : status === "attention"
-        ? "bg-amber-500/15 text-[var(--color-warn-text)]"
+        ? "bg-[var(--color-warn)]/15 text-[var(--color-warn-text)]"
         : "bg-[var(--color-surface-2)] text-[var(--color-fg)]";
   return (
     <span data-status={status} className={`rounded-full px-2 py-0.5 text-xs ${cls}`}>
@@ -337,9 +337,9 @@ export function SecurityBasicsItem({
 
   const badge =
     status === "done"
-      ? "bg-emerald-500 text-white"
+      ? "bg-[var(--color-success)] text-[var(--color-bg)]"
       : status === "attention"
-        ? "bg-amber-500 text-black"
+        ? "bg-[var(--color-warn)] text-[var(--color-bg)]"
         : "bg-[var(--color-surface-2)] text-[var(--color-fg)]";
 
   return (
@@ -397,7 +397,7 @@ export function SecurityBasicsItem({
             </p>
           ) : null}
           {!open && firstProblem ? (
-            <p className="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-[var(--color-warn-text)]">
+            <p className="mt-2 rounded-lg border border-[var(--color-warn)]/40 bg-[var(--color-warn)]/10 px-3 py-2 text-xs text-[var(--color-warn-text)]">
               ! {t("firstProblem", { text: firstProblem.text })}
             </p>
           ) : null}
@@ -429,7 +429,7 @@ function HelperNotice({ reason, t }: { reason: string; t: Translate }) {
     : "helper.bad_output") as "helper.missing";
   const install = reason === "missing" || reason === "refused";
   return (
-    <div data-helper={reason} className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs">
+    <div data-helper={reason} className="rounded-lg border border-[var(--color-warn)]/40 bg-[var(--color-warn)]/10 p-3 text-xs">
       <p className="text-[var(--color-warn-text)]">{t(key)}</p>
       {install ? (
         <>

@@ -1,5 +1,7 @@
 import { MobileShell } from "@/components/MobileShell";
-import { SettingsBackLink } from "@/components/settings/SettingsBackLink";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { InfoTip } from "@/components/ui/InfoTip";
+import { getT } from "@/i18n/server";
 import { GetReadyView, type GetReadyExtras } from "@/components/get-ready/GetReadyView";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
 import type { GetReadyResponse } from "@/types";
@@ -52,17 +54,20 @@ export default async function Page() {
     }
   }
 
+  const t = await getT("settings");
+  const tg = await getT("getReady");
   return (
-    <MobileShell title="Get ready" wide>
-      <SettingsBackLink />
+    <MobileShell
+      title={t("entry.get-ready")}
+      subtitle={data ? tg(data.can_manage ? "introManager" : "introPerson") : t("getReady.subtitle")}
+      info={<InfoTip label={t("getReady.infoLabel")}>{t("getReady.info")}</InfoTip>}
+      wide
+    >
       {data ? (
         <GetReadyView initial={data} extras={extras} />
       ) : (
-        <div
-          data-component="GetReadyError"
-          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
-        >
-          Couldn&apos;t load the checklist ({error}).
+        <div data-component="GetReadyError">
+          <ErrorState kind="error" details={error} />
         </div>
       )}
     </MobileShell>
