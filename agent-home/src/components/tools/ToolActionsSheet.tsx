@@ -6,6 +6,7 @@ import { useState } from "react";
 import { ActionButton } from "@/components/projects/ActionButton";
 import { useProjectAction } from "@/components/projects/useProjectAction";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { useUndoToast } from "@/components/ui/UndoToast";
 import { useT } from "@/i18n/client";
 import type { Tool } from "@/types";
 
@@ -47,6 +48,7 @@ export function ToolActionsSheet({
 }) {
   const t = useT("tools");
   const action = useProjectAction();
+  const undo = useUndoToast();
   const [danger, setDanger] = useState<Danger | null>(null);
   const [picking, setPicking] = useState(false);
   const name = displayName(tool);
@@ -159,12 +161,17 @@ export function ToolActionsSheet({
                 <ActionButton
                   busy={action.busy}
                   className={BTN}
-                  onClick={() =>
+                  onClick={() => {
+                    const next = !tool.enabled;
                     void action.run(appApiPath(tool, "/enabled"), {
                       method: "POST",
-                      body: { enabled: !tool.enabled, mode },
-                    })
-                  }
+                      body: { enabled: next, mode },
+                      onSuccess: () =>
+                        undo.show(t(next ? "undo.shown" : "undo.hidden", { name }), () =>
+                          action.run(appApiPath(tool, "/enabled"), { method: "POST", body: { enabled: !next, mode } }),
+                        ),
+                    });
+                  }}
                 >
                   {tool.enabled ? t("actions.hide") : t("actions.show")}
                 </ActionButton>
@@ -199,7 +206,7 @@ export function ToolActionsSheet({
                     <ActionButton busy={action.busy} className={BTN} onClick={() => post("/restore")}>
                       {t("actions.restore")}
                     </ActionButton>
-                    <button type="button" data-appmcp-deny="consent" className={`${BTN} text-[#c53b3b]`} onClick={() => setDanger("purge")}>
+                    <button type="button" data-appmcp-deny="consent" className={`${BTN} text-[var(--color-danger)]`} onClick={() => setDanger("purge")}>
                       {t("actions.purge")}
                     </button>
                   </>
@@ -208,7 +215,7 @@ export function ToolActionsSheet({
                     {t("actions.archive")}
                   </button>
                 ) : null}
-                <button type="button" data-appmcp-deny="consent" className={`${BTN} text-[#c53b3b]`} onClick={() => setDanger("delete")}>
+                <button type="button" data-appmcp-deny="consent" className={`${BTN} text-[var(--color-danger)]`} onClick={() => setDanger("delete")}>
                   {kind === "external" ? t("actions.unlink") : t("actions.delete")}
                 </button>
               </li>
@@ -216,7 +223,7 @@ export function ToolActionsSheet({
           ) : null}
         </ul>
         {action.error && !danger ? (
-          <p role="alert" className="mt-2 text-sm text-[#c53b3b]">
+          <p role="alert" className="mt-2 text-sm text-[var(--color-danger)]">
             {action.error}
           </p>
         ) : null}
@@ -237,6 +244,7 @@ export function ToolActionsSheet({
           />
         </div>
       ) : null}
+      {undo.toast}
     </div>
   );
 }

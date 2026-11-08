@@ -1,4 +1,6 @@
 import { MobileShell } from "@/components/MobileShell";
+import { InfoTip } from "@/components/ui/InfoTip";
+
 import { BrowseView } from "@/components/files/BrowseView";
 import { FilesTabs } from "@/components/files/FilesTabs";
 import { getT } from "@/i18n/server";
@@ -15,9 +17,15 @@ export const dynamic = "force-dynamic";
  */
 export default async function Page() {
   await requirePrincipal();
-  const t = await getT("filesBrowse");
+  const tf = await getT("filesBrowse");
+  const ts = await getT("settings");
   return (
-    <MobileShell title={t("title")} wide>
+    <MobileShell
+      title={tf("title")}
+      subtitle={ts("files.subtitle")}
+      info={<InfoTip label={ts("files.infoLabel")}>{ts("files.info")}</InfoTip>}
+      wide
+    >
       <FilesTabs />
       <BrowseView />
     </MobileShell>

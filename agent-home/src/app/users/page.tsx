@@ -1,4 +1,7 @@
 import { MobileShell } from "@/components/MobileShell";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { InfoTip } from "@/components/ui/InfoTip";
+import { getT } from "@/i18n/server";
 import { PAGE_SIZE } from "@/components/users/api";
 import { UsersView } from "@/components/users/UsersView";
 import { administeredProfiles, selectUsersProfile } from "@/lib/api/my-profiles";
@@ -74,14 +77,17 @@ export default async function Page({
     }
   }
 
+  const t = await getT("settings");
   return (
-    <MobileShell title="Users">
+    <MobileShell
+      title={t("entry.people")}
+      subtitle={t("users.subtitle")}
+      info={<InfoTip label={t("users.infoLabel")}>{t("users.info")}</InfoTip>}
+      wide
+    >
       {error ? (
-        <div
-          data-component="UsersError"
-          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
-        >
-          Couldn&apos;t load users ({error}).
+        <div data-component="UsersError">
+          <ErrorState kind="error" details={error} />
         </div>
       ) : (
         <UsersView

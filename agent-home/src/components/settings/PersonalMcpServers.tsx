@@ -177,7 +177,7 @@ export function PersonalMcpServers({ onCount }: { onCount?: (count: number) => v
       </div>
 
       {loadError ? (
-        <p className="rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-400">
+        <p className="rounded-xl border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 px-3 py-2 text-sm text-[var(--color-danger)]">
           {t("loadError", { error: loadError })}
         </p>
       ) : data === null ? (
@@ -307,7 +307,7 @@ function ServerRow({
       {result ? (
         <p
           role="status"
-          className={`mt-2 break-words text-xs ${result.ok ? "text-emerald-400" : "text-[var(--color-danger)]"}`}
+          className={`mt-2 break-words text-xs ${result.ok ? "text-[var(--color-success)]" : "text-[var(--color-danger)]"}`}
         >
           {result.ok
             ? t("testOk", { count: result.tools.length })
@@ -445,7 +445,7 @@ function SignIn({ name, onDone }: { name: string; onDone: () => void }) {
           {t("cancelSignIn")}
         </ActionButton>
       ) : null}
-      {flow?.status === "success" ? <p className="text-xs text-emerald-400">{t("signInDone")}</p> : null}
+      {flow?.status === "success" ? <p className="text-xs text-[var(--color-success)]">{t("signInDone")}</p> : null}
       {flow?.status === "error" ? (
         <p className="text-xs text-[var(--color-danger)]">{t("signInFailed", { error: flow.error ?? "" })}</p>
       ) : null}

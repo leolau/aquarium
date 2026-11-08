@@ -281,7 +281,7 @@ function UploadsForm({ view, saved, onSaved, onEdit }: FormProps<UploadsView>) {
         {t("uploadsRange", { min, max })}
       </p>
       {view.legacy_override_bytes ? (
-        <p className="mt-1 text-xs text-amber-300">
+        <p className="mt-1 text-xs text-[var(--color-warn-text)]">
           {t("uploadsOverride", { limit: formatUploadLimit(view.legacy_override_bytes) })}
         </p>
       ) : null}

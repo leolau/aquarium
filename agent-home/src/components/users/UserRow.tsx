@@ -4,26 +4,20 @@ import { useState } from "react";
 
 import { ASSIGNABLE_ROLES } from "@/components/users/CreateUserForm";
 import { ProfileRolesPanel } from "@/components/users/ProfileRolesPanel";
-import type { Member, Role } from "@/types";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { Sheet } from "@/components/ui/Sheet";
+import { useT } from "@/i18n/client";
+import type { Member, Role } from "@/types";
 
 /**
- * One roster row and its management controls.
- *
- * Two independent states are shown because they mean different things and the
- * remedies differ: the **account** is box-wide (a banned account is what a
- * created-but-not-activated user looks like, fixed with an activation link),
- * while the **enrolment** is this profile's (suspended here, fixed with
- * Restore). Collapsing them would send an admin to the wrong control.
- *
- * The owner row is read-only — `owner` cannot be created or assigned here, and
- * ownership moves via `hermes owner transfer`. An owner or admin may re-role
- * or remove anybody, themselves included; Python refuses only the owner and
- * the last live admin. The self row hides Suspend (a suspended enrolment
- * cannot restore itself).
+ * One person on the Users screen. The owner row has no role select or
+ * suspend (ownership moves via `hermes owner transfer`). An owner or admin may
+ * re-role, suspend/restore, issue or revoke an activation link, rename, link a
+ * channel and remove the enrolment. A picked role is only staged until Save
+ * role. On phones the secondary actions collapse into a "More" sheet.
  *
  * "Profiles & roles" opens the person's enrolments across every profile the
- * actor administers (see `ProfileRolesPanel`).
+ * actor administers.
  */
 export function UserRow({
   member,
@@ -45,7 +39,8 @@ export function UserRow({
   /** Removal from this profile (owner/admin; the box-wide account is kept). */
   canDelete: boolean;
   busy: boolean;
-  onChangeRole: (m: Member, r: Role) => void;
+  /** Saves an explicitly picked role; picking alone never saves. */
+  onChangeRole: (m: Member, r: Role) => unknown;
   onSetEnrolled: (m: Member, enrolled: boolean) => unknown;
   onInvite: (m: Member) => unknown;
   onRevokeInvite: (m: Member) => unknown;
@@ -55,11 +50,17 @@ export function UserRow({
   /** A "Profiles & roles" change landed in `profile`. */
   onProfilesChanged?: (profile: string, removedSelf: boolean) => unknown;
 }) {
+  const t = useT("users");
   const [expanded, setExpanded] = useState(false);
   const [profilesOpen, setProfilesOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [picked, setPicked] = useState<Role | null>(null);
   const [display, setDisplay] = useState(member.display);
   const [platform, setPlatform] = useState("telegram");
   const [handle, setHandle] = useState("");
+  const shownRole = picked ?? member.role;
+  const roleDirty = picked !== null && picked !== member.role;
+  const name = member.display || member.email || member.user_id;
 
   const invitation = member.invitation;
   // A reset *request* mints a recovery invitation whose token is never returned
@@ -67,62 +68,106 @@ export function UserRow({
   // open" would tell an admin a live link exists when none was ever handed out,
   // and they must still regenerate one.
   const resetRequested =
-    invitation !== null &&
-    invitation.kind === "recovery" &&
-    invitation.status === "open";
+    invitation !== null && invitation.kind === "recovery" && invitation.status === "open";
 
-  function profilesToggle() {
+  const chip = "rounded-lg bg-[var(--color-surface-2)] px-3 py-1 text-xs disabled:opacity-50";
+  const sheetItem =
+    "flex min-h-11 w-full items-center rounded-[var(--radius-lg)] bg-[var(--color-surface-2)] px-4 text-left text-sm disabled:opacity-50";
+
+  function profilesToggle(cls: string, after?: () => void) {
     return (
       <button
         type="button"
         aria-expanded={profilesOpen}
-        onClick={() => setProfilesOpen(!profilesOpen)}
-        className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 text-xs"
+        onClick={() => {
+          after?.();
+          setProfilesOpen(!profilesOpen);
+        }}
+        className={cls}
       >
-        {profilesOpen ? "Hide profiles & roles" : "Profiles & roles"}
+        {profilesOpen ? t("row.hideProfiles") : t("row.profiles")}
       </button>
+    );
+  }
+
+  /** Link, revoke, details and profiles: inline from `sm`, in the More sheet on phones. */
+  function secondary(inSheet: boolean) {
+    const cls = inSheet ? sheetItem : chip;
+    const close = () => {
+      if (inSheet) setMoreOpen(false);
+    };
+    return (
+      <>
+        <ActionButton
+          disabled={busy}
+          onAction={async () => {
+            close();
+            await onInvite(member);
+          }}
+          className={cls}
+        >
+          {resetRequested ? t("row.sendReset") : invitation ? t("row.regenerate") : t("row.sendLink")}
+        </ActionButton>
+        {invitation && invitation.status === "open" ? (
+          <ActionButton
+            disabled={busy}
+            onAction={async () => {
+              close();
+              await onRevokeInvite(member);
+            }}
+            className={cls}
+          >
+            {t("row.revoke")}
+          </ActionButton>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => {
+            close();
+            setExpanded(!expanded);
+          }}
+          className={cls}
+        >
+          {expanded ? t("row.hideDetails") : t("row.details")}
+        </button>
+        {profilesToggle(cls, close)}
+      </>
     );
   }
 
   return (
     <li
       data-component="UserRow"
-      className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
+      className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
     >
       <div className="min-w-0">
-        <p className="truncate text-sm font-medium">
-          {member.display || member.email || member.user_id}
-          {self ? <span className="text-[var(--color-muted)]"> (you)</span> : null}
+        <p className="break-words text-sm font-medium">
+          {name}
+          {self ? <span className="text-[var(--color-muted)]"> {t("row.you")}</span> : null}
         </p>
-        <p className="truncate text-xs text-[var(--color-muted)]">
-          {member.email || "(no email)"} · {member.user_id}
+        <p className="break-all text-xs text-[var(--color-muted)]">
+          {member.email || t("row.noEmail")} · {member.user_id}
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
           <span className="rounded-full bg-[var(--color-accent)] px-2 py-1 text-[var(--color-accent-fg)]">
-            {member.role}
+            {t(`role.${member.role}`)}
           </span>
           {member.enrolled ? null : (
             <span className="rounded-full bg-[var(--color-surface-2)] px-2 py-1 text-[var(--color-warn-text)]">
-              suspended here
+              {t("row.suspended")}
             </span>
           )}
           {member.active ? null : (
             <span className="rounded-full bg-[var(--color-surface-2)] px-2 py-1 text-[var(--color-danger)]">
-              {invitation && invitation.status === "open"
-                ? "awaiting activation"
-                : "account locked"}
+              {invitation && invitation.status === "open" ? t("row.awaiting") : t("row.locked")}
             </span>
           )}
           {invitation ? (
             <span
-              title={
-                resetRequested
-                  ? "This person asked to reset their password. No link has been handed over — regenerate one."
-                  : undefined
-              }
+              title={resetRequested ? t("row.resetTitle") : undefined}
               className="rounded-full bg-[var(--color-surface-2)] px-2 py-1"
             >
-              {resetRequested ? "reset requested" : `invite ${invitation.status}`}
+              {resetRequested ? t("row.resetRequested") : t("row.invite", { status: invitation.status })}
             </span>
           ) : null}
           {member.channels.map((c) => (
@@ -136,69 +181,83 @@ export function UserRow({
       {member.is_owner ? (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <p className="text-xs text-[var(--color-muted)]">
-            Owner — managed via <code>hermes owner transfer</code>.
+            {t("row.ownerNote")} <code>hermes owner transfer</code>.
           </p>
-          {profilesToggle()}
+          {profilesToggle(chip)}
         </div>
       ) : (
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <>
-            <label className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
-                Role
-                <select
-                  aria-label={`Role for ${member.display || member.user_id}`}
-                  value={member.role}
-                  disabled={busy}
-                  onChange={(e) => onChangeRole(member, e.target.value as Role)}
-                  className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-xs disabled:opacity-50"
-                >
-                  {ASSIGNABLE_ROLES.map((r) => (
-                    <option key={r} value={r}>
-                      {r}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {self ? null : (
-                <ActionButton
-                  disabled={busy}
-                  onAction={() => onSetEnrolled(member, !member.enrolled)}
-                  className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 text-xs disabled:opacity-50"
-                >
-                  {member.enrolled ? "Suspend" : "Restore"}
-                </ActionButton>
-              )}
-          </>
-          <ActionButton
-            disabled={busy}
-            onAction={() => onInvite(member)}
-            className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 text-xs disabled:opacity-50"
-          >
-            {resetRequested
-              ? "Send reset link"
-              : invitation
-                ? "Regenerate link"
-                : "Send link"}
-          </ActionButton>
-          {invitation && invitation.status === "open" ? (
+          <label className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
+            {t("row.role")}
+            <select
+              aria-label={t("row.roleFor", { name: member.display || member.user_id })}
+              value={shownRole}
+              disabled={busy}
+              onChange={(e) => setPicked(e.target.value as Role)}
+              className={`rounded-lg border bg-[var(--color-bg)] px-2 py-1 text-xs disabled:opacity-50 ${roleDirty ? "border-[var(--color-warn)]" : "border-[var(--color-border)]"}`}
+            >
+              {ASSIGNABLE_ROLES.map((r) => (
+                <option key={r} value={r}>
+                  {t(`role.${r}`)}
+                </option>
+              ))}
+            </select>
+          </label>
+          {roleDirty ? (
+            <>
+              <span className="flex basis-full items-center gap-1.5 text-xs text-[var(--color-warn-text)] sm:basis-auto">
+                <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-[var(--color-warn)]" />
+                {t("row.changedFrom", { role: t(`role.${member.role}`) })}
+              </span>
+              <ActionButton
+                data-action="save-role"
+                disabled={busy}
+                onAction={async () => {
+                  await onChangeRole(member, picked as Role);
+                  setPicked(null);
+                }}
+                className="rounded-lg bg-[var(--color-accent)] px-3 py-1 text-xs font-semibold text-[var(--color-accent-fg)] disabled:opacity-50"
+              >
+                {t("row.saveRole")}
+              </ActionButton>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setPicked(null)}
+                className="rounded-lg px-2 py-1 text-xs text-[var(--color-muted)] disabled:opacity-50"
+              >
+                {t("row.cancel")}
+              </button>
+            </>
+          ) : null}
+          {self ? null : (
             <ActionButton
               disabled={busy}
-              onAction={() => onRevokeInvite(member)}
-              className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 text-xs disabled:opacity-50"
+              onAction={() => onSetEnrolled(member, !member.enrolled)}
+              className={chip}
             >
-              Revoke link
+              {member.enrolled ? t("row.suspend") : t("row.restore")}
             </ActionButton>
-          ) : null}
+          )}
+          <div className="hidden flex-wrap items-center gap-2 sm:flex">{secondary(false)}</div>
           <button
             type="button"
-            onClick={() => setExpanded(!expanded)}
-            className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 text-xs"
+            data-action="user-more"
+            aria-haspopup="dialog"
+            disabled={busy}
+            onClick={() => setMoreOpen(true)}
+            className="rounded-lg px-3 py-1 text-xs text-[var(--color-muted)] disabled:opacity-50 sm:hidden"
           >
-            {expanded ? "Hide details" : "Details"}
+            {t("row.more")}
           </button>
-          {profilesToggle()}
         </div>
       )}
+
+      {moreOpen ? (
+        <Sheet title={t("row.moreTitle", { name })} onClose={() => setMoreOpen(false)} component="UserMoreSheet">
+          <div className="flex flex-col gap-2">{secondary(true)}</div>
+        </Sheet>
+      ) : null}
 
       {profilesOpen ? (
         <ProfileRolesPanel member={member} self={self} onChanged={onProfilesChanged} />
@@ -212,7 +271,7 @@ export function UserRow({
           <div className="flex flex-wrap items-center gap-2">
             <input
               type="text"
-              aria-label={`Display name for ${member.user_id}`}
+              aria-label={t("row.displayFor", { id: member.user_id })}
               value={display}
               onChange={(e) => setDisplay(e.target.value)}
               className="min-w-0 flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-xs"
@@ -220,14 +279,14 @@ export function UserRow({
             <ActionButton
               disabled={busy || !display.trim() || display === member.display}
               onAction={() => onRename(member, display.trim())}
-              className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 text-xs disabled:opacity-50"
+              className={chip}
             >
-              Rename
+              {t("row.rename")}
             </ActionButton>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <select
-              aria-label={`Channel platform for ${member.user_id}`}
+              aria-label={t("row.platformFor", { id: member.user_id })}
               value={platform}
               onChange={(e) => setPlatform(e.target.value)}
               className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-xs"
@@ -240,8 +299,8 @@ export function UserRow({
             </select>
             <input
               type="text"
-              aria-label={`Channel handle for ${member.user_id}`}
-              placeholder="channel user id"
+              aria-label={t("row.handleFor", { id: member.user_id })}
+              placeholder={t("row.handlePlaceholder")}
               value={handle}
               onChange={(e) => setHandle(e.target.value)}
               className="min-w-0 flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-xs"
@@ -252,9 +311,9 @@ export function UserRow({
                 onLinkChannel(member, platform, handle.trim());
                 setHandle("");
               }}
-              className="rounded-lg bg-[var(--color-surface-2)] px-3 py-1 text-xs disabled:opacity-50"
+              className={chip}
             >
-              Link channel
+              {t("row.linkChannel")}
             </ActionButton>
           </div>
           {canDelete ? (
@@ -262,14 +321,12 @@ export function UserRow({
               type="button"
               disabled={busy}
               onClick={() => onDelete(member)}
-              className="self-start rounded-lg bg-red-500/15 px-3 py-1 text-xs text-red-300 disabled:opacity-50"
+              className="self-start rounded-lg bg-[var(--color-danger)]/15 px-3 py-1 text-xs text-[var(--color-danger)] disabled:opacity-50"
             >
-              Remove from profile…
+              {t("row.remove")}
             </button>
           ) : (
-            <p className="text-xs text-[var(--color-muted)]">
-              Only an owner or admin can remove a user from this profile.
-            </p>
+            <p className="text-xs text-[var(--color-muted)]">{t("row.removeOnlyAdmin")}</p>
           )}
         </div>
       ) : null}

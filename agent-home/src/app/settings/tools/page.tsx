@@ -1,5 +1,7 @@
 import { MobileShell } from "@/components/MobileShell";
-import { SettingsBackLink } from "@/components/settings/SettingsBackLink";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { InfoTip } from "@/components/ui/InfoTip";
+import { getT } from "@/i18n/server";
 import { PersonalMcpServers } from "@/components/settings/PersonalMcpServers";
 import { RoleLimitsSection } from "@/components/settings/RoleLimitsSection";
 import { ToolsSettings } from "@/components/settings/ToolsSettings";
@@ -33,16 +35,17 @@ export default async function Page() {
     error = err instanceof Error ? err.message : "Failed to load tools";
   }
 
+  const t = await getT("settings");
   return (
-    <MobileShell title="Tools & Integrations">
-      <SettingsBackLink />
+    <MobileShell
+      title={t("entry.tools")}
+      subtitle={t("entry.tools.hint")}
+      info={<InfoTip label={t("tools.infoLabel")}>{t("tools.info")}</InfoTip>}
+    >
       <PersonalMcpServers />
       {error ? (
-        <div
-          data-component="ToolsSettingsError"
-          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
-        >
-          Couldn&apos;t load the integrations ({error}).
+        <div data-component="ToolsSettingsError">
+          <ErrorState kind="error" details={error} />
         </div>
       ) : (
         <ToolsSettings

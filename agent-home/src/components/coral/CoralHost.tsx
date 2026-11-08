@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { usePathname } from "next/navigation";
 
@@ -159,7 +160,22 @@ export function CoralHost({
                     className={`coral-section coral-section--${petal.id} mt-4`}
                   >
                     <h3 className="mb-1 px-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
-                      {t.has(`clusters.${petal.id}`) ? t(`clusters.${petal.id}`) : petal.label}
+                      {petal.id === "system" ? (
+                        // The System cluster's heading opens the /system hub.
+                        <Link
+                          href="/system"
+                          data-action="open-system-hub"
+                          onClick={() => close("navigate")}
+                          className="inline-flex min-h-8 items-center gap-1 hover:text-[var(--color-fg)]"
+                        >
+                          {t.has(`clusters.${petal.id}`) ? t(`clusters.${petal.id}`) : petal.label}
+                          <span aria-hidden>›</span>
+                        </Link>
+                      ) : t.has(`clusters.${petal.id}`) ? (
+                        t(`clusters.${petal.id}`)
+                      ) : (
+                        petal.label
+                      )}
                     </h3>
                     <div className="grid grid-cols-4 gap-1">
                       {petal.members.map((member) => (

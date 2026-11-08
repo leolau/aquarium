@@ -123,6 +123,7 @@ describe("ProfilesView", () => {
     fireEvent.click(next);
     fireEvent.click(screen.getByRole("button", { name: "Next →" }));
     fireEvent.click(screen.getByRole("button", { name: "Next →" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next →" }));
     expect(screen.getByTestId("new-profile-review").textContent).toContain("smoke-new");
     expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === "POST")).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Create profile" }));

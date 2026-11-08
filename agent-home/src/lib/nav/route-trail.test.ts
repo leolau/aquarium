@@ -12,6 +12,9 @@ describe("routeTrail", () => {
     expect(hrefs("/inbox/42")).toEqual(["/", "/inbox", "/inbox/42"]);
     expect(hrefs("/todos/7")).toEqual(["/", "/todos", "/todos/7"]);
     expect(hrefs("/users")).toEqual(["/", "/settings", "/users"]);
+    expect(hrefs("/activity/t1")).toEqual(["/", "/activity", "/activity/t1"]);
+    expect(hrefs("/capacity")).toEqual(["/", "/settings", "/capacity"]);
+    expect(hrefs("/settings/in-out/google")).toEqual(["/", "/settings", "/settings/in-out", "/settings/in-out/google"]);
     expect(hrefs("/webview")).toEqual(["/", "/system", "/webview"]);
   });
 
