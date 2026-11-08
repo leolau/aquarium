@@ -12,7 +12,11 @@ export function usePopover<T extends HTMLElement = HTMLDivElement>() {
       if (e.key === "Escape") setOpen(false);
     };
     const onDown = (e: MouseEvent | TouchEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      // A modal opened from the popover (e.g. sign-out confirm) is portalled to
+      // <body>; pressing inside it must not close the popover and unmount it.
+      const inModal = target instanceof Element && target.closest('[aria-modal="true"]');
+      if (ref.current && !ref.current.contains(target) && !inModal) setOpen(false);
     };
     window.addEventListener("keydown", onKey);
     document.addEventListener("mousedown", onDown);
