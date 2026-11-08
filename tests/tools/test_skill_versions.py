@@ -288,20 +288,24 @@ class TestRetention:
 
 class TestSkillManageHooks:
     def test_every_write_action_snapshots(self, skill_manager, monkeypatch):
-        from gateway.session_context import clear_session_vars, set_session_vars
+        import contextvars
 
-        tokens = set_session_vars(session_id="sess-42")
-        try:
-            def ok(res):
-                assert json.loads(res)["success"], res
+        from gateway.session_context import set_session_vars
 
+        def ok(res):
+            assert json.loads(res)["success"], res
+
+        def writes():
+            # Own context: clear_session_vars would leave "" behind and hide
+            # HERMES_SESSION_ID from later tests in this process.
+            set_session_vars(session_id="sess-42")
             ok(skill_manager.skill_manage("create", "demo", content=_md()))
             ok(skill_manager.skill_manage("edit", "demo", content=_md(body="Edited.")))
             ok(skill_manager.skill_manage("patch", "demo", old_string="Edited.", new_string="Patched."))
             ok(skill_manager.skill_manage("write_file", "demo", file_path="references/a.md", file_content="A"))
             ok(skill_manager.skill_manage("remove_file", "demo", file_path="references/a.md"))
-        finally:
-            clear_session_vars(tokens)
+
+        contextvars.copy_context().run(writes)
 
         versions = sorted(sv.list_versions("demo"), key=lambda v: v["n"])
         assert [v["source"] for v in versions] == ["create", "edit", "patch", "patch", "patch"]
