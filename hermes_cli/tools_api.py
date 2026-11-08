@@ -553,6 +553,56 @@ async def tool_quota(request: Request):
     }
 
 
+DEPLOYMENTS_SHOWN = 10
+
+
+def _secrets_view(names: Any, meta: Dict[str, Optional[str]]) -> List[dict]:
+    """Secret names with when each was last set (``None`` if set before that was
+    recorded). Never a value: values only ever live with the root helper."""
+    from hermes_cli.app_runtime import MCP_TOKEN_NAME
+
+    return [
+        {"name": n, "updated_at": meta.get(n)}
+        for n in sorted(set(names or ()))
+        if isinstance(n, str) and n != MCP_TOKEN_NAME
+    ]
+
+
+def _deployments_view(rows: List[dict], *, full: bool) -> List[dict]:
+    """Newest first with a pill ``status``; helper errors only for managers."""
+    from hermes_cli.app_store import deployment_statuses
+
+    rows = sorted(rows, key=lambda r: (str(r.get("created_at") or ""), str(r.get("id") or "")),
+                  reverse=True)[:DEPLOYMENTS_SHOWN]
+    out = []
+    for row, status in zip(rows, deployment_statuses(rows)):
+        item = {k: row.get(k) for k in ("id", "mode", "target", "url", "source_sha", "created_at")}
+        item["status"] = status
+        if full and row.get("error"):
+            item["error"] = str(row["error"])[:500]
+        out.append(item)
+    return out
+
+
+async def _other_mode_deployments(rt: Any, reg: Any, who: Any, name: str) -> List[dict]:
+    """The other mode's deployments of the same app, if the caller can see it
+    there too (C2 per mode), so the card shows the live and the test copy."""
+    from hermes_cli.datastore import get_store
+    from hermes_cli.tools_registry import ToolRegistry
+
+    try:
+        other = ToolRegistry(get_store("supabase-app", "dev" if reg.mode == "prod" else "prod"))
+        await other.initialize()
+        tool = await other.get_for_principal(who, name)
+        if tool is None or tool.hosting != "local":
+            return []
+        store = rt._store_for(other)
+        await store.initialize()
+        return await store.list_deployments(tool.id, limit=DEPLOYMENTS_SHOWN)
+    except Exception:  # noqa: BLE001 - best effort: the other schema may not exist
+        return []
+
+
 @router.get("/api/tools/{name}")
 async def get_tool(request: Request, name: str, mode: Optional[str] = None):
     """One visible tool with its runtime facts (C2 read)."""
@@ -564,12 +614,19 @@ async def get_tool(request: Request, name: str, mode: Optional[str] = None):
         payload["can_manage"] = _can_manage(who, tool)
         if tool.hosting == "local":
             payload["path"] = app_path(tool.name, reg.mode)
+        meta: Dict[str, Optional[str]] = {}
+        rows: List[dict] = []
         try:
             store = rt._store_for(reg)
             await store.initialize()
             payload["runtime"] = await store.get_runtime(tool.id)
+            meta = await store.secret_meta(tool.id)
+            rows = await store.list_deployments(tool.id, limit=DEPLOYMENTS_SHOWN)
         except Exception:  # noqa: BLE001 - the runtime tables may not exist yet
             payload["runtime"] = None
+        rows += await _other_mode_deployments(rt, reg, who, name)
+        payload["secrets"] = _secrets_view(tool.secret_names, meta)
+        payload["deployments"] = _deployments_view(rows, full=payload["can_manage"])
         return payload
 
     return await _app_tool_call(request, _resolve_tool_mode(mode), _run)
@@ -839,9 +896,19 @@ async def set_tool_secret(request: Request, name: str, body: ToolSecretUpdate):
         names = sorted(n for n in (out.get("secret_names") or [])
                        if isinstance(n, str) and n != MCP_TOKEN_NAME)
         await _update_tool(reg, tool.name, secret_names=names)
+        meta: Dict[str, Optional[str]] = {}
+        try:
+            store = rt._store_for(reg)
+            await store.initialize()
+            await store.note_secret(tool.id, body.name, actor_user_id=who.user_id,
+                                    deleted=bool(body.delete))
+            meta = await store.secret_meta(tool.id)
+        except Exception:  # noqa: BLE001 - the secret is set; its time is a nicety
+            pass
         await rt._record(reg, who, tool, f"hermes tool secret {'unset' if body.delete else 'set'} {name}",
                          {"mode": reg.mode, "name": body.name, "deleted": bool(body.delete)})
         return {"tool": tool.name, "mode": reg.mode, "secret_names": names,
+                "secrets": _secrets_view(names, meta),
                 "restart_needed": bool(out.get("restart_needed"))}
 
     return await _app_tool_call(request, body.mode, _run)

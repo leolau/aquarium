@@ -38,9 +38,19 @@ export default async function Page({
     const raw = await client.request<ToolDetailData | Tool>(`${path}?mode=${mode}`);
     // The Python read is the flat tool row plus its `runtime` row (runtime_state,
     // health, lifecycle_state), which is the health shape the view reads.
-    data = "tool" in raw
-      ? raw
-      : { tool: raw, health: (raw as Tool & { runtime?: AppHealth | null }).runtime ?? null };
+    // It also carries the app's `deployments` (both modes, with a pill status)
+    // and `secrets` (names and set times, never values).
+    if ("tool" in raw) {
+      data = raw;
+    } else {
+      const flat = raw as Tool & Pick<ToolDetailData, "deployments" | "secrets"> & { runtime?: AppHealth | null };
+      data = {
+        tool: raw,
+        health: flat.runtime ?? null,
+        deployments: Array.isArray(flat.deployments) ? flat.deployments : undefined,
+        secrets: Array.isArray(flat.secrets) ? flat.secrets : undefined,
+      };
+    }
     if (!data.mcp) {
       data.mcp = await client
         .request<NonNullable<ToolDetailData["mcp"]>>(`${path}/mcp?mode=${mode}`)

@@ -1,9 +1,11 @@
-"""Runtime tables for FG-33 local apps: ``app_databases``, ``app_deployments``, ``tool_runtime``.
+"""Runtime tables for FG-33 local apps: ``app_databases``, ``app_deployments``,
+``tool_runtime`` and ``app_secret_meta``.
 
 They live in each mode schema next to ``tools`` (C3), so ``app_dev`` holds the
 dev rows of dev tools and ``app_prod`` the prod rows of prod tools. None of
 them holds a secret: DSNs and tokens stay with the root helpers in
-``/etc/aquarium/apps/``.
+``/etc/aquarium/apps/``; ``app_secret_meta`` keeps only a secret's name and
+when (and by whom) it was last set.
 
 The tables have no ``owner_user_id``/``visibility`` of their own. Every caller
 first resolves the tool through :class:`~hermes_cli.tools_registry.ToolRegistry`
@@ -70,6 +72,13 @@ CREATE TABLE IF NOT EXISTS app_deployments (
 );
 CREATE INDEX IF NOT EXISTS app_deployments_tool_idx
     ON app_deployments (tool_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS app_secret_meta (
+    tool_id TEXT NOT NULL REFERENCES tools(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_by TEXT,
+    PRIMARY KEY (tool_id, name)
+);
 CREATE TABLE IF NOT EXISTS tool_runtime (
     tool_id TEXT PRIMARY KEY REFERENCES tools(id) ON DELETE CASCADE,
     runtime TEXT NOT NULL CHECK (runtime IN ('local', 'external')),
@@ -107,6 +116,32 @@ def _json(value: Any) -> Any:
 
 def _iso(value: Any) -> Any:
     return value.isoformat() if isinstance(value, datetime) else value
+
+
+#: Deployment pill states, newest first per mode: the newest good deployment of
+#: prod is ``live`` and of dev the ``test`` copy; older good ones are ``superseded``.
+DEPLOYMENT_STATUSES = ("live", "test", "superseded", "failed", "building")
+_OK_READY_STATES = ("ready", "succeeded", "success")
+_FAILED_READY_STATES = ("failed", "error", "canceled", "cancelled")
+
+
+def deployment_statuses(rows: List[Dict[str, Any]]) -> List[str]:
+    """One :data:`DEPLOYMENT_STATUSES` value per row of ``rows`` (newest first)."""
+    current: set = set()
+    out: List[str] = []
+    for row in rows:
+        state = str(row.get("ready_state") or "").lower()
+        mode = "prod" if row.get("mode") == "prod" or row.get("target") in ("prod", "production") else "dev"
+        if row.get("error") or state in _FAILED_READY_STATES:
+            out.append("failed")
+        elif state not in _OK_READY_STATES:
+            out.append("building")
+        elif mode in current:
+            out.append("superseded")
+        else:
+            current.add(mode)
+            out.append("live" if mode == "prod" else "test")
+    return out
 
 
 @dataclass(frozen=True)
@@ -328,6 +363,43 @@ class AppStore:
 
         return await self._with(_run, connection)
 
+    # -- secret metadata (names and times only, never a value) ---------------
+
+    async def note_secret(
+        self, tool_id: str, name: str, *, actor_user_id: Optional[str], deleted: bool = False,
+        connection: Optional["asyncpg.Connection"] = None,
+    ) -> None:
+        """Remember when ``name`` was last set (or forget it once it is removed)."""
+        async def _run(conn):
+            if deleted:
+                await conn.execute(
+                    "DELETE FROM app_secret_meta WHERE tool_id = $1 AND name = $2",
+                    tool_id, name,
+                )
+                return
+            await conn.execute(
+                """
+                INSERT INTO app_secret_meta (tool_id, name, updated_by) VALUES ($1, $2, $3)
+                ON CONFLICT (tool_id, name) DO UPDATE
+                    SET updated_at = NOW(), updated_by = EXCLUDED.updated_by
+                """,
+                tool_id, name, actor_user_id,
+            )
+
+        await self._with(_run, connection)
+
+    async def secret_meta(
+        self, tool_id: str, *, connection: Optional["asyncpg.Connection"] = None,
+    ) -> Dict[str, Optional[str]]:
+        """``{name: last set ISO time}`` for the tool's secrets."""
+        async def _run(conn):
+            rows = await conn.fetch(
+                "SELECT name, updated_at FROM app_secret_meta WHERE tool_id = $1", tool_id,
+            )
+            return {r["name"]: _iso(r["updated_at"]) for r in rows}
+
+        return await self._with(_run, connection)
+
     # -- runtime -----------------------------------------------------------
 
     async def set_runtime(
@@ -406,6 +478,7 @@ class AppStore:
                 raise RuntimeError(f"app database {live} is not dropped yet")
             await conn.execute("DELETE FROM app_databases WHERE tool_id = $1", tool_id)
             await conn.execute("DELETE FROM app_deployments WHERE tool_id = $1", tool_id)
+            await conn.execute("DELETE FROM app_secret_meta WHERE tool_id = $1", tool_id)
             await conn.execute("DELETE FROM tool_runtime WHERE tool_id = $1", tool_id)
 
         await self._with(_run, connection)
@@ -415,7 +488,9 @@ __all__ = [
     "AppDatabase",
     "AppStore",
     "DB_STATUSES",
+    "DEPLOYMENT_STATUSES",
     "HEALTH_STATES",
     "LIFECYCLE_STATES",
     "RUNTIME_STATES",
+    "deployment_statuses",
 ]

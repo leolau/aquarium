@@ -164,7 +164,18 @@
     "feedback": "意見",
     "feedbackLabel": "下次助理處理它時，應該改進什麼？",
     "feedbackSend": "送出意見",
-    "feedbackSent": "謝謝 — 助理會在下次建置時看到。"
+    "feedbackSent": "謝謝 — 助理會在下次建置時看到。",
+    "deploymentsEmpty": "還沒有部署。第一次建置後就會出現。",
+    "deploymentsInfoLabel": "關於部署記錄",
+    "deploymentsInfo": "「正式」是大家在正式網址使用的版本。「測試版本」是測試網址上最新的建置。較舊的建置會標示為「已取代」。",
+    "deploymentRelease": "版本 {sha}",
+    "deploymentStatus": {
+      "live": "正式",
+      "test": "測試版本",
+      "superseded": "已取代",
+      "failed": "失敗",
+      "building": "建置中"
+    }
   },
   "undo": {
     "shown": "{name} 已回到格狀檢視",

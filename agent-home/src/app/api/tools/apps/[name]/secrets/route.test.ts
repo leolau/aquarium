@@ -91,6 +91,27 @@ describe("PUT /api/tools/apps/[name]/secrets", () => {
     expect(JSON.parse(text)).toEqual({ mode: "dev", secret_names: ["STRIPE_KEY"], restart_needed: false });
   });
 
+  it("passes on each secret's set time but nothing else from the rows", async () => {
+    request.mockResolvedValue({
+      mode: "dev",
+      secret_names: ["OLD_KEY", "STRIPE_KEY"],
+      secrets: [
+        { name: "STRIPE_KEY", updated_at: "2026-11-05T10:00:00+00:00", value: VALUE },
+        { name: "OLD_KEY", updated_at: null, updated_by: "tom" },
+        { updated_at: "2026-11-05T10:00:00+00:00" },
+        "junk",
+      ],
+      restart_needed: true,
+    });
+    const res = await put({ mode: "dev", name: "STRIPE_KEY", value: VALUE });
+    const text = await res.text();
+    expect(text).not.toContain(VALUE);
+    expect(JSON.parse(text).secrets).toEqual([
+      { name: "STRIPE_KEY", updated_at: "2026-11-05T10:00:00+00:00" },
+      { name: "OLD_KEY", updated_at: null },
+    ]);
+  });
+
   it("masks the value in an upstream error and keeps the status", async () => {
     request.mockRejectedValue(new HermesApiError(400, `bad value ${VALUE}`));
     const res = await put({ mode: "dev", name: "STRIPE_KEY", value: VALUE });

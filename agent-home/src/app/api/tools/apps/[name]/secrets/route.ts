@@ -15,6 +15,7 @@ import {
   isAppMode,
   isAppSlug,
   secretNameProblem,
+  secretMetaList,
   secretValueProblem,
 } from "@/components/apps-secrets/rules";
 import { HermesApiError } from "@/lib/api/client";
@@ -89,9 +90,11 @@ export async function PUT(
     const names = Array.isArray(out?.secret_names)
       ? out.secret_names.filter((n): n is string => typeof n === "string")
       : [];
+    const secrets = secretMetaList(out?.secrets);
     const result: AppSecretsResult = {
       mode,
       secret_names: names,
+      ...(secrets ? { secrets } : {}),
       restart_needed: out?.restart_needed === true,
     };
     return reply(result);

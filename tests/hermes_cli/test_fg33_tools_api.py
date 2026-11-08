@@ -298,6 +298,7 @@ def test_secret_value_goes_only_to_the_helper(api):
     assert resp.status_code == 200
     assert "sk_live_zzz" not in resp.text
     assert resp.json() == {"tool": "notes", "mode": "dev", "secret_names": ["STRIPE_KEY"],
+                           "secrets": [{"name": "STRIPE_KEY", "updated_at": None}],
                            "restart_needed": True}
     argv, spec = state["helper"][-1]
     assert argv == ["sudo", "-n", rt.HELPER, "set-secret"]
@@ -306,6 +307,128 @@ def test_secret_value_goes_only_to_the_helper(api):
     assert all("sk_live_zzz" not in json.dumps(r) for r in state["records"])
     deleted = client.put("/api/tools/notes/secrets", json={"name": "STRIPE_KEY", "delete": True})
     assert deleted.json()["secret_names"] == [] and state["helper"][-1][1]["delete"] is True
+
+
+class _FakeAppStore:
+    """In-memory stand-in for :class:`hermes_cli.app_store.AppStore` (one per mode)."""
+
+    def __init__(self):
+        self.meta = {}
+        self.deployments = {}
+        self.noted = []
+
+    async def initialize(self):
+        pass
+
+    async def get_runtime(self, tool_id):
+        return None
+
+    async def note_secret(self, tool_id, name, *, actor_user_id, deleted=False):
+        self.noted.append((tool_id, name, actor_user_id, deleted))
+        if deleted:
+            self.meta.pop((tool_id, name), None)
+        else:
+            self.meta[(tool_id, name)] = f"2026-11-0{len(self.noted)}T10:00:00+00:00"
+
+    async def secret_meta(self, tool_id):
+        return {n: at for (t, n), at in self.meta.items() if t == tool_id}
+
+    async def list_deployments(self, tool_id, limit=20):
+        return list(self.deployments.get(tool_id, []))[:limit]
+
+
+@pytest.fixture
+def stores(api, monkeypatch):
+    by_mode = {"dev": _FakeAppStore(), "prod": _FakeAppStore()}
+    monkeypatch.setattr(rt.AppRuntime, "_store_for", staticmethod(lambda reg: by_mode[reg.mode]))
+    return by_mode
+
+
+def test_secret_set_time_is_recorded_and_returned_without_values(api, stores):
+    client, rows, state = api
+    resp = client.put("/api/tools/notes/secrets", json={"name": "STRIPE_KEY", "value": "sk_live_zzz"})
+    assert resp.status_code == 200 and "sk_live_zzz" not in resp.text
+    assert resp.json()["secrets"] == [{"name": "STRIPE_KEY", "updated_at": "2026-11-01T10:00:00+00:00"}]
+    assert stores["dev"].noted == [("tol_notes", "STRIPE_KEY", "alice", False)]
+
+    got = client.get("/api/tools/notes").json()
+    assert got["secrets"] == [{"name": "STRIPE_KEY", "updated_at": "2026-11-01T10:00:00+00:00"}]
+    assert "sk_live_zzz" not in json.dumps(got)
+
+    gone = client.put("/api/tools/notes/secrets", json={"name": "STRIPE_KEY", "delete": True})
+    assert gone.json()["secrets"] == [] and stores["dev"].meta == {}
+
+
+def test_secrets_view_hides_the_managed_token_and_keeps_unknown_times(api, stores):
+    client, rows, state = api
+    rows["notes"] = dataclasses.replace(rows["notes"], secret_names=("OLD_KEY", "APP_MCP_TOKEN"))
+    assert client.get("/api/tools/notes").json()["secrets"] == [{"name": "OLD_KEY", "updated_at": None}]
+
+
+def test_secret_time_writes_keep_the_role_gates(api, stores):
+    client, rows, state = api
+    state["as"] = VIEWER
+    assert client.put("/api/tools/board/secrets", json={"name": "K", "value": "v"}).status_code == 403
+    state["as"] = ALICE
+    assert client.put("/api/tools/board/secrets", json={"name": "K", "value": "v"}).status_code == 403
+    assert stores["dev"].noted == [] and state["helper"] == []
+
+
+def _dep(i, mode, created, *, ready="ready", error=None, sha=None):
+    return {"id": f"dep_{i}", "tool_id": "tol_board", "mode": mode, "target": mode,
+            "source_sha": sha, "url": f"/apps{'' if mode == 'prod' else '-dev'}/board/",
+            "ready_state": ready, "error": error, "actor_user_id": "bob",
+            "approval_ref": "apr_x", "change_ref": "chg_x", "trace_id": None,
+            "created_at": created}
+
+
+def test_deployments_get_a_status_across_both_modes(api, stores):
+    client, rows, state = api
+    stores["dev"].deployments["tol_board"] = [
+        _dep(3, "dev", "2026-11-08T09:00:00"),
+        _dep(2, "dev", "2026-11-07T09:00:00", ready="failed", error="build failed: npm ERR"),
+    ]
+    stores["prod"].deployments["tol_board"] = [
+        _dep(4, "prod", "2026-11-08T10:00:00", sha="3f9a2c1d7e04aa"),
+        _dep(1, "prod", "2026-11-06T09:00:00", sha="91be0a77c2d3bb"),
+    ]
+    state["as"] = BOB
+    deps = client.get("/api/tools/board?mode=dev").json()["deployments"]
+    assert [(d["id"], d["status"]) for d in deps] == [
+        ("dep_4", "live"), ("dep_3", "test"), ("dep_2", "failed"), ("dep_1", "superseded"),
+    ]
+    assert deps[2]["error"] == "build failed: npm ERR"
+    assert all(not {"actor_user_id", "approval_ref", "change_ref"} & set(d) for d in deps)
+
+    state["as"] = VIEWER  # sees the shared app, but not the helper's error text
+    deps = client.get("/api/tools/board?mode=dev").json()["deployments"]
+    assert [d["status"] for d in deps] == ["live", "test", "failed", "superseded"]
+    assert all("error" not in d for d in deps)
+
+
+def test_other_mode_deployments_respect_c2(api, stores):
+    client, rows, state = api
+    stores["prod"].deployments["tol_secret"] = [_dep(9, "prod", "2026-11-08T10:00:00")]
+    state["as"] = ALICE
+    assert client.get("/api/tools/secret?mode=dev").status_code == 404
+    assert client.get("/api/tools/notes?mode=dev").json()["deployments"] == []
+
+
+@pytest.mark.parametrize(
+    ("states", "expected"),
+    [
+        ([("prod", "ready"), ("prod", "ready")], ["live", "superseded"]),
+        ([("dev", "building"), ("dev", "ready")], ["building", "test"]),
+        ([("prod", "error"), ("prod", "READY")], ["failed", "live"]),
+        ([], []),
+    ],
+)
+def test_deployment_statuses_invariants(states, expected):
+    from hermes_cli.app_store import DEPLOYMENT_STATUSES, deployment_statuses
+
+    rows = [{"mode": m, "ready_state": r} for m, r in states]
+    got = deployment_statuses(rows)
+    assert got == expected and set(got) <= set(DEPLOYMENT_STATUSES)
 
 
 @pytest.mark.parametrize("name", ["APP_MCP_TOKEN", "DATABASE_URL", "NEXT_PUBLIC_X", "PATH", "lower"])

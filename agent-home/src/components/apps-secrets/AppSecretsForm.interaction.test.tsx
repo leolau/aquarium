@@ -35,6 +35,7 @@ function mount(names: string[] = ["APP_MCP_TOKEN", "OLD_KEY"], canEdit = true) {
   const view = render(
     <AppSecretsForm name="weather-board" mode="dev" secretNames={names} canEdit={canEdit} />,
   );
+  fireEvent.click(view.getByRole("button", { name: "Manage secrets" }));
   const nameInput = view.getByLabelText("Name") as HTMLInputElement;
   const valueInput = view.getByLabelText("Value") as HTMLInputElement;
   const save = view.getByRole("button", { name: "Save secret" });
@@ -150,12 +151,83 @@ describe("AppSecretsForm", () => {
     expect(view.queryByText("OLD_KEY")).toBeNull();
   });
 
+  it("shows each secret masked with when it was set, and hides editing until Manage", () => {
+    vi.useFakeTimers({ now: new Date("2026-11-08T12:00:00Z") });
+    try {
+      const view = render(
+        <AppSecretsForm
+          name="weather-board"
+          mode="dev"
+          secretNames={["GMAIL_TOKEN", "OLD_KEY"]}
+          secrets={[{ name: "GMAIL_TOKEN", updated_at: "2026-11-05T11:00:00Z" }]}
+        />,
+      );
+      const gmail = view.container.querySelector('[data-secret="GMAIL_TOKEN"]');
+      expect(gmail?.textContent).toContain("••••••••");
+      expect(gmail?.textContent).toContain("set 3 days ago");
+      const old = view.container.querySelector('[data-secret="OLD_KEY"]');
+      expect(old?.textContent).toContain("••••••••");
+      expect(old?.textContent).not.toContain("set ");
+      expect(view.getByText("Owner only")).toBeTruthy();
+      expect(view.queryByLabelText("Value")).toBeNull();
+      expect(view.queryByRole("button", { name: "Remove OLD_KEY" })).toBeNull();
+      const manage = view.getByRole("button", { name: "Manage secrets" });
+      expect(manage.closest("[data-appmcp-deny]")).toBeTruthy();
+      fireEvent.click(manage);
+      expect(view.getByLabelText("Value")).toBeTruthy();
+      expect(view.getByRole("button", { name: "Done" }).getAttribute("aria-expanded")).toBe("true");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("updates the set time from the answer after saving", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          mode: "dev",
+          secret_names: ["OLD_KEY"],
+          secrets: [{ name: "OLD_KEY", updated_at: new Date().toISOString() }],
+          restart_needed: false,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    const { view, nameInput, valueInput, save } = mount(["OLD_KEY"]);
+    expect(view.container.querySelector('[data-secret="OLD_KEY"]')?.textContent).not.toContain("set ");
+    fill(nameInput, valueInput, "OLD_KEY", VALUE);
+    await act(async () => {
+      fireEvent.click(save);
+    });
+    await waitFor(() =>
+      expect(view.container.querySelector('[data-secret="OLD_KEY"]')?.textContent).toContain("set now"),
+    );
+    expect(document.body.innerHTML).not.toContain(VALUE);
+  });
+
+  it("locks the confirm on its first press so a remove is sent once", async () => {
+    let finish: (r: Response) => void = () => {};
+    fetchMock.mockImplementation(() => new Promise<Response>((resolve) => (finish = resolve)));
+    const { view } = mount();
+    fireEvent.click(view.getByRole("button", { name: "Remove OLD_KEY" }));
+    const confirm = within(view.getByRole("dialog")).getByRole("button", { name: "Remove" });
+    await act(async () => {
+      fireEvent.click(confirm);
+      fireEvent.click(confirm);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await act(async () => finish(answer(["APP_MCP_TOKEN"])));
+    await waitFor(() => expect(view.queryByRole("dialog")).toBeNull());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("is read-only when the person may not edit", () => {
     const view = render(
       <AppSecretsForm name="weather-board" mode="dev" secretNames={["OLD_KEY"]} canEdit={false} />,
     );
     expect(view.queryByLabelText("Value")).toBeNull();
     expect(view.queryByRole("button", { name: "Remove OLD_KEY" })).toBeNull();
+    expect(view.queryByRole("button", { name: "Manage secrets" })).toBeNull();
     expect(view.getByText("OLD_KEY")).toBeTruthy();
   });
 });

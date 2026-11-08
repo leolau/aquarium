@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { AppSecretsForm } from "@/components/apps-secrets/AppSecretsForm";
+import type { AppSecretMeta } from "@/components/apps-secrets/rules";
 import { ActionButton } from "@/components/projects/ActionButton";
 import { useProjectAction } from "@/components/projects/useProjectAction";
 import { useT } from "@/i18n/client";
@@ -10,6 +11,7 @@ import type { Tool } from "@/types";
 
 import { AppIcon } from "./AppIcon";
 import { ToolActionsSheet } from "./ToolActionsSheet";
+import { ToolDeployments, type ToolDeployment } from "./ToolDeployments";
 import {
   appApiPath,
   canManageApp,
@@ -25,7 +27,10 @@ import {
 export interface ToolDetailData {
   tool: Tool;
   health?: AppHealth | null;
-  deployments?: Array<{ id?: string; url?: string | null; state?: string | null; created_at?: string | null }>;
+  /** Newest first, both modes, each with a pill `status` (GET /api/tools/{name}). */
+  deployments?: ToolDeployment[];
+  /** Secret names with when each was last set; never a value. */
+  secrets?: AppSecretMeta[];
   last_run?: { run_id?: string | null; project_slug?: string | null; status?: string | null } | null;
   mcp?: { enabled?: boolean; status?: string | null; tools?: number | null } | null;
 }
@@ -117,7 +122,13 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
-/** `/tools/[name]`: status, URLs, last build, deployments, logs, feedback, MCP. */
+/**
+ * `/tools/[name]`: status, URLs, last build, deployments, logs, feedback, MCP.
+ * Figma `Tool detail` (24:6274 / 24:6511): two columns on desktop (feedback and
+ * app secrets on the right); one column on a phone in the order status,
+ * feedback, deployments, logs, app secrets — the column wrappers dissolve
+ * (`contents`) below `lg` so `order-*` can interleave their cards.
+ */
 export function ToolDetailView({ data, viewer }: { data: ToolDetailData; viewer: Viewer | null }) {
   const t = useT("tools");
   const { tool } = data;
@@ -132,8 +143,8 @@ export function ToolDetailView({ data, viewer }: { data: ToolDetailData; viewer:
   const heading = "mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]";
   return (
     <div data-component="ToolDetailView" data-kind={kind} className="grid gap-5 pb-24 lg:grid-cols-[minmax(0,1fr)_minmax(0,24rem)] lg:items-start lg:pb-8">
-      <div className="flex min-w-0 flex-col gap-5">
-      <section className={card}>
+      <div className="contents min-w-0 lg:flex lg:flex-col lg:gap-5">
+      <section className={`${card} order-1`}>
       <div className="flex flex-wrap items-center gap-4">
         <AppIcon tool={tool} kind={kind} provider={providerOf(tool, data.health)} health={health} />
         <div className="min-w-0">
@@ -179,36 +190,30 @@ export function ToolDetailView({ data, viewer }: { data: ToolDetailData; viewer:
         </Row>
       </dl>
       </section>
-      {data.deployments?.length ? (
-        <section className={card}>
-          <h3 className={heading}>{t("detail.deployments")}</h3>
-          <ul className="flex flex-col divide-y divide-[var(--color-border)] text-sm">
-            {data.deployments.map((d, i) => (
-              <li key={d.id ?? i} className="py-2.5 [overflow-wrap:anywhere]">
-                {d.state ?? "—"} {d.created_at ? `· ${d.created_at}` : ""} {d.url ? `· ${d.url}` : ""}
-              </li>
-            ))}
-          </ul>
-        </section>
+      {section === "local" || data.deployments?.length ? (
+        <div className="order-3 min-w-0">
+          <ToolDeployments deployments={data.deployments ?? []} />
+        </div>
       ) : null}
       {section === "local" ? (
-        <section className={card}>
+        <section className={`${card} order-4`}>
           <h3 className={heading}>{t("detail.logs")}</h3>
           <LogsTail tool={tool} />
         </section>
       ) : null}
       </div>
-      <aside className="flex min-w-0 flex-col gap-5">
-      <section id="tool-feedback" className={card}>
+      <aside className="contents min-w-0 lg:flex lg:flex-col lg:gap-5">
+      <section id="tool-feedback" className={`${card} order-2`}>
         <h3 className={heading}>{t("detail.feedback")}</h3>
         <FeedbackForm tool={tool} />
       </section>
       {section === "local" ? (
-        <section className={card}>
+        <section className={`${card} order-5`}>
         <AppSecretsForm
           name={tool.name}
           mode={tool.mode}
           secretNames={tool.secret_names ?? []}
+          secrets={data.secrets}
           canEdit={canManageApp(viewer, tool)}
         />
         </section>
