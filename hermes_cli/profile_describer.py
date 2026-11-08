@@ -162,6 +162,25 @@ def _extract_json_blob(raw: str) -> Optional[dict]:
     return val
 
 
+MAX_DESCRIPTION_CHARS = 280
+
+
+def _trim_description(text: str, limit: int = MAX_DESCRIPTION_CHARS) -> str:
+    """Cap ``text`` at ``limit`` chars without cutting a word: keep whole
+    sentences when one ends past half the limit, else cut at a space."""
+    text = " ".join(str(text).split())
+    if len(text) <= limit:
+        return text
+    head = text[:limit]
+    end = max(head.rfind(". "), head.rfind("! "), head.rfind("? "))
+    if text[limit - 1] in ".!?" and (limit == len(text) or text[limit] == " "):
+        end = limit - 1
+    if end >= limit // 2:
+        return head[: end + 1]
+    cut = head.rfind(" ")
+    return (head[:cut] if cut > 0 else head).rstrip(" ,;:") + "…"
+
+
 def describe_profile(
     profile_name: str,
     *,
@@ -272,14 +291,14 @@ def describe_profile(
         text = raw.strip().split("\n\n", 1)[0]
         if not text:
             return DescribeOutcome(canon, False, "LLM returned an empty response")
-        description = text[:280]
+        description = _trim_description(text)
     else:
         val = parsed.get("description")
         if not isinstance(val, str) or not val.strip():
             return DescribeOutcome(
                 canon, False, "LLM response missing 'description' field"
             )
-        description = val.strip()[:280]
+        description = _trim_description(val)
 
     try:
         profiles_mod.write_profile_meta(

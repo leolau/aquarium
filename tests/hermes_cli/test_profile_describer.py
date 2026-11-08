@@ -166,3 +166,24 @@ def test_describer_returns_false_when_profile_missing(profile_env, monkeypatch):
     outcome = describer.describe_profile("ghost")
     assert outcome.ok is False
     assert "not found" in outcome.reason
+
+
+class TestTrimDescription:
+    def test_short_text_unchanged(self):
+        from hermes_cli.profile_describer import _trim_description
+
+        assert _trim_description("  Writes  docs. ") == "Writes docs."
+
+    def test_keeps_whole_sentences(self):
+        from hermes_cli.profile_describer import _trim_description
+
+        first = "A" * 200 + "."
+        out = _trim_description(first + " Also handles GitHub recon, web research and more.", 220)
+        assert out == first
+
+    def test_cuts_at_word_boundary(self):
+        from hermes_cli.profile_describer import _trim_description
+
+        out = _trim_description("alpha " * 60, 100)
+        assert len(out) <= 100
+        assert out.endswith("alpha…")
