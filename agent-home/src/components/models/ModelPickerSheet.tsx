@@ -442,7 +442,7 @@ export function ModelPickerSheet({
         </div>
 
         {loadError ? (
-          <p className="mb-2 rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-xs text-red-300">
+          <p className="mb-2 rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-xs text-[var(--color-danger)]">
             {loadError}
           </p>
         ) : null}
@@ -460,7 +460,7 @@ export function ModelPickerSheet({
               </p>
               <ActionButton
                 onAction={() => loadInitial()}
-                className="rounded-lg bg-[var(--color-accent)] px-4 py-2 text-sm text-white"
+                className="rounded-lg bg-[var(--color-accent)] px-4 py-2 text-sm text-[var(--color-accent-fg)]"
               >
                 Try again
               </ActionButton>
@@ -761,7 +761,7 @@ export function ModelPickerSheet({
                             aria-label={`Remove backup ${b.model}`}
                             busyLabel="…"
                             onAction={() => saveBackups(backups.filter((_, j) => j !== i))}
-                            className="rounded-full border border-[var(--color-border)] px-2 py-0.5 text-red-300"
+                            className="rounded-full border border-[var(--color-border)] px-2 py-0.5 text-[var(--color-danger)]"
                           >
                             Remove
                           </ActionButton>
@@ -789,7 +789,7 @@ export function ModelPickerSheet({
                       + Add the model selected above as a backup
                     </ActionButton>
                     {backupNote ? (
-                      <p className="mt-1 text-[11px] text-red-300">{backupNote}</p>
+                      <p className="mt-1 text-[11px] text-[var(--color-danger)]">{backupNote}</p>
                     ) : null}
                   </div>
                 ) : null}
@@ -826,7 +826,7 @@ export function ModelPickerSheet({
                       type="button"
                       disabled={busy !== null}
                       onClick={() => setPhase({ kind: "confirm-disconnect" })}
-                      className="block text-left text-xs text-red-300"
+                      className="block text-left text-xs text-[var(--color-danger)]"
                     >
                       Disconnect {provider?.name} — remove its key from .env
                     </button>

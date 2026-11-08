@@ -118,7 +118,7 @@ export function CsvImportPanel({
           Apply
         </ActionButton>
       </div>
-      {error ? <p className="text-xs text-red-300">{error}</p> : null}
+      {error ? <p className="text-xs text-[var(--color-danger)]">{error}</p> : null}
       {result ? (
         <div data-component="CsvImportResult" className="flex flex-col gap-2">
           <p className="text-xs text-[var(--color-muted)]">
@@ -134,7 +134,7 @@ export function CsvImportPanel({
               >
                 <span className="font-mono">{row.line}</span> {row.email || "(blank)"} ·{" "}
                 {row.error ? (
-                  <span className="text-red-300">{row.error}</span>
+                  <span className="text-[var(--color-danger)]">{row.error}</span>
                 ) : (
                   <span>{row.planned}</span>
                 )}

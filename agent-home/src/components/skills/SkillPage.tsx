@@ -72,6 +72,8 @@ export function SkillPage({
   const [enabled, setEnabled] = useState(skill?.enabled ?? true);
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmUninstall, setConfirmUninstall] = useState(false);
+  // Stays true after a successful uninstall so the dialog stays locked until the page navigates away.
+  const [uninstalled, setUninstalled] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [active, setActive] = useState(headings[0]?.id ?? "");
   const menuRef = useRef<HTMLDivElement>(null);
@@ -97,6 +99,7 @@ export function SkillPage({
     setMessage(null);
     try {
       await sendJson("/api/skills/hub/uninstall", "POST", { name, ...scoped });
+      setUninstalled(true);
       router.push(skillsListHref(profile));
       router.refresh();
     } catch (err) {
@@ -269,7 +272,7 @@ export function SkillPage({
                     <button
                       type="button"
                       role="menuitem"
-                      className={`${menuItem} text-red-300`}
+                      className={`${menuItem} text-[var(--color-danger)]`}
                       onClick={() => {
                         setMenuOpen(false);
                         setConfirmUninstall(true);
@@ -285,7 +288,7 @@ export function SkillPage({
         </header>
 
         {message ? (
-          <p role="alert" className="mt-3 text-sm text-red-300">
+          <p role="alert" className="mt-3 text-sm text-[var(--color-danger)]">
             {message}
           </p>
         ) : null}
@@ -412,6 +415,7 @@ export function SkillPage({
           title={`Uninstall ${name}?`}
           body={`This removes the hub skill from profile ${profile}. New chats won't have it; you can install it again from the Skills hub.`}
           confirmLabel="Uninstall"
+          busy={uninstalled}
           onConfirm={uninstall}
           onCancel={() => setConfirmUninstall(false)}
         />

@@ -572,7 +572,7 @@ export function PlanPanel({
           ) : null}
 
           {error ? (
-            <p role="alert" className="mt-2 text-sm text-red-400">
+            <p role="alert" className="mt-2 text-sm text-[var(--color-danger)]">
               {error}
             </p>
           ) : null}
@@ -671,7 +671,7 @@ function DiscardRevision({ slug, rev }: { slug: string; rev: number }) {
       </ActionButton>
       <ActionError
         action={action}
-        className="flex w-full flex-wrap items-center gap-2 text-xs text-red-400"
+        className="flex w-full flex-wrap items-center gap-2 text-xs text-[var(--color-danger)]"
       />
     </>
   );
@@ -711,7 +711,7 @@ function ActivateRevision({
       </ActionButton>
       <ActionError
         action={action}
-        className="flex w-full flex-wrap items-center gap-2 text-xs text-red-400"
+        className="flex w-full flex-wrap items-center gap-2 text-xs text-[var(--color-danger)]"
       />
     </>
   );

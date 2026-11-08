@@ -188,7 +188,7 @@ function ApprovalRow({
           </ActionButton>
         </div>
       ) : null}
-      <ActionError action={action} className="mt-2 flex flex-wrap items-center gap-2 text-xs text-red-300" />
+      <ActionError action={action} className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--color-danger)]" />
     </li>
   );
 }

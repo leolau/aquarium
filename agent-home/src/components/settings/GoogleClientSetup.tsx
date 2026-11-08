@@ -272,7 +272,7 @@ export function GoogleClientSetup() {
   if (loadFailed) {
     return (
       <section data-component="GoogleClientSetup">
-        <p className="text-xs text-red-400">{t("loadError")}</p>
+        <p className="text-xs text-[var(--color-danger)]">{t("loadError")}</p>
       </section>
     );
   }

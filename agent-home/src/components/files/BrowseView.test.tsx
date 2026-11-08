@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const push = vi.fn();
@@ -91,13 +91,15 @@ describe("BrowseView", () => {
   it("asks before saving from a folder not trusted for import", async () => {
     await openJensen();
     fireEvent.click(screen.getAllByRole("button", { name: /quote\.zip/ })[0]);
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     fireEvent.click(await screen.findByRole("button", { name: "Save to my files" }));
-    expect(confirm).toHaveBeenCalledOnce();
+    let dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(calls.some((c) => c.url === "/api/browse/save")).toBe(false);
 
-    confirm.mockReturnValue(true);
     fireEvent.click(await screen.findByRole("button", { name: "Save to my files" }));
+    dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save to my files" }));
     await screen.findByText(/Saved to Files/);
     const save = calls.find((c) => c.url === "/api/browse/save");
     expect(JSON.parse(String(save?.init?.body))).toEqual({ place: "net-jensen", path: "quote.zip" });

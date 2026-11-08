@@ -97,7 +97,7 @@ export function ArchivedModal({
         </div>
 
         {error ? (
-          <p className="mb-2 rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-xs text-red-300">
+          <p className="mb-2 rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-xs text-[var(--color-danger)]">
             {error}
           </p>
         ) : null}

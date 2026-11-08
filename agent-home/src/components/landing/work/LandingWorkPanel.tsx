@@ -4,7 +4,7 @@ import Link from "next/link";
 
 import { NeedsYouPanel } from "./NeedsYouPanel";
 import { WorkPanel } from "./WorkPanel";
-import { IconFolder } from "./icons";
+import { FolderIcon } from "@/components/ui/icons";
 import type { NeedsYouFeed } from "./useNeedsYouFeed";
 
 /**
@@ -24,7 +24,7 @@ export function LandingWorkPanel({ needsYou }: { needsYou?: NeedsYouFeed }) {
           data-action="open-projects"
           className="flex min-h-9 w-full items-center justify-center gap-2 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-[13px] font-medium leading-[18px] text-[var(--color-fg)] hover:brightness-110"
         >
-          <IconFolder size={16} />
+          <FolderIcon size={16} />
           Open Projects
         </Link>
       </div>

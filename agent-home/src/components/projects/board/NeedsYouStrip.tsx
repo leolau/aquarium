@@ -142,7 +142,7 @@ export function NeedsYouStrip({
         ) : null}
       </div>
       {bulk.error ? (
-        <div role="alert" className="mb-2 flex items-center gap-2 text-xs text-red-300">
+        <div role="alert" className="mb-2 flex items-center gap-2 text-xs text-[var(--color-danger)]">
           <span>Couldn&rsquo;t approve them: {bulk.error}</span>
           <ActionButton
             busy={bulk.busy}

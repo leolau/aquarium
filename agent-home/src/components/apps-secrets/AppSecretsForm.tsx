@@ -157,7 +157,7 @@ export function AppSecretsForm({ name, mode, secretNames, canEdit = true }: AppS
             />
           </label>
           {problem || save.error ? (
-            <p role="alert" className="text-xs text-red-600">
+            <p role="alert" className="text-xs text-[var(--color-danger)]">
               {problem ?? save.error}
             </p>
           ) : null}

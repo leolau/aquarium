@@ -7,7 +7,7 @@ import type { ProjectAction } from "@/components/projects/useProjectAction";
 export function ActionError<T>({ action }: { action: ProjectAction<T> }) {
   if (!action.error || action.busy) return null;
   return (
-    <p role="alert" className="mt-2 flex flex-wrap items-center gap-2 text-xs text-red-300">
+    <p role="alert" className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--color-danger)]">
       {action.error}
       <ActionButton
         busy={action.busy}

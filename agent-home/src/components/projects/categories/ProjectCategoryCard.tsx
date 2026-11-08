@@ -64,7 +64,7 @@ export function ProjectCategoryCard({
       {failure ? (
         <ActionError
           action={failure}
-          className="mt-2 flex flex-wrap items-center gap-2 text-xs text-red-400"
+          className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--color-danger)]"
         />
       ) : null}
     </li>

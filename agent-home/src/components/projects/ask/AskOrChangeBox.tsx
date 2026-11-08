@@ -295,7 +295,7 @@ export function AskOrChangeBox({
         className="w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-[var(--color-accent)]"
       />
       {tooLong ? (
-        <p role="alert" className="text-xs text-red-400">
+        <p role="alert" className="text-xs text-[var(--color-danger)]">
           Keep it under {QUESTION_MAX} characters.
         </p>
       ) : null}
@@ -389,7 +389,7 @@ function AskTurnView({
           </p>
         ) : turn.status === "error" ? (
           <div className="flex flex-wrap items-center gap-2">
-            <p role="alert" className="text-sm text-red-400">
+            <p role="alert" className="text-sm text-[var(--color-danger)]">
               {turn.error}
             </p>
             {retry ? (

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { ActionButton } from "@/components/ui/ActionButton";
 import { parseAllowedDomains } from "@/lib/webview";
 import type { WebviewMode } from "@/types";
 
@@ -58,11 +59,11 @@ export function ConsentForm({ busy, onOpen }: ConsentFormProps) {
         />
         Allow interactive actions (click / type / select) in scope
       </label>
-      <button
-        type="button"
-        disabled={busy}
-        onClick={() =>
-          void onOpen(
+      <ActionButton
+        busy={busy}
+        busyLabel="Opening…"
+        onAction={() =>
+          onOpen(
             parseAllowedDomains(domains),
             interactive ? "interactive" : "read_only",
           )
@@ -70,7 +71,7 @@ export function ConsentForm({ busy, onOpen }: ConsentFormProps) {
         className="w-fit rounded-xl bg-[var(--color-accent)] px-4 py-2 text-sm font-semibold text-[var(--color-accent-fg)] disabled:opacity-50"
       >
         Open session
-      </button>
+      </ActionButton>
     </section>
   );
 }

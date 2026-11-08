@@ -146,7 +146,7 @@ export function NewSkillModal({
         </label>
         <p className="text-xs text-[var(--color-muted)]">New skills are available to new chats.</p>
         {error ? (
-          <p role="alert" className="text-red-300">
+          <p role="alert" className="text-[var(--color-danger)]">
             {error}
           </p>
         ) : null}

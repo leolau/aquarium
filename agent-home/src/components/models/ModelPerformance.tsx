@@ -137,7 +137,7 @@ function DailyBars({ entry }: { entry: ModelPerformanceEntry }) {
             >
               {failed > 0 ? (
                 <div
-                  className="absolute inset-x-0 top-0 rounded-sm bg-[var(--color-warn,#f59e0b)]"
+                  className="absolute inset-x-0 top-0 rounded-sm bg-[var(--color-warn)]"
                   style={{ height: `${Math.max((failed / calls) * 100, 15)}%` }}
                 />
               ) : null}

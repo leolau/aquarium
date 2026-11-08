@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 
 import { ActionButton } from "@/components/ui/ActionButton";
+import { useT } from "@/i18n";
 
 export interface ConfirmDialogProps {
   title: string;
@@ -11,6 +12,11 @@ export interface ConfirmDialogProps {
   confirmLabel: string;
   cancelLabel?: string;
   busy?: boolean;
+  /** "danger" (default) for destructive actions, "accent" for a plain confirm. */
+  tone?: "danger" | "accent";
+  /** Extra content between the body and the buttons, e.g. a text field. */
+  children?: ReactNode;
+  confirmDisabled?: boolean;
   /** Return the promise: the button stays busy and locked until it settles. */
   onConfirm(): unknown;
   onCancel(): void;
@@ -30,11 +36,15 @@ export function ConfirmDialog({
   title,
   body,
   confirmLabel,
-  cancelLabel = "Cancel",
+  cancelLabel,
   busy = false,
+  tone = "danger",
+  children,
+  confirmDisabled = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  const t = useT("common");
   // Stop the page behind the sheet from scrolling under the user's thumb.
   useEffect(() => {
     const previous = document.body.style.overflow;
@@ -72,6 +82,7 @@ export function ConfirmDialog({
           {title}
         </h2>
         <p className="mt-2 text-sm text-[var(--color-muted)]">{body}</p>
+        {children}
         <div className="mt-4 flex gap-2">
           <button
             type="button"
@@ -79,14 +90,19 @@ export function ConfirmDialog({
             onClick={onCancel}
             className="rounded-full border border-[var(--color-border)] px-4 py-1.5 text-xs disabled:opacity-60"
           >
-            {cancelLabel}
+            {cancelLabel ?? t("cancel")}
           </button>
           <ActionButton
             busy={busy}
             busyLabel={confirmLabel}
-            autoFocus
+            autoFocus={!children}
+            disabled={confirmDisabled}
             onAction={onConfirm}
-            className="ml-auto inline-flex items-center gap-2 rounded-full bg-red-500/80 px-4 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+            className={`ml-auto inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-semibold disabled:opacity-60 ${
+              tone === "danger"
+                ? "bg-[var(--color-danger)] text-[var(--color-bg)]"
+                : "bg-[var(--color-accent)] text-[var(--color-accent-fg)]"
+            }`}
           >
             {confirmLabel}
           </ActionButton>

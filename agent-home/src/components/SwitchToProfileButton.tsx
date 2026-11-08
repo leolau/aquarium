@@ -27,7 +27,7 @@ export function SwitchToProfileButton({ profile }: { profile: string }) {
         Switch to {profile}
       </button>
       {error ? (
-        <p role="alert" className="w-full text-xs text-red-300">
+        <p role="alert" className="w-full text-xs text-[var(--color-danger)]">
           {error}
         </p>
       ) : null}

@@ -387,7 +387,7 @@ export function ProjectCategoriesSheet({
                         )}
                       </div>
                       {isRenaming && renameError ? (
-                        <span className="text-xs text-red-400">{renameError}</span>
+                        <span className="text-xs text-[var(--color-danger)]">{renameError}</span>
                       ) : null}
                       {isRenaming ? (
                         <Swatches
@@ -448,7 +448,7 @@ export function ProjectCategoriesSheet({
                             aria-label={`Delete ${category.name}`}
                             disabled={busy}
                             onClick={() => setConfirmDelete(category)}
-                            className={`${smallButton} text-red-400`}
+                            className={`${smallButton} text-[var(--color-danger)]`}
                           >
                             Delete
                           </button>
@@ -460,8 +460,8 @@ export function ProjectCategoriesSheet({
               </ul>
             )}
 
-            <ActionError action={writeError} className="flex flex-wrap items-center gap-2 text-sm text-red-400" />
-            <ActionError action={readError} className="flex flex-wrap items-center gap-2 text-sm text-red-400" />
+            <ActionError action={writeError} className="flex flex-wrap items-center gap-2 text-sm text-[var(--color-danger)]" />
+            <ActionError action={readError} className="flex flex-wrap items-center gap-2 text-sm text-[var(--color-danger)]" />
 
             <form
               data-component="AddCategoryForm"
@@ -480,7 +480,7 @@ export function ProjectCategoriesSheet({
                   maxLength={CATEGORY_NAME_MAX + 10}
                   className={inputClass(Boolean(nameError))}
                 />
-                {nameError ? <span className="text-xs text-red-400">{nameError}</span> : null}
+                {nameError ? <span className="text-xs text-[var(--color-danger)]">{nameError}</span> : null}
               </label>
               <Swatches value={newColor} onPick={setNewColor} disabled={busy} />
               <ActionButton

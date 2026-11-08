@@ -74,7 +74,7 @@ const checkCls = "flex items-center gap-1 text-xs text-[var(--color-muted)]";
 const btnCls =
   "rounded border border-[var(--color-surface-2)] px-2 py-1 text-xs font-semibold disabled:opacity-50";
 const primaryBtnCls =
-  "rounded bg-[var(--color-accent)] px-2 py-1 text-xs font-semibold text-black disabled:opacity-50";
+  "rounded bg-[var(--color-accent)] px-2 py-1 text-xs font-semibold text-[var(--color-accent-fg)] disabled:opacity-50";
 
 const STATE_KEY: Record<WinrmConnection["state"], string> = {
   working: "stateWorking",
@@ -83,7 +83,7 @@ const STATE_KEY: Record<WinrmConnection["state"], string> = {
 };
 const STATE_COLOR: Record<WinrmConnection["state"], string> = {
   working: "text-[var(--color-accent)]",
-  needs_attention: "text-red-400",
+  needs_attention: "text-[var(--color-danger)]",
   untested: "text-[var(--color-muted)]",
 };
 const TRANSPORT_KEY: Record<WinrmTransport, string> = {
@@ -217,8 +217,8 @@ export function WindowsServerConnections() {
       <h2 className="text-sm font-semibold">{t("title")}</h2>
       <p className="text-xs text-[var(--color-muted)]">{t("description")}</p>
       <p className="mb-3 text-xs text-[var(--color-muted)]">{t("perPerson")}</p>
-      {!driverAvailable && <p className="mb-2 text-xs text-red-400">{t("driverMissing")}</p>}
-      {error && <p role="alert" className="mb-2 text-xs text-red-400">{error}</p>}
+      {!driverAvailable && <p className="mb-2 text-xs text-[var(--color-danger)]">{t("driverMissing")}</p>}
+      {error && <p role="alert" className="mb-2 text-xs text-[var(--color-danger)]">{error}</p>}
       {connections === null && <p className="text-xs text-[var(--color-muted)]">{t("loading")}</p>}
       {connections && connections.length > 0 && (
         <ul className="mb-3 space-y-2">
@@ -401,7 +401,7 @@ function ServerRow({
         {c.vpn ? ` · ${t("viaVpn", { vpn: c.vpn })}` : ""}
       </p>
       {test && (
-        <p className={`mt-1 break-words ${test.ok ? "text-[var(--color-muted)]" : "text-red-400"}`}>
+        <p className={`mt-1 break-words ${test.ok ? "text-[var(--color-muted)]" : "text-[var(--color-danger)]"}`}>
           {test.ok
             ? t("testOk", { computer: test.computer_name ?? "", version: test.ps_version ?? "" })
             : t("testFail", { reason: test.error ?? "" })}
@@ -414,7 +414,7 @@ function ServerRow({
         <button type="button" className={btnCls} disabled={!!busy} onClick={onEdit}>
           {t("edit")}
         </button>
-        <button type="button" className={`${btnCls} text-red-400`} disabled={!!busy} onClick={onRemove}>
+        <button type="button" className={`${btnCls} text-[var(--color-danger)]`} disabled={!!busy} onClick={onRemove}>
           {t("remove")}
         </button>
       </div>

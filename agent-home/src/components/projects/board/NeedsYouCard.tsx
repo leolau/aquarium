@@ -311,7 +311,7 @@ export function NeedsYouCard({
         />
       ) : null}
       {error ? (
-        <div role="alert" className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-red-300">
+        <div role="alert" className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-[var(--color-danger)]">
           <span>
             {FAILED[verb ?? "approve"]}: {error}
           </span>

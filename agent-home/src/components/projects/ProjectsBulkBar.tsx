@@ -263,7 +263,7 @@ export function ProjectsBulkBar({
               </p>
             ) : null}
             {result.notSent > 0 ? (
-              <p data-component="ProjectsBulkNotSent" className="text-red-600">
+              <p data-component="ProjectsBulkNotSent" className="text-[var(--color-danger)]">
                 The server didn&apos;t answer (it may be restarting), so{" "}
                 {plural(result.notSent)} {result.notSent === 1 ? "was" : "were"}{" "}
                 not changed. They&apos;re still ticked: try again in a minute.
@@ -271,7 +271,7 @@ export function ProjectsBulkBar({
             ) : null}
             {result.failed.length > 0 ? (
               <>
-                <p className="text-red-600">
+                <p className="text-[var(--color-danger)]">
                   Couldn&apos;t {FAIL_VERB[result.kind]} {plural(result.failed.length)}{" "}
                   (still ticked):
                 </p>

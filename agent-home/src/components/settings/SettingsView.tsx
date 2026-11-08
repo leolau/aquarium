@@ -39,6 +39,8 @@ import {
 import { usePersistentState } from "@/lib/use-persistent-state";
 import { useT } from "@/i18n";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { useAction } from "@/lib/use-action";
+import { useConfirm } from "@/components/ui/useConfirm";
 
 /** Tag colours — same set used in SessionModal. */
 const TAG_COLORS = [
@@ -277,6 +279,7 @@ function InOutSection({
 /* ── Tags management ─────────────────────────────────────────────── */
 
 function TagsSection() {
+  const { ask, dialog } = useConfirm();
   const t = useT("settings");
   const [tags, setTags] = useState<SessionTag[]>([]);
   const [name, setName] = useState("");
@@ -339,9 +342,15 @@ function TagsSection() {
     }
   }
 
+  const create = useAction(createTag);
+
   async function deleteTag(tagId: string, tagName: string) {
-    if (!confirm(`Delete tag "${tagName}"? This removes it from all sessions.`))
-      return;
+    const ok = await ask({
+      title: `Delete tag "${tagName}"?`,
+      body: "This removes it from all sessions.",
+      confirmLabel: "Delete",
+    });
+    if (!ok) return;
     setError(null);
     setDeleting(tagId);
     try {
@@ -359,6 +368,7 @@ function TagsSection() {
 
   return (
     <section data-section="tags">
+      {dialog}
       <h2 className="text-sm font-semibold">{t("tags")}</h2>
       <p className="mb-3 text-xs text-[var(--color-muted)]">
         Define tags here, then associate them with conversations from the chat.
@@ -373,7 +383,7 @@ function TagsSection() {
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();
-              void createTag();
+              void create.run();
             }
           }}
           placeholder="Tag name…"
@@ -392,7 +402,7 @@ function TagsSection() {
           ))}
         </select>
         <ActionButton
-          onAction={() => createTag()}
+          onAction={() => create.run()}
           disabled={creating || !name.trim()}
           className="shrink-0 rounded-lg bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[var(--color-accent-fg)] disabled:opacity-60"
         >
@@ -408,7 +418,7 @@ function TagsSection() {
       </div>
 
       {error && (
-        <p className="mb-2 rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-xs text-red-300">
+        <p className="mb-2 rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-xs text-[var(--color-danger)]">
           {error}
         </p>
       )}

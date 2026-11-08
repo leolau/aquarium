@@ -4,7 +4,7 @@ import Link from "next/link";
 
 import { LogoutButton } from "@/components/LogoutButton";
 
-import { UserIcon } from "./icons";
+import { UserIcon } from "@/components/ui/icons";
 import { usePopover } from "./usePopover";
 
 /** Figma `account` (5:64): initial avatar → account, settings and sign out. */

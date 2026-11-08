@@ -11,6 +11,7 @@ import { useAction } from "@/lib/use-action";
 import { STAGE_LABEL, sourceGlyph } from "@/components/todos/TodoRow";
 import { formatWhen } from "@/components/files/FilesView";
 import type { Todo, TodoDetail, TodoStage } from "@/types";
+import { useConfirm } from "@/components/ui/useConfirm";
 
 /** The moves offered from each stage, in the order a user reaches for them. */
 const NEXT_STAGES: Record<TodoStage, TodoStage[]> = {
@@ -47,6 +48,7 @@ const SNOOZES: { label: string; hours: number }[] = [
  * provenance instead — "a WhatsApp message from this number" beats silence.
  */
 export function TodoDetailView({ todo }: { todo: TodoDetail }) {
+  const { askText, dialog } = useConfirm();
   const [current, setCurrent] = useState<TodoDetail>(todo);
   // One lock for the whole card: while one change is in flight, a click on any
   // other button here is dropped instead of racing it.
@@ -85,6 +87,7 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
 
   return (
     <div data-component="TodoDetailView" className="flex flex-col gap-4">
+      {dialog}
       <Link href="/todos" className="text-xs text-[var(--color-muted)]">
         ← To-dos
       </Link>
@@ -207,9 +210,16 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
           <div className="mt-2">
             <ActionButton
               disabled={busy}
-              onAction={() => exclusive(async () => {
-                const project = window.prompt("Project slug:");
+              onAction={async () => {
+                const project = await askText({
+                  title: "Promote to a project card",
+                  body: "The card lands in the project's triage column.",
+                  label: "Project slug",
+                  confirmLabel: "Promote",
+                  tone: "accent",
+                });
                 if (!project) return;
+                await exclusive(async () => {
                 setError(null);
                 try {
                   const res = await fetch(
@@ -233,7 +243,8 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
                 } catch {
                   setError("Couldn’t reach the AI layer.");
                 }
-              })}
+                });
+              }}
               busyLabel="Promoting…"
               className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-[11px] text-[var(--color-muted)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
             >

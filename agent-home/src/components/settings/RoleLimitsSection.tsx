@@ -123,7 +123,7 @@ function RoleCard({
           Also blocked: {role.other_blocked_tools.map(readable).join(", ")}
         </p>
       ) : null}
-      {error ? <p className="mt-2 text-xs text-red-400">{error}</p> : null}
+      {error ? <p className="mt-2 text-xs text-[var(--color-danger)]">{error}</p> : null}
 
       {role.locked ? null : (
         <>

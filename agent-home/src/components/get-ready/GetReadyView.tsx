@@ -46,7 +46,7 @@ const STATUS_DOT: Record<GetReadyStatus, string> = {
   not_started: "border border-[var(--color-border)] text-[var(--color-muted)]",
 };
 
-const TEST_TONE = { ok: "text-emerald-300", warn: "text-[var(--color-warn-text)]", bad: "text-red-300" };
+const TEST_TONE = { ok: "text-emerald-300", warn: "text-[var(--color-warn-text)]", bad: "text-[var(--color-danger)]" };
 
 export interface GetReadyExtras {
   profile: string;

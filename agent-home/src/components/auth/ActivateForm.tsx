@@ -110,7 +110,7 @@ export function ActivateForm({ token, profile }: { token: string; profile?: stri
         onChange={(e) => setConfirm(e.target.value)}
         className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
       />
-      {error ? <p className="text-sm text-red-300">{error}</p> : null}
+      {error ? <p className="text-sm text-[var(--color-danger)]">{error}</p> : null}
       <button
         type="submit"
         disabled={busy}

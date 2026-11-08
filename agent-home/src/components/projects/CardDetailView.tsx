@@ -156,7 +156,7 @@ export function CardDetailView({
             data-component="CardBlockedReason"
             className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3"
           >
-            <p className="text-xs font-medium uppercase tracking-wide text-red-300">
+            <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-danger)]">
               {card.block_kind
                 ? (BLOCK_KIND_LABEL[card.block_kind] ?? "Blocked")
                 : "Blocked"}

@@ -7,7 +7,7 @@ import { fmtElapsed } from "@/components/ui/useActivityRunning";
 import { useHydrated } from "@/lib/use-hydrated";
 import type { NeedsYouEntry } from "@/types/landing";
 
-import { AlertIcon, BellIcon, ChevronDownIcon, XIcon } from "./icons";
+import { AlertIcon, BellIcon, ChevronDownIcon, XIcon } from "@/components/ui/icons";
 import { sortNeedsYou } from "./useNeedsYou";
 
 const DISMISS_KEY = "landing.attention.dismissed";

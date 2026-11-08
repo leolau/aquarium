@@ -279,7 +279,7 @@ export function ChatThread({
           <p
             role="alert"
             data-component="ThreadError"
-            className="rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-sm text-red-300"
+            className="rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[var(--color-danger)]"
           >
             {error}
           </p>

@@ -11,6 +11,7 @@ import { SkillMarkdown } from "@/components/skills/SkillMarkdown";
 import { skillHref } from "@/components/skills/skill-links";
 import { ActionButton } from "@/components/ui/ActionButton";
 import { inputClass, primaryButtonClass, secondaryButtonClass } from "@/components/ui/Sheet";
+import { useConfirm } from "@/components/ui/useConfirm";
 import { errorText, profileQuery, sendJson } from "@/lib/admin-fetch";
 import { changedLineCount, diffLines, hunks } from "@/lib/skills/diff";
 import { applyEdit, byteLength, formatSize, lineCount, type SkillEdit } from "@/lib/skills/editor-state";
@@ -62,7 +63,7 @@ function ValidationBar({ checks, doc }: { checks: Check[]; doc: string }) {
   return (
     <div data-component="SkillValidation" role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-xs">
       {checks.map((c, k) => (
-        <span key={k} data-level={c.level} className={c.level === "ok" ? "text-emerald-400" : c.level === "warn" ? "text-[var(--color-warn-text)]" : "text-red-300"}>
+        <span key={k} data-level={c.level} className={c.level === "ok" ? "text-emerald-400" : c.level === "warn" ? "text-[var(--color-warn-text)]" : "text-[var(--color-danger)]"}>
           {c.level === "ok" ? "✓" : c.level === "warn" ? "⚠" : "✕"} {c.text}
         </span>
       ))}
@@ -104,6 +105,7 @@ export function SkillEditor({
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const dirty = doc !== original;
   const leaving = useRef(false);
+  const { ask: askConfirm, dialog: leaveDialog } = useConfirm();
   const q = profileQuery(profile);
   const viewHref = skillHref(name, profile);
 
@@ -136,12 +138,17 @@ export function SkillEditor({
       if (!a || a.getAttribute("target") === "_blank" || a.hasAttribute("download")) return;
       const href = a.getAttribute("href") ?? "";
       if (href.startsWith("#")) return;
-      if (!window.confirm("You have unsaved changes to this skill. Leave without saving?")) {
-        e.preventDefault();
-        e.stopPropagation();
-      } else {
+      e.preventDefault();
+      e.stopPropagation();
+      void askConfirm({
+        title: "Leave without saving?",
+        body: "You have unsaved changes to this skill.",
+        confirmLabel: "Leave",
+      }).then((leave) => {
+        if (!leave) return;
         leaving.current = true;
-      }
+        (a as HTMLAnchorElement).click();
+      });
     };
     window.addEventListener("beforeunload", beforeUnload);
     document.addEventListener("click", onClick, true);
@@ -149,7 +156,7 @@ export function SkillEditor({
       window.removeEventListener("beforeunload", beforeUnload);
       document.removeEventListener("click", onClick, true);
     };
-  }, [dirty]);
+  }, [dirty, askConfirm]);
 
   useEffect(() => {
     if (!fullscreen) return;
@@ -209,6 +216,7 @@ export function SkillEditor({
 
   return (
     <section data-component="SkillEditor" data-skill={name} data-view={view} className="space-y-3.5 pb-2">
+      {leaveDialog}
       <div className="flex flex-wrap items-center gap-2">
         <div className="min-w-0 flex-1 text-[13px] text-[var(--color-muted)]">
           <Link href={viewHref} className="text-[var(--color-accent)]">
@@ -240,7 +248,7 @@ export function SkillEditor({
               {builtinNote ? <span className="text-xs text-[var(--color-muted)]">{builtinNote}</span> : null}
             </div>
             {!parsed.split.hasFrontmatter ? (
-              <p role="alert" className="mt-2 text-sm text-red-300">
+              <p role="alert" className="mt-2 text-sm text-[var(--color-danger)]">
                 The YAML header can&apos;t be read, so the form is off. Fix it in Plain text.
               </p>
             ) : unsupported.length ? (
@@ -249,7 +257,7 @@ export function SkillEditor({
               </p>
             ) : null}
             {fieldError ? (
-              <p role="alert" className="mt-2 text-sm text-red-300">
+              <p role="alert" className="mt-2 text-sm text-[var(--color-danger)]">
                 {fieldError}
               </p>
             ) : null}
@@ -272,7 +280,7 @@ export function SkillEditor({
               <div className="md:col-span-2">
                 <label className={labelClass} htmlFor="skill-description">
                   Description — when should the agent use this skill?{" "}
-                  <span className={meta.description.length > MAX_DESCRIPTION_LENGTH ? "text-red-300" : ""}>
+                  <span className={meta.description.length > MAX_DESCRIPTION_LENGTH ? "text-[var(--color-danger)]" : ""}>
                     ({meta.description.length} / {MAX_DESCRIPTION_LENGTH})
                   </span>
                 </label>
@@ -499,14 +507,14 @@ function ReviewDialog({
           )}
         </div>
         {errors.length ? (
-          <ul role="alert" className="mt-3 space-y-0.5 text-sm text-red-300">
+          <ul role="alert" className="mt-3 space-y-0.5 text-sm text-[var(--color-danger)]">
             {errors.map((c, k) => (
               <li key={k}>✕ {c.text}</li>
             ))}
           </ul>
         ) : null}
         {error ? (
-          <p role="alert" className="mt-3 text-sm text-red-300">
+          <p role="alert" className="mt-3 text-sm text-[var(--color-danger)]">
             {error}
           </p>
         ) : null}

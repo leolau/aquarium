@@ -26,6 +26,7 @@ import type {
   ProjectRunStatus,
 } from "@/types";
 import { useTimeLabel } from "@/components/projects/useTimeLabel";
+import { useConfirm } from "@/components/ui/useConfirm";
 
 /**
  * One colour per run state, used for the badge, the progress bar and the
@@ -234,6 +235,7 @@ export function RunView({
   run: ProjectRun;
   archived?: boolean;
 }) {
+  const { ask, dialog } = useConfirm();
   const timeLabel = useTimeLabel();
   const router = useRouter();
   const [run, setRun] = useServerState(initial);
@@ -468,6 +470,7 @@ export function RunView({
 
   return (
     <div data-component="RunView" className="flex flex-col gap-4">
+      {dialog}
       <BusyRegion busy={busy} label={busy ? "Talking to the agent…" : undefined}>
         <div className="flex flex-col gap-4">
           {/* ── Headline ──────────────────────────────────────────── */}
@@ -567,7 +570,7 @@ export function RunView({
               </p>
             ) : null}
             {run.error ? (
-              <p className="mt-1 text-sm text-red-400">{run.error}</p>
+              <p className="mt-1 text-sm text-[var(--color-danger)]">{run.error}</p>
             ) : null}
             {run.score_user != null || run.score_self != null ? (
               <p className="mt-2 text-xs text-[var(--color-muted)]">
@@ -605,15 +608,13 @@ export function RunView({
                 <ActionButton
                   busy={controlPending("stop")}
                   pendingLabel="Stopping…"
-                  onClick={() => {
-                    if (
-                      !window.confirm(
-                        "Stop this run now? Work in progress is terminated where it stands — Cancel instead lets a running card finish.",
-                      )
-                    ) {
-                      return;
-                    }
-                    steer("stop");
+                  onClick={async () => {
+                    const ok = await ask({
+                      title: "Stop this run now?",
+                      body: "Work in progress is terminated where it stands — Cancel instead lets a running card finish.",
+                      confirmLabel: "Stop now",
+                    });
+                    if (ok) steer("stop");
                   }}
                   disabled={busy}
                   className="rounded-xl bg-red-500/90 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
@@ -636,12 +637,15 @@ export function RunView({
                 <ActionButton
                   busy={controlPending("repeat")}
                   pendingLabel="Starting run…"
-                  onClick={() => {
+                  onClick={async () => {
                     if (
                       canResume &&
-                      !window.confirm(
-                        "Start a brand-new run on the same method? This redoes every step from scratch, including ones already done — Resume instead continues from exactly where this run left off.",
-                      )
+                      !(await ask({
+                        title: "Start a brand-new run on the same method?",
+                        body: "This redoes every step from scratch, including ones already done — Resume instead continues from exactly where this run left off.",
+                        confirmLabel: "Start over",
+                        tone: "accent",
+                      }))
                     ) {
                       return;
                     }
@@ -800,7 +804,7 @@ export function RunView({
               data-component="RunBlocked"
               className="rounded-2xl border border-red-500/30 bg-[var(--color-surface)] p-4"
             >
-              <h2 className="text-xs uppercase tracking-wide text-red-400">
+              <h2 className="text-xs uppercase tracking-wide text-[var(--color-danger)]">
                 Blocked work
               </h2>
               <p className="mt-1 text-xs text-[var(--color-muted)]">
@@ -817,7 +821,7 @@ export function RunView({
                         {task.title ?? task.task_id}
                       </span>
                       {task.error ? (
-                        <span className="block truncate text-xs text-red-400">
+                        <span className="block truncate text-xs text-[var(--color-danger)]">
                           {task.error}
                         </span>
                       ) : null}

@@ -73,7 +73,7 @@ export function ScopeJobFailed({
 export function ScopeLoadFailed({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <section data-component="ClarifyLoadFailed" className={CARD}>
-      <p role="alert" className="text-sm text-red-300">
+      <p role="alert" className="text-sm text-[var(--color-danger)]">
         {message}
       </p>
       <button type="button" className={`mt-2 ${SECONDARY}`} onClick={onRetry}>

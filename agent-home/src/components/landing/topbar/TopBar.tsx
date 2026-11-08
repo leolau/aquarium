@@ -10,7 +10,7 @@ import type { NeedsYouEntry } from "@/types/landing";
 import { AccountMenu } from "./AccountMenu";
 import { AttentionBanner } from "./AttentionBanner";
 import { HealthPill } from "./HealthPill";
-import { PanelLeftIcon } from "./icons";
+import { PanelLeftIcon } from "@/components/ui/icons";
 import { MobileActivityStrip } from "./MobileActivityStrip";
 import { NeedsYouBadge } from "./NeedsYouBadge";
 import { useNeedsYou } from "./useNeedsYou";

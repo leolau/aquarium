@@ -1,7 +1,7 @@
 {
-  "launcher": "Coral 選單",
-  "openMenu": "打開 Coral 選單",
-  "closeMenu": "關閉 Coral 選單",
+  "launcher": "Aquarium 選單",
+  "openMenu": "打開 Aquarium 選單",
+  "closeMenu": "關閉 Aquarium 選單",
   "clusters": {
     "workspace": "工作區",
     "system": "系統"

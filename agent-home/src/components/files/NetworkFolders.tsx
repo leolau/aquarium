@@ -410,7 +410,7 @@ export function NetworkFolders() {
           opens one and disconnects after its idle time.
         </p>
 
-        {loadError ? <p className="mt-2 text-xs text-red-400">{loadError}</p> : null}
+        {loadError ? <p className="mt-2 text-xs text-[var(--color-danger)]">{loadError}</p> : null}
 
         {noVpn ? (
           <p data-component="NetworkFoldersNoVpn" className="mt-2 text-sm text-[var(--color-muted)]">
@@ -456,7 +456,7 @@ export function NetworkFolders() {
                   </span>
                   <span
                     data-vpn-chip={status.vpn_state}
-                    className={`${chipCls} ${status.vpn_state === "connected" ? "text-emerald-400" : status.vpn_state === "error" ? "text-red-400" : ""}`}
+                    className={`${chipCls} ${status.vpn_state === "connected" ? "text-emerald-400" : status.vpn_state === "error" ? "text-[var(--color-danger)]" : ""}`}
                   >
                     {VPN_CHIP[status.vpn_state] ?? status.vpn_state}
                   </span>
@@ -613,7 +613,7 @@ export function NetworkFolders() {
             Trusted for import (agent may copy files into Files without asking each time)
           </label>
           {formProblem ? (
-            <p role="alert" className="mt-2 text-xs text-red-400">
+            <p role="alert" className="mt-2 text-xs text-[var(--color-danger)]">
               {formProblem}
             </p>
           ) : null}
@@ -642,7 +642,7 @@ export function NetworkFolders() {
             <p
               data-component="NetworkFolderTestResult"
               data-ok={result.ok ? "true" : "false"}
-              className={`mt-3 rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-sm ${result.ok ? "" : "text-red-400"}`}
+              className={`mt-3 rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-sm ${result.ok ? "" : "text-[var(--color-danger)]"}`}
             >
               <span aria-hidden className={result.ok ? "text-emerald-400" : ""}>
                 {result.ok ? "✓ " : "✗ "}

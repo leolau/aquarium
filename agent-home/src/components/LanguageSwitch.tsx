@@ -1,11 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useTransition } from "react";
 
 import { Spinner } from "@/components/ui/Spinner";
 import { htmlLang, LOCALE_LABELS, LOCALES, useLocale, useT, type Locale } from "@/i18n";
-import { ActionButton } from "@/components/ui/ActionButton";
+import { useAction } from "@/lib/use-action";
 
 /**
  * EN / 繁體中文 switch. Before sign-in it remembers the choice in this browser;
@@ -16,12 +16,14 @@ export function LanguageSwitch({ showNote = false }: { showNote?: boolean }) {
   const t = useT("common");
   const locale = useLocale();
   const router = useRouter();
-  const [busy, setBusy] = useState<Locale | null>(null);
+  const [target, setTarget] = useState<Locale | null>(null);
   const [failed, setFailed] = useState(false);
+  const [refreshing, startRefresh] = useTransition();
 
-  async function choose(next: Locale) {
-    if (busy || next === locale) return;
-    setBusy(next);
+  // One lock for both buttons: a quick EN-then-中文 tap must not post twice,
+  // and the switch stays busy until the re-rendered page has landed.
+  const save = useAction(async (next: Locale) => {
+    setTarget(next);
     setFailed(false);
     try {
       const res = await fetch("/api/session/language", {
@@ -30,12 +32,17 @@ export function LanguageSwitch({ showNote = false }: { showNote?: boolean }) {
         body: JSON.stringify({ language: next }),
       });
       if (!res.ok) setFailed(true);
-      router.refresh();
+      startRefresh(() => router.refresh());
     } catch {
       setFailed(true);
-    } finally {
-      setBusy(null);
     }
+  });
+  const working = save.pending || refreshing;
+  const busy = working ? target : null;
+
+  function choose(next: Locale) {
+    if (working || next === locale) return;
+    void save.run(next);
   }
 
   return (
@@ -43,18 +50,20 @@ export function LanguageSwitch({ showNote = false }: { showNote?: boolean }) {
       <div
         role="group"
         aria-label={t("language")}
-        aria-busy={busy !== null}
+        aria-busy={working}
         className="inline-flex w-fit rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5"
       >
         {LOCALES.map((code) => {
           const active = code === locale;
           return (
-            <ActionButton
+            <button
+              type="button"
               key={code}
               lang={htmlLang(code)}
               aria-pressed={active}
-              disabled={busy !== null}
-              onAction={() => choose(code)}
+              disabled={working}
+              aria-busy={busy === code}
+              onClick={() => choose(code)}
               className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm disabled:opacity-70 ${
                 active
                   ? "bg-[var(--color-accent)] font-semibold text-[var(--color-accent-fg)]"
@@ -63,13 +72,13 @@ export function LanguageSwitch({ showNote = false }: { showNote?: boolean }) {
             >
               {busy === code ? <Spinner /> : null}
               {LOCALE_LABELS[code]}
-            </ActionButton>
+            </button>
           );
         })}
       </div>
       {showNote ? <span className="text-xs text-[var(--color-muted)]">{t("languageNote")}</span> : null}
       {failed ? (
-        <span role="alert" className="text-xs text-red-300">
+        <span role="alert" className="text-xs text-[var(--color-danger)]">
           {t("languageSaveFailed")}
         </span>
       ) : null}

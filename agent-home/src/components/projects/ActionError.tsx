@@ -23,7 +23,7 @@ export function ActionError({
     <div
       data-component="ActionError"
       className={
-        className ?? "mt-2 flex flex-wrap items-center gap-2 text-sm text-red-400"
+        className ?? "mt-2 flex flex-wrap items-center gap-2 text-sm text-[var(--color-danger)]"
       }
     >
       <span role="alert" className="min-w-0 flex-1">

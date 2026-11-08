@@ -22,6 +22,9 @@
    * this token and each theme picks a readable amber. */
   --color-warn: #f59e0b;
   --color-warn-text: #fcd34d;
+  --color-success: #34d399;
+  --color-danger: #f87171;
+  --color-attention-bg: #2a1f0b;
 }
 
 :root {
@@ -31,6 +34,15 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   /* Vertical space the Coral floating launcher needs at the bottom edge. */
   --coral-clearance: 5rem;
+  /* Landing redesign radius scale (Figma "Space" collection). Theme-
+   * independent, so every theme gets the same corners; these also back
+   * Tailwind's `rounded-*` utilities. */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-full: 999px;
 }
 
 /*
@@ -55,15 +67,6 @@
   --color-success: #34d399;
   --color-danger: #f87171;
   --color-attention-bg: #2a1f0b;
-  --color-success: #34d399;
-  --color-danger: #f87171;
-  --color-attention-bg: #2a1f0b;
-  /* Landing redesign scale (Figma "Space" collection). */
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
-  --radius-2xl: 20px;
 }
 
 [data-theme="light"] {
@@ -97,6 +100,9 @@
   --color-accent-fg: #1a0f2e;
   --color-warn: #f59e0b;
   --color-warn-text: #fcd34d;
+  --color-success: #34d399;
+  --color-danger: #fb7185;
+  --color-attention-bg: #3a2318;
 }
 
 html,
@@ -114,14 +120,21 @@ body {
   -webkit-font-smoothing: antialiased;
   /* Never allow horizontal scroll on a phone. */
   overflow-x: hidden;
+  /* Agent text carries long URLs, ids and paths; break them rather than let
+   * them push the page wider than the screen. Inherited, and unlike
+   * `anywhere` it leaves table/flex min-content sizing alone. */
+  overflow-wrap: break-word;
 }
 
-/* Large touch targets everywhere (min 44px per iOS HIG). */
-button,
-a[role="button"],
-input,
-select {
-  min-height: 44px;
+/* Large touch targets on touch screens (min 44px per iOS HIG). Scoped to
+ * coarse pointers so desktop chips and inline buttons keep their size. */
+@media (pointer: coarse) {
+  button,
+  a[role="button"],
+  input,
+  select {
+    min-height: 44px;
+  }
 }
 
 /* The field the journey bar just pointed at (revealTarget). */

@@ -107,7 +107,7 @@ export function ReadinessChecklist({
             <span
               aria-hidden
               className={
-                finding.severity === "stalled" ? "text-red-400" : "text-[var(--color-warn-text)]"
+                finding.severity === "stalled" ? "text-[var(--color-danger)]" : "text-[var(--color-warn-text)]"
               }
             >
               !

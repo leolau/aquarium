@@ -95,7 +95,7 @@ function Feedback({ error, saved, t }: { error: string | null; saved: boolean; t
 const inputClass =
   "w-full rounded border border-[var(--color-border)] bg-transparent px-2 py-1 text-sm disabled:opacity-50";
 const buttonClass =
-  "rounded bg-[var(--color-accent)] px-3 py-1.5 text-sm text-white disabled:opacity-50";
+  "rounded bg-[var(--color-accent)] px-3 py-1.5 text-sm text-[var(--color-accent-fg)] disabled:opacity-50";
 
 type FormProps<T> = { view: T; saved: boolean; onSaved: (data: T) => void; onEdit: () => void };
 

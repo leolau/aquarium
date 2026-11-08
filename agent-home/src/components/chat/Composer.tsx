@@ -180,7 +180,7 @@ export function Composer({
         </div>
       ) : null}
       {uploadError ? (
-        <p className="mb-2 text-xs text-red-300">{uploadError}</p>
+        <p className="mb-2 text-xs text-[var(--color-danger)]">{uploadError}</p>
       ) : null}
       {oversizeFiles ? (
         <div

@@ -1,7 +1,7 @@
 {
-  "launcher": "Coral launcher",
-  "openMenu": "Open Coral menu",
-  "closeMenu": "Close Coral menu",
+  "launcher": "Aquarium launcher",
+  "openMenu": "Open Aquarium menu",
+  "closeMenu": "Close Aquarium menu",
   "clusters": {
     "workspace": "Workspace",
     "system": "System"

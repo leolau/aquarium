@@ -150,7 +150,7 @@ export function CardActions({
           </div>
         </BusyRegion>
       ) : null}
-      <ActionError action={action} className="flex w-full flex-wrap items-center gap-2 text-xs text-red-300" />
+      <ActionError action={action} className="flex w-full flex-wrap items-center gap-2 text-xs text-[var(--color-danger)]" />
     </div>
   );
 }

@@ -259,7 +259,7 @@ function DirectiveAction({
       </ActionButton>
       <ActionError
         action={action}
-        className="flex flex-wrap items-center gap-2 text-xs text-red-300"
+        className="flex flex-wrap items-center gap-2 text-xs text-[var(--color-danger)]"
       />
     </span>
   );

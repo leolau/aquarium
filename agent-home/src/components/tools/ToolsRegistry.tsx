@@ -88,7 +88,7 @@ function EmptyApps() {
       <p className="text-sm text-[var(--color-muted)]">{t("empty.body")}</p>
       <div className="flex flex-wrap gap-2">
         <Link
-          className="inline-flex min-h-[44px] items-center rounded-xl bg-[var(--color-accent)] px-4 text-sm text-white"
+          className="inline-flex min-h-[44px] items-center rounded-xl bg-[var(--color-accent)] px-4 text-sm text-[var(--color-accent-fg)]"
           href={`/chat?draft=${encodeURIComponent(t("empty.localPrompt"))}`}
         >
           {t("empty.local")}

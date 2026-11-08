@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
-import { PencilIcon, PinIcon } from "./icons";
+import { PencilIcon, PinIcon } from "@/components/ui/icons";
 import { displayTitle, isPinned, sessionMeta, type LandingSession } from "./model";
 
 /** Row actions take no room until the row is hovered or focused (always shown on touch). */

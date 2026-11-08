@@ -56,8 +56,8 @@ const TONE: Record<WaBridgeStatus, string> = {
   waiting_for_qr: "text-[var(--color-warn-text)]",
   restarting: "text-[var(--color-warn-text)]",
   not_linked: "text-[var(--color-warn-text)]",
-  stopped: "text-red-400",
-  failed: "text-red-400",
+  stopped: "text-[var(--color-danger)]",
+  failed: "text-[var(--color-danger)]",
 };
 
 function StepNum({ n, state }: { n: number; state: "done" | "attention" | "todo" }) {
@@ -254,7 +254,7 @@ export function WhatsAppBridges() {
       </div>
 
       {errorText && (
-        <p role="alert" className="text-xs text-red-400">
+        <p role="alert" className="text-xs text-[var(--color-danger)]">
           {errorText}
         </p>
       )}
@@ -321,7 +321,7 @@ export function WhatsAppBridges() {
                     </button>
                     <button
                       type="button"
-                      className={`${GHOST} text-red-400`}
+                      className={`${GHOST} text-[var(--color-danger)]`}
                       disabled={busy !== null || b.active !== "active"}
                       onClick={() => setConfirm({ name: b.name, action: "stop" })}
                     >

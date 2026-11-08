@@ -206,7 +206,7 @@ function StageCard({
         </div>
       ) : null}
       {action.error ? (
-        <div role="alert" className="flex flex-wrap items-center gap-1.5 px-2.5 pb-1.5 text-xs text-red-300">
+        <div role="alert" className="flex flex-wrap items-center gap-1.5 px-2.5 pb-1.5 text-xs text-[var(--color-danger)]">
           <span>{action.error}</span>
           <ActionButton
             busy={action.busy}
@@ -320,7 +320,7 @@ function ColumnNewCard({
         </ActionButton>
       </div>
       {error || note ? (
-        <p role="alert" className="text-sm text-red-400">
+        <p role="alert" className="text-sm text-[var(--color-danger)]">
           {[error, note].filter(Boolean).join(" ")}
         </p>
       ) : null}

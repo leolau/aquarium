@@ -241,7 +241,7 @@ export function AddToProjectSheet({
         </p>
 
         {error ?? writeError ? (
-          <p className="flex flex-wrap items-center gap-2 text-sm text-red-400" role="alert">
+          <p className="flex flex-wrap items-center gap-2 text-sm text-[var(--color-danger)]" role="alert">
             {error ?? writeError}
             {writeError ? (
               <ActionButton

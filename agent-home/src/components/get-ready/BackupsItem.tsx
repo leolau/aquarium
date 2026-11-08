@@ -414,7 +414,7 @@ export function BackupsItem({
 
       {notice && !open ? <p className="mt-2 pl-10 text-xs text-emerald-300">✓ {notice}</p> : null}
       {error && !open ? (
-        <p className="mt-2 pl-10 text-xs text-red-300" role="alert">
+        <p className="mt-2 pl-10 text-xs text-[var(--color-danger)]" role="alert">
           ✗ {t("error", { error })}
         </p>
       ) : null}
@@ -584,7 +584,7 @@ export function BackupsItem({
 
               {notice ? <p className="text-xs text-emerald-300">✓ {notice}</p> : null}
               {error ? (
-                <p className="text-xs text-red-300" role="alert">
+                <p className="text-xs text-[var(--color-danger)]" role="alert">
                   ✗ {t("error", { error })}
                 </p>
               ) : null}

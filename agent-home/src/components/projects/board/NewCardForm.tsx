@@ -84,12 +84,12 @@ export function NewCardForm({
         </ActionButton>
       </div>
       {invalid ? (
-        <p role="alert" className="text-xs text-red-300">
+        <p role="alert" className="text-xs text-[var(--color-danger)]">
           A card needs a title.
         </p>
       ) : null}
       {action.error ? (
-        <div role="alert" className="flex items-center gap-2 text-xs text-red-300">
+        <div role="alert" className="flex items-center gap-2 text-xs text-[var(--color-danger)]">
           <span>Couldn&rsquo;t create the card: {action.error}</span>
           <ActionButton
             busy={action.busy}

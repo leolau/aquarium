@@ -360,7 +360,7 @@ export function ConnectedAccounts() {
         is on.
       </p>
 
-      {error && <p className="mb-2 text-xs text-red-400">{error}</p>}
+      {error && <p className="mb-2 text-xs text-[var(--color-danger)]">{error}</p>}
       {result && <p className="mb-2 text-xs text-green-400">{result}</p>}
 
       {loaded && entries.length === 0 && phase === "idle" && (
@@ -384,7 +384,7 @@ export function ConnectedAccounts() {
               </span>
               <button
                 type="button"
-                className="text-xs text-red-400"
+                className="text-xs text-[var(--color-danger)]"
                 onClick={() => setConfirmEntry(entry)}
               >
                 Disconnect
@@ -508,7 +508,7 @@ export function ConnectedAccounts() {
           <ActionButton busyLabel="Connecting…"
             disabled={services.length === 0}
             onAction={() => start()}
-            className="rounded bg-[var(--color-accent)] px-2 py-1 text-xs font-semibold text-black"
+            className="rounded bg-[var(--color-accent)] px-2 py-1 text-xs font-semibold text-[var(--color-accent-fg)]"
           >
             Connect Google account
           </ActionButton>
@@ -524,7 +524,7 @@ export function ConnectedAccounts() {
                 href={authUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-block rounded bg-[var(--color-accent)] px-2 py-1 font-semibold text-black"
+                className="inline-block rounded bg-[var(--color-accent)] px-2 py-1 font-semibold text-[var(--color-accent-fg)]"
               >
                 Open Google sign-in
               </a>
@@ -555,7 +555,7 @@ export function ConnectedAccounts() {
               <ActionButton
                 disabled={phase === "busy" || !pasted.trim()}
                 onAction={() => complete()}
-                className="rounded bg-[var(--color-accent)] px-2 py-1 font-semibold text-black"
+                className="rounded bg-[var(--color-accent)] px-2 py-1 font-semibold text-[var(--color-accent-fg)]"
               >
                 {phase === "busy" ? "Working…" : "Complete"}
               </ActionButton>

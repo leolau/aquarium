@@ -46,7 +46,7 @@ export function AddMemoryButton({
         Add
       </ActionButton>
       {action.error ? (
-        <span role="alert" className="text-xs text-red-400">
+        <span role="alert" className="text-xs text-[var(--color-danger)]">
           {action.error}{" "}
           <button type="button" onClick={() => void action.retry()} className="underline">
             Retry

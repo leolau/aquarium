@@ -40,4 +40,17 @@ describe("i18n message files", () => {
       });
     }
   }
+
+  // The product/launcher brand is "Aquarium"; "Coral" is an internal code name.
+  for (const locale of LOCALES) {
+    it(`${locale} never shows the internal "Coral" name to users`, () => {
+      const files = readLocaleFiles(locale);
+      const leaks = Object.entries(files).flatMap(([ns, tree]) =>
+        flattenKeys(tree)
+          .filter((key) => /\bcoral\b/i.test(String(lookup(tree, key) ?? "")))
+          .map((key) => `${ns}.${key}`),
+      );
+      expect(leaks).toEqual([]);
+    });
+  }
 });

@@ -1,9 +1,9 @@
 import type { CapacityResponse, CpuHistory } from "@/types";
 
 const TONE: Record<CapacityResponse["state"], string> = {
-  comfortable: "text-[var(--color-ok,#16a34a)]",
-  watch: "text-[var(--color-warn,#d97706)]",
-  constrained: "text-[var(--color-danger,#dc2626)]",
+  comfortable: "text-[var(--color-success)]",
+  watch: "text-[var(--color-warn)]",
+  constrained: "text-[var(--color-danger)]",
 };
 
 const VERDICT_HINT: Record<CapacityResponse["state"], string> = {
@@ -190,7 +190,7 @@ function CpuHistorySection({ history }: { history: CpuHistory | null }) {
                 <div
                   key={point.ts}
                   title={`${hourLabel(point.ts)} — avg ${pct(point.avg_pct)}, peak ${pct(point.max_pct)}`}
-                  className="flex-1 rounded-sm bg-[var(--color-accent,#2563eb)]"
+                  className="flex-1 rounded-sm bg-[var(--color-accent)]"
                   style={{ height: `${Math.max(avg, 2)}%`, opacity: point.avg_pct === null ? 0.15 : 1 }}
                 />
               );

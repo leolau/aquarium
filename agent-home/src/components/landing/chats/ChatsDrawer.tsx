@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 
 import { ChatsPanel, type ChatsPanelProps } from "./ChatsPanel";
-import { XIcon } from "./icons";
+import { XIcon } from "@/components/ui/icons";
 
 /**
  * Mobile Chats drawer (Figma `6:195`): the sidebar's contents in a
