@@ -57,8 +57,28 @@ export function secretValueProblem(value: string): SecretValueProblem | null {
 }
 
 /** What the helper answers, minus anything else upstream might add. */
+/** One secret as the API lists it: a name and when it was last set, never a value. */
+export interface AppSecretMeta {
+  name: string;
+  /** ISO time; null when it was set before set times were recorded. */
+  updated_at: string | null;
+}
+
 export interface AppSecretsResult {
   mode: AppMode;
   secret_names: string[];
+  secrets?: AppSecretMeta[];
   restart_needed: boolean;
+}
+
+/** Keeps only `{name, updated_at}` of well-formed rows, so nothing else the API
+ *  might add (let alone a value) ever reaches the browser. */
+export function secretMetaList(raw: unknown): AppSecretMeta[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  return raw.flatMap((row) => {
+    if (!row || typeof row !== "object") return [];
+    const { name, updated_at } = row as { name?: unknown; updated_at?: unknown };
+    if (typeof name !== "string") return [];
+    return [{ name, updated_at: typeof updated_at === "string" ? updated_at : null }];
+  });
 }

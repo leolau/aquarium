@@ -164,7 +164,18 @@
     "feedback": "Feedback",
     "feedbackLabel": "What should change next time the agent works on it?",
     "feedbackSend": "Send feedback",
-    "feedbackSent": "Thanks — the agent will see this on its next build."
+    "feedbackSent": "Thanks — the agent will see this on its next build.",
+    "deploymentsEmpty": "No deployments yet. The first build adds one.",
+    "deploymentsInfoLabel": "About deployments",
+    "deploymentsInfo": "Live is the copy people use at the live address. Test copy is the newest build at the test address. Older builds are kept as Superseded.",
+    "deploymentRelease": "release {sha}",
+    "deploymentStatus": {
+      "live": "Live",
+      "test": "Test copy",
+      "superseded": "Superseded",
+      "failed": "Failed",
+      "building": "Building"
+    }
   },
   "undo": {
     "shown": "{name} is back on the grid",
