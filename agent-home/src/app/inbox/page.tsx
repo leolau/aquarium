@@ -1,4 +1,7 @@
 import { MobileShell } from "@/components/MobileShell";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { InfoTip } from "@/components/ui/InfoTip";
+import { getT } from "@/i18n/server";
 import { InboxView, type Tab } from "@/components/inbox/InboxView";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
 import type {
@@ -94,14 +97,15 @@ export default async function Page({
     error = err instanceof Error ? err.message : "Failed to load the inbox";
   }
 
+  const t = await getT("inbox");
   return (
-    <MobileShell title="Inbox">
+    <MobileShell
+      title="Inbox"
+      info={<InfoTip label={t("infoLabel")}>{t("info")}</InfoTip>}
+    >
       {error ? (
-        <div
-          data-component="InboxError"
-          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
-        >
-          Couldn&apos;t load your inbox ({error}).
+        <div data-component="InboxError">
+          <ErrorState kind="error" details={error} />
         </div>
       ) : (
         <InboxView

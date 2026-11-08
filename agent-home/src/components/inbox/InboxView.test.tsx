@@ -109,8 +109,8 @@ describe("InboxView", () => {
     );
     expect(html).toContain('data-component="InboxView"');
     expect(html).toContain('data-component="IncomingsList"');
-    expect(html).toContain("principal-scoped (C2)");
-    expect(html).toContain("Incomings");
+    expect(html).not.toContain("principal-scoped (C2)");
+    expect(html).toContain("Arrived");
     expect(html).toContain("Approvals");
     expect(html).toContain("Changes");
     // The arrival itself, in Chinese, unsegmented.

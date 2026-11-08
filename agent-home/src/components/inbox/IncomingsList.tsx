@@ -136,6 +136,8 @@ export function IncomingsList({
     filters.since ||
     filters.until;
 
+  const fromParams = filtersToParams(filters).toString();
+  const fromQuery = fromParams ? `?tab=incomings&${fromParams}` : "";
   return (
     <div data-component="IncomingsList" className="flex flex-col gap-3">
       <IncomingsFilters facets={facets} value={filters} onChange={setFilters} />
@@ -161,7 +163,7 @@ export function IncomingsList({
           ) : (
             <ul className="flex flex-col gap-2">
               {items.map((item) => (
-                <IncomingRow key={item.id} item={item} />
+                <IncomingRow key={item.id} item={item} from={fromQuery} />
               ))}
             </ul>
           )}

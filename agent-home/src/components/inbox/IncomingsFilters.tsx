@@ -1,6 +1,11 @@
 "use client";
 
+import { useState } from "react";
+
 import { TagFilterBar } from "@/components/chat/TagFilterBar";
+import { useT } from "@/i18n";
+import { FilterIcon } from "@/components/ui/icons";
+import { Sheet, primaryButtonClass, secondaryButtonClass } from "@/components/ui/Sheet";
 import type { IncomingsFacets } from "@/types";
 
 export interface IncomingsFilterState {
@@ -59,6 +64,8 @@ export function IncomingsFilters({
   value: IncomingsFilterState;
   onChange: (next: IncomingsFilterState) => void;
 }) {
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const t = useT("inbox");
   const patch = (part: Partial<IncomingsFilterState>) =>
     onChange({ ...value, ...part });
 
@@ -85,16 +92,15 @@ export function IncomingsFilters({
     patch({ includeTags: [...value.includeTags, name] });
   };
 
-  return (
-    <div data-component="IncomingsFilters" className="flex flex-col gap-2">
-      <input
-        data-component="IncomingsSearch"
-        type="search"
-        value={value.q}
-        onChange={(e) => patch({ q: e.target.value })}
-        placeholder="Search everything that arrived"
-        className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-[var(--color-accent)]"
-      />
+  const activeCount =
+    value.surfaces.length +
+    value.includeTags.length +
+    value.excludeTags.length +
+    (value.hasAttachments ? 1 : 0) +
+    (value.remembered !== null ? 1 : 0) +
+    (value.since || value.until ? 1 : 0);
+  const panel = (
+    <>
 
       <div className="flex flex-wrap items-center gap-1.5 text-xs">
         {facets.surfaces.map((s) => (
@@ -154,6 +160,54 @@ export function IncomingsFilters({
           />
         </label>
       </div>
+    </>
+  );
+
+  return (
+    <div data-component="IncomingsFilters" className="flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+      <input
+        data-component="IncomingsSearch"
+        type="search"
+        value={value.q}
+        onChange={(e) => patch({ q: e.target.value })}
+        placeholder="Search everything that arrived"
+        className="min-w-0 flex-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-[var(--color-accent)]"
+      />
+        <button
+          type="button"
+          data-action="open-filters"
+          onClick={() => setSheetOpen(true)}
+          className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-fg)] lg:hidden"
+        >
+          <FilterIcon size={16} />
+          {activeCount ? t("filtersCount", { count: activeCount }) : t("filters")}
+        </button>
+      </div>
+      <div className="hidden flex-col gap-2 lg:flex">{panel}</div>
+      {sheetOpen ? (
+        <Sheet
+          title={t("filters")}
+          component="IncomingsFiltersSheet"
+          onClose={() => setSheetOpen(false)}
+          footer={
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => onChange({ ...EMPTY_FILTERS, q: value.q })}
+                className={secondaryButtonClass}
+              >
+                {t("clearAll")}
+              </button>
+              <button type="button" onClick={() => setSheetOpen(false)} className={primaryButtonClass}>
+                {t("showResults")}
+              </button>
+            </div>
+          }
+        >
+          <div className="flex flex-col gap-3">{panel}</div>
+        </Sheet>
+      ) : null}
     </div>
   );
 }
