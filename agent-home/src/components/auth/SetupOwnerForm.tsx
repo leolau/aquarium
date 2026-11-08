@@ -39,6 +39,14 @@ export function tokenFromHash(hash: string): string {
   return (params.get("token") ?? "").trim();
 }
 
+/**
+ * A fragment change on /setup reloads only when it carries a new setup link;
+ * in-page anchors (the step rail) must never wipe the half-filled form.
+ */
+export function hashCarriesSetupLink(hash: string): boolean {
+  return tokenFromHash(hash) !== "";
+}
+
 type FormProblem = "errorEmail" | "errorShort" | "errorMismatch";
 
 /** Local checks before posting; ``null`` when the form looks fine. */
@@ -171,7 +179,9 @@ export function SetupOwnerForm({
       .catch(() => setPhase("invalid"));
     // A link pasted into a tab already on /setup only changes the fragment, which
     // does not reload the page; reload so the new token is read.
-    const onHashChange = () => window.location.reload();
+    const onHashChange = () => {
+      if (hashCarriesSetupLink(window.location.hash)) window.location.reload();
+    };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
@@ -359,13 +369,18 @@ export function SetupOwnerForm({
           <a
             key={r.id}
             href={`#${r.id}`}
+            onClick={(e) => {
+              // Scroll in place: changing the fragment would fire hashchange.
+              e.preventDefault();
+              document.getElementById(r.id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }}
             className={`flex shrink-0 items-center gap-2 rounded-full border px-3 py-1.5 text-xs lg:rounded-lg lg:text-sm ${
-              r.done ? "border-emerald-500/40 text-emerald-300" : "border-[var(--color-border)] text-[var(--color-muted)]"
+              r.done ? "border-[var(--color-success)] text-[var(--color-success)]" : "border-[var(--color-border)] text-[var(--color-muted)]"
             }`}
           >
             <span
               className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold ${
-                r.done ? "bg-emerald-500 text-black" : "bg-[var(--color-surface-2)] text-[var(--color-text)]"
+                r.done ? "bg-[var(--color-success)] text-[var(--color-bg)]" : "bg-[var(--color-surface-2)] text-[var(--color-text)]"
               }`}
             >
               {r.done ? "✓" : i + 1}
@@ -433,7 +448,7 @@ export function SetupOwnerForm({
                 className={field}
               />
               {confirm ? (
-                <span className={`text-xs ${confirm === password ? "text-emerald-300" : "text-[var(--color-danger)]"}`}>
+                <span className={`text-xs ${confirm === password ? "text-[var(--color-success)]" : "text-[var(--color-danger)]"}`}>
                   {confirm === password ? t("pw_match") : t("pw_nomatch")}
                 </span>
               ) : null}
