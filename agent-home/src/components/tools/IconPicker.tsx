@@ -47,7 +47,7 @@ export function IconPicker({ tool, onDone }: { tool: Tool; onDone?: () => void }
           busy={action.busy}
           disabled={!valid}
           pendingLabel={t("actions.saving")}
-          className="min-h-[44px] rounded-xl bg-[var(--color-accent)] px-4 text-sm text-white"
+          className="min-h-[44px] rounded-xl bg-[var(--color-accent)] px-4 text-sm text-[var(--color-accent-fg)]"
           onClick={() =>
             void action.run(appApiPath(tool, "/icon"), {
               method: "PUT",
@@ -74,7 +74,7 @@ export function IconPicker({ tool, onDone }: { tool: Tool; onDone?: () => void }
         </ActionButton>
       </div>
       {action.error ? (
-        <p role="alert" className="text-sm text-[var(--color-danger,#c53b3b)]">
+        <p role="alert" className="text-sm text-[var(--color-danger)]">
           {action.error}
         </p>
       ) : null}

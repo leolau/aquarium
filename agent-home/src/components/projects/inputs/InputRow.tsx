@@ -148,7 +148,7 @@ export function InputRow({
         )}
       </div>
       {action.error ? (
-        <p role="alert" className="flex items-center gap-2 text-xs text-red-400">
+        <p role="alert" className="flex items-center gap-2 text-xs text-[var(--color-danger)]">
           {action.error}
           <ActionButton
             busy={action.busy}

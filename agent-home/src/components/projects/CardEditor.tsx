@@ -253,11 +253,11 @@ export function CardEditor({
         )}
       </BusyRegion>
       {invalid ? (
-        <p className="text-xs text-red-300" role="alert">
+        <p className="text-xs text-[var(--color-danger)]" role="alert">
           {invalid}
         </p>
       ) : null}
-      <ActionError action={action} className="flex flex-wrap items-center gap-2 text-xs text-red-300" />
+      <ActionError action={action} className="flex flex-wrap items-center gap-2 text-xs text-[var(--color-danger)]" />
     </div>
   );
 }

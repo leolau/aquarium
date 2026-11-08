@@ -118,7 +118,7 @@ export function ToolsPanel({
               : "full host set"}
           </p>
           {resolution.dropped_toolsets.length > 0 ? (
-            <p className="text-red-300">
+            <p className="text-[var(--color-danger)]">
               Dropped (not on host): {resolution.dropped_toolsets.join(", ")}
             </p>
           ) : null}
@@ -129,7 +129,7 @@ export function ToolsPanel({
               : "none"}
           </p>
           {resolution.dropped_skills.length > 0 ? (
-            <p className="text-red-300">
+            <p className="text-[var(--color-danger)]">
               Dropped skills: {resolution.dropped_skills.join(", ")}
             </p>
           ) : null}

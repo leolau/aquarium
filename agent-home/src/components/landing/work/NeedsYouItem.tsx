@@ -8,7 +8,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import type { NeedsYouAction, NeedsYouEntry } from "@/types/landing";
 
 import { fmtAge } from "./format";
-import { IconAlert, IconBell, IconCheck } from "./icons";
+import { AlertIcon, BellIcon, CheckIcon } from "@/components/ui/icons";
 import { SEVERITY_TONE } from "./tone";
 
 export type PrimaryAction =
@@ -61,7 +61,7 @@ export function NeedsYouItem({
 }) {
   const tone = SEVERITY_TONE[entry.severity] ?? SEVERITY_TONE.fyi;
   const Icon =
-    entry.severity === "fyi" ? IconBell : entry.severity === "review" ? IconCheck : IconAlert;
+    entry.severity === "fyi" ? BellIcon : entry.severity === "review" ? CheckIcon : AlertIcon;
   const primary = primaryAction(entry);
   const source = [entry.detail?.trim() || null, fmtAge(entry.created_at, now)]
     .filter(Boolean)
@@ -191,7 +191,7 @@ function OneTapButton({
         </>
       ) : done ? (
         <>
-          <IconCheck size={16} />
+          <CheckIcon size={16} />
           <span>Done</span>
         </>
       ) : (

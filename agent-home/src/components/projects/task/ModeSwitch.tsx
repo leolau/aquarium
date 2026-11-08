@@ -40,7 +40,7 @@ export function ModeSwitch({
               if (!on) onChange(option.mode);
             }}
             className={`rounded-full px-3 py-1 font-medium ${
-              on ? "bg-[var(--color-accent)] text-white" : "text-[var(--color-muted)]"
+              on ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-muted)]"
             } disabled:opacity-40`}
           >
             {option.label}

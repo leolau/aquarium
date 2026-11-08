@@ -24,7 +24,7 @@ function statusLine(item: UploadItem, waitingCopy: string) {
     case "done":
       return <span className="text-emerald-500">✓ Attached</span>;
     case "failed":
-      return <span className="text-red-400">✗ {item.error ?? "Upload failed."}</span>;
+      return <span className="text-[var(--color-danger)]">✗ {item.error ?? "Upload failed."}</span>;
     default:
       return <span>{waitingCopy}</span>;
   }

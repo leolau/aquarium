@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 
-import { SearchIcon, XIcon } from "./icons";
+import { SearchIcon, XIcon } from "@/components/ui/icons";
 
 /**
  * Filters the sidebar's chats by title, preview or tag. ⌘K / Ctrl+K focuses

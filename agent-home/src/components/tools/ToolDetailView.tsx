@@ -99,7 +99,7 @@ function FeedbackForm({ tool }: { tool: Tool }) {
           className="rounded-xl border border-[var(--color-border)] bg-transparent p-3"
         />
       </label>
-      <ActionButton type="submit" busy={action.busy} disabled={!ok} pendingLabel={t("actions.saving")} className="min-h-[44px] self-start rounded-xl bg-[var(--color-accent)] px-4 text-sm text-white">
+      <ActionButton type="submit" busy={action.busy} disabled={!ok} pendingLabel={t("actions.saving")} className="min-h-[44px] self-start rounded-xl bg-[var(--color-accent)] px-4 text-sm text-[var(--color-accent-fg)]">
         {t("detail.feedbackSend")}
       </ActionButton>
       {sent ? <p className="text-sm text-[var(--color-muted)]">{t("detail.feedbackSent")}</p> : null}
@@ -142,7 +142,7 @@ export function ToolDetailView({ data, viewer }: { data: ToolDetailData; viewer:
       {tool.description ? <p className="text-sm">{tool.description}</p> : null}
       <div className="flex flex-wrap gap-2">
         {url ? (
-          <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-[44px] items-center rounded-xl bg-[var(--color-accent)] px-4 text-sm text-white">
+          <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-[44px] items-center rounded-xl bg-[var(--color-accent)] px-4 text-sm text-[var(--color-accent-fg)]">
             {t("actions.open")}
             {kind === "external" ? " ↗" : ""}
           </a>

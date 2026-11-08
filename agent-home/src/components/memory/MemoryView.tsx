@@ -264,7 +264,7 @@ export function MemoryView({
           <ActionButton
             onAction={placeQuery}
             disabled={queryLoading || !queryText.trim()}
-            className="inline-flex items-center gap-2 rounded-lg bg-[var(--color-accent)] px-3 py-2 text-sm font-medium text-white disabled:opacity-40"
+            className="inline-flex items-center gap-2 rounded-lg bg-[var(--color-accent)] px-3 py-2 text-sm font-medium text-[var(--color-accent-fg)] disabled:opacity-40"
           >
             {queryLoading ? (
               <>

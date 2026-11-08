@@ -115,7 +115,7 @@ const labelCls = "block space-y-1 text-xs text-[var(--color-muted)]";
 const btnCls =
   "rounded border border-[var(--color-surface-2)] px-2 py-1 text-xs font-semibold disabled:opacity-50";
 const primaryBtnCls =
-  "rounded bg-[var(--color-accent)] px-2 py-1 text-xs font-semibold text-black disabled:opacity-50";
+  "rounded bg-[var(--color-accent)] px-2 py-1 text-xs font-semibold text-[var(--color-accent-fg)] disabled:opacity-50";
 
 const STATE_KEY: Record<EmailMailbox["state"], Key> = {
   working: "stateWorking",
@@ -124,7 +124,7 @@ const STATE_KEY: Record<EmailMailbox["state"], Key> = {
 };
 const STATE_COLOR: Record<EmailMailbox["state"], string> = {
   working: "text-[var(--color-accent)]",
-  needs_attention: "text-red-400",
+  needs_attention: "text-[var(--color-danger)]",
   untested: "text-[var(--color-muted)]",
 };
 
@@ -308,7 +308,7 @@ export function EmailMailboxes() {
       <h2 className="text-sm font-semibold">{t("title")}</h2>
       <p className="text-xs text-[var(--color-muted)]">{t("description")}</p>
       <p className="mb-3 text-xs text-[var(--color-muted)]">{t("perPerson")}</p>
-      {error && <p role="alert" className="mb-2 text-xs text-red-400">{error}</p>}
+      {error && <p role="alert" className="mb-2 text-xs text-[var(--color-danger)]">{error}</p>}
       {mailboxes === null && <p className="text-xs text-[var(--color-muted)]">{t("loading")}</p>}
       {mailboxes && mailboxes.length > 0 && (
         <ul className="mb-3 space-y-2">
@@ -502,16 +502,16 @@ function MailboxRow({
       </p>
       {test && (
         <>
-          <p className={`mt-1 ${test.imap.ok ? "text-[var(--color-muted)]" : "text-red-400"}`}>
+          <p className={`mt-1 ${test.imap.ok ? "text-[var(--color-muted)]" : "text-[var(--color-danger)]"}`}>
             {test.imap.ok ? t("imapOk") : t("imapFail", { reason: test.imap.error ?? "" })}
           </p>
-          <p className={`mt-1 ${test.smtp.ok ? "text-[var(--color-muted)]" : "text-red-400"}`}>
+          <p className={`mt-1 ${test.smtp.ok ? "text-[var(--color-muted)]" : "text-[var(--color-danger)]"}`}>
             {test.smtp.ok ? t("smtpOk") : t("smtpFail", { reason: test.smtp.error ?? "" })}
           </p>
         </>
       )}
       {m.last_poll?.ok === false && m.last_poll.error && (
-        <p className="mt-1 text-red-400">{t("readProblem", { reason: m.last_poll.error })}</p>
+        <p className="mt-1 text-[var(--color-danger)]">{t("readProblem", { reason: m.last_poll.error })}</p>
       )}
       {polling && (
         <label className="mt-2 flex items-center gap-1">
@@ -532,7 +532,7 @@ function MailboxRow({
         <button type="button" className={btnCls} disabled={!!busy} onClick={onEdit}>
           {t("edit")}
         </button>
-        <button type="button" className={`${btnCls} text-red-400`} disabled={!!busy} onClick={onRemove}>
+        <button type="button" className={`${btnCls} text-[var(--color-danger)]`} disabled={!!busy} onClick={onRemove}>
           {t("remove")}
         </button>
       </div>

@@ -83,7 +83,7 @@ export function ProfileSwitcher({
         compact
       />
       {error ? (
-        <p role="alert" className="mt-1 text-xs text-red-300">
+        <p role="alert" className="mt-1 text-xs text-[var(--color-danger)]">
           {error}
         </p>
       ) : null}

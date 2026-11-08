@@ -3,7 +3,7 @@ import Link from "next/link";
 import { LONG_RUN_MS, fmtElapsed } from "@/components/ui/ActivityStrip";
 import type { ActivityItem } from "@/types";
 
-import { IconClock, IconFolder, IconMessage, IconPlay } from "./icons";
+import { ClockIcon, FolderIcon, MessageIcon, PlayIcon } from "@/components/ui/icons";
 
 export type WorkStatus = "running" | "waiting" | "long";
 
@@ -14,11 +14,11 @@ export const KIND_LABEL: Record<ActivityItem["kind"], string> = {
   cron: "Scheduled",
 };
 
-const KIND_ICON: Record<ActivityItem["kind"], typeof IconFolder> = {
-  chat: IconMessage,
-  project_run: IconFolder,
-  card: IconPlay,
-  cron: IconClock,
+const KIND_ICON: Record<ActivityItem["kind"], typeof FolderIcon> = {
+  chat: MessageIcon,
+  project_run: FolderIcon,
+  card: PlayIcon,
+  cron: ClockIcon,
 };
 
 const STATUS: Record<WorkStatus, { label: string; colour: string; dot: string }> = {
@@ -66,7 +66,7 @@ export function WorkStatusPill({ status }: { status: WorkStatus }) {
  */
 export function WorkRow({ item, now }: { item: ActivityItem; now: number }) {
   const status = workStatus(item, now);
-  const Icon = KIND_ICON[item.kind] ?? IconFolder;
+  const Icon = KIND_ICON[item.kind] ?? FolderIcon;
   const elapsed =
     item.started_at !== null ? fmtElapsed(now - item.started_at * 1000) : null;
   const meta = [

@@ -163,7 +163,7 @@ function MutationButton({
         </span>
       ) : null}
       {mutation.error && !busy ? (
-        <span role="alert" className="text-xs text-red-300">
+        <span role="alert" className="text-xs text-[var(--color-danger)]">
           {mutation.error}{" "}
           <button
             type="button"

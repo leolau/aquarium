@@ -9,7 +9,7 @@ import { useAction } from "@/lib/use-action";
 import type { ProfileSummary } from "@/types";
 
 import { chatHref, chatsApi } from "./chatsApi";
-import { ChevronDownIcon, PlusIcon, UserIcon } from "./icons";
+import { ChevronDownIcon, PlusIcon, UserIcon } from "@/components/ui/icons";
 
 export function profileLabel(name: string): string {
   return name === DEFAULT_PROFILE ? "Default" : name;

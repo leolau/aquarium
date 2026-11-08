@@ -54,7 +54,7 @@ export function IdentityActivityPanel({ profile }: { profile: string }) {
           {busy ? "Loading…" : events ? "Refresh" : "Load"}
         </ActionButton>
       </div>
-      {error ? <p className="text-xs text-red-300">{error}</p> : null}
+      {error ? <p className="text-xs text-[var(--color-danger)]">{error}</p> : null}
       {events ? (
         <ul className="flex flex-col gap-1">
           {events.map((event) => (

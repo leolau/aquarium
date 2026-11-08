@@ -269,7 +269,7 @@ export function SkillPage({
                     <button
                       type="button"
                       role="menuitem"
-                      className={`${menuItem} text-red-300`}
+                      className={`${menuItem} text-[var(--color-danger)]`}
                       onClick={() => {
                         setMenuOpen(false);
                         setConfirmUninstall(true);
@@ -285,7 +285,7 @@ export function SkillPage({
         </header>
 
         {message ? (
-          <p role="alert" className="mt-3 text-sm text-red-300">
+          <p role="alert" className="mt-3 text-sm text-[var(--color-danger)]">
             {message}
           </p>
         ) : null}

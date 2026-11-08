@@ -2,7 +2,7 @@
 
 import type { PinSuggestion } from "@/types/landing";
 
-import { PinIcon, SparklesIcon, XIcon } from "./icons";
+import { PinIcon, SparklesIcon, XIcon } from "@/components/ui/icons";
 import { quoteList } from "./model";
 
 /**

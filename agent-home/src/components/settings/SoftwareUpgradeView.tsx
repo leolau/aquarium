@@ -22,7 +22,7 @@ const CHIP_BAD = `${CHIP} border-red-200 bg-red-50 text-red-700`;
 const CHIP_ACCENT = `${CHIP} border-[var(--color-accent)] text-[var(--color-accent)]`;
 const CHIP_MUTED = `${CHIP} border-[var(--color-border)] text-[var(--color-muted)]`;
 const BTN = "min-h-11 rounded-full border border-[var(--color-border)] px-4 text-sm disabled:opacity-50";
-const BTN_PRIMARY = "min-h-11 rounded-full bg-[var(--color-accent)] px-4 text-sm font-medium text-white disabled:opacity-50";
+const BTN_PRIMARY = "min-h-11 rounded-full bg-[var(--color-accent)] px-4 text-sm font-medium text-[var(--color-accent-fg)] disabled:opacity-50";
 
 function epoch(iso: string | null | undefined): number | null {
   if (!iso) return null;

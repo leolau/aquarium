@@ -52,7 +52,7 @@ export function IterationCard({ iteration, slug }: { iteration: Iteration; slug:
               </li>
             ))}
             {iteration.retired.map((r) => (
-              <li key={`r-${r.id}`} className="text-red-300 line-through">
+              <li key={`r-${r.id}`} className="text-[var(--color-danger)] line-through">
                 − {r.body}
               </li>
             ))}

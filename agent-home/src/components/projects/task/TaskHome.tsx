@@ -311,18 +311,18 @@ function AskBox({
         <button
           type="submit"
           disabled={!request || start.busy || queue.uploading}
-          className="rounded-lg bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+          className="rounded-lg bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-[var(--color-accent-fg)] disabled:opacity-50"
         >
           {start.busy || queue.uploading ? "Starting…" : "Start task"}
         </button>
       </div>
       {start.error ? (
-        <p role="alert" className="text-xs text-red-400">
+        <p role="alert" className="text-xs text-[var(--color-danger)]">
           {start.error}
         </p>
       ) : null}
       {uploadFailed ? (
-        <p role="alert" className="text-xs text-red-400">
+        <p role="alert" className="text-xs text-[var(--color-danger)]">
           The task started, but some files didn&apos;t upload. Add them from the task page.
         </p>
       ) : null}

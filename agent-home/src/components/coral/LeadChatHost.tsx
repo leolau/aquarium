@@ -525,7 +525,7 @@ export function LeadChatHost({
               </p>
             ) : null}
             {error ? (
-              <p role="alert" className="mt-2 text-xs text-red-300">
+              <p role="alert" className="mt-2 text-xs text-[var(--color-danger)]">
                 {error}
               </p>
             ) : null}

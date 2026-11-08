@@ -313,7 +313,7 @@ export function ProfileEditor({
         {message ? (
           <p
             role={message.tone === "error" ? "alert" : "status"}
-            className={message.tone === "error" ? "text-red-300" : "text-emerald-300"}
+            className={message.tone === "error" ? "text-[var(--color-danger)]" : "text-emerald-300"}
           >
             {message.text}
           </p>

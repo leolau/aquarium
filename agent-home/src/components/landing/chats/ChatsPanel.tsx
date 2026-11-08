@@ -7,7 +7,7 @@ import { DEFAULT_PROFILE } from "@/components/chat/ProfilePicker";
 import type { ProfileSummary } from "@/types";
 
 import { chatHref, chatsApi } from "./chatsApi";
-import { ArrowRightIcon, MessageIcon, XIcon } from "./icons";
+import { ArrowRightIcon, MessageIcon, XIcon } from "@/components/ui/icons";
 import { matchesQuery, type LandingSession } from "./model";
 import { NewChatButton, profileLabel } from "./NewChatButton";
 import { PinSuggestionCard } from "./PinSuggestionCard";

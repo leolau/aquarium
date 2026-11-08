@@ -40,7 +40,7 @@ import { PHASE_LABEL, planStepStates, queuedCardIds, taskPhase, taskPlan, type T
 
 const CARD = "rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3";
 const BTN = "rounded-lg border border-[var(--color-border)] px-2.5 py-1 text-xs disabled:opacity-50";
-const PRIMARY = "rounded-lg bg-[var(--color-accent)] px-3 py-1 text-xs font-medium text-white disabled:opacity-50";
+const PRIMARY = "rounded-lg bg-[var(--color-accent)] px-3 py-1 text-xs font-medium text-[var(--color-accent-fg)] disabled:opacity-50";
 
 const PHASE_TONE: Record<TaskPhase, string> = {
   planning: "text-sky-400",
@@ -48,7 +48,7 @@ const PHASE_TONE: Record<TaskPhase, string> = {
   ready: "text-amber-400",
   running: "text-sky-400",
   waiting: "text-amber-400",
-  failed: "text-red-400",
+  failed: "text-[var(--color-danger)]",
   done: "text-emerald-400",
 };
 
@@ -266,7 +266,7 @@ export function TaskView({
             <TaskBoardNeeds project={project} board={board} callerUserId={callerUserId} canLead={canLead} />
           ) : null}
           {start.error || stop.error || cont.error ? (
-            <p role="alert" className="text-xs text-red-400">
+            <p role="alert" className="text-xs text-[var(--color-danger)]">
               {start.error || stop.error || cont.error}
             </p>
           ) : null}
@@ -602,7 +602,7 @@ function TaskResult({
         </form>
       ) : null}
       {again.error || acceptAll.error || repeat.error || scheduleAction.error ? (
-        <p role="alert" className="text-xs text-red-400">
+        <p role="alert" className="text-xs text-[var(--color-danger)]">
           {again.error || acceptAll.error || repeat.error || scheduleAction.error}
         </p>
       ) : null}

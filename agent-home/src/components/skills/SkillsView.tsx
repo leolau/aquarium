@@ -123,7 +123,7 @@ export function SkillsView({ profiles, profile, initialSkills, initialView, erro
       </div>
 
       {message ? (
-        <p role="alert" className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm text-red-300">
+        <p role="alert" className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm text-[var(--color-danger)]">
           {message}
         </p>
       ) : null}

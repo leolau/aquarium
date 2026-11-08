@@ -219,7 +219,7 @@ export function NewProfileDialog({
                 placeholder="research-helper"
               />
               {name && !nameOk ? (
-                <span className="text-xs text-red-300">
+                <span className="text-xs text-[var(--color-danger)]">
                   {nameTaken ? "That name is taken." : "Use lowercase letters, digits, - or _."}
                 </span>
               ) : null}
@@ -399,7 +399,7 @@ export function NewProfileDialog({
         ) : null}
 
         {error ? (
-          <p role="alert" className="text-red-300">
+          <p role="alert" className="text-[var(--color-danger)]">
             {error}
           </p>
         ) : null}

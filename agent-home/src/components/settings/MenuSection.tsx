@@ -150,7 +150,7 @@ export function MenuSection() {
         })}
       </div>
       {error ? (
-        <p role="alert" className="mb-2 text-xs text-[var(--color-danger,#b91c1c)]">
+        <p role="alert" className="mb-2 text-xs text-[var(--color-danger)]">
           {error}
         </p>
       ) : null}

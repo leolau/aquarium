@@ -265,7 +265,7 @@ export function SettingsPanel({
       </div>
 
       {invalid ? (
-        <p role="alert" className="mt-2 text-sm text-red-400">
+        <p role="alert" className="mt-2 text-sm text-[var(--color-danger)]">
           {invalid}
         </p>
       ) : null}

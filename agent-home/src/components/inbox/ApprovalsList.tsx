@@ -77,7 +77,7 @@ export function ApprovalsList({
                       disabled={busy}
                       busyLabel="Denying…"
                       onAction={() => onAnswer(item, "denied")}
-                      className="min-h-11 flex-1 rounded-xl border border-[var(--color-border)] px-4 py-2 text-sm text-red-300 disabled:opacity-50"
+                      className="min-h-11 flex-1 rounded-xl border border-[var(--color-border)] px-4 py-2 text-sm text-[var(--color-danger)] disabled:opacity-50"
                     >
                       Deny
                     </ActionButton>

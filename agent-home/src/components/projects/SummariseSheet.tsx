@@ -104,7 +104,7 @@ export function SummariseSheet({
               />
               <span
                 className={`text-right text-xs ${
-                  remaining < 0 ? "text-red-400" : "text-[var(--color-muted)]"
+                  remaining < 0 ? "text-[var(--color-danger)]" : "text-[var(--color-muted)]"
                 }`}
               >
                 {remaining} left
@@ -112,11 +112,11 @@ export function SummariseSheet({
             </label>
 
             {invalid ? (
-              <p role="alert" className="text-sm text-red-400">
+              <p role="alert" className="text-sm text-[var(--color-danger)]">
                 {invalid}
               </p>
             ) : null}
-            <ActionError action={action} className="flex flex-wrap items-center gap-2 text-sm text-red-400" />
+            <ActionError action={action} className="flex flex-wrap items-center gap-2 text-sm text-[var(--color-danger)]" />
 
             <div className="flex justify-end">
               <ActionButton

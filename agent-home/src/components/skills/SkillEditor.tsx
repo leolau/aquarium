@@ -62,7 +62,7 @@ function ValidationBar({ checks, doc }: { checks: Check[]; doc: string }) {
   return (
     <div data-component="SkillValidation" role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-xs">
       {checks.map((c, k) => (
-        <span key={k} data-level={c.level} className={c.level === "ok" ? "text-emerald-400" : c.level === "warn" ? "text-[var(--color-warn-text)]" : "text-red-300"}>
+        <span key={k} data-level={c.level} className={c.level === "ok" ? "text-emerald-400" : c.level === "warn" ? "text-[var(--color-warn-text)]" : "text-[var(--color-danger)]"}>
           {c.level === "ok" ? "✓" : c.level === "warn" ? "⚠" : "✕"} {c.text}
         </span>
       ))}
@@ -240,7 +240,7 @@ export function SkillEditor({
               {builtinNote ? <span className="text-xs text-[var(--color-muted)]">{builtinNote}</span> : null}
             </div>
             {!parsed.split.hasFrontmatter ? (
-              <p role="alert" className="mt-2 text-sm text-red-300">
+              <p role="alert" className="mt-2 text-sm text-[var(--color-danger)]">
                 The YAML header can&apos;t be read, so the form is off. Fix it in Plain text.
               </p>
             ) : unsupported.length ? (
@@ -249,7 +249,7 @@ export function SkillEditor({
               </p>
             ) : null}
             {fieldError ? (
-              <p role="alert" className="mt-2 text-sm text-red-300">
+              <p role="alert" className="mt-2 text-sm text-[var(--color-danger)]">
                 {fieldError}
               </p>
             ) : null}
@@ -272,7 +272,7 @@ export function SkillEditor({
               <div className="md:col-span-2">
                 <label className={labelClass} htmlFor="skill-description">
                   Description — when should the agent use this skill?{" "}
-                  <span className={meta.description.length > MAX_DESCRIPTION_LENGTH ? "text-red-300" : ""}>
+                  <span className={meta.description.length > MAX_DESCRIPTION_LENGTH ? "text-[var(--color-danger)]" : ""}>
                     ({meta.description.length} / {MAX_DESCRIPTION_LENGTH})
                   </span>
                 </label>
@@ -499,14 +499,14 @@ function ReviewDialog({
           )}
         </div>
         {errors.length ? (
-          <ul role="alert" className="mt-3 space-y-0.5 text-sm text-red-300">
+          <ul role="alert" className="mt-3 space-y-0.5 text-sm text-[var(--color-danger)]">
             {errors.map((c, k) => (
               <li key={k}>✕ {c.text}</li>
             ))}
           </ul>
         ) : null}
         {error ? (
-          <p role="alert" className="mt-3 text-sm text-red-300">
+          <p role="alert" className="mt-3 text-sm text-[var(--color-danger)]">
             {error}
           </p>
         ) : null}

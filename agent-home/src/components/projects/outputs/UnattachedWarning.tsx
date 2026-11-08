@@ -259,7 +259,7 @@ function AttachAll({
       >
         Add all
       </ActionButton>
-      {error ? <span className="text-xs text-red-400">{error}</span> : null}
+      {error ? <span className="text-xs text-[var(--color-danger)]">{error}</span> : null}
     </div>
   );
 }

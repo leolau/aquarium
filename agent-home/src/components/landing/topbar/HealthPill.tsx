@@ -26,7 +26,7 @@ import {
   HardDriveIcon,
   PlayIcon,
   RefreshIcon,
-} from "./icons";
+} from "@/components/ui/icons";
 import { usePopover } from "./usePopover";
 
 type Status = Pick<StatusSummaryState, "summary" | "stale" | "fetchedAt" | "now" | "refreshing" | "refresh">;

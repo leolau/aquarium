@@ -307,7 +307,7 @@ function ServerRow({
       {result ? (
         <p
           role="status"
-          className={`mt-2 break-words text-xs ${result.ok ? "text-emerald-400" : "text-red-400"}`}
+          className={`mt-2 break-words text-xs ${result.ok ? "text-emerald-400" : "text-[var(--color-danger)]"}`}
         >
           {result.ok
             ? t("testOk", { count: result.tools.length })
@@ -332,7 +332,7 @@ function ServerRow({
         </ActionButton>
         <button
           type="button"
-          className="rounded-lg px-3 py-1.5 text-xs font-medium text-red-400 disabled:opacity-50"
+          className="rounded-lg px-3 py-1.5 text-xs font-medium text-[var(--color-danger)] disabled:opacity-50"
           disabled={busy !== null}
           onClick={onRemove}
         >
@@ -447,9 +447,9 @@ function SignIn({ name, onDone }: { name: string; onDone: () => void }) {
       ) : null}
       {flow?.status === "success" ? <p className="text-xs text-emerald-400">{t("signInDone")}</p> : null}
       {flow?.status === "error" ? (
-        <p className="text-xs text-red-400">{t("signInFailed", { error: flow.error ?? "" })}</p>
+        <p className="text-xs text-[var(--color-danger)]">{t("signInFailed", { error: flow.error ?? "" })}</p>
       ) : null}
-      {note ? <p className="text-xs text-red-400">{note}</p> : null}
+      {note ? <p className="text-xs text-[var(--color-danger)]">{note}</p> : null}
     </div>
   );
 }
@@ -535,7 +535,7 @@ function AddForm({
         <input type="checkbox" checked={values.oauth} onChange={(e) => set("oauth", e.target.checked)} />
         {t("useSignIn")}
       </label>
-      {error ? <p className="text-xs text-red-400">{error}</p> : null}
+      {error ? <p className="text-xs text-[var(--color-danger)]">{error}</p> : null}
       <div className="flex gap-2">
         <button
           type="submit"

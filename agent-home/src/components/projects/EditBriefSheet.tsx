@@ -152,7 +152,7 @@ export function EditBriefSheet({
                 className={inputClass(Boolean(fieldErrors.name))}
               />
               {fieldErrors.name ? (
-                <span className="text-xs text-red-400">{fieldErrors.name}</span>
+                <span className="text-xs text-[var(--color-danger)]">{fieldErrors.name}</span>
               ) : null}
             </label>
             <label className="flex flex-col gap-1 text-sm">
@@ -163,7 +163,7 @@ export function EditBriefSheet({
                 className={inputClass(Boolean(fieldErrors.goal))}
               />
               {fieldErrors.goal ? (
-                <span className="text-xs text-red-400">{fieldErrors.goal}</span>
+                <span className="text-xs text-[var(--color-danger)]">{fieldErrors.goal}</span>
               ) : null}
             </label>
             <label className="flex flex-col gap-1 text-sm">
@@ -198,8 +198,8 @@ export function EditBriefSheet({
               </span>
             ) : null}
 
-            <ActionError action={saveAction} className="flex flex-wrap items-center gap-2 text-sm text-red-400" />
-            <ActionError action={toggleAction} className="flex flex-wrap items-center gap-2 text-sm text-red-400" />
+            <ActionError action={saveAction} className="flex flex-wrap items-center gap-2 text-sm text-[var(--color-danger)]" />
+            <ActionError action={toggleAction} className="flex flex-wrap items-center gap-2 text-sm text-[var(--color-danger)]" />
 
             <div className="flex items-center gap-2">
               {toggle ? (

@@ -404,7 +404,7 @@ export function NewProjectForm({
                 className={inputClass(Boolean(fieldErrors.goal))}
               />
               {fieldErrors.goal ? (
-                <span role="alert" className="text-xs text-red-400">
+                <span role="alert" className="text-xs text-[var(--color-danger)]">
                   {fieldErrors.goal}
                 </span>
               ) : null}
@@ -420,7 +420,7 @@ export function NewProjectForm({
                 className={inputClass(Boolean(fieldErrors.description))}
               />
               {fieldErrors.description ? (
-                <span role="alert" className="text-xs text-red-400">
+                <span role="alert" className="text-xs text-[var(--color-danger)]">
                   {fieldErrors.description}
                 </span>
               ) : null}
@@ -476,7 +476,7 @@ export function NewProjectForm({
                 </div>
               ))}
               {fieldErrors.outputs ? (
-                <span role="alert" className="text-xs text-red-400">
+                <span role="alert" className="text-xs text-[var(--color-danger)]">
                   {fieldErrors.outputs}
                 </span>
               ) : null}
@@ -702,7 +702,7 @@ export function NewProjectForm({
                                 {status === "done" ? (
                                   <span className="text-emerald-500"> ✓</span>
                                 ) : status === "failed" ? (
-                                  <span className="text-red-400"> ✗ not attached</span>
+                                  <span className="text-[var(--color-danger)]"> ✗ not attached</span>
                                 ) : status === "sending" ? (
                                   <span className="text-[var(--color-muted)]"> attaching…</span>
                                 ) : null}
@@ -775,7 +775,7 @@ export function NewProjectForm({
         ) : null}
 
         {error ? (
-          <p role="alert" className="text-sm text-red-400">
+          <p role="alert" className="text-sm text-[var(--color-danger)]">
             {error}
           </p>
         ) : null}

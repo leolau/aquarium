@@ -218,7 +218,7 @@ function SuggestionCard({
       </details>
 
       {failed ? (
-        <p className="mt-3 text-xs text-red-300" role="alert">
+        <p className="mt-3 text-xs text-[var(--color-danger)]" role="alert">
           {failed}
         </p>
       ) : null}

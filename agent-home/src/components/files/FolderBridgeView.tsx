@@ -25,6 +25,7 @@ import {
 import type { ImportProgress } from "@/lib/folder-bridge/transport";
 import type { ConnectionStatus, FolderRecord, SearchMatch } from "@/lib/folder-bridge/types";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { useAction } from "@/lib/use-action";
 
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
   disconnected: "Disconnected",
@@ -149,6 +150,8 @@ export function FolderBridgeView() {
       setBusy(false);
     }
   };
+  // Enter and the Search button share one lock, so a double Enter can't stack searches.
+  const search = useAction(handleSearch);
 
   if (supported === null) return null;
 
@@ -327,13 +330,15 @@ export function FolderBridgeView() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") void handleSearch();
+              if (e.key === "Enter") void search.run();
             }}
             placeholder="File or folder name, e.g. invoices, *.pdf or 2026/*.pdf"
             className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-[var(--color-accent)]"
           />
           <ActionButton
-            onAction={() => handleSearch()}
+            onAction={() => search.run()}
+            busy={search.pending}
+            busyLabel="Searching…"
             disabled={busy || folders.length === 0}
             className="rounded-xl border border-[var(--color-border)] px-3 py-2 text-sm disabled:opacity-50"
           >
@@ -342,7 +347,7 @@ export function FolderBridgeView() {
         </div>
 
         {error ? (
-          <p role="alert" className="mt-2 text-sm text-red-400">
+          <p role="alert" className="mt-2 text-sm text-[var(--color-danger)]">
             {error}
           </p>
         ) : null}

@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { GRADES, NEXT_STEPS, SHARE_OPTIONS } from "@/components/seminar/content";
 import { SurveyThanks } from "@/components/seminar/SeminarShell";
+import { ActionButton } from "@/components/ui/ActionButton";
 import { errorMessage, sendJson } from "@/components/users/api";
 import type {
   SeminarGrade,
@@ -11,6 +12,7 @@ import type {
   SeminarShare,
   SeminarSurveySubmitResult,
 } from "@/types";
+import { useAction } from "@/lib/use-action";
 
 const RATINGS = [1, 2, 3, 4, 5] as const;
 
@@ -34,7 +36,6 @@ export function SurveyForm({ token }: { token: string }) {
   const [name, setName] = useState("");
   const [stayInTouch, setStayInTouch] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
 
   function toggleGrade(grade: SeminarGrade) {
@@ -43,8 +44,9 @@ export function SurveyForm({ token }: { token: string }) {
     );
   }
 
-  async function submit(evt: React.FormEvent) {
-    evt.preventDefault();
+  // One submit at a time: a double tap or a second Enter lands before the
+  // disabled button renders, so the lock — not `disabled` — stops the repost.
+  const send = useAction(async () => {
     setError(null);
     if (rating === null) {
       setError("請為講座評分 Please rate the seminar.");
@@ -58,7 +60,6 @@ export function SurveyForm({ token }: { token: string }) {
       setError("請填寫所有必填項目 Please answer every required question.");
       return;
     }
-    setBusy(true);
     try {
       await sendJson<SeminarSurveySubmitResult>("/api/seminar/survey/submit", "POST", {
         token,
@@ -75,9 +76,13 @@ export function SurveyForm({ token }: { token: string }) {
       setDone(true);
     } catch (err) {
       setError(errorMessage(err, "未能提交，請再試一次。 Couldn't submit — please try again."));
-    } finally {
-      setBusy(false);
     }
+  });
+  const busy = send.pending;
+
+  function submit(evt: React.FormEvent) {
+    evt.preventDefault();
+    void send.run();
   }
 
   if (done) return <SurveyThanks />;
@@ -225,18 +230,19 @@ export function SurveyForm({ token }: { token: string }) {
       </fieldset>
 
       {error ? (
-        <p role="alert" className="text-sm text-red-300">
+        <p role="alert" className="text-sm text-[var(--color-danger)]">
           {error}
         </p>
       ) : null}
 
-      <button
+      <ActionButton
         type="submit"
-        disabled={busy}
+        busy={busy}
+        busyLabel="提交中… Submitting…"
         className="rounded-xl bg-[var(--color-accent)] px-4 py-3 text-sm font-semibold text-[var(--color-accent-fg)] disabled:opacity-60"
       >
-        {busy ? "提交中… Submitting…" : "提交並索取簡報 Submit & get the slides"}
-      </button>
+        提交並索取簡報 Submit &amp; get the slides
+      </ActionButton>
     </form>
   );
 }

@@ -156,7 +156,7 @@ export function SkillsHubView({ profile, onInstalled }: { profile: string; onIns
       </div>
 
       {message ? (
-        <p role={message.tone === "error" ? "alert" : "status"} className={`text-sm ${message.tone === "error" ? "text-red-300" : "text-emerald-300"}`}>
+        <p role={message.tone === "error" ? "alert" : "status"} className={`text-sm ${message.tone === "error" ? "text-[var(--color-danger)]" : "text-emerald-300"}`}>
           {message.text}
         </p>
       ) : null}

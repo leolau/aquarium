@@ -1,6 +1,6 @@
 "use client";
 
-import { BellIcon, CheckIcon } from "./icons";
+import { BellIcon, CheckIcon } from "@/components/ui/icons";
 
 /**
  * Figma `needs-you-badge` (4:84). Amber with the count when something needs

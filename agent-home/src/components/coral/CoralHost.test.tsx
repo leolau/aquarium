@@ -48,7 +48,7 @@ describe("CoralHost (SSR)", () => {
   it("renders the FAB closed — no panel in server markup", () => {
     const html = renderToStaticMarkup(<CoralHost />);
     expect(html).toContain('data-component="CoralHost"');
-    expect(html).toContain("Open Coral menu");
+    expect(html).toContain("Open Aquarium menu");
     expect(html).not.toContain('role="menu"');
     expect(html).not.toContain('aria-expanded="true"');
   });

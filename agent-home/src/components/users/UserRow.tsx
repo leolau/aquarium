@@ -107,7 +107,7 @@ export function UserRow({
             </span>
           )}
           {member.active ? null : (
-            <span className="rounded-full bg-[var(--color-surface-2)] px-2 py-1 text-red-300">
+            <span className="rounded-full bg-[var(--color-surface-2)] px-2 py-1 text-[var(--color-danger)]">
               {invitation && invitation.status === "open"
                 ? "awaiting activation"
                 : "account locked"}

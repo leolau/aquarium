@@ -90,7 +90,7 @@ const STATE_COLOR: Record<VpnState, string> = {
   connected: "text-green-400",
   connecting: "text-[var(--color-warn-text)]",
   disconnected: "text-[var(--color-muted)]",
-  error: "text-red-400",
+  error: "text-[var(--color-danger)]",
   needs_cert: "text-[var(--color-warn-text)]",
 };
 
@@ -192,7 +192,7 @@ const labelCls = "block space-y-1 text-xs text-[var(--color-muted)]";
 const btnCls =
   "rounded border border-[var(--color-surface-2)] px-2 py-1 text-xs font-semibold disabled:opacity-50";
 const primaryBtnCls =
-  "rounded bg-[var(--color-accent)] px-2 py-1 text-xs font-semibold text-black disabled:opacity-50";
+  "rounded bg-[var(--color-accent)] px-2 py-1 text-xs font-semibold text-[var(--color-accent-fg)] disabled:opacity-50";
 
 export function VpnConnections() {
   const [vpns, setVpns] = useState<VpnView[]>([]);
@@ -419,7 +419,7 @@ export function VpnConnections() {
         internet.
       </p>
 
-      {error && <p className="mb-2 text-xs text-red-400">{error}</p>}
+      {error && <p className="mb-2 text-xs text-[var(--color-danger)]">{error}</p>}
 
       {loaded && vpns.length === 0 && !form && (
         <p className="mb-2 text-xs text-[var(--color-muted)]">
@@ -576,7 +576,7 @@ export function VpnConnections() {
             with its \\server\share path. Only traffic to those file servers goes
             through the VPN.
           </p>
-          {formProblem && <p className="text-xs text-red-400">{formProblem}</p>}
+          {formProblem && <p className="text-xs text-[var(--color-danger)]">{formProblem}</p>}
           <div className="flex gap-2">
             <ActionButton busyLabel="Saving…"
               disabled={saving}
@@ -671,7 +671,7 @@ function VpnCard({
             {vpn.visibility === "shared" ? ", shared" : ""})
           </span>
         </span>
-        <button type="button" className="text-red-400" onClick={onRemove}>
+        <button type="button" className="text-[var(--color-danger)]" onClick={onRemove}>
           Remove
         </button>
       </div>
@@ -728,19 +728,19 @@ function VpnCard({
       )}
 
       {check && (
-        <p className={`mt-1 ${check.ok ? "text-[var(--color-muted)]" : "text-red-400"}`}>
+        <p className={`mt-1 ${check.ok ? "text-[var(--color-muted)]" : "text-[var(--color-danger)]"}`}>
           Last check{checkAt ? ` ${checkAt}` : ""}: {check.message}
         </p>
       )}
 
       {state === "connected" && status.share_error && (
-        <p className="mt-1 text-red-400">
+        <p className="mt-1 text-[var(--color-danger)]">
           VPN connected, but the files are not available: &ldquo;{status.share_error}&rdquo;
         </p>
       )}
 
       {state === "error" && status.error && (
-        <p className="mt-1 text-red-400">Last attempt failed: &ldquo;{status.error}&rdquo;</p>
+        <p className="mt-1 text-[var(--color-danger)]">Last attempt failed: &ldquo;{status.error}&rdquo;</p>
       )}
 
       {certDismissed && (
@@ -750,7 +750,7 @@ function VpnCard({
         </p>
       )}
 
-      {notice && <p className="mt-1 text-red-400">{notice}</p>}
+      {notice && <p className="mt-1 text-[var(--color-danger)]">{notice}</p>}
 
       {children}
 

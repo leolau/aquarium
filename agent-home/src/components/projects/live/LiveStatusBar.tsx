@@ -87,7 +87,7 @@ function StateDot({ kind }: { kind: LiveState["kind"] }) {
 }
 
 const LABEL_COLOUR: Partial<Record<LiveState["kind"], string>> = {
-  stalled: "text-red-500",
+  stalled: "text-[var(--color-danger)]",
   needs_you: "text-[var(--color-warn-text)]",
 };
 
@@ -164,7 +164,7 @@ function RowMeta({
 }) {
   const level = silenceLevel(silentFor);
   const tone =
-    level === "silent" ? "text-red-500 font-medium" : level === "quiet" ? "text-[var(--color-warn-text)] font-medium" : "";
+    level === "silent" ? "text-[var(--color-danger)] font-medium" : level === "quiet" ? "text-[var(--color-warn-text)] font-medium" : "";
   return (
     <div className="truncate text-xs text-[var(--color-muted)]">
       {parts.filter(Boolean).join(" · ")}
@@ -285,7 +285,7 @@ function TaskRow({
         ) : null}
       </div>
       {stop.error ? (
-        <p role="alert" className="mt-1 text-xs text-red-500">
+        <p role="alert" className="mt-1 text-xs text-[var(--color-danger)]">
           {stop.error}{" "}
           <button type="button" className="underline" disabled={stop.busy} onClick={() => void stop.retry()}>
             Try again
@@ -422,7 +422,7 @@ function StopAllDialog({
           ))}
         </div>
         {error ? (
-          <p role="alert" className="mt-2 text-sm text-red-500">
+          <p role="alert" className="mt-2 text-sm text-[var(--color-danger)]">
             {error}{" "}
             <button type="button" className="underline" disabled={busy} onClick={onRetry}>
               Try again
@@ -501,7 +501,7 @@ function PrimaryAction({
       {p?.kind !== "stop_all" ? button : null}
       {stopAll}
       {action.error ? (
-        <p role="alert" className="basis-full text-sm text-red-500">
+        <p role="alert" className="basis-full text-sm text-[var(--color-danger)]">
           {action.error}{" "}
           <button type="button" className="underline" disabled={action.busy} onClick={() => void action.retry()}>
             Try again

@@ -67,7 +67,7 @@ export function readingLine(reading: ProjectChangeReading): string {
 function ActionError<T>({ action, label }: { action: ProjectAction<T>; label: string }) {
   if (!action.error) return null;
   return (
-    <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-red-300">
+    <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-[var(--color-danger)]">
       <span className="min-w-0 flex-1">{action.error}</span>
       <ActionButton
         busy={action.busy}
@@ -447,7 +447,7 @@ export function ChangeRequestSheet({
             ) : null}
             {draft.status === "failed" ? (
               <div role="alert" className="flex flex-col gap-2 text-sm">
-                <p className="text-red-300">{draft.detail}</p>
+                <p className="text-[var(--color-danger)]">{draft.detail}</p>
                 <ActionButton busy={redraft.busy} pendingLabel="Asking…" onClick={doRedraft}>
                   Try again
                 </ActionButton>

@@ -87,7 +87,7 @@ export function ApprovalModal({ request, busy, onResolve }: ApprovalModalProps) 
                 onAction={() => onResolve(choice)}
                 className={`w-full rounded-xl px-4 py-3 text-sm font-semibold disabled:opacity-50 ${
                   isDeny
-                    ? "mt-1 border border-[var(--color-border)] text-red-300"
+                    ? "mt-1 border border-[var(--color-border)] text-[var(--color-danger)]"
                     : choice === "once"
                       ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]"
                       : "border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-fg)]"

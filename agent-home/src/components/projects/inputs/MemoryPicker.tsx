@@ -97,7 +97,7 @@ export function MemoryPicker({
       {search.loading ? (
         <p className="text-xs text-[var(--color-muted)]">Searching…</p>
       ) : search.error ? (
-        <p role="alert" className="text-xs text-red-400">
+        <p role="alert" className="text-xs text-[var(--color-danger)]">
           {search.error}
         </p>
       ) : effective && search.answered === effective && search.results.length === 0 ? (

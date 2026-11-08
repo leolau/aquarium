@@ -567,7 +567,7 @@ export function RunView({
               </p>
             ) : null}
             {run.error ? (
-              <p className="mt-1 text-sm text-red-400">{run.error}</p>
+              <p className="mt-1 text-sm text-[var(--color-danger)]">{run.error}</p>
             ) : null}
             {run.score_user != null || run.score_self != null ? (
               <p className="mt-2 text-xs text-[var(--color-muted)]">
@@ -800,7 +800,7 @@ export function RunView({
               data-component="RunBlocked"
               className="rounded-2xl border border-red-500/30 bg-[var(--color-surface)] p-4"
             >
-              <h2 className="text-xs uppercase tracking-wide text-red-400">
+              <h2 className="text-xs uppercase tracking-wide text-[var(--color-danger)]">
                 Blocked work
               </h2>
               <p className="mt-1 text-xs text-[var(--color-muted)]">
@@ -817,7 +817,7 @@ export function RunView({
                         {task.title ?? task.task_id}
                       </span>
                       {task.error ? (
-                        <span className="block truncate text-xs text-red-400">
+                        <span className="block truncate text-xs text-[var(--color-danger)]">
                           {task.error}
                         </span>
                       ) : null}

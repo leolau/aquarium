@@ -205,7 +205,7 @@ function OAuthSheet({
           </p>
         ) : null}
         {flow?.status === "error" ? (
-          <p className="mt-3 text-sm text-red-400">
+          <p className="mt-3 text-sm text-[var(--color-danger)]">
             {flow.error ?? "The sign-in flow failed."}
           </p>
         ) : null}
@@ -280,7 +280,7 @@ function McpServerRow({
       </p>
       {testResult ? (
         <p
-          className={`mt-2 text-xs ${testResult.ok ? "text-emerald-400" : "text-red-400"}`}
+          className={`mt-2 text-xs ${testResult.ok ? "text-emerald-400" : "text-[var(--color-danger)]"}`}
         >
           {testResult.detail}
         </p>
@@ -313,7 +313,7 @@ function McpServerRow({
         <ActionButton
           disabled={busy}
           onAction={() => onAction("remove")}
-          className="rounded-lg px-3 py-1.5 text-xs font-medium text-red-400 disabled:opacity-50"
+          className="rounded-lg px-3 py-1.5 text-xs font-medium text-[var(--color-danger)] disabled:opacity-50"
         >
           Remove
         </ActionButton>

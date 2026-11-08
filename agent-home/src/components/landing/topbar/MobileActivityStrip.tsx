@@ -6,7 +6,7 @@ import { activityTiming } from "@/components/ui/useActivityRunning";
 import type { ActivityItem } from "@/types";
 
 import { ActivityList } from "./ActivityList";
-import { ChevronDownIcon, PlayIcon } from "./icons";
+import { ChevronDownIcon, PlayIcon } from "@/components/ui/icons";
 
 /**
  * Mobile one-line activity strip (Figma `activity-strip` 6:107): "4 working ·

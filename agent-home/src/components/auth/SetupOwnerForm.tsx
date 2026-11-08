@@ -433,7 +433,7 @@ export function SetupOwnerForm({
                 className={field}
               />
               {confirm ? (
-                <span className={`text-xs ${confirm === password ? "text-emerald-300" : "text-red-300"}`}>
+                <span className={`text-xs ${confirm === password ? "text-emerald-300" : "text-[var(--color-danger)]"}`}>
                   {confirm === password ? t("pw_match") : t("pw_nomatch")}
                 </span>
               ) : null}

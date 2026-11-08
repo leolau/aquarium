@@ -189,13 +189,13 @@ function RunRowActions({
           fire("stop");
         }}
         disabled={action.busy}
-        className={`${actionClass} text-red-400`}
+        className={`${actionClass} text-[var(--color-danger)]`}
       >
         Stop now
       </ActionButton>
       <ActionError
         action={action}
-        className="flex w-full flex-wrap items-center gap-2 text-xs text-red-400"
+        className="flex w-full flex-wrap items-center gap-2 text-xs text-[var(--color-danger)]"
       />
     </div>
   );

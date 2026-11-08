@@ -162,7 +162,7 @@ export function WebviewConsole({
       ) : null}
 
       {error ? (
-        <p className="rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-sm text-red-300">
+        <p className="rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[var(--color-danger)]">
           {error}
         </p>
       ) : null}
