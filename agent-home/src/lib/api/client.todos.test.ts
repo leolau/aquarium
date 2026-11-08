@@ -109,6 +109,24 @@ describe("HermesApiClient to-dos", () => {
     });
   });
 
+  it("unsnoozeTodo POSTs the state to restore", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(ok({}));
+    const c = client();
+
+    await c.unsnoozeTodo("t1", { until: null, notified_at: "2026-08-11T09:00:00Z" });
+    await c.unsnoozeTodo("t1");
+
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      "http://api.test/api/registry/todos/t1/unsnooze",
+    );
+    expect(fetchMock.mock.calls[0][1]?.method).toBe("POST");
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      until: null,
+      notified_at: "2026-08-11T09:00:00Z",
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toEqual({});
+  });
+
   it("completeTodo carries the outcome and the drafted action", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(ok({}));
 

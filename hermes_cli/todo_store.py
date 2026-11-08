@@ -722,6 +722,67 @@ class TodoStore:
             if own:
                 await conn.close()
 
+    async def unsnooze(
+        self,
+        principal: Principal,
+        todo_id: str,
+        *,
+        until: Optional[datetime] = None,
+        notified_at: Optional[datetime] = None,
+        actor: Optional[str] = None,
+        connection: Optional["asyncpg.Connection"] = None,
+    ) -> Todo:
+        """Clear a snooze, or put back the one it replaced.
+
+        With no arguments the to-do is visible again at once. Undo passes the
+        values the row had before :meth:`snooze` ran: ``until`` is the earlier
+        snooze (``None`` when there was none) and ``notified_at`` the stamp
+        the snooze cleared, so a to-do the user was already told about is not
+        announced a second time. A ``None`` ``notified_at`` leaves the column
+        as it is.
+        """
+        predicate = scope_filter(
+            principal,
+            start_index=2,
+            grant_item_kind=GRANT_ITEM_KIND,
+            id_column=GRANT_ID_COLUMN,
+        )
+        offset = len(predicate.params) + 2
+        own = connection is None
+        conn = connection or await self._connect()
+        try:
+            row = await conn.fetchrow(
+                f"""
+                UPDATE {TASKS_TABLE}
+                SET snoozed_until = ${offset}::timestamptz,
+                    notified_at = COALESCE(${offset + 1}::timestamptz, notified_at),
+                    updated_at = NOW()
+                WHERE id = $1 AND {predicate.sql}
+                RETURNING {_SELECT_COLUMNS}
+                """,
+                todo_id,
+                *predicate.params,
+                until,
+                notified_at,
+            )
+            if row is None:
+                raise LookupError("to-do not found or not visible")
+            await self._record_transition(
+                conn,
+                todo_id,
+                from_stage=str(row["stage"]),
+                to_stage=(
+                    f"snoozed until {until.isoformat()}"
+                    if until
+                    else "snooze cleared"
+                ),
+                actor=actor or principal.user_id,
+            )
+            return _row_to_todo(row)
+        finally:
+            if own:
+                await conn.close()
+
     async def mark_notified(
         self,
         principal: Principal,
