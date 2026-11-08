@@ -612,11 +612,12 @@ def create_draft(
     author: str,
     message: str = "",
     source: str = "improve",
+    base: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Store ``content`` as a new draft SKILL.md; never touches the live folder.
 
-    The draft copies the active version's other files so it is a complete
-    skill folder. Agent-authored drafts go through the same security scan as
+    The draft copies the other files of ``base`` (default: the active
+    version) so it is a complete skill folder, and records it as the parent. Agent-authored drafts go through the same security scan as
     agent skill writes.
     """
     validate_name(name)
@@ -625,6 +626,8 @@ def create_draft(
         raise SkillVersionError("Invalid version source.")
     if not isinstance(content, str):
         raise SkillVersionError("content must be a string.")
+    if base is not None:
+        validate_version_id(base)
     from tools.skill_manager_tool import (
         _security_scan_skill,
         _validate_content_size,
@@ -641,10 +644,15 @@ def create_draft(
         active = _find_meta(index, index.get("active") or "")
         if active is None:
             raise SkillVersionNotFound(f"Skill '{name}' not found.")
+        parent = active
+        if base is not None:
+            parent = _find_meta(index, base)
+            if parent is None:
+                raise SkillVersionNotFound(f"Version '{base}' not found.")
         store = _store_dir(name)
         work = store / f".draft-{uuid.uuid4().hex}"
         try:
-            _copy_folder(store / active["id"], work)
+            _copy_folder(store / parent["id"], work)
             (work / "SKILL.md").write_text(content, encoding="utf-8")
             if author.startswith("agent:"):
                 scan_error = _security_scan_skill(work)
@@ -653,7 +661,7 @@ def create_draft(
             meta = _new_version_from_folder(
                 name, index, work,
                 author=author, message=_clean_message(message), source=source,
-                status=STATUS_DRAFT, parent=active["id"],
+                status=STATUS_DRAFT, parent=parent["id"],
             )
         finally:
             shutil.rmtree(work, ignore_errors=True)

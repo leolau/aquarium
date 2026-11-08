@@ -166,6 +166,18 @@ class TestDraftsDiffActivate:
         files = [f["path"] for f in sv.get_version("demo", draft["id"])["files"]]
         assert "scripts/run.sh" in files
 
+    def test_draft_from_base_copies_that_version(self):
+        d = _live()
+        first = sv.create_draft("demo", _md(body="First."), author="user:u")
+        assert first["parent"] == "v1"
+        (d / "extra.txt").write_text("live only\n", encoding="utf-8")
+        edited = sv.create_draft("demo", _md(body="Edited."), author="user:u", source="edit", base=first["id"])
+        assert edited["parent"] == first["id"] and edited["source"] == "edit"
+        with pytest.raises(sv.SkillVersionNotFound):
+            sv.create_draft("demo", _md(body="x"), author="user:u", base="v99")
+        with pytest.raises(sv.SkillVersionError):
+            sv.create_draft("demo", _md(body="x"), author="user:u", base="../v1")
+
     def test_draft_validates_content(self):
         _live()
         with pytest.raises(sv.SkillVersionError):

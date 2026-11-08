@@ -14,6 +14,9 @@ export async function POST(request: Request) {
   const content = typeof body.content === "string" ? body.content : "";
   if (!name || !content.trim()) return badRequest("name and content are required.");
   const json: Record<string, string> = { name, content, message: str(body.message) };
+  // Editing a saved draft builds on that draft, not on the active version.
+  const base = str(body.base);
+  if (base) json.base = base;
   // An improve chat's draft is credited to that chat (C-3).
   const sessionId = str(body.session_id);
   if (sessionId) {

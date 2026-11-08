@@ -121,12 +121,17 @@ describe("Skill version BFF routes", () => {
     });
     expect(saved.id).toBe("v3");
     expect(saved.status).toBe("draft");
+    await draft(post({ name: "a", content: "---\nname: a\n---\n", message: "Edited from v2", base: "v2" }));
+    expect(client.request).toHaveBeenLastCalledWith("/api/skills/versions/draft", {
+      method: "POST",
+      json: { name: "a", content: "---\nname: a\n---\n", message: "Edited from v2", base: "v2" },
+    });
     client.activateSkillVersion.mockResolvedValue({ active: "v1", versions: [META] });
     const res = await (await activate(post({ name: "a", id: "v1" }))).json();
     expect(client.activateSkillVersion).toHaveBeenCalledWith({ name: "a", id: "v1", trial: false });
     expect(res.active).toBe("v1");
     await activate(post({ name: "a", id: "v3", trial: true }));
     expect(client.activateSkillVersion).toHaveBeenLastCalledWith({ name: "a", id: "v3", trial: true });
-    expect(boundProfiles).toEqual(["coder", undefined, undefined]);
+    expect(boundProfiles).toEqual(["coder", undefined, undefined, undefined]);
   });
 });

@@ -237,7 +237,7 @@ describe("SkillEditor in draft mode", () => {
       fireEvent.click(screen.getByRole("button", { name: "Save" }));
     });
     expect(calls("PUT", "/api/skills/content")).toHaveLength(0);
-    expect(bodyOf("POST", "/api/skills/versions/draft")).toEqual({ name: "q", content: `${DRAFT}\nMore.\n`, message: "Edited from v3", profile: "coder" });
+    expect(bodyOf("POST", "/api/skills/versions/draft")).toEqual({ name: "q", content: `${DRAFT}\nMore.\n`, message: "Edited from v3", base: "v3", profile: "coder" });
     expect(router.push).toHaveBeenCalledWith("/skills/q?profile=coder&tab=versions");
   });
 });

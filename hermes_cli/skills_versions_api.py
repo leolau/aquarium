@@ -26,6 +26,7 @@ class DraftRequest(BaseModel):
     message: Optional[str] = None
     profile: Optional[str] = None
     session_id: Optional[str] = None
+    base: Optional[str] = None
 
 
 class ActivateRequest(BaseModel):
@@ -114,7 +115,12 @@ async def create_skill_draft(
         skill_versions.validate_name(body.name)
         _require_skill(body.name)
         return skill_versions.create_draft(
-            body.name, body.content, author=author, message=body.message or "", source="improve",
+            body.name,
+            body.content,
+            author=author,
+            message=body.message or "",
+            source="improve" if body.session_id else "edit",
+            base=body.base,
         )
 
     return await _in_profile(body.profile or profile, _work)

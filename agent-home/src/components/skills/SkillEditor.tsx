@@ -188,6 +188,7 @@ export function SkillEditor({
           name,
           content: doc,
           message: `Edited from v${draft.n}`,
+          base: draft.id,
           ...(q ? { profile } : {}),
         });
       } else {

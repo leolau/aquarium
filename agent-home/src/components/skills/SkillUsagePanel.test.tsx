@@ -220,6 +220,29 @@ describe("SkillUsagePanel", () => {
     expect(tiles[1]).toBe("67%");
   });
 
+  it("refreshes the per-version rates after a rating", async () => {
+    let rated = false;
+    routes(
+      () =>
+        reply(
+          rated
+            ? detail({ by_version: [{ version_id: "v3", uses: 2, success_rate: 0.5 }, { version_id: "v2", uses: 1, success_rate: 0 }] })
+            : detail(),
+        ),
+      () => {
+        rated = true;
+        return reply({ ...EVENTS[0], rating: -1, outcome: "failure", outcome_source: "user" });
+      },
+    );
+    const { container } = render(<SkillUsagePanel name="pdf-tools" profile="default" tabHref={tabHref} />);
+    const v3 = () => container.querySelector('[aria-label="Usage by version"] [data-version="v3"]')?.textContent ?? "";
+    await screen.findByText("uses in the last 90 days");
+    expect(v3()).toContain("100%");
+    fireEvent.click(screen.getByRole("button", { name: "Not helpful: Chat · “Fill the tax form”" }));
+    fireEvent.click(screen.getByRole("button", { name: "Mark not helpful" }));
+    await waitFor(() => expect(v3()).toContain("50%"));
+  });
+
   it("marks a chat run Not helpful with a note", async () => {
     const posted: Record<string, unknown>[] = [];
     routes(
