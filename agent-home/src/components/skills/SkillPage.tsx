@@ -169,7 +169,7 @@ export function SkillPage({
     if (next === "instructions") url.searchParams.delete("tab");
     else url.searchParams.set("tab", next);
     url.hash = "";
-    history.replaceState(history.state, "", url);
+    history.replaceState(null, "", url);
     return true;
   }
 

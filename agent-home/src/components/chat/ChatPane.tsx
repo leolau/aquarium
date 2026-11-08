@@ -641,7 +641,7 @@ export function ChatPane({
     // Drop `?find=` so a reload or shared link opens the chat without it.
     const url = new URL(window.location.href);
     url.searchParams.delete("find");
-    window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+    window.history.replaceState(null, "", url.pathname + url.search + url.hash);
     // Once, on arrival.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -654,7 +654,7 @@ export function ChatPane({
     // re-opens this chat instead of sending the same first turn again.
     const url = new URL(window.location.href);
     for (const key of ["new", "autosend", "draft"]) url.searchParams.delete(key);
-    window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+    window.history.replaceState(null, "", url.pathname + url.search + url.hash);
     void send(initialDraft, []);
     // Once, on arrival: the landing page handed over a turn the user already sent.
     // eslint-disable-next-line react-hooks/exhaustive-deps

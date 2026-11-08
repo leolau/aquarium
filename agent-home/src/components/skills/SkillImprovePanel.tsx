@@ -51,8 +51,21 @@ async function load<T>(url: string): Promise<Loaded<T>> {
   }
 }
 
+const SEED_START = "You are helping me improve the skill ";
+const SEED_MESSAGE_MARK = "\n\n## My message\n";
+
+/** The first user turn carries the hidden skill context; show only what the user typed. */
+function withoutSeed(content: string): string {
+  if (!content.startsWith(SEED_START)) return content;
+  const at = content.lastIndexOf(SEED_MESSAGE_MARK);
+  return at === -1 ? content : content.slice(at + SEED_MESSAGE_MARK.length);
+}
+
+/** User and assistant text turns; tool-call-only assistant rows have no text and are skipped. */
 function visibleTurns(messages: ChatMessage[]): ChatMessage[] {
-  return messages.filter((m) => m.role === "user" || m.role === "assistant");
+  return messages
+    .filter((m) => m.role === "user" || (m.role === "assistant" && (m.content ?? "").trim() !== ""))
+    .map((m, i) => (i === 0 && m.role === "user" ? { ...m, content: withoutSeed(m.content ?? "") } : m));
 }
 
 /**
