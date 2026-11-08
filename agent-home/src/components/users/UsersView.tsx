@@ -27,6 +27,10 @@ import type {
   Role,
 } from "@/types";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { useUndoToast } from "@/components/ui/UndoToast";
+import { useConfirm } from "@/components/ui/useConfirm";
+
+const ROLE_RANK: Record<Role, number> = { owner: 3, admin: 2, member: 1, viewer: 0 };
 
 
 export interface UsersViewProps {
@@ -72,6 +76,8 @@ export function UsersView({
 }: UsersViewProps) {
   const scoped = (path: string) => withProfileQuery(path, profile);
   const router = useRouter();
+  const { ask, dialog } = useConfirm();
+  const undo = useUndoToast();
   const canManage = role === "owner" || role === "admin";
   const [page, setPage] = useState<MembersResponse | null>(initialPage);
   const [offset, setOffset] = useState(initialPage?.offset ?? 0);
@@ -174,6 +180,18 @@ export function UsersView({
 
   async function changeRole(member: Member, next: Role) {
     if (!page) return;
+    if (ROLE_RANK[next] < ROLE_RANK[member.role]) {
+      const ok = await ask({
+        title: `Change ${member.display || member.user_id} to ${next}?`,
+        body:
+          member.user_id === userId
+            ? `You will lose ${member.role} rights in ${profile} straight away, and may not be able to change this back yourself.`
+            : `They lose what a ${member.role} can do in ${profile} as soon as you confirm.`,
+        confirmLabel: `Yes, make ${next}`,
+        tone: "danger",
+      });
+      if (!ok) return;
+    }
     setBusy(member.user_id);
     setError(null);
     setNotice(null);
@@ -216,7 +234,22 @@ export function UsersView({
     router.refresh();
   }
 
-  function setEnrolled(member: Member, enrolled: boolean) {
+  async function setEnrolled(member: Member, enrolled: boolean) {
+    const name = member.display || member.user_id;
+    if (!enrolled) {
+      const ok = await ask({
+        title: `Suspend ${name}?`,
+        body: `They can no longer sign in to ${profile} until someone restores them. Their account and work are kept.`,
+        confirmLabel: "Yes, suspend",
+        tone: "danger",
+      });
+      if (!ok) return;
+    }
+    await sendEnrolled(member, enrolled);
+    if (enrolled) undo.show(`${name} restored in ${profile}.`, () => sendEnrolled(member, false));
+  }
+
+  function sendEnrolled(member: Member, enrolled: boolean) {
     return mutate(member.user_id, async () => {
       await sendJson(
         scoped(
@@ -248,7 +281,14 @@ export function UsersView({
     });
   }
 
-  function revokeInvite(member: Member) {
+  async function revokeInvite(member: Member) {
+    const ok = await ask({
+      title: `Revoke the link for ${member.display || member.user_id}?`,
+      body: "The link stops working at once. You can send a new one later.",
+      confirmLabel: "Yes, revoke",
+      tone: "danger",
+    });
+    if (!ok) return;
     return mutate(member.user_id, async () => {
       await sendJson(
         scoped(
@@ -395,7 +435,7 @@ export function UsersView({
                 setOffset(0);
                 void load({ q: e.target.value, offset: 0 });
               }}
-              className="min-w-0 flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
+              className="min-w-0 flex-1 basis-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm sm:basis-0"
             />
             <select
               aria-label="Filter by role"
@@ -504,6 +544,8 @@ export function UsersView({
           onConfirm={(strategy, transferTo) => remove(removing, strategy, transferTo)}
         />
       ) : null}
+      {dialog}
+      {undo.toast}
     </div>
   );
 }

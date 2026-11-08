@@ -1,5 +1,9 @@
 import { MobileShell } from "@/components/MobileShell";
+import { CapacityRefresh } from "@/components/capacity/CapacityRefresh";
 import { CapacityView } from "@/components/capacity/CapacityView";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { InfoTip } from "@/components/ui/InfoTip";
+import { getT } from "@/i18n/server";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
 import type { CapacityResponse } from "@/types";
 
@@ -26,14 +30,18 @@ export default async function Page() {
     error = err instanceof Error ? err.message : "Failed to read capacity";
   }
 
+  const t = await getT("settings");
   return (
-    <MobileShell title="Capacity">
+    <MobileShell
+      title={t("entry.capacity")}
+      subtitle={t("capacity.subtitle")}
+      info={<InfoTip label={t("capacity.infoLabel")}>{t("capacity.info")}</InfoTip>}
+      actions={<CapacityRefresh />}
+      wide
+    >
       {capacity === null ? (
-        <div
-          data-component="CapacityError"
-          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
-        >
-          Couldn&apos;t read the capacity indicators ({error}).
+        <div data-component="CapacityError">
+          <ErrorState kind="error" details={error} />
         </div>
       ) : (
         <CapacityView capacity={capacity} />

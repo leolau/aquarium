@@ -35,18 +35,18 @@ import { ActionButton } from "@/components/ui/ActionButton";
 const GROUPS: GetReadyGroup[] = ["basics", "connections", "safety"];
 
 const STATUS_PILL: Record<GetReadyStatus, string> = {
-  done: "bg-emerald-500/15 text-emerald-300",
-  attention: "bg-amber-500/15 text-[var(--color-warn-text)]",
+  done: "bg-[var(--color-success)]/15 text-[var(--color-success)]",
+  attention: "bg-[var(--color-warn)]/15 text-[var(--color-warn-text)]",
   not_started: "bg-[var(--color-surface-2)] text-[var(--color-muted)]",
 };
 
 const STATUS_DOT: Record<GetReadyStatus, string> = {
-  done: "bg-emerald-500 text-white",
-  attention: "bg-amber-500 text-black",
+  done: "bg-[var(--color-success)] text-[var(--color-bg)]",
+  attention: "bg-[var(--color-warn)] text-[var(--color-bg)]",
   not_started: "border border-[var(--color-border)] text-[var(--color-muted)]",
 };
 
-const TEST_TONE = { ok: "text-emerald-300", warn: "text-[var(--color-warn-text)]", bad: "text-[var(--color-danger)]" };
+const TEST_TONE = { ok: "text-[var(--color-success)]", warn: "text-[var(--color-warn-text)]", bad: "text-[var(--color-danger)]" };
 
 export interface GetReadyExtras {
   profile: string;
@@ -135,7 +135,7 @@ export function GetReadyView({ initial, extras }: { initial: GetReadyResponse; e
           </p>
           <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--color-surface-2)]">
             <div
-              className="h-full rounded-full bg-emerald-500"
+              className="h-full rounded-full bg-[var(--color-success)]"
               style={{ width: `${summary.total ? (summary.done / summary.total) * 100 : 0}%` }}
             />
           </div>
@@ -178,7 +178,7 @@ export function GetReadyView({ initial, extras }: { initial: GetReadyResponse; e
           {initial.can_manage ? t("introManager") : t("introPerson")}
         </p>
         {error ? (
-          <p role="alert" className="rounded-xl bg-red-500/15 px-3 py-2 text-sm text-red-300">
+          <p role="alert" className="rounded-xl bg-[var(--color-danger)]/15 px-3 py-2 text-sm text-[var(--color-danger)]">
             {error}
           </p>
         ) : null}

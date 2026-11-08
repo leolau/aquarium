@@ -115,10 +115,15 @@ describe("UsersView — the administered profile (FG-28 C3)", () => {
     const type = (label: string, value: string) =>
       fireEvent.change(screen.getByLabelText(label), { target: { value } });
 
-    await step(() => type("Role for Mia", "admin"));
-    await step(click("Suspend"));
+    // Picking a role alone saves nothing; Save role does.
+    type("Role for Mia", "admin");
+    await step(click("Save role"));
+    // Suspend and revoke ask first.
+    fireEvent.click(screen.getAllByRole("button", { name: "Suspend" })[0]);
+    await step(click("Yes, suspend"));
     await step(click("Regenerate link"));
-    await step(click("Revoke link"));
+    fireEvent.click(screen.getAllByRole("button", { name: "Revoke link" })[0]);
+    await step(click("Yes, revoke"));
     fireEvent.click(screen.getAllByRole("button", { name: "Details" })[0]);
     type("Display name for a1b2c3", "Mia K");
     await step(click("Rename"));

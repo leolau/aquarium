@@ -5,9 +5,9 @@ export type Tone = "accent" | "success" | "warning" | "danger" | "muted";
 
 const TONE_CLASS: Record<Tone, string> = {
   accent: "bg-[var(--color-accent)] text-[var(--color-accent-fg)]",
-  success: "bg-emerald-500/15 text-emerald-300",
-  warning: "bg-amber-500/15 text-[var(--color-warn-text)]",
-  danger: "bg-red-500/15 text-red-300",
+  success: "bg-[var(--color-success)]/15 text-[var(--color-success)]",
+  warning: "bg-[var(--color-warn)]/15 text-[var(--color-warn-text)]",
+  danger: "bg-[var(--color-danger)]/15 text-[var(--color-danger)]",
   muted: "bg-[var(--color-surface-2)] text-[var(--color-fg)]",
 };
 

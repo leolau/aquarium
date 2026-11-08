@@ -20,6 +20,11 @@ const principal = (role: Role): Principal => ({
   is_owner: role === "owner",
 });
 
+vi.mock("@/i18n/server", async () => {
+  const { createTranslator } = await import("@/i18n/translate");
+  const settings = (await import("@/i18n/messages/en/settings.json")).default;
+  return { getT: async (ns: string) => createTranslator({ settings }, ns) };
+});
 vi.mock("@/components/MobileShell", () => ({
   MobileShell: ({ children }: { children: unknown }) => children,
 }));

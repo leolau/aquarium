@@ -38,7 +38,7 @@ export function RemoveUserDialog({
   return (
     <div
       data-component="RemoveUserDialog"
-      className="rounded-2xl border border-red-500/40 bg-[var(--color-surface)] p-4"
+      className="rounded-2xl border border-[var(--color-danger)]/40 bg-[var(--color-surface)] p-4"
     >
       <p className="text-sm font-medium">
         {self ? `Remove yourself from ${profile}?` : `Remove ${name} from ${profile}?`}
@@ -83,7 +83,7 @@ export function RemoveUserDialog({
         <ActionButton
           disabled={strategy === "transfer" && !transferTo}
           onAction={() => onConfirm(strategy, strategy === "transfer" ? transferTo : "")}
-          className="rounded-lg bg-red-500/20 px-3 py-1 text-xs text-red-200 disabled:opacity-50"
+          className="rounded-lg bg-[var(--color-danger)]/20 px-3 py-1 text-xs text-[var(--color-danger)] disabled:opacity-50"
         >
           Remove
         </ActionButton>

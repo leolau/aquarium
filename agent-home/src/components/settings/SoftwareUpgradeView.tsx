@@ -17,8 +17,8 @@ import type {
 const POLL_MS = 3000;
 const CARD = "mb-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4";
 const CHIP = "inline-flex items-center whitespace-nowrap rounded-full border px-2 py-px text-[11px]";
-const CHIP_OK = `${CHIP} border-green-200 bg-green-50 text-green-700`;
-const CHIP_BAD = `${CHIP} border-red-200 bg-red-50 text-red-700`;
+const CHIP_OK = `${CHIP} border-[var(--color-success)]/40 bg-[var(--color-success)]/10 text-[var(--color-success)]`;
+const CHIP_BAD = `${CHIP} border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 text-[var(--color-danger)]`;
 const CHIP_ACCENT = `${CHIP} border-[var(--color-accent)] text-[var(--color-accent)]`;
 const CHIP_MUTED = `${CHIP} border-[var(--color-border)] text-[var(--color-muted)]`;
 const BTN = "min-h-11 rounded-full border border-[var(--color-border)] px-4 text-sm disabled:opacity-50";
@@ -481,9 +481,9 @@ function HistoryCard({ status }: { status: SoftwareUpgradeStatus }) {
 /* ── progress + finished ───────────────────────────────────────────── */
 
 const ICON: Record<string, string> = {
-  done: "bg-green-50 text-green-700",
+  done: "bg-[var(--color-success)]/10 text-[var(--color-success)]",
   running: "bg-[var(--color-accent)] text-[var(--color-accent-fg)] animate-pulse",
-  failed: "bg-red-50 text-red-700",
+  failed: "bg-[var(--color-danger)]/10 text-[var(--color-danger)]",
   skipped: "bg-[var(--color-bg)] text-[var(--color-muted)]",
   pending: "bg-[var(--color-bg)] text-[var(--color-muted)]",
 };
@@ -538,13 +538,13 @@ function JobPanel({
   return (
     <div data-component="UpgradeJobPanel" data-running={job.running ? "1" : "0"}>
       {!job.running && ok ? (
-        <div data-testid="upgrade-done-banner" className="mb-4 rounded-xl bg-green-50 p-3 text-sm text-green-800">
+        <div data-testid="upgrade-done-banner" className="mb-4 rounded-xl bg-[var(--color-success)]/10 p-3 text-sm text-[var(--color-success)]">
           <b>{rollback ? t("rolledBackTo", { tag }) : t("upgradedTo", { tag })}</b>{" "}
           {t("tookTotal", { took: tookLabel(between(job.started, job.finished)) })}
         </div>
       ) : null}
       {!job.running && !ok ? (
-        <div data-testid="upgrade-failed-banner" className="mb-4 rounded-xl bg-red-50 p-3 text-sm text-red-800">
+        <div data-testid="upgrade-failed-banner" className="mb-4 rounded-xl bg-[var(--color-danger)]/10 p-3 text-sm text-[var(--color-danger)]">
           <b>{t("failedTitle", { tag })}</b>{" "}
           {job.result === "interrupted"
             ? t("interrupted")
@@ -556,7 +556,7 @@ function JobPanel({
         </div>
       ) : null}
       {reconnecting && job.running ? (
-        <div data-testid="upgrade-reconnecting" className="mb-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-800">
+        <div data-testid="upgrade-reconnecting" className="mb-4 rounded-xl bg-[var(--color-warn)] p-3 text-sm text-[var(--color-warn-text)]">
           {t("reconnecting")}
         </div>
       ) : null}
@@ -591,7 +591,7 @@ function JobPanel({
         </ul>
         <details className="mt-2" open={!job.running && !ok}>
           <summary className="cursor-pointer text-xs">{t("showLog")}</summary>
-          <pre className="mt-2 max-h-48 overflow-auto rounded-xl bg-[#14171f] p-3 font-mono text-xs leading-relaxed text-[#c9d1e0]">
+          <pre className="mt-2 max-h-48 overflow-auto rounded-xl bg-[var(--color-bg)] p-3 font-mono text-xs leading-relaxed text-[var(--color-bg)]">
             {job.log.length ? job.log.join("\n") : t("noLog")}
           </pre>
         </details>

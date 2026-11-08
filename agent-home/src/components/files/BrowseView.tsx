@@ -481,7 +481,7 @@ export function BrowseView() {
                   >
                     <span aria-hidden>{iconOf(p)}</span>
                     <span className="min-w-0">
-                      <span className="block truncate">{p.name}</span>
+                      <span className="block break-words">{p.name}</span>
                       <span className="block text-[11px] text-[var(--color-muted)]">{hint(p)}</span>
                     </span>
                   </button>
@@ -593,7 +593,7 @@ export function BrowseView() {
                             className="flex w-full min-w-0 items-center gap-2 text-left disabled:cursor-wait"
                           >
                             <span aria-hidden>{fileIcon(e)}</span>
-                            <span className="truncate">{e.name}</span>
+                            <span className="min-w-0 break-words">{e.name}</span>
                           </button>
                         </td>
                         <td className="whitespace-nowrap px-3 py-2 text-[var(--color-muted)]">
@@ -643,7 +643,7 @@ export function BrowseView() {
                       >
                         <span aria-hidden>{fileIcon(e)}</span>
                         <span className="min-w-0">
-                          <span className="block truncate">{e.name}</span>
+                          <span className="block break-words">{e.name}</span>
                           <span className="block text-[11px] text-[var(--color-muted)]">
                             {opening === `entry:${e.path}`
                               ? t("opening")
@@ -743,7 +743,7 @@ export function BrowseView() {
             {notice ? (
               <p
                 role="status"
-                className={`mt-3 text-xs ${notice.ok ? "text-emerald-400" : "text-[var(--color-warn-text)]"}`}
+                className={`mt-3 text-xs ${notice.ok ? "text-[var(--color-success)]" : "text-[var(--color-warn-text)]"}`}
               >
                 {notice.text}{" "}
                 {notice.ok ? (

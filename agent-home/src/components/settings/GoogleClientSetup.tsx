@@ -140,7 +140,7 @@ function Step({
           aria-label={t("markDone", { n })}
           onClick={onToggle}
           disabled={disabled || !onToggle}
-          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 text-sm ${done ? "border-emerald-500 bg-emerald-500 text-emerald-950" : "border-[var(--color-border)]"}`}
+          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 text-sm ${done ? "border-[var(--color-success)] bg-[var(--color-success)] text-[var(--color-bg)]" : "border-[var(--color-border)]"}`}
         >
           {done ? "✓" : ""}
         </button>
@@ -292,7 +292,7 @@ export function GoogleClientSetup() {
   const notice = message && (
     <p
       role="status"
-      className={`mt-2 rounded-lg border px-2.5 py-2 text-[13px] ${message.tone === "ok" ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-200" : "border-red-400/40 bg-red-400/10 text-red-300"}`}
+      className={`mt-2 rounded-lg border px-2.5 py-2 text-[13px] ${message.tone === "ok" ? "border-[var(--color-success)]/35 bg-[var(--color-success)]/10 text-[var(--color-success)]" : "border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 text-[var(--color-danger)]"}`}
     >
       {t(message.key)}
     </p>
@@ -327,8 +327,8 @@ export function GoogleClientSetup() {
     return (
       <section data-component="GoogleClientSetup" data-state="done">
         <h2 className="text-sm font-semibold">{t("title")}</h2>
-        <div className="mt-2 rounded-xl border border-emerald-500/35 bg-emerald-500/5 p-3">
-          <p className="text-sm font-semibold text-emerald-200">✓ {t("doneTitle")}</p>
+        <div className="mt-2 rounded-xl border border-[var(--color-success)]/35 bg-[var(--color-success)]/5 p-3">
+          <p className="text-sm font-semibold text-[var(--color-success)]">✓ {t("doneTitle")}</p>
           <p className="mt-1 text-xs text-[var(--color-muted)]">
             {t(kind, { id: status.client_id_hint ?? "" })}
             {status.source === "env" ? ` ${t("doneEnv")}` : ""}
@@ -375,7 +375,7 @@ export function GoogleClientSetup() {
       <div className="mt-3 flex flex-col gap-1">
         <div className="h-2 overflow-hidden rounded-full bg-[var(--color-surface-2)]">
           <i
-            className="block h-full bg-emerald-500"
+            className="block h-full bg-[var(--color-success)]"
             style={{ width: `${(doneCount / 6) * 100}%` }}
           />
         </div>
@@ -403,7 +403,7 @@ export function GoogleClientSetup() {
             </p>
           </div>
           <p className="mt-2 text-xs">{t("audience")}</p>
-          <p className="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-xs text-[var(--color-warn-text)]">
+          <p className="mt-2 rounded-lg border border-[var(--color-warn)]/40 bg-[var(--color-warn)]/10 px-2.5 py-2 text-xs text-[var(--color-warn-text)]">
             {t("unverified")}
           </p>
           <ConsoleLink href={CONSOLE.branding} t={t} />
@@ -425,7 +425,7 @@ export function GoogleClientSetup() {
         </Step>
         <Step n={6} title={t("step6")} done={status.configured} t={t}>
           {replacing && (
-            <p className="mt-1 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-xs text-[var(--color-warn-text)]">
+            <p className="mt-1 rounded-lg border border-[var(--color-warn)]/40 bg-[var(--color-warn)]/10 px-2.5 py-2 text-xs text-[var(--color-warn-text)]">
               {t("replaceIntro")}
               {status.source === "env" ? ` ${t("replaceEnv")}` : ""}
             </p>

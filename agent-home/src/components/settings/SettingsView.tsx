@@ -1,17 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { AccountSecurity } from "@/components/account/AccountSecurity";
 import { AppsSettings, UploadsSettings } from "@/components/settings/AppsSettings";
 import { EntityGoalSection } from "@/components/settings/EntityGoalSection";
 import { MenuSection } from "@/components/settings/MenuSection";
-import { SettingsBackLink } from "@/components/settings/SettingsBackLink";
 import {
-  settingsSectionHref,
-  visibleSettingsSections,
+  settingsEntryHref,
+  settingsIndexGroups,
   type SettingsAccess,
+  type SettingsEntryId,
   type SettingsSectionId,
 } from "@/components/settings/sections";
 import { LanguageSwitch } from "@/components/LanguageSwitch";
@@ -26,6 +26,25 @@ import { WindowsServerConnections } from "@/components/settings/WindowsServerCon
 import { VpnConnections } from "@/components/settings/VpnConnections";
 import { WhatsAppBridges } from "@/components/settings/WhatsAppBridges";
 import { BusyRegion } from "@/components/ui/BusyRegion";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import {
+  ArrowRightIcon,
+  BellIcon,
+  CheckIcon,
+  ChevronRightIcon,
+  ClockIcon,
+  CpuIcon,
+  FolderIcon,
+  GridIcon,
+  HardDriveIcon,
+  MessageIcon,
+  PencilIcon,
+  RefreshIcon,
+  SettingsIcon,
+  SparklesIcon,
+  UserIcon,
+  type IconProps,
+} from "@/components/ui/icons";
 import { Spinner } from "@/components/ui/Spinner";
 import type { EntityGoal, SessionTag } from "@/types";
 import {
@@ -54,10 +73,10 @@ const TAG_COLORS = [
 
 const TAG_DOT: Record<string, string> = {
   blue: "var(--color-accent)",
-  red: "#ef4444",
-  green: "#22c55e",
-  amber: "#f59e0b",
-  purple: "#a855f7",
+  red: "var(--color-danger)",
+  green: "var(--color-success)",
+  amber: "var(--color-warn)",
+  purple: "color-mix(in srgb, var(--color-accent) 50%, var(--color-danger))",
   gray: "var(--color-muted)",
 };
 
@@ -91,7 +110,6 @@ export function SettingsView({
   }
   return (
     <div data-component="SettingsView" data-detail={section}>
-      <SettingsBackLink />
       <SettingsSection
         section={section}
         entityGoal={entityGoal}
@@ -103,29 +121,121 @@ export function SettingsView({
   );
 }
 
-function SettingsIndex({ access }: { access: SettingsAccess }) {
+const ENTRY_ICON: Record<SettingsEntryId, (p: IconProps) => ReactNode> = {
+  language: MessageIcon,
+  account: UserIcon,
+  theme: SparklesIcon,
+  notifications: BellIcon,
+  "in-out": ArrowRightIcon,
+  tags: PencilIcon,
+  "get-ready": CheckIcon,
+  activity: ClockIcon,
+  people: UserIcon,
+  tools: GridIcon,
+  "entity-goal": SparklesIcon,
+  capacity: CpuIcon,
+  uploads: HardDriveIcon,
+  apps: FolderIcon,
+  menu: SettingsIcon,
+  upgrade: RefreshIcon,
+};
+
+/** Figma `hub-card` on tablet/desktop, `list-row` on phones: the whole card is the link. */
+function EntryLink({ id, badge }: { id: SettingsEntryId; badge?: string }) {
+  const t = useT("settings");
+  const Icon = ENTRY_ICON[id];
+  return (
+    <Link
+      href={settingsEntryHref(id)}
+      data-section-link={id}
+      className="flex h-full min-h-11 items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] active:bg-[var(--color-surface-2)] md:flex-col md:items-start md:gap-2 md:p-4"
+    >
+      <span
+        aria-hidden
+        className="inline-flex shrink-0 items-center justify-center text-[var(--color-muted)] md:h-7 md:w-7 md:rounded-[var(--radius-md)] md:bg-[var(--color-surface-2)] md:text-[var(--color-accent)]"
+      >
+        <Icon size={18} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-semibold text-[var(--color-fg)]">{t(`entry.${id}`)}</span>
+        <span className="mt-0.5 block text-xs text-[var(--color-muted)] md:text-[13px]">
+          {t(`entry.${id}.hint`)}
+        </span>
+      </span>
+      {badge ? (
+        <span className="shrink-0 rounded-[var(--radius-full)] bg-[var(--color-surface-2)] px-2 py-0.5 text-xs text-[var(--color-muted)]">
+          {badge}
+        </span>
+      ) : null}
+      <ChevronRightIcon size={16} aria-hidden className="shrink-0 text-[var(--color-muted)] md:hidden" />
+    </Link>
+  );
+}
+
+function EntryGrid({ ids }: { ids: SettingsEntryId[] }) {
+  return (
+    <ul className="grid grid-cols-1 gap-2 md:grid-cols-2 md:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+      {ids.map((id) => (
+        <li key={id}>
+          <EntryLink id={id} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function GroupHeader({ title, hint, admin }: { title: string; hint: string; admin?: boolean }) {
   const t = useT("settings");
   return (
-    <nav data-component="SettingsView" aria-label={t("title")}>
-      <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        {visibleSettingsSections(access).map((id) => (
-          <li key={id}>
-            <Link
-              href={settingsSectionHref(id)}
-              data-section-link={id}
-              className="flex h-full items-center justify-between gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 hover:border-[var(--color-accent)]"
-            >
-              <span className="min-w-0">
-                <span className="block text-sm font-semibold">{t(`section.${id}`)}</span>
-                <span className="mt-0.5 block text-xs text-[var(--color-muted)]">
-                  {t(`section.${id}.hint`)}
-                </span>
-              </span>
-              <span aria-hidden className="text-[var(--color-muted)]">→</span>
-            </Link>
-          </li>
-        ))}
-      </ul>
+    <div className="mb-3 md:mb-4">
+      <h2 className="flex flex-wrap items-center gap-2 text-lg font-semibold text-[var(--color-fg)]">
+        {title}
+        {admin ? (
+          <span className="inline-flex items-center gap-1 rounded-[var(--radius-full)] bg-[var(--color-surface-2)] px-2 py-0.5 text-xs font-normal text-[var(--color-muted)]">
+            <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-[var(--color-muted)]" />
+            {t("group.adminPill")}
+          </span>
+        ) : null}
+      </h2>
+      <p className="mt-1 text-[13px] text-[var(--color-muted)]">{hint}</p>
+    </div>
+  );
+}
+
+function SettingsIndex({ access }: { access: SettingsAccess }) {
+  const t = useT("settings");
+  const groups = settingsIndexGroups(access);
+  return (
+    <nav data-component="SettingsView" aria-label={t("title")} className="flex flex-col gap-8">
+      <section data-group="you">
+        <GroupHeader title={t("group.you")} hint={t("group.you.hint")} />
+        <EntryGrid ids={groups.you} />
+      </section>
+      <section data-group="admin">
+        <GroupHeader title={t("group.admin")} hint={t("group.admin.hint")} admin />
+        {groups.admin.length > 0 ? (
+          <EntryGrid ids={groups.admin} />
+        ) : (
+          <div
+            data-component="SettingsAdminLocked"
+            className="flex flex-col gap-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
+          >
+            <InlineAlert tone="info">{t("group.admin.locked")}</InlineAlert>
+            {groups.readOnly.length > 0 ? (
+              <>
+                <p className="text-[13px] text-[var(--color-muted)]">{t("group.admin.readOnly")}</p>
+                <ul className="flex flex-col gap-2 md:grid md:grid-cols-2 md:gap-4">
+                  {groups.readOnly.map((id) => (
+                    <li key={id}>
+                      <EntryLink id={id} badge={t("group.admin.view")} />
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
+          </div>
+        )}
+      </section>
     </nav>
   );
 }

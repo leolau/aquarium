@@ -116,7 +116,7 @@ function NewKey({ value, t, onDone }: { value: string; t: BackupsT; onDone(): vo
   return (
     <div
       data-component="BackupKeyOnce"
-      className="flex flex-col gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3"
+      className="flex flex-col gap-2 rounded-lg border border-[var(--color-warn)]/40 bg-[var(--color-warn)]/10 p-3"
     >
       <p className="text-sm font-semibold text-[var(--color-warn-text)]">{t("keyTitle")}</p>
       <p className="text-xs text-[var(--color-muted)]">{t("keyBody")}</p>
@@ -343,9 +343,9 @@ export function BackupsItem({
           aria-hidden
           className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
             overall === "done"
-              ? "bg-emerald-500/20 text-emerald-300"
+              ? "bg-[var(--color-success)]/20 text-[var(--color-success)]"
               : overall === "attention"
-                ? "bg-amber-500/20 text-[var(--color-warn-text)]"
+                ? "bg-[var(--color-warn)]/20 text-[var(--color-warn-text)]"
                 : "bg-[var(--color-surface-2)] text-[var(--color-muted)]"
           }`}
         >
@@ -412,7 +412,7 @@ export function BackupsItem({
         </div>
       ) : null}
 
-      {notice && !open ? <p className="mt-2 pl-10 text-xs text-emerald-300">✓ {notice}</p> : null}
+      {notice && !open ? <p className="mt-2 pl-10 text-xs text-[var(--color-success)]">✓ {notice}</p> : null}
       {error && !open ? (
         <p className="mt-2 pl-10 text-xs text-[var(--color-danger)]" role="alert">
           ✗ {t("error", { error })}
@@ -582,7 +582,7 @@ export function BackupsItem({
               </div>
               <p className="text-xs text-[var(--color-muted)]">{t("restoreNote")}</p>
 
-              {notice ? <p className="text-xs text-emerald-300">✓ {notice}</p> : null}
+              {notice ? <p className="text-xs text-[var(--color-success)]">✓ {notice}</p> : null}
               {error ? (
                 <p className="text-xs text-[var(--color-danger)]" role="alert">
                   ✗ {t("error", { error })}

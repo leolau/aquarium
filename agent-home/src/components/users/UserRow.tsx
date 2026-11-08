@@ -45,7 +45,8 @@ export function UserRow({
   /** Removal from this profile (owner/admin; the box-wide account is kept). */
   canDelete: boolean;
   busy: boolean;
-  onChangeRole: (m: Member, r: Role) => void;
+  /** Saves an explicitly picked role; picking alone never saves. */
+  onChangeRole: (m: Member, r: Role) => unknown;
   onSetEnrolled: (m: Member, enrolled: boolean) => unknown;
   onInvite: (m: Member) => unknown;
   onRevokeInvite: (m: Member) => unknown;
@@ -56,6 +57,9 @@ export function UserRow({
   onProfilesChanged?: (profile: string, removedSelf: boolean) => unknown;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [picked, setPicked] = useState<Role | null>(null);
+  const shownRole = picked ?? member.role;
+  const roleDirty = picked !== null && picked !== member.role;
   const [profilesOpen, setProfilesOpen] = useState(false);
   const [display, setDisplay] = useState(member.display);
   const [platform, setPlatform] = useState("telegram");
@@ -147,9 +151,9 @@ export function UserRow({
                 Role
                 <select
                   aria-label={`Role for ${member.display || member.user_id}`}
-                  value={member.role}
+                  value={shownRole}
                   disabled={busy}
-                  onChange={(e) => onChangeRole(member, e.target.value as Role)}
+                  onChange={(e) => setPicked(e.target.value as Role)}
                   className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-xs disabled:opacity-50"
                 >
                   {ASSIGNABLE_ROLES.map((r) => (
@@ -159,6 +163,29 @@ export function UserRow({
                   ))}
                 </select>
               </label>
+              {roleDirty ? (
+                <>
+                  <ActionButton
+                    data-action="save-role"
+                    disabled={busy}
+                    onAction={async () => {
+                      await onChangeRole(member, picked as Role);
+                      setPicked(null);
+                    }}
+                    className="rounded-lg bg-[var(--color-accent)] px-3 py-1 text-xs font-semibold text-[var(--color-accent-fg)] disabled:opacity-50"
+                  >
+                    Save role
+                  </ActionButton>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setPicked(null)}
+                    className="rounded-lg px-2 py-1 text-xs text-[var(--color-muted)] disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                </>
+              ) : null}
               {self ? null : (
                 <ActionButton
                   disabled={busy}
@@ -262,7 +289,7 @@ export function UserRow({
               type="button"
               disabled={busy}
               onClick={() => onDelete(member)}
-              className="self-start rounded-lg bg-red-500/15 px-3 py-1 text-xs text-red-300 disabled:opacity-50"
+              className="self-start rounded-lg bg-[var(--color-danger)]/15 px-3 py-1 text-xs text-[var(--color-danger)] disabled:opacity-50"
             >
               Remove from profile…
             </button>

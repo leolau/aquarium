@@ -253,7 +253,7 @@ export function ProfileRolesPanel({
                   <ActionButton
                     disabled={busy !== null}
                     onAction={() => openRemove(row.name)}
-                    className="rounded-lg bg-red-500/15 px-3 py-1 text-xs text-red-300 disabled:opacity-50"
+                    className="rounded-lg bg-[var(--color-danger)]/15 px-3 py-1 text-xs text-[var(--color-danger)] disabled:opacity-50"
                   >
                     Remove…
                   </ActionButton>
