@@ -152,6 +152,9 @@ def auto_title_session(
         return
 
     try:
+        # Generation takes seconds; a user rename in that window wins.
+        if session_db.get_session_title(session_id):
+            return
         session_db.set_session_title(session_id, title)
         logger.debug("Auto-generated session title: %s", title)
         if title_callback is not None:

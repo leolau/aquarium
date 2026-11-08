@@ -16,6 +16,7 @@ test.describe("login / logout", { tag: "@smoke" }, () => {
     await page.waitForURL((url) => !url.pathname.startsWith("/login"), { waitUntil: "commit" });
     await expect(component(page, "LandingComposer")).toBeVisible();
 
+    await page.locator('[data-action="account-open"]').click();
     await component(page, "LogoutButton").click();
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();

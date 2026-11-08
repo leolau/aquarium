@@ -100,13 +100,23 @@ self.addEventListener("push", (event) => {
     data = { body: event.data ? event.data.text() : "" };
   }
   event.waitUntil(
-    self.registration.showNotification(data.title || "Hermes", {
-      body: data.body || "",
-      icon: data.icon || "/icons/icon-192.png",
-      badge: data.badge || "/icons/icon-192.png",
-      tag: data.tag || undefined,
-      data: { url: data.url || "/" },
-    }),
+    Promise.all([
+      self.registration.showNotification(data.title || "Hermes", {
+        body: data.body || "",
+        icon: data.icon || "/icons/icon-192.png",
+        badge: data.badge || "/icons/icon-192.png",
+        tag: data.tag || undefined,
+        data: { url: data.url || "/" },
+      }),
+      // Open tabs re-read their "Needs you" list now instead of on the
+      // next poll (useNeedsYou listens for this).
+      self.clients
+        .matchAll({ type: "window", includeUncontrolled: true })
+        .then((clients) => {
+          for (const client of clients) client.postMessage({ type: "needs-you:refresh" });
+        })
+        .catch(() => {}),
+    ]),
   );
 });
 

@@ -19,7 +19,8 @@ import sys
 import threading
 import time
 import unicodedata
-from typing import Optional
+import uuid
+from typing import Iterable, Optional
 from hermes_cli.config import cfg_get
 
 from tools.interrupt import is_interrupted
@@ -1578,10 +1579,13 @@ class _ApprovalEntry:
     only that person (or an owner/admin) can answer it. Both stay ``None``
     for turns with no sender (cron, CLI), which anyone may answer as before.
     """
-    __slots__ = ("event", "data", "result", "requester_id", "requester_user_id")
+    __slots__ = ("event", "data", "result", "requester_id", "requester_user_id",
+                 "approval_id", "created_at")
 
     def __init__(self, data: dict, requester_id: Optional[str] = None,
                  requester_user_id: Optional[str] = None):
+        self.approval_id = uuid.uuid4().hex[:12]
+        self.created_at = time.time()
         self.event = threading.Event()
         self.data = data          # command, description, pattern_keys, …
         self.result: Optional[str] = None  # "once"|"session"|"always"|"deny"
@@ -1710,6 +1714,39 @@ def has_blocking_approval(session_key: str) -> bool:
     """Check if a session has one or more blocking gateway approvals waiting."""
     with _lock:
         return bool(_gateway_queues.get(session_key))
+
+
+def list_pending_gateway_approvals(
+    session_keys: Optional[Iterable[str]] = None,
+) -> list[dict]:
+    """Snapshot of every blocking gateway approval still waiting, oldest first.
+
+    Read-only: lets a surface other than the run's own stream (agent-home's
+    "Needs you" list) show who is waiting on what. The command is returned
+    raw — callers that show it must redact it first.
+    """
+    wanted = set(session_keys) if session_keys is not None else None
+    with _lock:
+        snapshot = [
+            (key, list(queue))
+            for key, queue in _gateway_queues.items()
+            if wanted is None or key in wanted
+        ]
+    out: list[dict] = []
+    for key, queue in snapshot:
+        for entry in queue:
+            data = entry.data or {}
+            out.append({
+                "session_key": key,
+                "approval_id": entry.approval_id,
+                "created_at": entry.created_at,
+                "command": data.get("command", ""),
+                "description": data.get("description", ""),
+                "requester_id": entry.requester_id,
+                "requester_user_id": entry.requester_user_id,
+            })
+    out.sort(key=lambda a: a["created_at"])
+    return out
 
 
 def submit_pending(session_key: str, approval: dict):
@@ -2401,6 +2438,8 @@ def _await_gateway_decision(session_key: str, notify_cb, approval_data: dict,
     all_keys = approval_data.get("pattern_keys", [primary_key])
 
     entry = _ApprovalEntry(approval_data, *_current_requester())
+    if isinstance(approval_data, dict):
+        approval_data.setdefault("approval_id", entry.approval_id)
     with _lock:
         _gateway_queues.setdefault(session_key, []).append(entry)
 

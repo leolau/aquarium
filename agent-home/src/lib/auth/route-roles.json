@@ -328,5 +328,11 @@
   "GET /api/software-upgrade/job": "admin",
   "POST /api/software-upgrade/check": "admin",
   "POST /api/software-upgrade/start": "owner",
-  "POST /api/software-upgrade/rollback": "owner"
+  "POST /api/software-upgrade/rollback": "owner",
+  "POST /api/chat/pin-suggestions/dismiss": "signed-in",
+  "GET /api/chat/pin-suggestions": "signed-in",
+  "POST /api/chat/sessions/pin": "signed-in",
+  "GET /api/chat/sessions/rename": "signed-in",
+  "GET /api/landing/bar": "signed-in",
+  "GET /api/needs-you": "signed-in"
 }

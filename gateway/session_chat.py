@@ -14,9 +14,11 @@ session-context binding (:mod:`gateway.session_context`). It only assembles the
 agent and (optionally) runs one turn in a worker thread.
 """
 
+import contextvars
 import logging
+import threading
 import time
-from typing import Any, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 _log = logging.getLogger(__name__)
 
@@ -133,6 +135,7 @@ def run_session_turn_sync(
     on_agent_ready=None,
     principal: Any = None,
     trusted_local: bool = False,
+    auto_title_db_factory: Optional[Callable[[], Any]] = None,
 ) -> Tuple[dict, dict]:
     """Run one synchronous one-brain turn for a persisted session.
 
@@ -144,6 +147,9 @@ def run_session_turn_sync(
     fire on the caller's executor thread. ``on_agent_ready(agent)`` is called
     once the agent is built, before the turn runs, so the caller can hold a
     handle for ``agent.interrupt()`` (user-initiated stop from another thread).
+
+    *auto_title_db_factory* opts the turn into auto-titling: it opens a fresh
+    ``SessionDB`` for the background title thread (see :func:`schedule_auto_title`).
     """
     t0 = time.monotonic()
     agent = build_session_agent(
@@ -183,4 +189,93 @@ def run_session_turn_sync(
     eff_sid = getattr(agent, "session_id", session_id)
     if isinstance(eff_sid, str) and eff_sid and isinstance(result, dict):
         result["session_id"] = eff_sid
+    if auto_title_db_factory is not None and isinstance(result, dict):
+        schedule_auto_title(
+            db_factory=auto_title_db_factory,
+            session_id=eff_sid if isinstance(eff_sid, str) and eff_sid else session_id,
+            user_message=user_message,
+            result=result,
+            conversation_history=conversation_history,
+            agent=agent,
+        )
     return result, usage
+
+
+def _main_runtime_of(agent: Any) -> Optional[dict]:
+    if agent is None:
+        return None
+    return {
+        "model": getattr(agent, "model", None),
+        "provider": getattr(agent, "provider", None),
+        "base_url": getattr(agent, "base_url", None),
+        "api_key": getattr(agent, "api_key", None),
+        "api_mode": getattr(agent, "api_mode", None),
+    }
+
+
+def schedule_auto_title(
+    *,
+    db_factory: Callable[[], Any],
+    session_id: Optional[str],
+    user_message: str,
+    result: dict,
+    conversation_history: Optional[List[dict]],
+    agent: Any = None,
+) -> Optional[threading.Thread]:
+    """Title an untitled session once after its first exchange, in the background.
+
+    The same rules as :func:`agent.title_generator.maybe_auto_title` (first two
+    exchanges only, never overwrite an existing title), adapted to the web chat
+    path: the caller's ``SessionDB`` is closed when the turn returns, so the
+    thread opens its own via *db_factory*, and it runs in a copy of the
+    caller's context so a per-profile config/secret scope still applies.
+
+    It is a separate auxiliary call that only writes ``sessions.title``; the
+    conversation's messages and system prompt are untouched (prompt caching).
+    Returns the started thread, or ``None`` when nothing was scheduled.
+    """
+    final_response = result.get("final_response") or ""
+    if not session_id or not user_message or not final_response:
+        return None
+    if result.get("failed") or result.get("partial") or result.get("interrupted"):
+        return None
+    messages = result.get("messages")
+    if not isinstance(messages, list):
+        messages = list(conversation_history or []) + [{"role": "user"}]
+    if sum(1 for m in messages if isinstance(m, dict) and m.get("role") == "user") > 2:
+        return None
+
+    main_runtime = _main_runtime_of(agent)
+    ctx = contextvars.copy_context()
+
+    def _failure(task: str, exc: BaseException) -> None:
+        _log.debug("agent-home auto-title failed (%s): %s", task, exc)
+
+    def _work() -> None:
+        from agent.title_generator import auto_title_session
+
+        try:
+            db = db_factory()
+        except Exception:
+            _log.debug("auto-title: could not open session db", exc_info=True)
+            return
+        try:
+            auto_title_session(
+                db,
+                session_id,
+                user_message,
+                final_response,
+                failure_callback=_failure,
+                main_runtime=main_runtime,
+            )
+        except Exception:
+            _log.debug("auto-title failed for %s", session_id, exc_info=True)
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+    thread = threading.Thread(target=ctx.run, args=(_work,), daemon=True, name="auto-title")
+    thread.start()
+    return thread

@@ -17,6 +17,7 @@ import "server-only";
 import { activeEnrolments } from "@/lib/api/my-profiles";
 import { hermesApiBaseUrl } from "@/lib/env";
 import type { SecurityBasicsResult } from "@/lib/api/security-basics";
+import type { PinResponse, PinSuggestionsResponse } from "@/types/landing";
 import type {
   ActivityItem,
   GoogleClientCheck,
@@ -874,6 +875,8 @@ export class HermesApiClient {
       tags?: string;
       excludeTags?: string;
       tagMatch?: string;
+      /** `only` = just the caller's pinned chats, whatever their age. */
+      pinned?: "only";
     } = {},
   ): Promise<SessionsResponse> {
     const params = new URLSearchParams();
@@ -886,6 +889,7 @@ export class HermesApiClient {
     if (opts.tags) params.set("tags", opts.tags);
     if (opts.excludeTags) params.set("exclude_tags", opts.excludeTags);
     if (opts.tagMatch) params.set("tag_match", opts.tagMatch);
+    if (opts.pinned) params.set("pinned", opts.pinned);
     return this.request(`/api/sessions?${params.toString()}`);
   }
 
@@ -975,6 +979,29 @@ export class HermesApiClient {
     return this.request(`/api/sessions/${encodeURIComponent(sessionId)}`, {
       method: "PATCH",
       json: { archived },
+    });
+  }
+
+  // ── Session pins (per user, per profile) ─────────────────────────
+
+  /** Pin or unpin a conversation for the caller (idempotent). */
+  async setSessionPinned(sessionId: string, pinned: boolean): Promise<PinResponse> {
+    return this.request(`/api/sessions/${encodeURIComponent(sessionId)}/pin`, {
+      method: "POST",
+      json: { pinned },
+    });
+  }
+
+  /** The agent's cached "worth pinning" suggestions for the caller. */
+  async pinSuggestions(): Promise<PinSuggestionsResponse> {
+    return this.request(`/api/sessions/pin-suggestions`);
+  }
+
+  /** Dismiss suggestions for good (until nothing — they never come back). */
+  async dismissPinSuggestions(sessionIds: string[]): Promise<{ dismissed: string[] }> {
+    return this.request(`/api/sessions/pin-suggestions/dismiss`, {
+      method: "POST",
+      json: { session_ids: sessionIds },
     });
   }
 

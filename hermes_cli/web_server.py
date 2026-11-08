@@ -6414,6 +6414,29 @@ async def get_action_status(name: str, lines: int = 200):
     }
 
 
+_LOCAL_PIN_USER = "local"
+
+
+async def _pin_user_id(request: Request, profile: Optional[str]) -> str:
+    """Whose pins a call reads/writes: the principal in the addressed profile.
+
+    A single-user install without the user directory pins as one local user.
+    """
+    try:
+        return (await _chat_principal(request, profile)).user_id or _LOCAL_PIN_USER
+    except _CommsNotConfigured:
+        return _LOCAL_PIN_USER
+
+
+async def _session_list_pin_user(request: Request) -> Optional[str]:
+    """Dependency for list views: the pin owner, or ``None`` when unresolvable
+    (the list then simply reports nothing pinned)."""
+    try:
+        return await _pin_user_id(request, await _requested_chat_profile(request))
+    except Exception:
+        return None
+
+
 @app.get("/api/sessions")
 def get_sessions(
     limit: int = 20,
@@ -6428,12 +6451,17 @@ def get_sessions(
     tags: str = None,
     exclude_tags: str = None,
     tag_match: str = "any",
+    pinned: str = "any",
     scope: Optional[str] = Depends(_chat_scope),
+    pin_user: Optional[str] = Depends(_session_list_pin_user),
 ):
     """List sessions.
 
     A login limited to its own chats (see :func:`_chat_scope`) only lists the
     conversations it owns.
+
+    Every row carries the caller's ``pinned_at`` (null when not pinned);
+    ``pinned=only`` lists just the caller's pinned chats, whatever their age.
 
     ``archived`` controls how soft-archived sessions are treated:
     ``exclude`` (default) hides them, ``only`` returns just the archived ones
@@ -6455,12 +6483,15 @@ def get_sessions(
             status_code=400,
             detail="order must be one of: created, recent",
         )
+    if pinned not in ("any", "only"):
+        raise HTTPException(status_code=400, detail="pinned must be one of: any, only")
     profile_name: Optional[str] = None
     if profile:
         profile_name, _ = _cron_profile_home(profile)
     try:
         db = _open_session_db_for_profile(profile)
         try:
+            pins = db.get_pins(pin_user) if pin_user else {}
             min_message_count = max(0, min_messages)
             archived_only = archived == "only"
             include_archived = archived == "include"
@@ -6493,11 +6524,12 @@ def get_sessions(
                 archived_only=archived_only,
                 order_by_last_active=order == "recent",
                 user_id=scope,
+                root_ids=list(pins) if pinned == "only" else None,
             )
             if filtered_ids is not None:
                 id_set = set(filtered_ids)
                 sessions = [s for s in sessions if s["id"] in id_set]
-            total = db.session_count(
+            total = len(sessions) if pinned == "only" else db.session_count(
                 source=source or None,
                 cwd_prefix=(cwd_prefix or None),
                 exclude_sources=exclude_list or None,
@@ -6524,6 +6556,7 @@ def get_sessions(
                 # SQLite stores the flag as 0/1; expose a real JSON boolean.
                 s["archived"] = bool(s.get("archived"))
                 s["tags"] = tags_by_session.get(s["id"], [])
+                s["pinned_at"] = pins.get(s.get("_lineage_root_id") or s["id"])
                 # Tens of KB per row and unused by list views; a whole list
                 # would otherwise weigh tens of MB.
                 s.pop("system_prompt", None)
@@ -7233,6 +7266,7 @@ _AUX_TASK_SLOTS: Tuple[str, ...] = (
     "approval",
     "mcp",
     "title_generation",
+    "session_review",
     "triage_specifier",
     "kanban_decomposer",
     "profile_describer",
@@ -11631,6 +11665,94 @@ async def get_lead_session(request: Request, profile: Optional[str] = None):
         db.close()
 
 
+# ---------------------------------------------------------------------------
+# Session pins + pin suggestions (agent-home landing). Pins are per user and,
+# because they live in each profile's own state.db, per profile.
+# ---------------------------------------------------------------------------
+
+class SessionPinBody(BaseModel):
+    pinned: bool
+    profile: Optional[str] = None
+
+
+class PinSuggestionDismissBody(BaseModel):
+    session_ids: List[str]
+    profile: Optional[str] = None
+
+
+@app.post("/api/sessions/{session_id}/pin")
+async def set_session_pin(
+    session_id: str,
+    body: SessionPinBody,
+    request: Request,
+    scope: Optional[str] = Depends(_chat_scope),
+):
+    """Pin or unpin a chat for the caller (idempotent either way).
+
+    Pins key on the compression root, so a chat stays pinned after it
+    auto-compresses. Returns ``{session_id, pinned_at}`` (null once unpinned).
+    """
+    user_id = await _pin_user_id(request, body.profile)
+    db = _open_session_db_for_profile(body.profile)
+    try:
+        _require_chat_access(db, session_id, scope)
+        if db.get_session(session_id) is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if body.pinned:
+            try:
+                pinned_at = db.pin_session(user_id, session_id)
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc))
+        else:
+            db.unpin_session(user_id, session_id)
+            pinned_at = None
+        return {"session_id": session_id, "pinned_at": pinned_at}
+    finally:
+        db.close()
+
+
+@app.get("/api/sessions/pin-suggestions")
+async def get_pin_suggestions(
+    request: Request,
+    profile: Optional[str] = None,
+    scope: Optional[str] = Depends(_chat_scope),
+):
+    """Chats the agent suggests pinning (landing "review").
+
+    Served from a per-user cache; a due model review runs in the background
+    (``pending: true``) and never touches any conversation. Gated by
+    ``landing.pin_suggestions`` in config.yaml.
+    """
+    from hermes_cli import session_pins
+
+    user_id = await _pin_user_id(request, profile)
+    db = _open_session_db_for_profile(profile)
+    try:
+        return session_pins.get_suggestions(db, scope, user_id)
+    finally:
+        db.close()
+
+
+@app.post("/api/sessions/pin-suggestions/dismiss")
+async def dismiss_pin_suggestions(
+    body: PinSuggestionDismissBody,
+    request: Request,
+    scope: Optional[str] = Depends(_chat_scope),
+):
+    """Dismiss suggestions for good; ids the caller cannot see are ignored."""
+    user_id = await _pin_user_id(request, body.profile)
+    db = _open_session_db_for_profile(body.profile)
+    try:
+        ids = [
+            sid for sid in dict.fromkeys(body.session_ids[:100])
+            if sid and (scope is None or db.session_owner_user_id(sid) == scope)
+        ]
+        db.dismiss_pin_suggestions(user_id, ids)
+        return {"dismissed": ids}
+    finally:
+        db.close()
+
+
 @app.get("/api/sessions/tags")
 def list_session_tags(
     profile: Optional[str] = None, _scope: Optional[str] = Depends(_chat_scope)
@@ -11993,6 +12115,7 @@ async def session_chat(session_id: str, request: Request):
                         conversation_history=history,
                         session_id=sid,
                         principal=principal,
+                        auto_title_db_factory=lambda: _open_session_db_for_profile(profile),
                     )
             finally:
                 run_db.close()
@@ -12426,6 +12549,26 @@ async def session_chat_stream(session_id: str, request: Request):
             {"tool_id": str(tc_id or ""), "name": str(name or "tool"), "run_id": run_id},
         )
 
+    from hermes_cli.projects_api import _instance_admin as _is_instance_admin
+
+    # Push devices are the instance's own, so a member's approval is not
+    # pushed to them; the member still sees it in-stream and in Needs you.
+    _approval_push_ok = _is_instance_admin(principal)
+
+    async def _push_chat_approval(event: dict) -> None:
+        try:
+            from hermes_cli.needs_you import chat_href
+            from plugins.platforms.app.push import send_push
+
+            await send_push(
+                f"chat_approval:{run_id}:{event.get('approval_id') or ''}",
+                title="Approval needed",
+                body=str(event.get("description") or event.get("command") or "A tool is waiting for your approval"),
+                url=chat_href(sid, profile),
+            )
+        except Exception:
+            _log.debug("chat approval push failed", exc_info=True)
+
     def _approval_notify(approval_data: dict) -> None:
         # A gated tool blocked the agent thread. Redact the command (it can
         # carry secrets) and forward the prompt to the browser; the user's
@@ -12438,6 +12581,8 @@ async def session_chat_stream(session_id: str, request: Request):
         event["run_id"] = run_id
         event.setdefault("choices", ["once", "session", "always", "deny"])
         _enqueue("approval.request", event)
+        if _approval_push_ok:
+            asyncio.run_coroutine_threadsafe(_push_chat_approval(event), loop)
 
     def _agent_ready(agent) -> None:
         run_entry["agent"] = agent
@@ -12489,6 +12634,7 @@ async def session_chat_stream(session_id: str, request: Request):
                         tool_complete_callback=_tool_complete,
                         on_agent_ready=_agent_ready,
                         principal=principal,
+                        auto_title_db_factory=lambda: _open_session_db_for_profile(profile),
                     )
             finally:
                 run_db.close()
@@ -12675,6 +12821,84 @@ async def activity_running(request: Request):
         return act.finalize(items)
 
     return await asyncio.to_thread(_collect)
+
+
+_NEEDS_YOU_PUSH_TASKS: "set[asyncio.Task]" = set()
+
+
+@app.get("/api/needs-you")
+async def needs_you(request: Request):
+    """Everything waiting on the caller, for agent-home's "Needs you" list.
+
+    ``NeedsYouResponse`` (``agent-home/src/types/landing.ts``); with
+    ``?include=count`` the ``items`` array is empty and only the counts are
+    returned. Each source is scoped to the caller and fails independently
+    (see ``hermes_cli.needs_you``).
+    """
+    from hermes_cli import needs_you as ny
+    from hermes_cli.projects_api import _enrolled_profiles, _instance_admin
+
+    count_only = request.query_params.get("include") == "count"
+    try:
+        principal = await _comms_resolve_principal(request)
+    except _CommsNotConfigured:
+        return ny.response([], count_only=count_only)
+    admin = _instance_admin(principal)
+    items: list = []
+
+    try:
+        from hermes_cli.human_comms import NotificationStore
+
+        ntf = NotificationStore(_comms_app_store(), config=load_config() or {})
+        await ntf.initialize()
+        items.extend(
+            ny.notification_entries(await ntf.list_pending(principal), principal.user_id)
+        )
+    except Exception:
+        _log.warning("needs-you: notifications source failed", exc_info=True)
+    covered = ny.notification_dedupe_keys(items)
+
+    runs = {
+        run_id: {"session_id": entry["session_id"], "profile": entry.get("profile")}
+        for run_id, entry in list(_CHAT_RUNS.items())
+        if not entry["done"]
+    }
+    try:
+        from tools.approval import list_pending_gateway_approvals
+
+        items.extend(ny.chat_approval_entries(
+            list_pending_gateway_approvals(runs.keys()), runs, principal, admin=admin,
+        ))
+    except Exception:
+        _log.warning("needs-you: chat approvals source failed", exc_info=True)
+
+    try:
+        items.extend(ny.webview_entries(_get_webview_registry().get(principal.user_id)))
+    except Exception:
+        _log.warning("needs-you: webview source failed", exc_info=True)
+
+    try:
+        from hermes_cli.profile_suggestion import ProfileSuggestionStore
+
+        open_rows, _reviewed = await ProfileSuggestionStore(_comms_app_store()).queue(principal)
+        items.extend(ny.profile_suggestion_entries(open_rows))
+    except Exception:
+        _log.warning("needs-you: profile suggestions source failed", exc_info=True)
+
+    try:
+        enrolled = set() if admin else await _enrolled_profiles(principal.user_id)
+        items.extend(await asyncio.to_thread(ny.project_entries, principal, enrolled, covered))
+    except Exception:
+        _log.warning("needs-you: projects source failed", exc_info=True)
+
+    items = ny.finalize(items)
+    # Enrolled push devices are the instance's, not per-member, so only the
+    # admin's own waits are pushed from here.
+    if admin:
+        task = asyncio.create_task(ny.push_new(principal.user_id, items))
+        _NEEDS_YOU_PUSH_TASKS.add(task)
+        task.add_done_callback(_NEEDS_YOU_PUSH_TASKS.discard)
+    return ny.response(items, count_only=count_only)
 
 
 @app.post("/api/sessions/{session_id}/chat/stream/attach")

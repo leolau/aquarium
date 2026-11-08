@@ -20,7 +20,9 @@ export type NeedsYouSource =
   | "webview_approval"
   | "todo"
   | "profile_suggestion"
-  | "pin_suggestion";
+  | "pin_suggestion"
+  /** A pending notification that maps to no source above (e.g. a proactive ask). */
+  | "notification";
 
 export interface NeedsYouAction {
   id: string;
@@ -103,10 +105,35 @@ export interface PinSuggestion {
 export interface PinSuggestionsResponse {
   items: PinSuggestion[];
   generated_at: number | null;
+  /** False when `landing.pin_suggestions.enabled` is off in config.yaml. */
+  enabled?: boolean;
+  /** A fresh review is running; re-read shortly. */
+  pending?: boolean;
+  /** Who picked the current items: the auxiliary model or the heuristic. */
+  source?: "model" | "heuristic" | null;
 }
 
 /** POST /api/chat/pin-suggestions/dismiss { sessionIds } */
 export interface DismissPinSuggestionsRequest {
   sessionIds: string[];
   profile?: string;
+}
+
+/** GET /api/chat/sessions/rename?sessionId=&profile= — one conversation's title. */
+export interface SessionTitleResponse {
+  session_id: string;
+  /** null while untitled; the agent auto-titles a few seconds after the first reply. */
+  title: string | null;
+}
+
+/** PATCH /api/chat/sessions/rename { sessionId, title, profile? } — empty title clears it. */
+export interface RenameSessionRequest {
+  sessionId: string;
+  title: string;
+  profile?: string;
+}
+
+export interface RenameSessionResponse {
+  ok: boolean;
+  title: string;
 }
