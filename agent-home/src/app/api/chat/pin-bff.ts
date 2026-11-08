@@ -1,22 +1,22 @@
 /**
- * Shared plumbing for the landing pin BFF routes: principal check, the
- * profile-aware client with the browser's Idempotency-Key forwarded, and
+ * Shared plumbing for the landing pin BFF routes (each route checks the
+ * principal itself, so route-roles can see it): the profile-aware client with the browser's Idempotency-Key forwarded, and
  * upstream errors mapped to their status (502 when unreachable).
  */
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 
 import { HermesApiClient, HermesApiError } from "@/lib/api/client";
-import { apiClientForRequest, getPrincipal } from "@/lib/auth/principal";
+import { apiClientForRequest } from "@/lib/auth/principal";
+
+export function unauthenticated(): NextResponse {
+  return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
+}
 
 export async function withPinClient(
   profile: string | undefined,
   handler: (client: HermesApiClient) => Promise<unknown>,
 ): Promise<NextResponse> {
-  const principal = await getPrincipal();
-  if (!principal) {
-    return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
-  }
   try {
     const client = await apiClientForRequest({ profile });
     const key = await incomingIdempotencyKey();

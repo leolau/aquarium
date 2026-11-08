@@ -6,11 +6,13 @@
  */
 import { NextResponse } from "next/server";
 
-import { readJson, withPinClient } from "@/app/api/chat/pin-bff";
+import { readJson, withPinClient, unauthenticated } from "@/app/api/chat/pin-bff";
+import { getPrincipal } from "@/lib/auth/principal";
 import { profileFromBody } from "@/lib/chat/profile";
 import type { PinResponse } from "@/types/landing";
 
 export async function POST(req: Request): Promise<NextResponse> {
+  if (!(await getPrincipal())) return unauthenticated();
   const body = await readJson(req);
   if (!body) return NextResponse.json({ error: "invalid_body" }, { status: 400 });
   const sessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : "";

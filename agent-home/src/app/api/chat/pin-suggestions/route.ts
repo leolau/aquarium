@@ -6,9 +6,11 @@
  */
 import { NextResponse } from "next/server";
 
-import { withPinClient } from "@/app/api/chat/pin-bff";
+import { withPinClient, unauthenticated } from "@/app/api/chat/pin-bff";
+import { getPrincipal } from "@/lib/auth/principal";
 import { profileFromUrl } from "@/lib/chat/profile";
 
 export async function GET(req: Request): Promise<NextResponse> {
+  if (!(await getPrincipal())) return unauthenticated();
   return withPinClient(profileFromUrl(req.url), (client) => client.pinSuggestions());
 }
