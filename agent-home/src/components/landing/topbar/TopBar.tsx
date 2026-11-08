@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { AquariumMark } from "@/components/brand/AquariumMark";
@@ -65,8 +66,10 @@ export function TopBarView({
               <PanelLeftIcon size={18} />
             </button>
           ) : null}
-          <AquariumMark size={24} title="" />
-          <span className="text-sm font-semibold text-[var(--color-fg)]">Aquarium</span>
+          <Link href="/" aria-label="Aquarium home" data-action="home" className="flex items-center gap-2 rounded-[var(--radius-md)]">
+            <AquariumMark size={24} title="" />
+            <span className="text-sm font-semibold text-[var(--color-fg)]">Aquarium</span>
+          </Link>
         </div>
         <div className="hidden min-w-0 lg:flex">
           <HealthPill variant="bar" status={status} activity={activity} />
