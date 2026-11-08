@@ -73,8 +73,11 @@ export function TodoRow({
   todo,
   onStage,
   busy = false,
+  from = "",
 }: {
   todo: Todo;
+  /** The list's query string, so the detail page's Back restores the filters. */
+  from?: string;
   /** Move the to-do along; the list owns the request and the optimism. */
   onStage?: (todo: Todo, stage: TodoStage) => unknown;
   busy?: boolean;
@@ -91,7 +94,7 @@ export function TodoRow({
         }`}
       >
         <Link
-          href={`/todos/${encodeURIComponent(todo.id)}`}
+          href={`/todos/${encodeURIComponent(todo.id)}${from ? `?from=${encodeURIComponent(from)}` : ""}`}
           className="flex items-start gap-2"
         >
           <span aria-hidden className="text-base leading-5">

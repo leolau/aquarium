@@ -4,6 +4,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { TodoRow } from "@/components/todos/TodoRow";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import { useUndoToast } from "@/components/ui/UndoToast";
+import { useT } from "@/i18n";
 import { TodosFilters } from "@/components/todos/TodosFilters";
 import {
   EMPTY_FILTERS,
@@ -47,6 +50,8 @@ export function TodosList({
   const [loading, setLoading] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const t = useT("todos");
+  const { show: showUndo, toast } = useUndoToast();
 
   // The observer fires again before `loading` re-renders, so the next-page
   // fetch is locked synchronously: one request per page, however many hits.
@@ -87,7 +92,7 @@ export function TodosList({
   );
 
   const setStage = useCallback(
-    async (todo: Todo, stage: TodoStage) => {
+    async (todo: Todo, stage: TodoStage, fromUndo = false) => {
       const before = todo.stage;
       setPending(todo.id);
       setItems((prev) =>
@@ -107,6 +112,12 @@ export function TodosList({
         setItems((prev) =>
           prev.map((row) => (row.id === todo.id ? updated : row)),
         );
+        if (!fromUndo && (stage === "done" || stage === "dismissed")) {
+          showUndo(
+            t(stage === "done" ? "markedDone" : "dismissed", { title: todo.title }),
+            () => setStageRef.current({ ...updated, stage }, before, true),
+          );
+        }
       } catch {
         // Put it back: a to-do that silently stayed where it was, while the
         // list says otherwise, is worse than an error.
@@ -120,8 +131,10 @@ export function TodosList({
         setPending(null);
       }
     },
-    [],
+    [showUndo, t],
   );
+  const setStageRef = useRef(setStage);
+  setStageRef.current = setStage;
 
   // The server rendered the first page, so the debounce must not fire on mount
   // and refetch identical rows; it arms on the first interaction.
@@ -163,33 +176,33 @@ export function TodosList({
     filters.sourceRef ||
     filters.stages.length !== EMPTY_FILTERS.stages.length;
 
+  const fromParams = filtersToParams(filters).toString();
+  const fromQuery = fromParams ? `?${fromParams}` : "";
   return (
     <div data-component="TodosList" className="flex flex-col gap-3">
+      {toast}
       <TodosFilters facets={facets} value={filters} onChange={setFilters} />
 
       {error ? (
-        <p
-          data-component="TodosError"
-          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
-        >
-          {error}
-        </p>
+        <div data-component="TodosError">
+          <InlineAlert tone="danger">{error}</InlineAlert>
+        </div>
       ) : null}
 
       {items.length === 0 && !loading ? (
-        <p
+        <div
           data-component="TodosEmpty"
-          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
+          className="flex flex-col items-center gap-2 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-8 text-center"
         >
-          {narrowed
-            ? "Nothing matches those filters."
-            : "Nothing to do. As messages arrive, anything that looks like it needs you lands here first."}
-        </p>
+          <p className="text-sm font-semibold">{t(narrowed ? "filteredEmptyTitle" : "emptyTitle")}</p>
+          <p className="text-sm text-[var(--color-muted)]">{t(narrowed ? "filteredEmpty" : "empty")}</p>
+        </div>
       ) : (
         <ul className="flex flex-col gap-2">
           {items.map((todo) => (
             <TodoRow
               key={todo.id}
+              from={fromQuery}
               todo={todo}
               onStage={setStage}
               busy={pending === todo.id}

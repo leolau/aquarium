@@ -1,7 +1,12 @@
 "use client";
 
+import { useState } from "react";
+
 import { STAGE_LABEL } from "@/components/todos/TodoRow";
-import type { TodosFilterState } from "@/components/todos/filters";
+import { FilterIcon } from "@/components/ui/icons";
+import { Sheet, primaryButtonClass, secondaryButtonClass } from "@/components/ui/Sheet";
+import { useT } from "@/i18n";
+import { EMPTY_FILTERS, type TodosFilterState } from "@/components/todos/filters";
 import type { TodosFacets, TodoStage } from "@/types";
 
 const STAGE_ORDER: TodoStage[] = [
@@ -32,6 +37,8 @@ export function TodosFilters({
   value: TodosFilterState;
   onChange: (next: TodosFilterState) => void;
 }) {
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const t = useT("todos");
   const counts = new Map(facets.stages.map((s) => [s.value, s.count]));
   const priorities = PRIORITY_ORDER.filter((p) =>
     facets.priorities.some((facet) => facet.value === p),
@@ -40,15 +47,12 @@ export function TodosFilters({
   const toggle = (list: string[], item: string) =>
     list.includes(item) ? list.filter((x) => x !== item) : [...list, item];
 
-  return (
-    <div data-component="TodosFilters" className="flex flex-col gap-2">
-      <input
-        type="search"
-        value={value.q}
-        onChange={(e) => onChange({ ...value, q: e.target.value })}
-        placeholder="Search to-dos"
-        className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-[var(--color-accent)]"
-      />
+  const activeCount =
+    value.priorities.length +
+    (value.sourceRef ? 1 : 0) +
+    (value.stages.join() !== EMPTY_FILTERS.stages.join() ? 1 : 0);
+  const panel = (
+    <>
 
       <div className="flex flex-wrap gap-1.5 text-[11px]">
         {STAGE_ORDER.map((stage) => (
@@ -100,6 +104,53 @@ export function TodosFilters({
         >
           From one arrival ✕
         </button>
+      ) : null}
+    </>
+  );
+
+  return (
+    <div data-component="TodosFilters" className="flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+      <input
+        type="search"
+        value={value.q}
+        onChange={(e) => onChange({ ...value, q: e.target.value })}
+        placeholder="Search to-dos"
+        className="min-w-0 flex-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-[var(--color-accent)]"
+      />
+        <button
+          type="button"
+          data-action="open-filters"
+          onClick={() => setSheetOpen(true)}
+          className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-fg)] lg:hidden"
+        >
+          <FilterIcon size={16} />
+          {activeCount ? t("filtersCount", { count: activeCount }) : t("filters")}
+        </button>
+      </div>
+      <div className="hidden flex-col gap-2 lg:flex">{panel}</div>
+      {sheetOpen ? (
+        <Sheet
+          title={t("filters")}
+          component="TodosFiltersSheet"
+          onClose={() => setSheetOpen(false)}
+          footer={
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => onChange({ ...EMPTY_FILTERS, q: value.q })}
+                className={secondaryButtonClass}
+              >
+                {t("clearAll")}
+              </button>
+              <button type="button" onClick={() => setSheetOpen(false)} className={primaryButtonClass}>
+                {t("showResults")}
+              </button>
+            </div>
+          }
+        >
+          <div className="flex flex-col gap-3">{panel}</div>
+        </Sheet>
       ) : null}
     </div>
   );

@@ -15,10 +15,18 @@ export const dynamic = "force-dynamic";
  * renders the same not-found either way rather than confirming that somebody
  * else's to-do exists.
  */
+/** Only a To-dos query string is a valid Back target (no open redirects). */
+function todosBackHref(from: string | string[] | undefined): string {
+  const value = Array.isArray(from) ? from[0] : from;
+  return value && value.startsWith("?") && !value.includes("//") ? `/todos${value}` : "/todos";
+}
+
 export default async function Page({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams?: Promise<{ from?: string | string[] }>;
 }) {
   await requirePrincipal();
   const { id } = await params;
@@ -34,7 +42,10 @@ export default async function Page({
   }
 
   return (
-    <MobileShell title="To-dos">
+    <MobileShell
+      title={todo.title}
+      back={{ href: todosBackHref((await searchParams)?.from), label: "To-dos" }}
+    >
       <TodoDetailView todo={todo} />
     </MobileShell>
   );

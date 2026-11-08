@@ -11,7 +11,9 @@ import { useAction } from "@/lib/use-action";
 import { STAGE_LABEL, sourceGlyph } from "@/components/todos/TodoRow";
 import { formatWhen } from "@/components/files/FilesView";
 import type { Todo, TodoDetail, TodoStage } from "@/types";
-import { useConfirm } from "@/components/ui/useConfirm";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import { useUndoToast } from "@/components/ui/UndoToast";
+import { useT } from "@/i18n";
 
 /** The moves offered from each stage, in the order a user reaches for them. */
 const NEXT_STAGES: Record<TodoStage, TodoStage[]> = {
@@ -48,7 +50,8 @@ const SNOOZES: { label: string; hours: number }[] = [
  * provenance instead — "a WhatsApp message from this number" beats silence.
  */
 export function TodoDetailView({ todo }: { todo: TodoDetail }) {
-  const { askText, dialog } = useConfirm();
+  const t = useT("todos");
+  const { show: showUndo, toast } = useUndoToast();
   const [current, setCurrent] = useState<TodoDetail>(todo);
   // One lock for the whole card: while one change is in flight, a click on any
   // other button here is dropped instead of racing it.
@@ -85,20 +88,26 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
 
   const source = current.source;
 
+  async function dismissWithUndo() {
+    const before = current.stage;
+    await post("/stage", { stage: "dismissed" });
+    showUndo(t("dismissed", { title: current.title }), () => post("/stage", { stage: before }));
+  }
+
   return (
-    <div data-component="TodoDetailView" className="flex flex-col gap-4">
-      {dialog}
-      <Link href="/todos" className="text-xs text-[var(--color-muted)]">
-        ← To-dos
-      </Link>
-
-      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-        <h1 className="flex items-start gap-2 text-sm font-semibold">
+    <div
+      data-component="TodoDetailView"
+      className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start"
+    >
+      {toast}
+      <div className="flex min-w-0 flex-col gap-4">
+      <div className="min-w-0 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+        <p className="flex items-start gap-2 text-sm font-semibold">
           <span aria-hidden>{sourceGlyph(current.source_kind)}</span>
-          <span className="break-words">{current.title}</span>
-        </h1>
+          <span className="min-w-0 break-words">{current.title}</span>
+        </p>
 
-        <dl className="mt-3 grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-xs">
+        <dl className="mt-3 grid grid-cols-[112px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-xs [overflow-wrap:anywhere]">
           <Row label="Stage">{STAGE_LABEL[current.stage]}</Row>
           <Row label="Priority">{current.priority}</Row>
           {current.due_at ? (
@@ -121,173 +130,6 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
           </p>
         ) : null}
 
-        <div className="mt-4 flex flex-wrap gap-1.5 text-[11px]">
-          {/* Finishing goes through the form below instead: it is the one
-              transition that may also propose something outgoing. */}
-          {NEXT_STAGES[current.stage]
-            .filter((stage) => stage !== "done")
-            .map((stage) => (
-              <ActionButton
-                key={stage}
-                disabled={busy}
-                busyLabel="Saving…"
-                onAction={() => post("/stage", { stage })}
-                className="rounded-lg border border-[var(--color-border)] px-2 py-1 text-[var(--color-muted)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
-              >
-                {STAGE_VERB[stage]}
-              </ActionButton>
-            ))}
-          {/* "Add to project" (§13): the user is here when they realise the
-              to-do belongs to something bigger — link it from both ends. */}
-          <button
-            type="button"
-            onClick={() => setAddOpen(true)}
-            className="rounded-lg border border-[var(--color-border)] px-2 py-1 text-[var(--color-muted)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
-          >
-            Add to project
-          </button>
-        </div>
-
-        {/* “Work on this” moves to working AND spawns a seeded session.
-            The stage change happens first; the spawn is best-effort and
-            reports itself.  Sits beside the stage buttons rather than
-            replacing “Work on it”, so the user can move the stage without
-            spawning if they prefer. */}
-        {current.stage === "staged" || current.stage === "open" ? (
-          <div className="mt-2">
-            <ActionButton
-              disabled={busy}
-              onAction={() => exclusive(async () => {
-                setError(null);
-                setSessionLink(null);
-                try {
-                  const res = await fetch(
-                    `/api/todos/${encodeURIComponent(current.id)}/start`,
-                    {
-                      method: "POST",
-                      headers: { "content-type": "application/json" },
-                      body: JSON.stringify({ session: true }),
-                    },
-                  );
-                  const payload = (await res.json()) as Todo & {
-                    session_id?: string | null;
-                    spawned?: boolean;
-                    detail?: string;
-                  };
-                  if (!res.ok) {
-                    setError(payload.detail ?? "That didn’t stick — try again.");
-                  } else {
-                    setCurrent({ ...current, ...payload });
-                    if (payload.session_id) {
-                      setSessionLink(payload.session_id);
-                    }
-                  }
-                } catch {
-                  setError("Couldn’t reach the AI layer.");
-                }
-              })}
-              busyLabel="Starting…"
-              className="rounded-lg border border-[var(--color-accent)] bg-[var(--color-accent)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-surface)] transition hover:opacity-90 disabled:opacity-50"
-            >
-              Work on this
-            </ActionButton>
-            {sessionLink ? (
-              <Link
-                href={`/chat?session=${encodeURIComponent(sessionLink)}`}
-                className="ml-2 inline-block text-[11px] text-[var(--color-accent)]"
-              >
-                Session started →
-              </Link>
-            ) : null}
-          </div>
-        ) : null}
-
-        {/* Promote to a project card (Part 2). Only a human promotes —
-            the card lands in `triage`, not `ready`, and the to-do moves to
-            `working`, not `done`. The link-vs-promote difference: link keeps
-            it a to-do; promote makes it a card. */}
-        {current.stage === "staged" || current.stage === "open" ? (
-          <div className="mt-2">
-            <ActionButton
-              disabled={busy}
-              onAction={async () => {
-                const project = await askText({
-                  title: "Promote to a project card",
-                  body: "The card lands in the project's triage column.",
-                  label: "Project slug",
-                  confirmLabel: "Promote",
-                  tone: "accent",
-                });
-                if (!project) return;
-                await exclusive(async () => {
-                setError(null);
-                try {
-                  const res = await fetch(
-                    `/api/todos/${encodeURIComponent(current.id)}/promote`,
-                    {
-                      method: "POST",
-                      headers: { "content-type": "application/json" },
-                      body: JSON.stringify({ project }),
-                    },
-                  );
-                  const payload = (await res.json()) as Todo & {
-                    card_id?: string;
-                    project_id?: string;
-                    detail?: string;
-                  };
-                  if (!res.ok) {
-                    setError(payload.detail ?? "Promotion failed — try again.");
-                  } else {
-                    setCurrent({ ...current, ...payload });
-                  }
-                } catch {
-                  setError("Couldn’t reach the AI layer.");
-                }
-                });
-              }}
-              busyLabel="Promoting…"
-              className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-[11px] text-[var(--color-muted)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
-            >
-              Promote to a project card
-            </ActionButton>
-          </div>
-        ) : null}
-
-        {current.stage !== "done" && current.stage !== "dismissed" ? (
-          <div className="mt-2 flex">
-            <TodoCompleteForm
-              todo={current}
-              onDone={(completed) => setCurrent({ ...current, ...completed })}
-            />
-          </div>
-        ) : null}
-
-        {current.stage === "staged" || current.stage === "open" ? (
-          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--color-muted)]">
-            <span>Snooze:</span>
-            {SNOOZES.map((option) => (
-              <ActionButton
-                key={option.hours}
-                disabled={busy}
-                busyLabel="Snoozing…"
-                onAction={() =>
-                  post("/snooze", {
-                    until: new Date(
-                      Date.now() + option.hours * 3_600_000,
-                    ).toISOString(),
-                  })
-                }
-                className="rounded-lg border border-[var(--color-border)] px-2 py-1 transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
-              >
-                {option.label}
-              </ActionButton>
-            ))}
-          </div>
-        ) : null}
-
-        {error ? (
-          <p className="mt-2 text-xs text-[var(--color-muted)]">{error}</p>
-        ) : null}
       </div>
 
       {source ? (
@@ -371,6 +213,153 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
           </ul>
         </div>
       ) : null}
+
+      </div>
+
+      <aside
+        data-component="TodoActions"
+        aria-label={t("nextStep")}
+        className="flex min-w-0 flex-col gap-2 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4 lg:sticky lg:top-4"
+      >
+        <h2 className="text-sm font-semibold">{t("nextStep")}</h2>
+        {error ? <InlineAlert tone="danger">{error}</InlineAlert> : null}
+        <div className="flex flex-wrap gap-1.5 text-[11px]">
+          {/* Finishing goes through the form below instead: it is the one
+              transition that may also propose something outgoing. */}
+          {NEXT_STAGES[current.stage]
+            .filter((stage) => stage !== "done")
+            .map((stage) => (
+              <ActionButton
+                key={stage}
+                disabled={busy}
+                busyLabel="Saving…"
+                onAction={() =>
+                  stage === "dismissed" ? dismissWithUndo() : post("/stage", { stage })
+                }
+                className="rounded-lg border border-[var(--color-border)] px-2 py-1 text-[var(--color-muted)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+              >
+                {STAGE_VERB[stage]}
+              </ActionButton>
+            ))}
+          {/* "Add to project" (§13): the user is here when they realise the
+              to-do belongs to something bigger — link it from both ends. */}
+          <button
+            type="button"
+            onClick={() => setAddOpen(true)}
+            className="rounded-lg border border-[var(--color-border)] px-2 py-1 text-[var(--color-muted)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+          >
+            Add to project
+          </button>
+        </div>
+
+        {/* “Work on this” moves to working AND spawns a seeded session.
+            The stage change happens first; the spawn is best-effort and
+            reports itself.  Sits beside the stage buttons rather than
+            replacing “Work on it”, so the user can move the stage without
+            spawning if they prefer. */}
+        {current.stage === "staged" || current.stage === "open" ? (
+          <div className="mt-2">
+            <ActionButton
+              disabled={busy}
+              onAction={() => exclusive(async () => {
+                setError(null);
+                setSessionLink(null);
+                try {
+                  const res = await fetch(
+                    `/api/todos/${encodeURIComponent(current.id)}/start`,
+                    {
+                      method: "POST",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ session: true }),
+                    },
+                  );
+                  const payload = (await res.json()) as Todo & {
+                    session_id?: string | null;
+                    spawned?: boolean;
+                    detail?: string;
+                  };
+                  if (!res.ok) {
+                    setError(payload.detail ?? "That didn’t stick — try again.");
+                  } else {
+                    setCurrent({ ...current, ...payload });
+                    if (payload.session_id) {
+                      setSessionLink(payload.session_id);
+                    }
+                  }
+                } catch {
+                  setError("Couldn’t reach the AI layer.");
+                }
+              })}
+              busyLabel="Starting…"
+              className="rounded-lg border border-[var(--color-accent)] bg-[var(--color-accent)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-surface)] transition hover:opacity-90 disabled:opacity-50"
+            >
+              Work on this
+            </ActionButton>
+            {sessionLink ? (
+              <Link
+                href={`/chat?session=${encodeURIComponent(sessionLink)}`}
+                className="ml-2 inline-block text-[11px] text-[var(--color-accent)]"
+              >
+                Session started →
+              </Link>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* Promote to a project card (Part 2). Only a human promotes —
+            the card lands in `triage`, not `ready`, and the to-do moves to
+            `working`, not `done`. The link-vs-promote difference: link keeps
+            it a to-do; promote makes it a card. */}
+        {current.stage === "staged" || current.stage === "open" ? (
+          <div className="mt-2">
+            <button
+              type="button"
+              data-action="promote"
+              disabled={busy}
+              onClick={() => setAddOpen(true)}
+              className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-[11px] text-[var(--color-muted)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+            >
+              Promote to a project card
+            </button>
+          </div>
+        ) : null}
+
+        {current.stage !== "done" && current.stage !== "dismissed" ? (
+          <div className="mt-2 flex">
+            <TodoCompleteForm
+              todo={current}
+              onDone={(completed) => setCurrent({ ...current, ...completed })}
+            />
+          </div>
+        ) : null}
+
+        {current.stage === "staged" || current.stage === "open" ? (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--color-muted)]">
+            <span>Snooze:</span>
+            {SNOOZES.map((option) => (
+              <ActionButton
+                key={option.hours}
+                disabled={busy}
+                busyLabel="Snoozing…"
+                onAction={async () => {
+                  await post("/snooze", {
+                    until: new Date(
+                      Date.now() + option.hours * 3_600_000,
+                    ).toISOString(),
+                  });
+                  showUndo(t("snoozed", { title: current.title }), () =>
+                    post("/snooze", { until: new Date().toISOString() }),
+                  );
+                }}
+                className="rounded-lg border border-[var(--color-border)] px-2 py-1 transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+              >
+                {option.label}
+              </ActionButton>
+            ))}
+          </div>
+        ) : null}
+
+      </aside>
 
       {addOpen ? (
         <AddToProjectSheet
