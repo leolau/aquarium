@@ -346,7 +346,7 @@ export function ModelsView({
               </span>
               {advanced ? <BackupLine backups={fallbacks} /> : null}
             </span>
-            <span className="text-[var(--color-muted)]">›</span>
+            {canAdmin ? <span className="text-[var(--color-muted)]">›</span> : null}
           </button>
           {roles.map((role) => {
             const a = assignments.get(role.task);
@@ -380,7 +380,7 @@ export function ModelsView({
                   ) : null}
                   {advanced ? <BackupLine backups={a?.fallback_chain} /> : null}
                 </span>
-                <span className="text-[var(--color-muted)]">›</span>
+                {canAdmin ? <span className="text-[var(--color-muted)]">›</span> : null}
               </button>
             );
           })}
