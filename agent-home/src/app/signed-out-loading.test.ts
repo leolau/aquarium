@@ -17,7 +17,9 @@ describe("signed-out loading states", () => {
     else expect(src).not.toMatch(/CoralHost|LeadChatHost/);
   });
 
-  it("the root loading state still shows the signed-in shell", () => {
-    expect(readFileSync(join(APP, "loading.tsx"), "utf8")).toContain("<MobileShell");
+  it("the root loading state shows the signed-in shell without a page header", () => {
+    const src = readFileSync(join(APP, "loading.tsx"), "utf8");
+    expect(src).toMatch(/<MobileShell[^>]*\bhideHeader\b/);
+    expect(src).toContain("<RouteLoading");
   });
 });
