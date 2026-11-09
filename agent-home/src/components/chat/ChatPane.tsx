@@ -227,6 +227,13 @@ export function ChatPane({
     }
   }
 
+  // The page heading is server-rendered from `?session=`; re-open the page
+  // fresh so it reads "New chat" instead of the chat just left.
+  function startFreshChat() {
+    startNewConversation();
+    if (initialSessionId) router.push("/chat?new=1");
+  }
+
   async function archiveSession() {
     const s = detailsSession;
     if (!s) return;
@@ -416,7 +423,7 @@ export function ChatPane({
   // latest closures.  The cleanup resets to noops on unmount so a stale ref
   // can't fire after navigating away from the chat page.
   useEffect(() => {
-    chatHeaderActionsRef.current.startNew = startNewConversation;
+    chatHeaderActionsRef.current.startNew = startFreshChat;
     chatHeaderActionsRef.current.openArchived = () => setArchivedOpen(true);
     chatHeaderActionsRef.current.openDetails = () => {
       const active = sessions.find((s) => s.id === sessionId);
@@ -549,7 +556,7 @@ export function ChatPane({
         <button
           type="button"
           data-action="new-chat"
-          onClick={startNewConversation}
+          onClick={startFreshChat}
           className="flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-[var(--radius-lg)] bg-[var(--color-accent)] text-sm font-medium text-[var(--color-accent-fg)]"
         >
           <PlusIcon size={16} />

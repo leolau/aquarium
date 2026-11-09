@@ -202,3 +202,13 @@ describe("ChatPane filters & search panel", () => {
     expect(push).not.toHaveBeenCalled();
   });
 });
+
+describe("ChatPane new chat", () => {
+  it("re-opens the page fresh so the heading leaves the old chat", () => {
+    renderPane();
+    expect(screen.getByText("general kenobi")).toBeTruthy();
+    fireEvent.click(document.querySelector('[data-action="new-chat"]')!);
+    expect(screen.queryByText("general kenobi")).toBeNull();
+    expect(push).toHaveBeenCalledWith("/chat?new=1");
+  });
+});
