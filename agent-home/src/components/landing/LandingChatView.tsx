@@ -26,6 +26,7 @@ export function LandingChatView({
   sessionId,
   profile,
   title,
+  renamedTitle,
   highlight,
   storageEnabled,
   onClose,
@@ -34,6 +35,8 @@ export function LandingChatView({
   profile: string;
   /** Title known from the row or hit that opened it (shown until the list loads). */
   title?: string | null;
+  /** The title just saved from the sidebar ("" when cleared), until the list catches up. */
+  renamedTitle?: string;
   /** Message-search words to highlight. */
   highlight?: string;
   storageEnabled: boolean;
@@ -64,8 +67,17 @@ export function LandingChatView({
     findSession: (id) => sessions?.find((s) => s.id === id),
     onSessionsStale: () => void refresh(),
   });
+  useEffect(() => {
+    if (renamedTitle === undefined) return;
+    setSessions(
+      (prev) =>
+        prev?.map((s) => (s.id === sessionId ? { ...s, title: renamedTitle || null } : s)) ?? prev,
+    );
+  }, [renamedTitle, sessionId]);
   const session = sessions?.find((s) => s.id === sessionId);
-  const heading = session ? displayTitle(session).text : title?.trim() || t("inlineChat.untitled");
+  const heading = session
+    ? displayTitle(session).text
+    : renamedTitle?.trim() || title?.trim() || t("inlineChat.untitled");
 
   return (
     <section

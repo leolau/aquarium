@@ -79,6 +79,7 @@ export function LandingClient({
   const chatProfile = params?.get("profile") || currentProfile;
   const [opened, setOpened] = useState<OpenedChat | null>(null);
   const openedChat = opened?.id === chatId ? opened : null;
+  const [renamed, setRenamed] = useState<{ id: string; title: string } | null>(null);
 
   const openChat = (id: string, profile: string, meta: Omit<OpenedChat, "id">) => {
     const href = landingChatHref(id, profile);
@@ -106,6 +107,7 @@ export function LandingClient({
       chatsApi.searchMessages(q, signal, currentProfile),
     onOpenMessageHit: openMessageHit,
     onOpenChat: openSession,
+    onRenamed: (s: LandingSession, title: string) => setRenamed({ id: s.id, title }),
   };
 
   return (
@@ -134,6 +136,7 @@ export function LandingClient({
               sessionId={chatId}
               profile={chatProfile}
               title={openedChat?.title}
+              renamedTitle={renamed?.id === chatId ? renamed.title : undefined}
               highlight={openedChat?.highlight}
               storageEnabled={storageEnabled}
               onClose={closeChat}

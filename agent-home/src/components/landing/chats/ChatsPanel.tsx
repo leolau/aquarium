@@ -46,6 +46,8 @@ export interface ChatsPanelProps {
   onOpenMessageHit?: (hit: MessageSearchHit) => void;
   /** Open a row's chat in place (the landing page) instead of on `/chat`. */
   onOpenChat?: (session: LandingSession) => void;
+  /** A row was renamed (the new title, trimmed; empty when cleared). */
+  onRenamed?: (session: LandingSession, title: string) => void;
 }
 
 function SectionHeader({ label, count }: { label: string; count?: number }) {
@@ -110,6 +112,7 @@ export function ChatsPanel({
   messageSearch,
   onOpenMessageHit,
   onOpenChat,
+  onRenamed,
 }: ChatsPanelProps & {
   searchShortcut?: boolean | "hint";
   onNavigate?: () => void;
@@ -174,7 +177,11 @@ export function ChatsPanel({
       canPin={chats.canPin}
       busy={chats.busyIds.has(s.id)}
       onTogglePin={(s) => void onTogglePin(s)}
-      onRename={chats.rename}
+      onRename={async (session, title) => {
+        const ok = await chats.rename(session, title);
+        if (ok) onRenamed?.(session, title.trim());
+        return ok;
+      }}
       onNavigate={onNavigate}
       onOpen={onOpenChat}
     />
