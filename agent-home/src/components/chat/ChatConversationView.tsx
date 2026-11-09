@@ -19,10 +19,12 @@ export function ChatConversationView({
   conv,
   storageEnabled,
   composerInitialText,
+  composerLauncherClearance = true,
 }: {
   conv: ChatConversation;
   storageEnabled: boolean;
   composerInitialText?: string;
+  composerLauncherClearance?: boolean;
 }) {
   const {
     sessionId,
@@ -115,6 +117,7 @@ export function ChatConversationView({
         onSend={conv.send}
         onStop={() => void conv.stopTurn()}
         stopping={selTurn?.stopping ?? false}
+        launcherClearance={composerLauncherClearance}
       />
     </>
   );

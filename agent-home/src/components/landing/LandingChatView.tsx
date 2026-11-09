@@ -125,7 +125,12 @@ export function LandingChatView({
         </div>
       ) : null}
 
-      <ChatConversationView conv={conv} storageEnabled={storageEnabled} />
+      {/* The landing dock already keeps the composer clear of the launcher. */}
+      <ChatConversationView
+        conv={conv}
+        storageEnabled={storageEnabled}
+        composerLauncherClearance={false}
+      />
     </section>
   );
 }

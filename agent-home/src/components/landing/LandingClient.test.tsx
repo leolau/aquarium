@@ -136,6 +136,17 @@ describe("LandingClient inline chat", () => {
     );
   });
 
+  it("lines the inline composer up with the transcript card", async () => {
+    renderLanding();
+    fireEvent.click(await sidebar().findByRole("link", { name: "Q3 planning notes" }));
+    await screen.findByText("Here is the Q3 plan outline.");
+    const inline = document.querySelector<HTMLElement>(
+      '[data-component="LandingChat"] [data-component="Composer"]',
+    );
+    expect(inline).toBeTruthy();
+    expect(inline!.style.marginLeft).toBe("");
+  });
+
   it("adds one history entry for a double press", async () => {
     renderLanding();
     const link = await sidebar().findByRole("link", { name: "Q3 planning notes" });
