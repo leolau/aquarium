@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { authField, authLabel, authPrimary, authSecondary } from "@/components/auth/styles";
 import { InlineAlert, type AlertTone } from "@/components/ui/InlineAlert";
@@ -15,15 +15,15 @@ export interface ProviderOption {
   supports_password: boolean;
 }
 
-type IdKind = "email" | "username";
-
 /**
  * Mobile-first login form for the C1 bridge. Submits credentials to the
  * `agent-home` `/api/session/login` route, which authenticates against the
  * Python `dashboard_auth` provider and mints the bridge session.
  *
- * The Email / Username tabs only change the field's label and autocomplete
- * hint; both send the same `username` value. Sign in locks on the first press
+ * One "Email or username" field and no provider choice: the BFF picks the
+ * password provider from the value (an `@` prefers email) and retries the
+ * other one once. A two-factor step names the provider that asked for it, and
+ * the code goes back to that one. Sign in locks on the first press
  * (Enter included) and, once it succeeds, stays locked until the next page
  * lands.
  */
@@ -38,8 +38,9 @@ export function LoginForm({
   const t = useT("login");
   const router = useRouter();
   const passwordProviders = providers.filter((p) => p.supports_password);
-  const [provider, setProvider] = useState(passwordProviders[0]?.name ?? "");
-  const [idKind, setIdKind] = useState<IdKind>("email");
+  // The provider that asked for the two-factor code, so the code goes back to it.
+  const [codeProvider, setCodeProvider] = useState<string | null>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<{ text: string; tone: AlertTone } | null>(null);
@@ -62,7 +63,7 @@ export function LoginForm({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          provider,
+          ...(needsCode && codeProvider ? { provider: codeProvider } : {}),
           username,
           password,
           ...(needsCode ? { code } : {}),
@@ -73,9 +74,11 @@ export function LoginForm({
         detail?: string;
         error?: string;
         two_factor_required?: boolean;
+        provider?: string;
         profile?: string;
       } | null;
       if (res.ok && body?.two_factor_required) {
+        setCodeProvider(typeof body.provider === "string" ? body.provider : null);
         setNeedsCode(true);
         setCode("");
         return;
@@ -104,7 +107,12 @@ export function LoginForm({
         setError({ text: ta("tooMany"), tone: "danger" });
         return;
       }
-      setError({ text: body?.detail ?? t("failed"), tone: "danger" });
+      if (body?.error === "login_failed" && res.status === 401) {
+        setError({ text: t("wrongCredentials"), tone: "danger" });
+        passwordRef.current?.focus();
+        return;
+      }
+      setError({ text: t("failed"), tone: "danger" });
     } catch {
       setError({ text: t("unreachable"), tone: "warn" });
     } finally {
@@ -144,6 +152,7 @@ export function LoginForm({
             disabled={locked}
             onClick={() => {
               setNeedsCode(false);
+              setCodeProvider(null);
               setPassword("");
               setError(null);
             }}
@@ -174,52 +183,15 @@ export function LoginForm({
       className="flex flex-col gap-4"
     >
       {alert}
-      <div
-        role="tablist"
-        aria-label={t("signInWith")}
-        className="inline-flex w-fit rounded-[var(--radius-full)] border border-[var(--color-border)] bg-[var(--color-bg)] p-0.5"
-      >
-        {(["email", "username"] as const).map((kind) => (
-          <button
-            key={kind}
-            type="button"
-            role="tab"
-            aria-selected={idKind === kind}
-            disabled={locked}
-            onClick={() => setIdKind(kind)}
-            className={`min-h-9 rounded-[var(--radius-full)] px-4 text-sm ${
-              idKind === kind
-                ? "bg-[var(--color-surface-2)] font-medium text-[var(--color-text)]"
-                : "text-[var(--color-muted)]"
-            }`}
-          >
-            {t(kind === "email" ? "tabEmail" : "tabUsername")}
-          </button>
-        ))}
-      </div>
-      {passwordProviders.length > 1 ? (
-        <label className={authLabel}>
-          {t("provider")}
-          <select
-            value={provider}
-            disabled={locked}
-            onChange={(e) => setProvider(e.target.value)}
-            className={authField}
-          >
-            {passwordProviders.map((p) => (
-              <option key={p.name} value={p.name}>
-                {p.display_name}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : null}
       <label className={authLabel}>
-        {t(idKind === "email" ? "email" : "usernameOnly")}
+        {t("identifier")}
         <input
-          type={idKind === "email" ? "email" : "text"}
-          autoComplete={idKind === "email" ? "email" : "username"}
-          inputMode={idKind === "email" ? "email" : "text"}
+          type="text"
+          name="username"
+          autoComplete="username"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
           readOnly={locked}
           value={username}
           onChange={(e) => setUsername(e.target.value)}
@@ -230,7 +202,9 @@ export function LoginForm({
       <label className={authLabel}>
         {t("password")}
         <input
+          ref={passwordRef}
           type="password"
+          name="password"
           autoComplete="current-password"
           readOnly={locked}
           value={password}
@@ -239,7 +213,7 @@ export function LoginForm({
           required
         />
       </label>
-      <button type="submit" disabled={locked || !provider} className={`${authPrimary} w-full`}>
+      <button type="submit" disabled={locked || passwordProviders.length === 0} className={`${authPrimary} w-full`}>
         {locked ? (
           <>
             <Spinner size="md" />
