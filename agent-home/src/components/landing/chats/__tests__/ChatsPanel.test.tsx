@@ -14,6 +14,8 @@ vi.mock("@/lib/chat/session-list-fetch", () => ({
 
 import { ChatsDrawer } from "../ChatsDrawer";
 import { ChatsSidebar } from "../ChatsSidebar";
+import { notifySessionsChanged } from "@/lib/chat/sessions-changed";
+
 import { fakeFetch, json, sessions, withoutPins } from "./fixtures";
 
 const profiles = [
@@ -179,6 +181,79 @@ describe("ChatsSidebar", () => {
       title: "Nightly sync failure",
       profile: "work",
     });
+  });
+
+  it("archives a chat once, hides it, and Undo restores it", async () => {
+    let list = sessions;
+    const f = install({
+      "GET /api/chat/sessions": () => json({ sessions: list }),
+      "GET /api/chat/pin-suggestions": () => json({ items: [], generated_at: 1 }),
+      "PATCH /api/chat/sessions/archive": async (init) => {
+        const b = JSON.parse(String(init?.body));
+        list = list.map((s) => (s.id === b.sessionId ? { ...s, archived: b.archived } : s));
+        return json({ ok: true });
+      },
+    });
+    render(<ChatsSidebar profiles={profiles} profile="work" />);
+    const btn = await screen.findByRole("button", { name: "Archive “Debug flaky e2e test”" });
+    fireEvent.click(btn);
+    fireEvent.click(btn);
+    await waitFor(() => expect(rowNames("Recent chats")).not.toContain("Debug flaky e2e test"));
+    expect(await screen.findByText("Chat archived")).toBeTruthy();
+    const archives = () => f.mock.calls.filter(([u]) => String(u).includes("/sessions/archive"));
+    expect(archives()).toHaveLength(1);
+    expect(bodyOf(f, "PATCH /api/chat/sessions/archive")).toEqual({
+      sessionId: "s-flaky",
+      archived: true,
+      profile: "work",
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Undo/ }));
+    await waitFor(() => expect(rowNames("Recent chats")).toContain("Debug flaky e2e test"));
+    expect(archives().map(([, i]) => JSON.parse(String(i?.body)).archived)).toEqual([true, false]);
+  });
+
+  it("puts an archived chat back and explains when the archive fails", async () => {
+    install({
+      "GET /api/chat/sessions": () => json({ sessions }),
+      "GET /api/chat/pin-suggestions": () => json({ items: [], generated_at: 1 }),
+      "PATCH /api/chat/sessions/archive": () => json({ error: "api_error", detail: "boom" }, 500),
+    });
+    render(<ChatsSidebar profiles={profiles} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Archive “Debug flaky e2e test”" }));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(rowNames("Recent chats")).toContain("Debug flaky e2e test");
+    expect(screen.queryByText("Chat archived")).toBeNull();
+  });
+
+  it("lists a chat started elsewhere on the page under Recent at once", async () => {
+    let list = sessions;
+    install({
+      "GET /api/chat/sessions": () => json({ sessions: list }),
+      "GET /api/chat/pin-suggestions": () => json({ items: [], generated_at: 1 }),
+    });
+    render(<ChatsSidebar profiles={profiles} profile="work" />);
+    await screen.findByRole("region", { name: "Recent chats" });
+    act(() => notifySessionsChanged({ profile: "work", session: { id: "s-new", preview: "draft the Q4 plan" } }));
+    expect(rowNames("Recent chats")[0]).toBe("draft the Q4 plan");
+    // The server has not listed it yet: the forced re-read must not drop it.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(rowNames("Recent chats")[0]).toBe("draft the Q4 plan");
+    // Once the server lists it (with its title), it shows once.
+    list = [{ ...sessions[0], id: "s-new", title: "Q4 plan", pinned_at: null, last_active: 9e9 }, ...sessions];
+    act(() => notifySessionsChanged({ profile: "work" }));
+    await waitFor(() => expect(rowNames("Recent chats")[0]).toBe("Q4 plan"));
+    expect(rowNames("Recent chats").filter((n) => n === "draft the Q4 plan")).toHaveLength(0);
+  });
+
+  it("ignores chats started in another profile", async () => {
+    install({
+      "GET /api/chat/sessions": () => json({ sessions }),
+      "GET /api/chat/pin-suggestions": () => json({ items: [], generated_at: 1 }),
+    });
+    render(<ChatsSidebar profiles={profiles} profile="work" />);
+    await screen.findByRole("region", { name: "Recent chats" });
+    act(() => notifySessionsChanged({ profile: "default", session: { id: "s-other", preview: "other profile" } }));
+    expect(screen.queryByText("other profile")).toBeNull();
   });
 
   it("starts a new chat in the default profile and opens it", async () => {

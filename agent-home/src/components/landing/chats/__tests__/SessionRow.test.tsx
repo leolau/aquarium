@@ -40,6 +40,36 @@ describe("SessionRow", () => {
     expect(screen.getByText("Default · working now")).toBeTruthy();
   });
 
+  it("shows when every chat was last updated, live ones included", () => {
+    const { rerender } = renderRow({ session: pinnedRow });
+    const time = document.querySelector("time[data-slot='session-updated']")!;
+    expect(time.textContent).toBe("Last updated 14 min ago");
+    expect(time.getAttribute("dateTime")).toBe(new Date(pinnedRow.last_active! * 1000).toISOString());
+    expect(time.getAttribute("title")).toMatch(/^Last updated /);
+    rerender(
+      <ul>
+        <SessionRow session={liveRow} href="/x" profileLabel="Default" now={NOW} />
+      </ul>,
+    );
+    expect(document.querySelector("time[data-slot='session-updated']")!.textContent).toBe("Last updated 1 min ago");
+  });
+
+  it("archives the chat from its row and locks while busy", () => {
+    const onArchive = vi.fn();
+    const { rerender } = renderRow({ session: pinnedRow, onArchive });
+    fireEvent.click(screen.getByRole("button", { name: "Archive “Refactor billing webhooks”" }));
+    expect(onArchive).toHaveBeenCalledWith(pinnedRow);
+    rerender(
+      <ul>
+        <SessionRow session={pinnedRow} href="/x" profileLabel="Default" now={NOW} onArchive={onArchive} busy />
+      </ul>,
+    );
+    const btn = screen.getByRole("button", { name: "Archive “Refactor billing webhooks”" }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    fireEvent.click(btn);
+    expect(onArchive).toHaveBeenCalledTimes(1);
+  });
+
   it("toggles pin and reflects pinned state", () => {
     const onTogglePin = vi.fn();
     renderRow({ session: pinnedRow, onTogglePin });

@@ -3,7 +3,6 @@
 import type { PinSuggestion } from "@/types/landing";
 
 import { PinIcon, SparklesIcon, XIcon } from "@/components/ui/icons";
-import { quoteList } from "./model";
 
 /**
  * The agent's page-load nudge (Figma `pin-suggestion` 4:54): unfinished chats
@@ -25,13 +24,7 @@ export function PinSuggestionCard({
   const ids = suggestions.map((s) => s.session_id);
   const n = suggestions.length;
   const title = `${n} unfinished chat${n === 1 ? "" : "s"} worth pinning`;
-  const names = suggestions.map((s) => s.title?.trim() || "Untitled chat");
-  const detail =
-    n === 1
-      ? `${quoteList(names)} stopped mid-way${
-          suggestions[0].reason ? ` — ${suggestions[0].reason}` : ""
-        }. Pin it so it stays on top?`
-      : `${quoteList(names)} stopped mid-way. Pin them so they stay on top?`;
+  const ask = n === 1 ? "Pin it so it stays on top?" : "Pin them so they stay on top?";
   const accept = n === 1 ? "Pin it" : n === 2 ? "Pin both" : "Pin all";
 
   return (
@@ -56,7 +49,23 @@ export function PinSuggestionCard({
           <XIcon size={14} />
         </button>
       </div>
-      <p className="text-xs font-medium leading-4 text-[var(--color-muted)]">{detail}</p>
+      <ul aria-label="Suggested chats" className="flex max-h-40 flex-col gap-1 overflow-y-auto">
+        {suggestions.map((s) => (
+          <li
+            key={s.session_id}
+            data-slot="suggested-chat"
+            className="flex min-w-0 flex-col rounded-[var(--radius-md)] bg-[var(--color-surface-2)] px-2 py-1.5"
+          >
+            <span className="break-words text-xs font-medium leading-4 text-[var(--color-fg)]">
+              {s.title?.trim() || "Untitled chat"}
+            </span>
+            <span className="text-[11px] leading-[14px] text-[var(--color-muted)]">
+              {s.reason || "stopped mid-way"}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="text-xs font-medium leading-4 text-[var(--color-muted)]">{ask}</p>
       <div className="flex items-center gap-2">
         <button
           type="button"

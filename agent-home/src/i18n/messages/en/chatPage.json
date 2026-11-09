@@ -15,6 +15,7 @@
   "tryAgain": "Try again",
   "pinnedToast": "Chat pinned",
   "unpinnedToast": "Chat unpinned",
+  "archivedToast": "Chat archived",
   "messageSearch": {
     "heading": "In messages",
     "hint": "Type {min} or more letters to also search inside every conversation.",

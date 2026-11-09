@@ -163,6 +163,11 @@ export function ChatsPanel({
       togglePin({ ...s, pinned_at: wasPinned ? null : Date.now() / 1000 }),
     );
   };
+  const { setArchived } = chats;
+  const onArchive = async (s: LandingSession) => {
+    if (!(await setArchived(s, true))) return;
+    showUndo(t("archivedToast"), () => setArchived({ ...s, archived: true }, false));
+  };
   const pinned = chats.pinned.filter(inCategory);
   const recent = chats.recent.filter(inCategory).slice(0, RECENT_LIMIT);
   const empty = !chats.loading && chats.sessions.filter((s) => !s.archived).length === 0;
@@ -182,6 +187,7 @@ export function ChatsPanel({
         if (ok) onRenamed?.(session, title.trim());
         return ok;
       }}
+      onArchive={(s) => void onArchive(s)}
       onNavigate={onNavigate}
       onOpen={onOpenChat}
     />

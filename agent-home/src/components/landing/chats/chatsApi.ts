@@ -109,6 +109,19 @@ export const chatsApi = {
     );
   },
 
+  archive(
+    sessionId: string,
+    archived: boolean,
+    profile: string | undefined,
+    fetchImpl: typeof fetch = fetch,
+  ): Promise<WriteOutcome<unknown>> {
+    return write(
+      "/api/chat/sessions/archive",
+      "PATCH",
+      { sessionId, archived, ...profileBody(profile) },
+      fetchImpl,
+    );
+  },
   rename(
     sessionId: string,
     title: string,

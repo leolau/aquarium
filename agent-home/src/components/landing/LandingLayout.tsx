@@ -21,7 +21,7 @@ export function LandingLayout({
   dock?: ReactNode;
 }) {
   return (
-    <div data-component="LandingLayout" className="flex h-dvh flex-col">
+    <div data-component="LandingLayout" className="relative flex h-dvh flex-col overflow-hidden">
       {/* Not sticky: a sticky wrapper is a stacking context and would trap the
           top bar's dialogs (sign-out, health) under the Coral launchers. */}
       <div style={{ paddingTop: "var(--safe-top)" }}>
@@ -32,7 +32,7 @@ export function LandingLayout({
           <aside
             data-component="landing-sidebar"
             aria-label="Chats"
-            className="hidden min-h-0 overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-surface)] lg:block"
+            className="relative hidden min-h-0 overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-surface)] lg:block"
           >
             {sidebar}
           </aside>
@@ -41,7 +41,7 @@ export function LandingLayout({
         )}
         <main
           data-component="landing-main"
-          className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-4 pt-6 lg:justify-center lg:px-10 lg:py-8"
+          className="relative flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-4 pt-6 lg:justify-center lg:px-10 lg:py-8"
         >
           {main}
         </main>
@@ -49,7 +49,7 @@ export function LandingLayout({
           <aside
             data-component="landing-aside"
             aria-label="Needs you and background work"
-            className="hidden min-h-0 overflow-y-auto border-l border-[var(--color-border)] p-4 lg:block"
+            className="relative hidden min-h-0 overflow-y-auto border-l border-[var(--color-border)] p-4 lg:block"
           >
             {aside}
           </aside>
