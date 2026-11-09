@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 
 import { Sheet } from "@/components/ui/Sheet";
@@ -10,24 +11,40 @@ import { useNeedsYou } from "@/lib/landing/needsYou";
 import type { ProfileSummary } from "@/types";
 
 import { ChatsDrawer, ChatsSidebar } from "./chats";
+import { chatsApi, landingChatHref } from "./chats/chatsApi";
+import { highlightTermOf, type MessageSearchHit } from "./chats/MessageSearch";
+import { displayTitle, type LandingSession } from "./chats/model";
+import { LandingChatView } from "./LandingChatView";
 import { LandingComposer } from "./LandingComposer";
 import { LandingLayout } from "./LandingLayout";
 import { TopBarView } from "./topbar";
 import { LandingWorkPanel, type NeedsYouFeed } from "./work";
 
+/** What the row or hit that opened a chat already knew about it. */
+interface OpenedChat {
+  id: string;
+  title?: string | null;
+  highlight?: string;
+}
+
 /**
  * The interactive landing page. One needs-you poll feeds the top-bar badge,
  * the mobile banner, the greeting, the panel, the tab-title count and the app
- * badge, so they can never disagree.
+ * badge, so they can never disagree. A chat picked in the sidebar, the
+ * drawer or message search opens in the centre column (`/?chat=<id>`, a
+ * history push, so Back returns to the composer and a reload re-opens it).
  */
 export function LandingClient({
   profiles,
   currentProfile,
   accountName,
+  storageEnabled = false,
 }: {
   profiles: ProfileSummary[];
   currentProfile: string;
   accountName?: string | null;
+  /** Attachments can be uploaded from the inline chat's composer. */
+  storageEnabled?: boolean;
 }) {
   const status = useStatusSummary();
   const activity = useActivityRunning();
@@ -57,7 +74,39 @@ export function LandingClient({
     }
   };
 
-  const chats = { profile: currentProfile, profiles };
+  const params = useSearchParams();
+  const chatId = params?.get("chat") || null;
+  const chatProfile = params?.get("profile") || currentProfile;
+  const [opened, setOpened] = useState<OpenedChat | null>(null);
+  const openedChat = opened?.id === chatId ? opened : null;
+
+  const openChat = (id: string, profile: string, meta: Omit<OpenedChat, "id">) => {
+    const href = landingChatHref(id, profile);
+    // A second press (or Enter) on the open chat adds no history entry.
+    if (window.location.pathname + window.location.search !== href) {
+      window.history.pushState(null, "", href);
+    }
+    setOpened({ id, ...meta });
+  };
+  const openSession = (s: LandingSession) =>
+    openChat(s.id, s.profile ?? currentProfile, { title: displayTitle(s).text });
+  const openMessageHit = (hit: MessageSearchHit) =>
+    openChat(hit.session_id, currentProfile, {
+      title: hit.title,
+      highlight: highlightTermOf(hit.snippet),
+    });
+  // Back follows the logical parent (Home's composer), never browser history.
+  const closeChat = () => window.history.pushState(null, "", "/");
+
+  const chats = {
+    profile: currentProfile,
+    profiles,
+    activeSessionId: chatId,
+    messageSearch: (q: string, signal: AbortSignal) =>
+      chatsApi.searchMessages(q, signal, currentProfile),
+    onOpenMessageHit: openMessageHit,
+    onOpenChat: openSession,
+  };
 
   return (
     <>
@@ -79,12 +128,24 @@ export function LandingClient({
         }
         sidebar={<ChatsSidebar {...chats} />}
         main={
-          <LandingComposer
-            profiles={profiles}
-            currentProfile={currentProfile}
-            needsYouCount={needsYou.count}
-            name={accountName}
-          />
+          chatId ? (
+            <LandingChatView
+              key={`${chatProfile}:${chatId}:${openedChat?.highlight ?? ""}`}
+              sessionId={chatId}
+              profile={chatProfile}
+              title={openedChat?.title}
+              highlight={openedChat?.highlight}
+              storageEnabled={storageEnabled}
+              onClose={closeChat}
+            />
+          ) : (
+            <LandingComposer
+              profiles={profiles}
+              currentProfile={currentProfile}
+              needsYouCount={needsYou.count}
+              name={accountName}
+            />
+          )
         }
         aside={<LandingWorkPanel needsYou={feed} />}
         dock={

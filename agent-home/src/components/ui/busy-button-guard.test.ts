@@ -34,6 +34,8 @@ const SENDS_CHANGE =
 // fire them without a busy button. Each entry says how.
 const SELF_LOCKED: Record<string, string> = {
   "components/projects/task/saveViewMode.ts": "one PUT in flight per device; later taps coalesce",
+  "components/chat/useChatConversation.ts":
+    "approval POST goes through its own useAction; one live turn per session",
 };
 // `useProjectAction` takes the same synchronous lock (plus an idempotency key)
 // and pairs with `projects/ActionButton` for the busy look.

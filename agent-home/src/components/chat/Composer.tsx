@@ -27,6 +27,7 @@ export function Composer({
   onStop,
   stopping = false,
   initialText = "",
+  launcherClearance = true,
 }: {
   sending: boolean;
   /** A Stop was requested and the server is winding the turn down. */
@@ -44,6 +45,11 @@ export function Composer({
   onSend: (text: string, attachments: ChatAttachment[]) => void | Promise<boolean | void> | boolean;
   /** Cancel the in-flight turn for the conversation on screen. */
   onStop?: () => void;
+  /**
+   * Left margin that keeps the composer clear of the left-edge Coral
+   * launcher. Off where the layout already clears it (the landing dock).
+   */
+  launcherClearance?: boolean;
 }) {
   const [text, setText] = useState(initialText);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
@@ -154,7 +160,7 @@ export function Composer({
       className="sticky bottom-0 mt-3 bg-[var(--color-bg)] pt-2"
       style={{
         bottom: "var(--safe-bottom)",
-        marginLeft: "calc(2.75rem + 0.75rem)",
+        marginLeft: launcherClearance ? "calc(2.75rem + 0.75rem)" : undefined,
       }}
     >
       {attachments.length > 0 ? (

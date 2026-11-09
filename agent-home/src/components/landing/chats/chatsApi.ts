@@ -7,6 +7,7 @@ import { LANDING_ROUTES, landingApi } from "@/lib/landing/api";
 import type { PinResponse, PinSuggestionsResponse } from "@/types/landing";
 import type { ProfileSummary, SessionCreateResponse } from "@/types";
 
+import type { MessageSearchHit } from "./MessageSearch";
 import type { LandingSession } from "./model";
 
 /**
@@ -49,6 +50,21 @@ export const chatsApi = {
     const url = withProfileQuery(`/api/chat/sessions?limit=${SIDEBAR_SESSION_LIMIT}`, profile);
     const body = await fetchSessionList(url, opts);
     return body?.sessions ? (body.sessions as LandingSession[]) : null;
+  },
+
+  /** Every conversation's messages (`GET /api/chat/sessions/search`). */
+  async searchMessages(
+    q: string,
+    signal: AbortSignal,
+    profile: string | undefined,
+  ): Promise<MessageSearchHit[]> {
+    const res = await fetch(
+      withProfileQuery(`/api/chat/sessions/search?q=${encodeURIComponent(q)}`, profile),
+      { cache: "no-store", signal },
+    );
+    if (!res.ok) throw new Error("Message search failed.");
+    const body = (await res.json()) as { results?: MessageSearchHit[] };
+    return body.results ?? [];
   },
 
   async profiles(fetchImpl: typeof fetch = fetch): Promise<ProfileSummary[] | null> {
@@ -116,6 +132,13 @@ export const chatsApi = {
 };
 
 /** Where a conversation opens: the chat page, in the conversation's profile. */
+/** The landing page with that chat open in its centre column. */
+export function landingChatHref(sessionId: string, profile: string | undefined): string {
+  const params = new URLSearchParams({ chat: sessionId });
+  if (profile && profile !== "default") params.set("profile", profile);
+  return `/?${params.toString()}`;
+}
+
 export function chatHref(sessionId: string, profile: string | undefined): string {
   const params = new URLSearchParams({ session: sessionId });
   if (profile && profile !== "default") params.set("profile", profile);

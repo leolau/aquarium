@@ -22,5 +22,13 @@
     "failed": "搜尋訊息失敗。",
     "empty": "沒有訊息符合「{query}」。",
     "untitled": "未命名對話"
+  },
+  "inlineChat": {
+    "back": "返回主頁",
+    "home": "主頁",
+    "openFullPage": "以完整頁面開啟",
+    "untitled": "對話",
+    "highlighting": "正在標示「{term}」",
+    "clearHighlight": "清除標示"
   }
 }
