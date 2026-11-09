@@ -139,7 +139,7 @@ export function SessionRow({
               data-slot="session-updated"
               dateTime={updated.iso}
               title={`Last updated ${updated.full}`}
-              className="ml-auto inline-flex shrink-0 items-center gap-1 tabular-nums"
+              className="relative z-10 ml-auto inline-flex shrink-0 cursor-default items-center gap-1 tabular-nums"
             >
               <ClockIcon size={11} />
               <span className="sr-only">Last updated </span>
