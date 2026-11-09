@@ -66,7 +66,7 @@ describe("POST /api/session/login with two-factor", () => {
   it("asks for a code without creating a session", async () => {
     upstream = Response.json({ ok: false, two_factor_required: true });
     const res = await POST(req(creds));
-    expect(await res.json()).toEqual({ ok: false, two_factor_required: true });
+    expect(await res.json()).toEqual({ ok: false, two_factor_required: true, provider: "supabase" });
     expect(writeSession).not.toHaveBeenCalled();
   });
 
@@ -95,6 +95,111 @@ describe("POST /api/session/login with two-factor", () => {
     expect((await res.json()).error).toBe("login_failed");
     const sent = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
     expect(sent).toEqual(creds);
+  });
+});
+
+describe("POST /api/session/login picks the password provider itself", () => {
+  const PROVIDERS = [
+    { name: "supabase", display_name: "Email & Password (Supabase)", supports_password: true },
+    { name: "github", display_name: "GitHub", supports_password: false },
+    { name: "basic", display_name: "Username & Password", supports_password: true },
+  ];
+  let answers: Response[] = [];
+  const tried = () =>
+    fetchMock.mock.calls
+      .filter(([url]) => String(url).endsWith("/auth/password-login"))
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)) as Record<string, string>);
+
+  beforeEach(() => {
+    answers = [];
+    fetchMock.mockImplementation(async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith("/api/auth/providers")) return Response.json({ providers: PROVIDERS });
+      if (u.endsWith("/api/auth/my-profiles")) return Response.json({ profiles: enrolments });
+      return answers.shift() ?? Response.json({ detail: "Invalid credentials" }, { status: 401 });
+    });
+  });
+  afterEach(() => fetchMock.mockImplementation(async (url: unknown) =>
+    String(url).endsWith("/api/auth/my-profiles") ? Response.json({ profiles: enrolments }) : upstream,
+  ));
+
+  const login = (username: string, extra: Record<string, string> = {}) =>
+    POST(req({ username, password: "pw-123456789012", ...extra }));
+
+  it("tries the email provider first for an address, and stops when it works", async () => {
+    answers = [signedIn()];
+    const res = await login("o@x.io");
+    expect(res.status).toBe(200);
+    expect(tried().map((b) => b.provider)).toEqual(["supabase"]);
+    expect(writeSession).toHaveBeenCalledOnce();
+  });
+
+  it("tries the username provider first for a plain name, with provider \"auto\" too", async () => {
+    answers = [signedIn()];
+    await login("admin", { provider: "auto" });
+    expect(tried().map((b) => b.provider)).toEqual(["basic"]);
+  });
+
+  it("falls back to the other password provider exactly once", async () => {
+    answers = [
+      Response.json({ detail: "Invalid credentials" }, { status: 401 }),
+      Response.json({ detail: "Invalid credentials" }, { status: 401 }),
+    ];
+    const res = await login("admin");
+    expect(tried().map((b) => b.provider)).toEqual(["basic", "supabase"]);
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "login_failed", detail: "Wrong email/username or password." });
+    expect(writeSession).not.toHaveBeenCalled();
+  });
+
+  it("falls back after an unknown provider and signs in with the other one", async () => {
+    answers = [Response.json({ detail: "Unknown provider" }, { status: 404 }), signedIn()];
+    const res = await login("o@x.io");
+    expect(tried().map((b) => b.provider)).toEqual(["supabase", "basic"]);
+    expect(res.status).toBe(200);
+  });
+
+  it("does not fall back on a rate limit or an outage", async () => {
+    answers = [Response.json({}, { status: 429 })];
+    expect((await login("admin")).status).toBe(429);
+    answers = [Response.json({}, { status: 503 })];
+    const res = await login("admin");
+    expect(res.status).toBe(503);
+    expect(tried().map((b) => b.provider)).toEqual(["basic", "basic"]);
+  });
+
+  it("names the provider that asked for two-factor, and sends the code only there", async () => {
+    answers = [
+      Response.json({ detail: "Invalid credentials" }, { status: 401 }),
+      Response.json({ ok: false, two_factor_required: true }),
+    ];
+    const first = await login("o@x.io");
+    expect(await first.json()).toEqual({ ok: false, two_factor_required: true, provider: "basic" });
+    fetchMock.mockClear();
+    answers = [Response.json({ detail: "Invalid code" }, { status: 401 })];
+    const second = await login("o@x.io", { provider: "basic", code: "000000" });
+    expect((await second.json()).error).toBe("invalid_code");
+    expect(tried()).toEqual([
+      { provider: "basic", username: "o@x.io", password: "pw-123456789012", code: "000000" },
+    ]);
+  });
+
+  it("uses the only password provider for either kind of identifier", async () => {
+    fetchMock.mockImplementation(async (url: unknown) =>
+      String(url).endsWith("/api/auth/providers")
+        ? Response.json({ providers: [PROVIDERS[0]] })
+        : Response.json({ detail: "Invalid credentials" }, { status: 401 }),
+    );
+    await login("admin");
+    expect(tried().map((b) => b.provider)).toEqual(["supabase"]);
+  });
+
+  it("refuses when no password provider is configured", async () => {
+    fetchMock.mockImplementation(async () => Response.json({ providers: [PROVIDERS[1]] }));
+    const res = await login("admin");
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("no_provider");
+    expect(tried()).toEqual([]);
   });
 });
 

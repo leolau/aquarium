@@ -15,11 +15,17 @@ import { useT } from "@/i18n/client";
 export function AuthLayout({
   children,
   wide = false,
+  aside,
   component,
 }: {
   children: ReactNode;
   /** 860 px for the five-step owner setup; 420 px otherwise. */
   wide?: boolean;
+  /**
+   * A brand panel beside the card from `lg` (1024 px): a two-column split,
+   * vertically centred. Hidden below `lg`, where the single column stays.
+   */
+  aside?: ReactNode;
   component?: string;
 }) {
   const t = useT("auth");
@@ -36,8 +42,22 @@ export function AuthLayout({
         </span>
         <LanguageSwitch />
       </header>
-      <main className="flex flex-1 flex-col items-center px-4 pb-[max(1.5rem,var(--safe-bottom))] pt-4 lg:pt-16">
-        <div className={`w-full min-w-0 ${wide ? "max-w-[860px]" : "max-w-[420px]"}`}>{children}</div>
+      <main
+        className={`flex flex-1 flex-col items-center px-4 pb-[max(1.5rem,var(--safe-bottom))] pt-4 ${
+          aside ? "lg:justify-center lg:px-8 lg:pt-6" : "lg:pt-16"
+        }`}
+      >
+        {aside ? (
+          <div
+            data-layout="auth-split"
+            className="w-full min-w-0 max-w-[420px] lg:grid lg:max-w-[1080px] lg:grid-cols-[minmax(0,1fr)_420px] lg:items-center lg:gap-16 xl:gap-24"
+          >
+            <div className="hidden min-w-0 lg:block">{aside}</div>
+            <div className="min-w-0">{children}</div>
+          </div>
+        ) : (
+          <div className={`w-full min-w-0 ${wide ? "max-w-[860px]" : "max-w-[420px]"}`}>{children}</div>
+        )}
         <p className="mt-6 text-center text-xs text-[var(--color-muted)]">{t("footer")}</p>
       </main>
     </div>

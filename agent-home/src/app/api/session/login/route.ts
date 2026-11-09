@@ -3,7 +3,10 @@
  *
  * Flow (Decision 1 = BRIDGE):
  *   1. Forward the submitted credentials to the Python API's existing
- *      `dashboard_auth` password-login (`POST /auth/password-login`).
+ *      `dashboard_auth` password-login (`POST /auth/password-login`). With no
+ *      `provider` (or `"auto"`) the route picks one from `/api/auth/providers`:
+ *      an `@` prefers the email provider, else the username one; a wrong
+ *      password or unknown provider tries the other password provider once.
  *   2. Capture the upstream `hermes_session_at` token from its `Set-Cookie`.
  *   3. Choose the landing profile among the account's active enrolments
  *      (`/api/auth/my-profiles`, FG-28 D1): `?profile=` from the login URL,
@@ -25,8 +28,10 @@ import { chooseLandingProfile, type LandingChoice } from "@/lib/auth/landing-pro
 import { readLastProfileHint, writeLastProfileHint, writeSession } from "@/lib/auth/session";
 import { syncLanguageAtLogin } from "@/i18n/sync";
 import { HermesApiClient } from "@/lib/api/client";
+import { passwordProviderOrder } from "@/lib/auth/password-providers";
 
 interface LoginBody {
+  /** A provider name, or missing / `"auto"` to choose from the identifier. */
   provider?: unknown;
   username?: unknown;
   password?: unknown;
@@ -55,6 +60,13 @@ async function landingFor(token: string, requested: string): Promise<LandingChoi
   return chooseLandingProfile(enrolments, { requested, hint: await readLastProfileHint() });
 }
 
+function unreachable(): NextResponse {
+  return NextResponse.json(
+    { error: "api_unreachable", detail: "The AI layer could not be reached." },
+    { status: 502 },
+  );
+}
+
 /** Pull the upstream `hermes_session_at` value out of Set-Cookie headers. */
 function extractHermesToken(setCookies: string[]): string | null {
   for (const raw of setCookies) {
@@ -74,32 +86,58 @@ export async function POST(request: Request): Promise<NextResponse> {
   } catch {
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
-  const provider = typeof body.provider === "string" ? body.provider : "";
+  const requestedProvider =
+    typeof body.provider === "string" && body.provider !== "auto" ? body.provider : "";
   const username = typeof body.username === "string" ? body.username : "";
   const password = typeof body.password === "string" ? body.password : "";
   const code = typeof body.code === "string" ? body.code.trim() : "";
   const requestedProfile = typeof body.profile === "string" ? body.profile.trim() : "";
-  if (!provider || !username || !password) {
+  if (!username || !password) {
     return NextResponse.json(
-      { error: "missing_fields", detail: "provider, username and password are required" },
+      { error: "missing_fields", detail: "username and password are required" },
       { status: 400 },
     );
   }
 
-  let upstream: Response;
-  try {
-    upstream = await fetch(`${hermesApiBaseUrl()}/auth/password-login`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(code ? { provider, username, password, code } : { provider, username, password }),
-      cache: "no-store",
-    });
-  } catch {
-    return NextResponse.json(
-      { error: "api_unreachable", detail: "The AI layer could not be reached." },
-      { status: 502 },
-    );
+  let candidates: string[];
+  if (requestedProvider) {
+    candidates = [requestedProvider];
+  } else {
+    try {
+      candidates = passwordProviderOrder(username, (await new HermesApiClient().authProviders()).providers ?? []);
+    } catch {
+      return unreachable();
+    }
+    if (candidates.length === 0) {
+      return NextResponse.json(
+        { error: "no_provider", detail: "No password provider is configured." },
+        { status: 400 },
+      );
+    }
   }
+
+  let upstream: Response | null = null;
+  let provider = "";
+  for (const [i, name] of candidates.entries()) {
+    try {
+      upstream = await fetch(`${hermesApiBaseUrl()}/auth/password-login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(
+          code ? { provider: name, username, password, code } : { provider: name, username, password },
+        ),
+        cache: "no-store",
+      });
+    } catch {
+      return unreachable();
+    }
+    provider = name;
+    // Only a wrong password / unknown provider earns the one fallback; a
+    // rate limit, a provider outage or a code check is final.
+    const tryNext = !code && (upstream.status === 401 || upstream.status === 404) && i < candidates.length - 1;
+    if (!tryNext) break;
+  }
+  if (!upstream) return unreachable();
 
   if (upstream.status === 429) {
     return NextResponse.json(
@@ -114,11 +152,15 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
   if (!upstream.ok) {
-    // Mirror the Python endpoint's deliberately generic failures.
-    const status = upstream.status === 401 ? 401 : upstream.status;
+    // Deliberately generic, like the Python endpoint: never say which part
+    // (identifier, password or provider) was wrong.
+    const wrong = upstream.status === 401 || upstream.status === 404;
     return NextResponse.json(
-      { error: "login_failed", detail: "Invalid credentials or provider." },
-      { status },
+      {
+        error: "login_failed",
+        detail: wrong ? "Wrong email/username or password." : "Sign-in failed.",
+      },
+      { status: wrong ? 401 : upstream.status },
     );
   }
 
@@ -127,8 +169,9 @@ export async function POST(request: Request): Promise<NextResponse> {
   } | null;
   if (answer?.two_factor_required === true) {
     // Password was right; this login has two-factor on. No session yet: the
-    // form asks for a code and sends the password again with it.
-    return NextResponse.json({ ok: false, two_factor_required: true });
+    // form asks for a code and sends the password again with it, to the
+    // provider named here.
+    return NextResponse.json({ ok: false, two_factor_required: true, provider });
   }
 
   const token = extractHermesToken(upstream.headers.getSetCookie());

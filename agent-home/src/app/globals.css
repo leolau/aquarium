@@ -144,3 +144,55 @@ body {
   border-radius: 1rem;
   transition: outline-color 0.3s;
 }
+
+/* Sign-in bowl (AuthBowl): the loader's motion language — the bowl floats,
+ * the AI stars grow and glow in turn. Reduced motion keeps only the fade-in. */
+.aq-bowl {
+  animation: aq-bowl-in 0.6s ease-out both;
+}
+.aq-bowl-float {
+  animation: aq-bowl-float 6s ease-in-out infinite;
+}
+.aq-bowl-star {
+  position: absolute;
+  overflow: visible;
+  transform-origin: 50% 50%;
+  animation: aq-bowl-twinkle 3.6s ease-in-out infinite;
+}
+@keyframes aq-bowl-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes aq-bowl-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4%);
+  }
+}
+@keyframes aq-bowl-twinkle {
+  0%,
+  45%,
+  100% {
+    transform: scale(0.75);
+    opacity: 0.8;
+    filter: none;
+  }
+  20% {
+    transform: scale(1.2);
+    opacity: 1;
+    filter: drop-shadow(0 0 6px rgb(167 139 250 / 0.85));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .aq-bowl-float,
+  .aq-bowl-star {
+    animation: none;
+  }
+}

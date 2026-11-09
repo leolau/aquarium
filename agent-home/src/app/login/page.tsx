@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation";
 
-import { AuthCard, AuthIllustration, AuthLayout } from "@/components/auth/AuthLayout";
+import { AuthBowl } from "@/components/auth/AuthBowl";
+import { AuthCard, AuthLayout } from "@/components/auth/AuthLayout";
+import { LoginBrandPanel } from "@/components/auth/LoginBrandPanel";
 import { ResetRequestForm } from "@/components/auth/ResetRequestForm";
 import { LoginForm, type ProviderOption } from "@/components/LoginForm";
 import { getT } from "@/i18n/server";
@@ -35,10 +37,10 @@ export default async function LoginPage({
   const profile = (await searchParams).profile?.trim() || undefined;
 
   return (
-    <AuthLayout component="LoginPage">
+    <AuthLayout component="LoginPage" aside={<LoginBrandPanel />}>
       <AuthCard className="gap-5">
         <div className="flex flex-col gap-3">
-          <AuthIllustration name="welcome" className="self-start" />
+          <AuthBowl className="h-[120px] self-start lg:hidden" />
           <h1 className="text-[26px] font-semibold tracking-tight lg:text-3xl">{t("title")}</h1>
           <p className="text-sm text-[var(--color-muted)]">{t("intro")}</p>
         </div>
