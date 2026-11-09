@@ -219,3 +219,28 @@ describe("Composer upload errors", () => {
     expect(text).toBe("shot.png: Upload failed: the server could not be reached (Failed to fetch).");
   });
 });
+
+describe("Composer Stop button", () => {
+  it("is ready to press while the turn started by a Send click is still running", async () => {
+    const onStop = vi.fn();
+    const props = {
+      storageEnabled: false,
+      sessionId: "s1",
+      onStop,
+      onSend: () => new Promise<boolean>(() => {}),
+    };
+    const { getByRole, getByPlaceholderText, rerender } = render(
+      <Composer sending={false} {...props} />,
+    );
+    fireEvent.change(getByPlaceholderText(/Message your agent/), {
+      target: { value: "hello" },
+    });
+    fireEvent.click(getByRole("button", { name: "Send" }));
+    rerender(<Composer sending {...props} />);
+    const stop = getByRole("button", { name: "Stop the agent" });
+    expect((stop as HTMLButtonElement).disabled).toBe(false);
+    expect(stop.getAttribute("data-busy")).toBe("false");
+    fireEvent.click(stop);
+    expect(onStop).toHaveBeenCalledTimes(1);
+  });
+});

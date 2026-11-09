@@ -176,6 +176,27 @@ describe("LandingClient inline chat", () => {
     expect(composer()).toBeTruthy();
   });
 
+  it("renaming the open chat in the sidebar updates the inline heading", async () => {
+    const base = vi.mocked(fetch);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) =>
+        String(input).includes("/api/chat/sessions/rename")
+          ? Promise.resolve(json({ ok: true, title: JSON.parse(String(init?.body)).title }))
+          : base(input, init),
+      ),
+    );
+    renderLanding();
+    fireEvent.click(await sidebar().findByRole("link", { name: "Q3 planning notes" }));
+    await screen.findByRole("heading", { level: 2, name: "Q3 planning notes" });
+
+    fireEvent.click(sidebar().getByRole("button", { name: "Rename “Q3 planning notes”" }));
+    const input = sidebar().getByLabelText("Chat title");
+    fireEvent.change(input, { target: { value: "Q3 plan v2" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByRole("heading", { level: 2, name: "Q3 plan v2" })).toBeTruthy();
+  });
+
   it("browser Back returns to the composer", async () => {
     renderLanding();
     fireEvent.click(await sidebar().findByRole("link", { name: "Q3 planning notes" }));
