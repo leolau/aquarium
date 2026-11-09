@@ -261,6 +261,7 @@ export function Composer({
         />
         {sending ? (
           <ActionButton
+            key="stop"
             onAction={() => onStop?.()}
             busy={stopping}
             busyLabel="Stopping…"
@@ -273,6 +274,7 @@ export function Composer({
           </ActionButton>
         ) : (
           <ActionButton
+            key="send"
             onAction={sendOnce}
             disabled={!canSend}
             busyLabel="Sending…"
