@@ -44,6 +44,8 @@ export interface ChatsPanelProps {
   messageSearch?: MessageSearchFn;
   /** Opens the chat a message hit belongs to. */
   onOpenMessageHit?: (hit: MessageSearchHit) => void;
+  /** Open a row's chat in place (the landing page) instead of on `/chat`. */
+  onOpenChat?: (session: LandingSession) => void;
 }
 
 function SectionHeader({ label, count }: { label: string; count?: number }) {
@@ -107,6 +109,7 @@ export function ChatsPanel({
   categoryFilter = false,
   messageSearch,
   onOpenMessageHit,
+  onOpenChat,
 }: ChatsPanelProps & {
   searchShortcut?: boolean | "hint";
   onNavigate?: () => void;
@@ -173,6 +176,7 @@ export function ChatsPanel({
       onTogglePin={(s) => void onTogglePin(s)}
       onRename={chats.rename}
       onNavigate={onNavigate}
+      onOpen={onOpenChat}
     />
   );
 

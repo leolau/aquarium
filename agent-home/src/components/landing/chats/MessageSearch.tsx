@@ -15,6 +15,12 @@ export interface MessageSearchHit {
 
 export type MessageSearchFn = (query: string, signal: AbortSignal) => Promise<MessageSearchHit[]>;
 
+/** The words to highlight for a hit: its `>>>…<<<` match, else its opening text. */
+export function highlightTermOf(snippet: string): string {
+  const marked = />>>([\s\S]+?)<<</.exec(snippet)?.[1]?.trim();
+  return marked || snippet.replace(/>>>/g, "").replace(/<<</g, "").trim().slice(0, 30);
+}
+
 /** Wait for a typing pause before searching every transcript (it is slow). */
 export const MESSAGE_SEARCH_DEBOUNCE_MS = 350;
 /** Shorter queries match almost everything, so they are not sent. */

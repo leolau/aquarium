@@ -3,6 +3,7 @@ import { LandingClient } from "@/components/landing/LandingClient";
 import { activeEnrolments } from "@/lib/api/my-profiles";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
 import { readSession } from "@/lib/auth/session";
+import { storageConfigured } from "@/lib/env";
 import type { ProfileSummary } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -31,6 +32,7 @@ export default async function HomePage() {
         profiles={profiles}
         currentProfile={currentProfile}
         accountName={principal.display || null}
+        storageEnabled={storageConfigured()}
       />
     </MobileShell>
   );

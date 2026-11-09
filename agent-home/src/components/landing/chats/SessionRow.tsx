@@ -25,6 +25,7 @@ export function SessionRow({
   onTogglePin,
   onRename,
   onNavigate,
+  onOpen,
   now,
 }: {
   session: LandingSession;
@@ -37,6 +38,9 @@ export function SessionRow({
   /** Resolves true when the new title was saved. */
   onRename?: (session: LandingSession, title: string) => Promise<boolean>;
   onNavigate?: () => void;
+  /** Open the chat in place instead of following `href` (a plain click or
+   * Enter; modified clicks still open the full page). */
+  onOpen?: (session: LandingSession) => void;
   now?: number;
 }) {
   const [editing, setEditing] = useState(false);
@@ -104,7 +108,13 @@ export function SessionRow({
         ) : (
           <Link
             href={href}
-            onClick={onNavigate}
+            onClick={(e) => {
+              if (onOpen && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && e.button === 0) {
+                e.preventDefault();
+                onOpen(session);
+              }
+              onNavigate?.();
+            }}
             aria-current={active ? "page" : undefined}
             className="min-w-0 truncate text-[13px] font-medium leading-[18px] text-[var(--color-fg)] outline-none after:absolute after:inset-0 after:rounded-[var(--radius-lg)] focus-visible:after:ring-2 focus-visible:after:ring-[var(--color-accent)]"
           >

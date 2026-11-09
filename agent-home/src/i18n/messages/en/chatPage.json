@@ -22,5 +22,13 @@
     "failed": "Message search failed.",
     "empty": "No messages match “{query}”.",
     "untitled": "Untitled chat"
+  },
+  "inlineChat": {
+    "back": "Back to Home",
+    "home": "Home",
+    "openFullPage": "Open full page",
+    "untitled": "Chat",
+    "highlighting": "Highlighting “{term}”",
+    "clearHighlight": "Clear highlight"
   }
 }
