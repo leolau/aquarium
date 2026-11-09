@@ -67,14 +67,9 @@ export function LandingChatView({
     findSession: (id) => sessions?.find((s) => s.id === id),
     onSessionsStale: () => void refresh(),
   });
-  useEffect(() => {
-    if (renamedTitle === undefined) return;
-    setSessions(
-      (prev) =>
-        prev?.map((s) => (s.id === sessionId ? { ...s, title: renamedTitle || null } : s)) ?? prev,
-    );
-  }, [renamedTitle, sessionId]);
-  const session = sessions?.find((s) => s.id === sessionId);
+  const listed = sessions?.find((s) => s.id === sessionId);
+  const session =
+    listed && renamedTitle !== undefined ? { ...listed, title: renamedTitle || null } : listed;
   const heading = session
     ? displayTitle(session).text
     : renamedTitle?.trim() || title?.trim() || t("inlineChat.untitled");
