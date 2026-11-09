@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useT } from "@/i18n";
+import { useAction } from "@/lib/use-action";
 
 import { ChatsDrawer, ChatsSidebar } from "@/components/landing/chats";
 import { chatHref, chatsApi } from "@/components/landing/chats/chatsApi";
@@ -329,6 +330,9 @@ export function ChatPane({
     void refreshSessions();
   }
 
+  // Remove-then-add must not interleave with a second pick.
+  const { run: setSessionCategoryOnce } = useAction(setSessionCategory);
+
   async function suggestTags() {
     const s = detailsSession;
     if (!s) return;
@@ -576,7 +580,7 @@ export function ChatPane({
           onRename={renameSession}
           onArchive={archiveSession}
           category={categorizeSession({ ...detailsSession, tags: sessionTags })}
-          onSetCategory={setSessionCategory}
+          onSetCategory={setSessionCategoryOnce}
           tags={sessionTags}
           allTags={allTags}
           tagSuggestions={tagSuggestions}
