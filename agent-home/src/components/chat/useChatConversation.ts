@@ -25,6 +25,7 @@ import {
   STOPPED_NOTE,
   type TurnActivity,
 } from "@/lib/chat/turn-activity";
+import { notifySessionsChanged } from "@/lib/chat/sessions-changed";
 import { mayGetAutoTitle, waitForAutoTitle } from "@/lib/landing/titles";
 import { useAction } from "@/lib/use-action";
 import type {
@@ -102,6 +103,10 @@ export function useChatConversation({
   onSessionsStale,
 }: ChatConversationOptions) {
   const path = (p: string) => withProfileQuery(p, profile);
+  const sessionsStale = () => {
+    onSessionsStale();
+    notifySessionsChanged({ profile });
+  };
   const [sessionId, setSessionId] = useState<string | null>(initialSessionId);
   const [messages, setMessages] = useState<ChatMessage[]>(visible(initialMessages));
   const [loadingThread, setLoadingThread] = useState(loadOnMount && initialSessionId !== null);
@@ -268,6 +273,17 @@ export function useChatConversation({
     setLiveActivity((prev) => ({ ...prev, [turnKey]: emptyActivity(runId) }));
   }
 
+  /** Tell every chats list the moment the turn lands, so a new chat shows at once. */
+  function withSessionNotice(handlers: ChatStreamHandlers, text: string): ChatStreamHandlers {
+    return {
+      ...handlers,
+      onAccepted: (runId, sid) => {
+        handlers.onAccepted?.(runId, sid);
+        if (sid) notifySessionsChanged({ profile, session: { id: sid, preview: text } });
+      },
+    };
+  }
+
   function makeTurnHandlers(
     turnKey: string,
     setLive: (content: string) => void,
@@ -351,7 +367,7 @@ export function useChatConversation({
         { sessionId: sid, runId },
         makeTurnHandlers(turnKey, setLive),
       );
-      onSessionsStale();
+      sessionsStale();
     } catch {
       // The grace window may have passed; the next transcript load shows the
       // finished turn.
@@ -413,7 +429,7 @@ export function useChatConversation({
           signal: controller.signal,
           profile,
         },
-        makeTurnHandlers(turnKey, setLive),
+        withSessionNotice(makeTurnHandlers(turnKey, setLive), text),
       );
       // A brand-new session lands an id only at completion; you cannot have
       // navigated to it mid-stream, so adopt it only if still on this turn.
@@ -425,12 +441,12 @@ export function useChatConversation({
       // A turn stopped before its first token completes with no text; never
       // leave a blank reply bubble behind.
       if (onThisSession()) setMessages(dropTrailingEmptyAssistant);
-      onSessionsStale();
+      sessionsStale();
       // The backend auto-titles a new chat a few seconds after its first reply.
       const titledId = landed || turnSessionId;
       if (titledId && mayGetAutoTitle(findSession(titledId))) {
         void waitForAutoTitle(titledId, { profile }).then((t) => {
-          if (t) onSessionsStale();
+          if (t) sessionsStale();
         });
       }
       return true;

@@ -73,6 +73,28 @@ export function sessionMeta(s: LandingSession, profileLabel: string, now = Date.
   return when ? `${label} · ${when}` : label;
 }
 
+/** Who the chat belongs to, plus "working now" while the agent is replying. */
+export function sessionOwner(s: LandingSession, profileLabel: string): string {
+  const who = s.tags?.[0]?.name ?? s.profile ?? profileLabel;
+  const label = who === "default" ? "Default" : who;
+  return s.is_active ? `${label} · working now` : label;
+}
+
+/** When the chat last changed: a short relative label plus the full date for tooltips. */
+export function lastUpdated(
+  s: LandingSession,
+  now = Date.now(),
+): { label: string; iso: string; full: string } | null {
+  const at = s.last_active ?? s.started_at;
+  if (!at) return null;
+  const date = new Date(at * 1000);
+  return {
+    label: relativeTime(at, now),
+    iso: date.toISOString(),
+    full: date.toLocaleString("en", { dateStyle: "medium", timeStyle: "short" }),
+  };
+}
+
 /** “A” and “B” / “A”, “B” and “C” — names the chats a suggestion covers. */
 export function quoteList(names: string[]): string {
   const quoted = names.map((n) => `“${n}”`);

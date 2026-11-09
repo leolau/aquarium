@@ -15,6 +15,7 @@
   "tryAgain": "再試一次",
   "pinnedToast": "已釘選對話",
   "unpinnedToast": "已取消釘選對話",
+  "archivedToast": "已封存對話",
   "messageSearch": {
     "heading": "訊息內容",
     "hint": "輸入至少 {min} 個字元，即可同時搜尋所有對話的內容。",

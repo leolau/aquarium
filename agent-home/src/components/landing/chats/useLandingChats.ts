@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { PinSuggestion, PinSuggestionsResponse } from "@/types/landing";
 
+import { onSessionsChanged } from "@/lib/chat/sessions-changed";
+
 import { chatsApi } from "./chatsApi";
 import { isPinned, pinsSupported, splitSessions, type LandingSession } from "./model";
 
@@ -12,6 +14,8 @@ export const TITLE_POLL_MS = 10_000;
 const TITLE_POLL_MAX = 12;
 const SUGGESTION_RETRY_MS = 5_000;
 const SUGGESTION_RETRIES = 3;
+/** How long a just-started chat stays listed while the server catches up. */
+export const PENDING_CHAT_MS = 60_000;
 
 /** `pending` lands in the contract with the pins workstream (B2). */
 type PendingSuggestions = PinSuggestionsResponse & { pending?: boolean };
@@ -27,7 +31,7 @@ export interface LandingChats {
   /** Pin UI is shown only once the pins workstream is deployed. */
   canPin: boolean;
   suggestions: PinSuggestion[];
-  /** Session ids with a write in flight (pin or rename). */
+  /** Session ids with a write in flight (pin, rename or archive). */
   busyIds: ReadonlySet<string>;
   error: string | null;
   clearError: () => void;
@@ -35,6 +39,8 @@ export interface LandingChats {
   /** Resolves true once the server saved the new pin state. */
   togglePin: (session: LandingSession) => Promise<boolean>;
   rename: (session: LandingSession, title: string) => Promise<boolean>;
+  /** Hides the chat at once; restores it if the server refuses. Resolves true once saved. */
+  setArchived: (session: LandingSession, archived: boolean) => Promise<boolean>;
   acceptSuggestions: (ids: string[]) => Promise<void>;
   dismissSuggestions: (ids: string[]) => Promise<void>;
 }
@@ -69,10 +75,19 @@ export function useLandingChats({
     };
   }, []);
 
+  /** Chats started on this page that the list may not include yet. */
+  const pendingChats = useRef(new Map<string, { session: LandingSession; until: number }>());
+
   const apply = useCallback((next: LandingSession[] | null) => {
     if (!alive.current) return;
     if (next) {
-      setSessions(next);
+      const listed = new Set(next.map((s) => s.id));
+      const extra: LandingSession[] = [];
+      for (const [id, p] of pendingChats.current) {
+        if (listed.has(id) || p.until < Date.now()) pendingChats.current.delete(id);
+        else extra.push(p.session);
+      }
+      setSessions(extra.length ? [...extra, ...next] : next);
       setFailed(false);
     } else {
       setSessions((prev) => {
@@ -109,6 +124,41 @@ export function useLandingChats({
       window.clearTimeout(retry);
     };
   }, [profile, apply]);
+
+  useEffect(
+    () =>
+      onSessionsChanged((detail) => {
+        if (detail.profile && profile && detail.profile !== profile) return;
+        const started = detail.session;
+        if (started) {
+          const at = Date.now() / 1000;
+          setSessions((prev) => {
+            const list = prev ?? [];
+            if (list.some((s) => s.id === started.id)) {
+              return list.map((s) =>
+                s.id === started.id ? { ...s, last_active: at, is_active: true } : s,
+              );
+            }
+            const session: LandingSession = {
+              id: started.id,
+              source: "web",
+              title: null,
+              preview: started.preview ?? null,
+              message_count: 1,
+              started_at: at,
+              last_active: at,
+              ended_at: null,
+              is_active: true,
+              ...(pinsSupported(list) ? { pinned_at: null } : {}),
+            };
+            pendingChats.current.set(started.id, { session, until: Date.now() + PENDING_CHAT_MS });
+            return [session, ...list];
+          });
+        }
+        void refresh();
+      }),
+    [profile, refresh],
+  );
 
   useEffect(() => {
     const onFocus = () => {
@@ -212,6 +262,27 @@ export function useLandingChats({
     [fetchImpl, patch, profile, refresh, withLock],
   );
 
+  const setArchived = useCallback(
+    async (s: LandingSession, archived: boolean) => {
+      let ok = false;
+      await withLock(s.id, async () => {
+        patch(s.id, { archived });
+        const res = await chatsApi.archive(s.id, archived, profile, fetchImpl);
+        if (!alive.current) return;
+        if (res.ok) {
+          ok = true;
+          if (archived) setSuggestions((prev) => prev.filter((x) => x.session_id !== s.id));
+          void refresh();
+        } else {
+          patch(s.id, { archived: s.archived ?? false });
+          setError(res.error);
+        }
+      });
+      return ok;
+    },
+    [fetchImpl, patch, profile, refresh, withLock],
+  );
+
   const acceptSuggestions = useCallback(
     (ids: string[]) =>
       withLock("suggestions", async () => {
@@ -261,6 +332,7 @@ export function useLandingChats({
     refresh: () => refresh(true),
     togglePin,
     rename,
+    setArchived,
     acceptSuggestions,
     dismissSuggestions,
   };
