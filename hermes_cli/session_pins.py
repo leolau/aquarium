@@ -121,10 +121,50 @@ def _clip(text: Any, n: int = _SNIPPET) -> str:
     return value if len(value) <= n else value[: n - 1] + "…"
 
 
+_NON_CHAT_SOURCES = ("cron", "projects", "subagent", "tool")
+_SCAN_LIMIT = 400
+
+
+def is_chat(session: Dict[str, Any]) -> bool:
+    """A conversation someone had with the agent, not a project run, board
+    card worker, scheduled job or delegated subagent. Card workers run as
+    ``cli`` sessions inside a kanban workspace (same rule as agent-home's
+    ``isKanbanWorkspace``); project runs use a ``projects:<slug>:run-N`` source.
+    """
+    source = str(session.get("source") or "")
+    if source.split(":", 1)[0] in _NON_CHAT_SOURCES:
+        return False
+    cwd = str(session.get("cwd") or "")
+    return "/kanban/workspaces/" not in cwd and "/kanban/boards/" not in cwd
+
+
+def _recent_chats(db, user_scope: Optional[str], page: int):
+    """Chats by most recent activity, paging past non-chat sessions."""
+    offset = 0
+    while offset < _SCAN_LIMIT:
+        rows = db.list_sessions_rich(
+            exclude_sources=["cron"],
+            limit=page,
+            offset=offset,
+            order_by_last_active=True,
+            user_id=user_scope,
+            min_message_count=2,
+        )
+        for s in rows:
+            if is_chat(s):
+                yield s
+        if len(rows) < page:
+            return
+        offset += page
+
+
 def collect_candidates(
     db, user_scope: Optional[str], user_id: str, settings: Dict[str, Any], now: float
 ) -> List[Dict[str, Any]]:
     """The N most recent unpinned, undismissed, unarchived chats with content.
+
+    Only chats qualify (:func:`is_chat`): project runs and board-card worker
+    sessions are never suggested for pinning.
 
     ``user_scope`` limits the review to chats that login may list (``None`` =
     every chat in the profile, the owner's view). Each candidate carries the
@@ -137,15 +177,9 @@ def collect_candidates(
     }
     since = now - settings["lookback_days"] * 86400
     want = settings["candidates"]
-    rows = db.list_sessions_rich(
-        exclude_sources=["cron"],
-        limit=max(want * 4, 20),
-        order_by_last_active=True,
-        user_id=user_scope,
-        min_message_count=2,
-    )
+    page = max(want * 4, 20)
     out: List[Dict[str, Any]] = []
-    for s in rows:
+    for s in _recent_chats(db, user_scope, page):
         if (s.get("last_active") or 0) < since:
             continue
         root = s.get("_lineage_root_id") or s["id"]

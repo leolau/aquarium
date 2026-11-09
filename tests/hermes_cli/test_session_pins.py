@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -319,3 +320,33 @@ def test_suggestion_routes(client, monkeypatch):
     assert r.status_code == 200 and r.json()["dismissed"] == ["unanswered"]
     out = client.get("/api/sessions/pin-suggestions").json()
     assert [i["session_id"] for i in out["items"]] == ["question"]
+
+
+def test_only_chats_are_suggested(db):
+    """Project runs and board-card worker sessions are never pin candidates."""
+    from hermes_cli import session_pins
+
+    _seed_review_set(db)
+    unanswered = [("user", "a"), ("assistant", "b"), ("user", "and then?")]
+    _chat(db, "card-worker", unanswered, cwd="/srv/hermes/kanban/workspaces/t_abc")
+    db._execute_write(lambda c: c.execute("UPDATE sessions SET source = 'cli' WHERE id = 'card-worker'"))
+    db.create_session("project-run", "projects:demo:run-1")
+    for role, text in unanswered:
+        db.append_message("project-run", role, text)
+
+    candidates = session_pins.collect_candidates(db, None, "ann", HEUR, now=time.time())
+    ids = {c["session_id"] for c in candidates}
+    assert {"card-worker", "project-run"}.isdisjoint(ids)
+    assert {"unanswered", "question", "done"} <= ids
+    out = session_pins.get_suggestions(db, None, "ann", settings=HEUR)
+    assert {i["session_id"] for i in out["items"]} == {"unanswered", "question"}
+
+
+def test_is_chat():
+    from hermes_cli.session_pins import is_chat
+
+    assert is_chat({"source": "agent_home", "cwd": "/home/me"})
+    assert is_chat({"source": "telegram"})
+    assert not is_chat({"source": "projects:demo:run-3"})
+    assert not is_chat({"source": "cron"})
+    assert not is_chat({"source": "cli", "cwd": "/x/kanban/boards/ops/workspaces/t_1"})
