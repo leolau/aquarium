@@ -45,23 +45,36 @@ describe("TopBarView", () => {
     expect(document.querySelector('[data-component="AttentionBanner"][data-blocking]')).toBeTruthy();
   });
 
-  it("uses a supplied account slot and shows the sidebar toggle when asked", () => {
-    const toggle = vi.fn();
+  it("uses a supplied account slot", () => {
     render(
       <TopBarView
         status={mockStatus()}
         activity={mockActivity({ items: [] })}
         needsYou={{ count: 0, blocking: 0, items: [], stale: false }}
         account={<span>custom account</span>}
-        onToggleSidebar={toggle}
       />,
     );
     expect(screen.getByText("custom account")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^Account/ })).toBeNull();
     expect(document.querySelector('[data-component="MobileActivityStrip"]')).toBeNull();
     expect(document.querySelector('[data-component="AttentionBanner"]')).toBeNull();
-    fireEvent.click(screen.getByLabelText("Toggle chats"));
-    expect(toggle).toHaveBeenCalledOnce();
+  });
+
+  it("has no panel toggle beside the logo and shows the account name and role", () => {
+    render(
+      <TopBarView
+        status={mockStatus()}
+        activity={mockActivity()}
+        needsYou={needsYou}
+        accountName="Yan"
+        accountRole="owner"
+      />,
+    );
+    const brand = document.querySelector('[data-component="brand"]')!;
+    expect(brand.querySelectorAll("button")).toHaveLength(0);
+    expect(document.querySelector('[data-action="toggle-sidebar"]')).toBeNull();
+    expect(screen.getByRole("button", { name: "Account: Yan, Owner" })).toBeTruthy();
+    expect(screen.getByTestId("account-identity").textContent).toBe("YanOwner");
   });
 });
 

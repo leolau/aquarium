@@ -1,6 +1,6 @@
 import { MobileShell } from "@/components/MobileShell";
 import { LandingClient } from "@/components/landing/LandingClient";
-import { activeEnrolments } from "@/lib/api/my-profiles";
+import { activeEnrolments, enrolmentRoles, type ProfileRole } from "@/lib/api/my-profiles";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
 import { readSession } from "@/lib/auth/session";
 import { storageConfigured } from "@/lib/env";
@@ -19,9 +19,12 @@ export default async function HomePage() {
   const currentProfile = (await readSession())?.profile ?? "default";
 
   let profiles: ProfileSummary[] = [];
+  let roles: ProfileRole[] = [];
   try {
     const client = await apiClientForRequest();
-    profiles = activeEnrolments(await client.myProfiles());
+    const mine = await client.myProfiles();
+    profiles = activeEnrolments(mine);
+    roles = enrolmentRoles(mine);
   } catch {
     // The composer still works with only the current profile.
   }
@@ -32,6 +35,8 @@ export default async function HomePage() {
         profiles={profiles}
         currentProfile={currentProfile}
         accountName={principal.display || null}
+        accountRole={principal.role ?? null}
+        accountRoles={roles}
         storageEnabled={storageConfigured()}
       />
     </MobileShell>

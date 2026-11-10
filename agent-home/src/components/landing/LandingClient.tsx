@@ -9,7 +9,8 @@ import { useActivityRunning } from "@/components/ui/useActivityRunning";
 import { useStatusSummary } from "@/components/ui/useStatusSummary";
 import { useIdleRedirect } from "@/lib/aquarium/useIdleRedirect";
 import { useNeedsYou } from "@/lib/landing/needsYou";
-import type { ProfileSummary } from "@/types";
+import type { ProfileRole } from "@/lib/api/my-profiles";
+import type { ProfileSummary, Role } from "@/types";
 
 import { ChatsDrawer, ChatsSidebar } from "./chats";
 import { chatsApi, landingChatHref } from "./chats/chatsApi";
@@ -19,6 +20,7 @@ import { LandingChatView } from "./LandingChatView";
 import { LandingComposer } from "./LandingComposer";
 import { LandingLayout } from "./LandingLayout";
 import { TopBarView } from "./topbar";
+import { useLandingPanels } from "./useLandingPanels";
 import { LandingWorkPanel, type NeedsYouFeed } from "./work";
 
 /** What the row or hit that opened a chat already knew about it. */
@@ -39,11 +41,17 @@ export function LandingClient({
   profiles,
   currentProfile,
   accountName,
+  accountRole,
+  accountRoles,
   storageEnabled = false,
 }: {
   profiles: ProfileSummary[];
   currentProfile: string;
   accountName?: string | null;
+  /** The signed-in principal's role in the current profile. */
+  accountRole?: Role | null;
+  /** Its role in every profile it is actively enrolled in. */
+  accountRoles?: ProfileRole[];
   /** Attachments can be uploaded from the inline chat's composer. */
   storageEnabled?: boolean;
 }) {
@@ -52,6 +60,7 @@ export function LandingClient({
   const needsYou = useNeedsYou();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [needsYouOpen, setNeedsYouOpen] = useState(false);
+  const panels = useLandingPanels();
 
   const feed: NeedsYouFeed = useMemo(
     () => ({
@@ -69,7 +78,14 @@ export function LandingClient({
     needsYou.markSeen();
     // Desktop shows the panel beside the composer; phones open it as a sheet.
     if (window.matchMedia("(min-width: 1024px)").matches) {
-      document.getElementById("needs-you-heading")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      const reveal = () =>
+        document.getElementById("needs-you-heading")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (panels.tasksCollapsed) {
+        panels.setTasksCollapsed(false);
+        requestAnimationFrame(reveal);
+      } else {
+        reveal();
+      }
     } else {
       setNeedsYouOpen(true);
     }
@@ -127,8 +143,10 @@ export function LandingClient({
               stale: needsYou.stale,
             }}
             onOpenNeedsYou={openNeedsYou}
-            onToggleSidebar={() => setDrawerOpen(true)}
             accountName={accountName}
+            accountRole={accountRole}
+            accountRoles={accountRoles}
+            currentProfile={currentProfile}
           />
         }
         sidebar={<ChatsSidebar {...chats} />}
@@ -155,6 +173,8 @@ export function LandingClient({
           )
         }
         aside={<LandingWorkPanel needsYou={feed} />}
+        chats={{ collapsed: panels.chatsCollapsed, onCollapsedChange: panels.setChatsCollapsed }}
+        tasks={{ collapsed: panels.tasksCollapsed, onCollapsedChange: panels.setTasksCollapsed }}
         dock={
           <div className="flex gap-2">
             <button
