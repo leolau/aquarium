@@ -13,6 +13,9 @@ import {
 import { useAction } from "@/lib/use-action";
 import type { ProjectCategory, ProjectListItem, ProjectStatus } from "@/types";
 
+/** How long clicks on the list stay swallowed after a bulk action ends. */
+export const SETTLE_MS = 600;
+
 /** A state the bulk menu can move ticked projects to. */
 export type BulkStateMove = "active" | "paused" | "done" | "archive" | "restore";
 
@@ -183,6 +186,12 @@ export function ProjectsBulkBar({
     waiting?: boolean;
   } | null>(null);
   const [result, setResult] = useState<BulkResult | null>(null);
+  const [running, setRunning] = useState<BulkKind | null>(null);
+  // Briefly after an action the layout shifts (rows untick, the panel
+  // changes), so the second click of a double-click must not land on a row.
+  const [settling, setSettling] = useState(false);
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const barRef = useRef<HTMLDivElement>(null);
 
   const selectedSlugs = new Set(selected.map((p) => p.slug));
   const pageAll =
@@ -196,7 +205,9 @@ export function ProjectsBulkBar({
     extra: Pick<BulkResult, "label" | "skipped"> = { skipped: 0 },
   ): Promise<void> {
     setMenuOpen(false);
-    setResult(null);
+    setRunning(kind);
+    if (settleTimer.current) clearTimeout(settleTimer.current);
+    setSettling(false);
     setProgress({ done: 0, total: jobs.length });
     const succeeded: ProjectListItem[] = [];
     const failed: BulkResult["failed"] = [];
@@ -229,7 +240,10 @@ export function ProjectsBulkBar({
       setProgress({ done: i + 1, total: jobs.length });
     }
     setProgress(null);
+    setRunning(null);
     setConfirming(false);
+    setSettling(true);
+    settleTimer.current = setTimeout(() => setSettling(false), SETTLE_MS);
     const undoable = kind === "active" || kind === "paused" || kind === "done";
     setResult({
       kind,
@@ -257,8 +271,8 @@ export function ProjectsBulkBar({
     );
   }
 
-  function undo(entries: NonNullable<BulkResult["undo"]>): void {
-    void run(
+  function undo(entries: NonNullable<BulkResult["undo"]>): Promise<void> {
+    return run(
       "undo",
       entries.map(({ project, status }) => ({
         project,
@@ -266,8 +280,29 @@ export function ProjectsBulkBar({
         method: "PATCH",
         body: { status },
       })),
-    );
+    ).then(() => undefined);
   }
+
+  useEffect(
+    () => () => {
+      if (settleTimer.current) clearTimeout(settleTimer.current);
+    },
+    [],
+  );
+
+  // While a bulk action runs, and just after, a click outside the bar (the
+  // list under the pointer) is swallowed instead of opening a project.
+  const guarding = pending || settling;
+  useEffect(() => {
+    if (!guarding) return;
+    function swallow(e: MouseEvent) {
+      if (e.target instanceof Node && barRef.current?.contains(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    window.addEventListener("click", swallow, true);
+    return () => window.removeEventListener("click", swallow, true);
+  }, [guarding]);
 
   // The menu takes focus when it opens and gives it back on Escape.
   useEffect(() => {
@@ -309,14 +344,20 @@ export function ProjectsBulkBar({
     target === UNCATEGORIZED_FILTER
       ? "Uncategorized"
       : ordered.find((c) => c.id === target)?.name;
+  const verb = running === "undo" ? "Undoing…" : "Working…";
   const working = progress?.waiting
     ? "Waiting for the server…"
     : progress
-      ? `Working… ${progress.done} of ${progress.total}`
-      : "Working…";
+      ? `${verb} ${progress.done} of ${progress.total}`
+      : verb;
 
   return (
-    <div data-component="ProjectsBulkBar" className="flex flex-col gap-2 text-xs">
+    <div
+      ref={barRef}
+      data-component="ProjectsBulkBar"
+      data-guarding={guarding ? "true" : undefined}
+      className={`flex flex-col gap-2 text-xs ${guarding ? "cursor-progress" : ""}`}
+    >
       <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1">
         <label className="flex cursor-pointer items-center gap-2">
           <input
@@ -465,13 +506,21 @@ export function ProjectsBulkBar({
         ) : null}
       </div>
 
-      {result ? (
+      {result || running ? (
         <div
           data-component="ProjectsBulkResult"
           role="status"
+          aria-busy={pending}
           className="flex items-start gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2"
         >
           <div className="min-w-0 flex-1">
+            {running ? (
+              <p data-component="ProjectsBulkWorking" className="font-medium text-[var(--color-accent)]">
+                {working}
+              </p>
+            ) : null}
+            {result ? (
+            <div className={running ? "opacity-50" : undefined}>
             {result.done > 0 ? (
               <p>
                 {DONE_VERB[result.kind]} {plural(result.done)}
@@ -509,9 +558,12 @@ export function ProjectsBulkBar({
             {result.done === 0 && result.skipped > 0 && result.failed.length === 0 && result.notSent === 0 ? (
               <p>Nothing to change: every ticked project was already there.</p>
             ) : null}
+            </div>
+            ) : null}
           </div>
-          {result.undo ? (
+          {result?.undo ? (
             <ActionButton
+              busy={running === "undo"}
               busyLabel={working}
               disabled={pending}
               onAction={() => undo(result.undo!)}
@@ -523,6 +575,7 @@ export function ProjectsBulkBar({
           <button
             type="button"
             aria-label="Dismiss"
+            disabled={pending}
             onClick={() => setResult(null)}
             className="rounded-lg px-2 text-[var(--color-muted)]"
           >

@@ -13,6 +13,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { ProjectsList } from "@/components/projects/ProjectsList";
+import { SETTLE_MS } from "@/components/projects/ProjectsBulkBar";
 import { pageWindow } from "@/components/projects/ProjectsPagination";
 import type { ProjectCategory, ProjectListItem } from "@/types";
 
@@ -283,6 +284,84 @@ describe("ProjectsList bulk actions", () => {
       ["PATCH", "/api/projects/b", { status: "done" }],
     ]);
     expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  });
+
+  it("double-clicking Undo sends one undo, keeps the panel busy and never opens the row under it", async () => {
+    const two = [
+      ITEM({ id: "a", slug: "alpha", name: "Alpha", status: "active" }),
+      ITEM({ id: "b", slug: "beta", name: "Beta", status: "active" }),
+    ];
+    stubFetch({ beta: "still has an open run" }, two);
+    renderList(two);
+    tick("Alpha");
+    tick("Beta");
+    openStateMenu(2);
+    await act(async () => {
+      fireEvent.click(menuItem("paused"));
+    });
+    await waitFor(() => expect(screen.getByText(/Paused 1 project/)).toBeTruthy());
+
+    let release: () => void = () => {};
+    calls = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const method = init?.method ?? "GET";
+        calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : null, key: null });
+        if (method === "GET") {
+          return new Response(JSON.stringify({ items: two, next_cursor: null }), { status: 200 });
+        }
+        await new Promise<void>((r) => (release = r));
+        return new Response("{}", { status: 200 });
+      }),
+    );
+    const row = screen.getByRole("link", { name: "Alpha" });
+    const opened = vi.fn();
+    row.addEventListener("click", opened);
+
+    const undoButton = screen.getByRole("button", { name: "Undo" });
+    act(() => {
+      fireEvent.click(undoButton);
+      fireEvent.click(undoButton);
+    });
+    // The panel stays where it was, busy, with the button locked.
+    const panel = screen.getByRole("status");
+    expect(panel.querySelector('[data-component="ProjectsBulkWorking"]')?.textContent).toMatch(/Undoing…/);
+    const busyUndo = within(panel).getAllByRole("button").find((b) => b.getAttribute("aria-busy") === "true");
+    expect(busyUndo?.hasAttribute("disabled")).toBe(true);
+    // A stray click on the list underneath goes nowhere.
+    expect(fireEvent.click(row)).toBe(false);
+    expect(opened).not.toHaveBeenCalled();
+    expect(writes()).toHaveLength(1);
+
+    await act(async () => release());
+    await waitFor(() => expect(screen.getByText(/Put back 1 project/)).toBeTruthy());
+    // Right after it lands the second click of a double-click is still swallowed…
+    expect(fireEvent.click(row)).toBe(false);
+    expect(opened).not.toHaveBeenCalled();
+    expect(writes().map((c) => [c.method, c.url, c.body])).toEqual([
+      ["PATCH", "/api/projects/alpha", { status: "active" }],
+    ]);
+    // …and the list is clickable again once things settle.
+    await new Promise((r) => setTimeout(r, SETTLE_MS + 50));
+    fireEvent.click(row);
+    expect(opened).toHaveBeenCalledTimes(1);
+  });
+
+  it("swallows a click on the list right after a confirmed archive", async () => {
+    renderList();
+    tick("Project 1");
+    openStateMenu(1);
+    fireEvent.click(menuItem("archive"));
+    const row = screen.getByRole("link", { name: "Project 2" });
+    const opened = vi.fn();
+    row.addEventListener("click", opened);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Archive 1" }));
+    });
+    await waitFor(() => expect(screen.getByText(/Archived 1 project/)).toBeTruthy());
+    fireEvent.click(row);
+    expect(opened).not.toHaveBeenCalled();
   });
 
   it("locks while applying: a second pick sends nothing more", async () => {
