@@ -19,6 +19,7 @@ import {
 import type { FolderPermission } from "@/lib/folder-bridge/types";
 import type { BrowseEntry, BrowsePlace, ChatAttachment } from "@/types";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { SlowHint } from "@/components/ui/SlowHint";
 import { Spinner } from "@/components/ui/Spinner";
 import { useConfirm } from "@/components/ui/useConfirm";
 import { ChevronRightIcon } from "@/components/ui/icons";
@@ -818,9 +819,12 @@ export function BrowseView() {
 function openingSlow(show: boolean, text: string) {
   if (!show) return null;
   return (
-    <p role="status" className="mb-2 text-xs text-[var(--color-warn-text)]">
-      {text}
-    </p>
+    <div className="mb-2">
+      <p role="status" className="text-xs text-[var(--color-warn-text)]">
+        {text}
+      </p>
+      <SlowHint className="mt-1" />
+    </div>
   );
 }
 
@@ -828,10 +832,13 @@ function renderPreview(preview: Preview | null, t: ReturnType<typeof useT>) {
   if (!preview) return null;
   if (preview.state === "loading")
     return (
-      <p role="status" className="inline-flex items-center gap-2 text-xs text-[var(--color-muted)]">
-        <Spinner />
-        {t("file.loading")}
-      </p>
+      <>
+        <p role="status" className="inline-flex items-center gap-2 text-xs text-[var(--color-muted)]">
+          <Spinner />
+          {t("file.loading")}
+        </p>
+        <SlowHint className="mt-1" />
+      </>
     );
   if (preview.state === "image")
     // eslint-disable-next-line @next/next/no-img-element
