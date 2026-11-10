@@ -326,8 +326,12 @@ def test_steer_lands_inside_the_last_tool_result(base, chat, real_agent):
         stored = db.get_messages_as_conversation(chat)
     finally:
         db.close()
+    # A reloaded transcript (and the next turn's history) has the steer too.
+    from agent.prompt_builder import format_steer_marker
+
     tool_rows = [m for m in stored if m["role"] == "tool"]
-    assert STEER_MARKER_OPEN in tool_rows[-1]["content"]
+    assert tool_rows[-1]["content"] == content
+    assert tool_rows[-1]["content"].endswith(format_steer_marker("also check auth.log"))
     assert [m["content"] for m in stored if m["role"] == "user"] == ["what's in /var/log?"]
 
 

@@ -12592,7 +12592,7 @@ def _launch_chat_run(
     """
     run_id = f"run_{uuid.uuid4().hex}"
     loop = asyncio.get_running_loop()
-    run_entry = {
+    run_entry: dict = {
         "session_id": sid,
         "buffer": [],
         "subs": [],
