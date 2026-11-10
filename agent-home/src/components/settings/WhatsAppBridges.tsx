@@ -22,6 +22,7 @@ import type {
   WaBridgesResponse,
 } from "@/types";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { PanelLoading } from "@/components/ui/PanelLoading";
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,30}$/;
 //: Baileys rotates the QR payload about every 60s; poll often enough to
@@ -271,6 +272,11 @@ export function WhatsAppBridges() {
       <div className="space-y-2 rounded-lg border border-[var(--color-surface-2)] p-2 sm:ml-10">
         <p className="text-sm font-semibold">{t("bridgesHead")}</p>
         <ul className="space-y-2">
+          {!loaded && (
+            <li>
+              <PanelLoading />
+            </li>
+          )}
           {loaded && bridges.length === 0 && (
             <li className="text-xs text-[var(--color-muted)]">{t("none")}</li>
           )}

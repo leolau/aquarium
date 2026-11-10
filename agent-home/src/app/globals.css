@@ -190,6 +190,30 @@ body {
     filter: drop-shadow(0 0 6px rgb(167 139 250 / 0.85));
   }
 }
+/* "Still working…" (components/ui/SlowHint): hidden until its inline
+   animation-delay passes, then fades in. Pure CSS so it also runs in a
+   streamed route loader before hydration. */
+.aq-slow-hint {
+  visibility: hidden;
+  opacity: 0;
+  animation: aq-slow-hint-in 300ms ease-out forwards;
+}
+@keyframes aq-slow-hint-in {
+  from {
+    visibility: visible;
+    opacity: 0;
+  }
+  to {
+    visibility: visible;
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .aq-slow-hint {
+    animation-duration: 1ms;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .aq-bowl-float,
   .aq-bowl-star {

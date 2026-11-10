@@ -1,18 +1,28 @@
+import { GraphSkeleton } from "@/components/gts/GraphSkeleton";
 import { MobileShell } from "@/components/MobileShell";
+import { InfoTip } from "@/components/ui/InfoTip";
 import { PageSkeleton } from "@/components/ui/PageSkeleton";
+import { getT } from "@/i18n/server";
 
 /**
- * Route-level loading UI for **GTS Centre**.
+ * Route-level loading UI for **Graph**.
  *
- * The page is a `force-dynamic` server component, so navigating to it blocks on
- * the upstream reads. Without this file the browser kept showing the page the
- * user was leaving, with no sign anything was happening. Now the shell and a
- * skeleton paint on tap, and the real content replaces them when it arrives.
+ * The page waits on the whole goal → task → skill graph before it can render,
+ * which takes seconds on a large box. The same header paints on tap with goal
+ * cards in the page's grid, and a "still working…" line if the wait runs long.
  */
-export default function Loading() {
+export default async function Loading() {
+  const t = await getT("system");
   return (
-    <MobileShell title="Graph">
-      <PageSkeleton rows={4} />
+    <MobileShell
+      title={t("cards.graph.name")}
+      subtitle={t("graph.subtitle")}
+      info={<InfoTip label={t("graph.info")}>{t("graph.infoBody")}</InfoTip>}
+      wide
+    >
+      <PageSkeleton label={t("graph.loading")}>
+        <GraphSkeleton />
+      </PageSkeleton>
     </MobileShell>
   );
 }
