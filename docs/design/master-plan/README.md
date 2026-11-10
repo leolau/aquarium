@@ -260,7 +260,7 @@ Every project, card, run, chat, to-do and inbox message gets a short, typeable r
 
 | FG | Title | Wave | Primary reuse anchors |
 |----|-------|------|-----------------------|
-| [36](./feature-groups/FG-36-short-refs.md) | Short refs: box-unique type letter + running number, resolver, `/go/[ref]`, copyable badge | **P10** — PR 1 (P/T/R) BUILT; PR 2 (C), PR 3 (D/M) PLAN | `projects_db_path()`, `sqlite_util.write_txn`, `projects_api` read gate, `CopyButton.tsx` |
+| [36](./feature-groups/FG-36-short-refs.md) | Short refs: box-unique type letter + running number, resolver, `/go/[ref]`, copyable badge | **P10** — BUILT: PR 1 P/T/R (#818, #820), PR 2 C + prompt mentions (#822), PR 3 D/M (#821) | `projects_db_path()`, `sqlite_util.write_txn`, `projects_api` read gate, `CopyButton.tsx` |
 
 ---
 
@@ -864,3 +864,4 @@ transient, and in-place-resize to 8/32 (same-family, ~5 min, no data migration
 | 2026-10-25 | 32 | devin (for Leo) | FG-33 / D21 | **Added the missing locked-decision row D21 to §1** (the table stopped at D20 although D21 was accepted 2026-10-25). Wording taken from FG-33: local apps = in-house on the box (one Node process per app per mode; database per app per mode in the dedicated apps Postgres cluster); external apps = same unit template on approved providers (Vercel + supabase.com first, then Railway, AWS Amplify, Alibaba FC) with data on provider-hosted Supabase; D3 extended, D4 scoped to Aquarium-hosted data; C6-gated spend caps. Docs-only. | Leo/Yan: "D21 accepted; add the missing locked-decision row" |
 | 2026-11-08 | 33 | devin (for Yan) | FG-34 | **Phase 9 added: FG-34 skill-aware plan assignment, status PLAN.** Yan: the planner may pick any profile the signed-in user can access, and past results count as a signal. Work items W1–W6 in the FG doc. | The project planner had no profile roster, so every step fell to the host profile and the plan never said why. |
 | 2026-11-10 | 34 | devin (for Leo) | FG-36 | **Phase 10 added: FG-36 short refs.** PR 1 builds the box-wide registry (`short_refs.db` beside `projects.db`), `P`/`T` refs, derived `P12-R3` run refs, `GET /api/refs/{ref}` (hidden = 404), `hermes ref`, `/go/[ref]` and the agent-home badge. PR 2 (chats, `C`) and PR 3 (to-dos `D`, inbox `M`) are planned in the FG doc. | Leo: short, typeable unique ids for projects, tasks and chats so they can be referenced in later prompts. |
+| 2026-11-10 | 35 | devin (for Leo) | FG-36 | **FG-36 built.** PR 1 (#818) plus its follow-up #820 (`short_refs.db` in upgrade backups; ref-shaped search also matches text), PR 2 (#822: `C` chat refs, `/go/C…`, ref mentions in agent-home chat turns) and PR 3 (#821: `D` to-do and `M` inbox refs) are merged. | Leo: update the FG-36 row once all three PRs landed. |
