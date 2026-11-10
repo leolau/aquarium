@@ -133,7 +133,7 @@ assistant from your phone's messaging app. It remembers you across all of them.
 | Language | English or Traditional Chinese |
 | Notifications | turn on push notifications on this device |
 | In&Out | your connections: Google, WhatsApp, Telegram, email, VPN, SQL Server databases |
-| Apps / Menu | which apps appear in the menu (owner sets this per role) |
+| Apps / Menu | which apps appear in the menu (owner or admin sets this per role, owner included) |
 | Tools & Integrations | the tools the assistant can use |
 | Get ready | the setup checklist |
 | Entity goal | what the whole system is for (owner edits) |
@@ -451,8 +451,10 @@ Every person has one role.
 | **Member** | staff | chat; own private chats and files; everything shared; own Google, WhatsApp, Telegram, email, extra tools, VPN and SQL Server databases | see other people's private items; change settings; let the assistant run commands on the server |
 | **Viewer** | part-time staff, guests | read what is shared; chat using the tools allowed for viewers | have the assistant write files; change settings; see other people's private items |
 
-Which menu apps each role sees is set by the owner in **Settings → Menu**. A
-hidden app is also blocked if someone types its address directly.
+Which menu apps each role sees is set by the owner or an admin in **Settings →
+Menu**, with one tab per role: Owner, Admin, Member and Viewer. Only the owner
+can change the Owner tab. A hidden app is also blocked if someone types its
+address directly.
 
 # 11. Admin functions (owner and admins)
 

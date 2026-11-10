@@ -2,9 +2,9 @@
 
 /**
  * Settings → Menu (owner/admin): which launcher items each role sees. One tab
- * per role (admin, member, viewer), a switch per app, grouped like the Coral
- * launcher. Edits are a draft per role until Save. Home and Settings are
- * locked on; the owner always sees everything.
+ * per role (owner, admin, member, viewer), a switch per app, grouped like the
+ * Coral launcher. Edits are a draft per role until Save. Home and Settings are
+ * locked on; only the owner can change the Owner tab.
  * Hidden items are also refused by URL (see `lib/nav/menu-access.ts`).
  */
 import { useEffect, useState } from "react";
@@ -16,7 +16,12 @@ import { useAction } from "@/lib/use-action";
 import { isLockedOff, LOCKED_APP_IDS, NAV_ROLES, type NavRole } from "@/lib/nav/menu-access";
 import type { AgentHomeNav } from "@/types";
 
-const ROLE_LABEL: Record<NavRole, string> = { admin: "Admin", member: "Member", viewer: "Viewer" };
+const ROLE_LABEL: Record<NavRole, string> = {
+  owner: "Owner",
+  admin: "Admin",
+  member: "Member",
+  viewer: "Viewer",
+};
 const GROUP_LABEL: Record<string, string> = { workspace: "Workspace", system: "System" };
 
 /** Launcher grouping: top-level apps first, then each cluster's members. */
@@ -61,7 +66,7 @@ export function MenuSection() {
   const stored = nav?.roles?.[role] ?? [];
   const hidden = drafts[role] ?? stored;
   const dirty = !sameSet(hidden, stored);
-  const readOnly = !nav?.roles;
+  const readOnly = !nav?.roles || (role === "owner" && !nav.is_owner);
 
   const toggle = (appId: string) => {
     if (readOnly || isLockedOff(role, appId) || LOCKED_APP_IDS.includes(appId)) return;
@@ -80,7 +85,7 @@ export function MenuSection() {
   };
 
   const { run: save, pending: saving } = useAction(async () => {
-    if (!nav?.roles || !dirty) return;
+    if (readOnly || !dirty) return;
     const target = role;
     setError(null);
     try {
@@ -120,8 +125,10 @@ export function MenuSection() {
           because only owners and admins can make changes there.
         </li>
         <li>
-          {nav?.is_owner ? "You are the owner, so your" : "The owner's"} own menu always shows
-          everything; these choices only change what admins, members and viewers see.
+          <strong>Owner</strong>:{" "}
+          {nav?.is_owner
+            ? "the Owner tab is your own menu, and only you can change it."
+            : "only the owner can change the Owner tab."}
         </li>
       </ul>
       <div role="tablist" aria-label="Role" className="mb-3 flex gap-2">

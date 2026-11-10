@@ -30,8 +30,8 @@
  * otherwise "/inbox" and "/inbox/…", never "/inboxes".
  */
 
-/** Roles with an editable list. The owner always sees every item. */
-export const NAV_ROLES = ["admin", "member", "viewer"] as const;
+/** Roles with an editable list. Only the owner may change the owner's list. */
+export const NAV_ROLES = ["owner", "admin", "member", "viewer"] as const;
 export type NavRole = (typeof NAV_ROLES)[number];
 
 /** Locked visible for every role, so nobody can lock themselves out. */
@@ -171,9 +171,9 @@ export function blockedAppForPath(
   return null;
 }
 
-/** Whether `principal` is the owner (who always sees every item). */
-export function seesEverything(principal: { role: string; is_owner?: boolean }): boolean {
-  return Boolean(principal.is_owner) || principal.role === "owner";
+/** The menu list that applies to `principal`: the owner's list for the owner. */
+export function navRoleOf(principal: { role: string; is_owner?: boolean }): string {
+  return principal.is_owner || principal.role === "owner" ? "owner" : principal.role;
 }
 
 /** Drop locked and duplicate ids — defence in depth over the server's validation. */

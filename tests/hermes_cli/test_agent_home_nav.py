@@ -118,15 +118,28 @@ def test_member_and_viewer_cannot_change_the_menu(client, acting, who):
         ("member", ["graph", "graph"]),
         ("member", ["home"]),
         ("viewer", ["settings"]),
-        ("owner", ["graph"]),
+        ("owner", ["home"]),
         ("stranger", []),
     ],
-    ids=["unknown-id", "duplicate", "home-locked", "settings-locked", "owner-row", "unknown-role"],
+    ids=["unknown-id", "duplicate", "home-locked", "settings-locked", "owner-home-locked", "unknown-role"],
 )
 def test_bad_lists_are_rejected(client, acting, role, hidden):
     resp = client.put(f"/api/agent-home/nav/{role}", json={"hidden": hidden})
     assert resp.status_code == 400, resp.text
     assert _saved_nav() is None
+
+
+def test_owner_has_an_own_list_only_the_owner_can_change(client, acting):
+    resp = client.put("/api/agent-home/nav/owner", json={"hidden": ["graph", "profiles"]})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["roles"]["owner"] == ["graph", "profiles"]
+    assert client.get("/api/agent-home/nav").json()["hidden"] == ["graph", "profiles"]
+    acting["as"] = ADMIN
+    assert client.get("/api/agent-home/nav").json()["roles"]["owner"] == ["graph", "profiles"]
+    resp = client.put("/api/agent-home/nav/owner", json={"hidden": []})
+    assert resp.status_code == 403
+    assert _saved_nav()["roles"]["owner"]["hidden"] == ["graph", "profiles"]
+    assert client.get("/api/agent-home/nav").json()["hidden"] == []
 
 
 def test_hand_edited_config_cannot_hide_locked_or_unknown_items(client, acting):

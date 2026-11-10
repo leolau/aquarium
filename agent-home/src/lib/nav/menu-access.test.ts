@@ -13,7 +13,8 @@ import {
   normalizePath,
   ROLE_GATED_APPS,
   sanitizeHidden,
-  seesEverything,
+  navRoleOf,
+  NAV_ROLES,
   withAdminOnly,
 } from "@/lib/nav/menu-access";
 
@@ -106,10 +107,16 @@ describe("menu access mapping", () => {
     }
   });
 
-  it("treats the owner as seeing everything", () => {
-    expect(seesEverything({ role: "owner" })).toBe(true);
-    expect(seesEverything({ role: "admin", is_owner: true })).toBe(true);
-    expect(seesEverything({ role: "admin" })).toBe(false);
+  it("uses the owner's list for the owner", () => {
+    expect(navRoleOf({ role: "owner" })).toBe("owner");
+    expect(navRoleOf({ role: "admin", is_owner: true })).toBe("owner");
+    expect(navRoleOf({ role: "admin" })).toBe("admin");
+  });
+
+  it("edits the same roles as the Python API", () => {
+    const src = readFileSync(resolve(__dirname, "../../../../hermes_cli/agent_home_nav.py"), "utf8");
+    const block = /NAV_ROLES = \(([^)]*)\)/.exec(src)?.[1] ?? "";
+    expect([...block.matchAll(/"([a-z-]+)"/g)].map((m) => m[1])).toEqual([...NAV_ROLES]);
   });
 
   it("sanitizes hidden lists", () => {
