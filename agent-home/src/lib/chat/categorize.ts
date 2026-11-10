@@ -68,7 +68,7 @@ export function categoryOverride(
  * shape is shared with ordinary git worktrees unrelated to kanban at all —
  * a false positive there is worse than a false negative here.
  */
-function isKanbanWorkspace(cwd: string | null | undefined): boolean {
+export function isKanbanWorkspace(cwd: string | null | undefined): boolean {
   if (!cwd) return false;
   return cwd.includes("/kanban/workspaces/") || cwd.includes("/kanban/boards/");
 }

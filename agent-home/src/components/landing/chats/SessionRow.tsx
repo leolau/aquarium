@@ -11,16 +11,19 @@ const revealOnHover = "hidden group-hover:grid group-focus-within:grid [@media(h
 
 /**
  * One conversation in the sidebar (Figma `session-row` 3:76, states
- * Default / Active / Pinned / Live). The pencil swaps the title for an input:
+ * Default / Active / Pinned / Live / Resume). The pencil swaps the title for an input:
  * Enter saves, Esc or leaving the field cancels. An untitled chat shows its
  * preview in muted italics until the agent's title arrives. Every row shows
- * when the chat was last updated; Archive hides it from the list.
+ * when the chat was last updated; Archive hides it from the list. `resume`
+ * marks the chat to pick up again (the latest one, while none is open) with
+ * an accent outline and a "Continue" badge.
  */
 export function SessionRow({
   session,
   href,
   profileLabel,
   active = false,
+  resume = false,
   canPin = false,
   busy = false,
   onTogglePin,
@@ -34,6 +37,8 @@ export function SessionRow({
   href: string;
   profileLabel: string;
   active?: boolean;
+  /** The chat to continue: shown with a "Continue" badge (ignored while `active`). */
+  resume?: boolean;
   canPin?: boolean;
   busy?: boolean;
   onTogglePin?: (session: LandingSession) => void;
@@ -81,7 +86,8 @@ export function SessionRow({
     }
   }
 
-  const state = active ? "active" : live ? "live" : pinned ? "pinned" : "default";
+  const resuming = resume && !active;
+  const state = active ? "active" : resuming ? "resume" : live ? "live" : pinned ? "pinned" : "default";
 
   return (
     <li
@@ -90,7 +96,9 @@ export function SessionRow({
       className={`group relative flex items-center gap-2 rounded-[var(--radius-lg)] px-3 py-2 transition-colors ${
         active
           ? "bg-[var(--color-surface-2)]"
-          : "hover:bg-[var(--color-surface)] focus-within:bg-[var(--color-surface)]"
+          : resuming
+            ? "bg-[var(--color-surface)] ring-1 ring-inset ring-[var(--color-accent)] hover:bg-[var(--color-surface-2)]"
+            : "hover:bg-[var(--color-surface)] focus-within:bg-[var(--color-surface)]"
       }`}
     >
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -110,25 +118,38 @@ export function SessionRow({
             className="min-w-0 rounded-[var(--radius-sm)] border border-[var(--color-accent)] lg:!min-h-0 bg-[var(--color-bg)] px-1.5 py-0.5 text-[13px] font-medium leading-[18px] text-[var(--color-fg)] outline-none disabled:opacity-60"
           />
         ) : (
-          <Link
-            href={href}
-            onClick={(e) => {
-              if (onOpen && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && e.button === 0) {
-                e.preventDefault();
-                onOpen(session);
-              }
-              onNavigate?.();
-            }}
-            aria-current={active ? "page" : undefined}
-            className="min-w-0 truncate text-[13px] font-medium leading-[18px] text-[var(--color-fg)] outline-none after:absolute after:inset-0 after:rounded-[var(--radius-lg)] focus-visible:after:ring-2 focus-visible:after:ring-[var(--color-accent)]"
-          >
-            <span
-              data-slot="session-title"
-              className={untitled ? "italic text-[var(--color-muted)]" : undefined}
+          <span className="flex min-w-0 items-center gap-1.5">
+            <Link
+              href={href}
+              onClick={(e) => {
+                if (onOpen && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && e.button === 0) {
+                  e.preventDefault();
+                  onOpen(session);
+                }
+                onNavigate?.();
+              }}
+              aria-current={active ? "page" : undefined}
+              title={resuming ? "Continue your last chat" : undefined}
+              className="min-w-0 truncate text-[13px] font-medium leading-[18px] text-[var(--color-fg)] outline-none after:absolute after:inset-0 after:rounded-[var(--radius-lg)] focus-visible:after:ring-2 focus-visible:after:ring-[var(--color-accent)]"
             >
-              {text}
-            </span>
-          </Link>
+              <span
+                data-slot="session-title"
+                className={untitled ? "italic text-[var(--color-muted)]" : undefined}
+              >
+                {text}
+              </span>
+              {resuming ? <span className="sr-only"> — continue your last chat</span> : null}
+            </Link>
+            {resuming ? (
+              <span
+                data-slot="continue-badge"
+                aria-hidden="true"
+                className="shrink-0 rounded-full bg-[var(--color-accent)] px-1.5 text-[10px] font-semibold leading-4 text-[var(--color-accent-fg)]"
+              >
+                Continue
+              </span>
+            ) : null}
+          </span>
         )}
         <span className="flex min-w-0 items-center gap-2 text-xs font-medium leading-4 text-[var(--color-muted)]">
           <span data-slot="session-meta" className="min-w-0 truncate">

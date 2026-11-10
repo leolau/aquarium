@@ -11,6 +11,8 @@ export interface MessageSearchHit {
   snippet: string;
   role: string;
   title?: string | null;
+  /** The matched session's `source`. */
+  source?: string;
 }
 
 export type MessageSearchFn = (query: string, signal: AbortSignal) => Promise<MessageSearchHit[]>;

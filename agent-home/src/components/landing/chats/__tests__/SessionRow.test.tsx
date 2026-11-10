@@ -54,6 +54,22 @@ describe("SessionRow", () => {
     expect(document.querySelector("time[data-slot='session-updated']")!.textContent).toBe("Last updated 1 min ago");
   });
 
+  it("marks the chat to continue with a badge, unless it is already open", () => {
+    const { rerender } = renderRow({ session: pinnedRow, resume: true });
+    const li = document.querySelector("li")!;
+    expect(li.getAttribute("data-state")).toBe("resume");
+    expect(li.className).toContain("ring-[var(--color-accent)]");
+    expect(screen.getByText("Continue").getAttribute("data-slot")).toBe("continue-badge");
+    expect(screen.getByRole("link").getAttribute("title")).toBe("Continue your last chat");
+    rerender(
+      <ul>
+        <SessionRow session={pinnedRow} href="/x" profileLabel="Default" now={NOW} resume active />
+      </ul>,
+    );
+    expect(document.querySelector("li")!.getAttribute("data-state")).toBe("active");
+    expect(screen.queryByText("Continue")).toBeNull();
+  });
+
   it("archives the chat from its row and locks while busy", () => {
     const onArchive = vi.fn();
     const { rerender } = renderRow({ session: pinnedRow, onArchive });

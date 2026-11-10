@@ -103,6 +103,8 @@ export function LandingClient({
     profile: currentProfile,
     profiles,
     activeSessionId: chatId,
+    userChatsOnly: true,
+    highlightLatest: true,
     messageSearch: (q: string, signal: AbortSignal) =>
       chatsApi.searchMessages(q, signal, currentProfile),
     onOpenMessageHit: openMessageHit,
