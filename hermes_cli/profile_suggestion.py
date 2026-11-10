@@ -538,6 +538,7 @@ def _ask_aux_llm(
         from agent.auxiliary_client import (
             get_auxiliary_extra_body,
             get_text_auxiliary_client,
+            resolve_task_timeout,
         )
     except Exception as exc:
         log.debug("suggestion: auxiliary client import failed: %s", exc)
@@ -568,7 +569,7 @@ def _ask_aux_llm(
             ],
             temperature=0.3,
             max_tokens=500,
-            timeout=60,
+            timeout=resolve_task_timeout("profile_suggestion", model=aux_model, default=60),
             extra_body=get_auxiliary_extra_body() or None,
         )
     except Exception as exc:

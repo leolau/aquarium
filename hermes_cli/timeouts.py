@@ -80,3 +80,38 @@ def _get_model_config(
     if isinstance(model_config, dict):
         return model_config
     return None
+
+
+def resolve_model_timeout(
+    provider_id: str | None,
+    model: str | None = None,
+    *,
+    explicit: object = None,
+    task_timeout: object = None,
+    task_default: object = None,
+    default: float | None = None,
+) -> float | None:
+    """The timeout in seconds for one model API call.
+
+    Order: ``explicit`` (passed in code for this call) → ``task_timeout``
+    when it differs from ``task_default`` (an ``auxiliary.<task>.timeout`` the
+    user set) → ``providers.<id>.models.<model>.timeout_seconds`` →
+    ``providers.<id>.request_timeout_seconds`` → the task's own timeout or
+    default → ``default``.
+    """
+    timeout = _coerce_timeout(explicit)
+    if timeout is not None:
+        return timeout
+    configured = _coerce_timeout(task_timeout)
+    builtin = _coerce_timeout(task_default)
+    if configured is not None and configured != builtin:
+        return configured
+    if provider_id:
+        timeout = get_provider_request_timeout(provider_id, model)
+        if timeout is not None:
+            return timeout
+    if configured is not None:
+        return configured
+    if builtin is not None:
+        return builtin
+    return default

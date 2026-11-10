@@ -5,6 +5,8 @@
   "GET /api/aquarium": "signed-in",
   "GET /api/aquarium/settings": "signed-in",
   "PUT /api/aquarium/settings": "admin",
+  "GET /api/model-timeouts": "admin",
+  "PUT /api/model-timeouts": "admin",
   "POST /api/account/password": "signed-in",
   "GET /api/account/security": "signed-in",
   "POST /api/account/two-factor/[action]": "signed-in",

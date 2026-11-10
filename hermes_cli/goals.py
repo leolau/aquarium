@@ -46,6 +46,15 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_TURNS = 20
 DEFAULT_JUDGE_TIMEOUT = 30.0
+
+
+def _judge_timeout(timeout: Optional[float], model: Optional[str]) -> float:
+    """The caller's timeout, else the goal_judge task/provider/model timeout, else 30 s."""
+    if timeout is not None:
+        return timeout
+    from agent.auxiliary_client import resolve_task_timeout
+
+    return resolve_task_timeout("goal_judge", model=model, default=DEFAULT_JUDGE_TIMEOUT)
 # Judge output budget. The freeform judge returns a one-line JSON verdict, but
 # reasoning models (deepseek-v4, qwq, etc.) burn tokens on hidden reasoning
 # before emitting the visible JSON — and the first /goal turn's prompt is
@@ -1025,7 +1034,7 @@ def judge_goal(
     goal: str,
     last_response: str,
     *,
-    timeout: float = DEFAULT_JUDGE_TIMEOUT,
+    timeout: Optional[float] = None,
     subgoals: Optional[List[str]] = None,
     background_processes: Optional[List[Dict[str, Any]]] = None,
     contract: Optional[GoalContract] = None,
@@ -1131,7 +1140,7 @@ def judge_goal(
             ],
             temperature=0,
             max_tokens=_goal_judge_max_tokens(),
-            timeout=timeout,
+            timeout=_judge_timeout(timeout, model),
             extra_body=get_auxiliary_extra_body() or None,
         )
     except Exception as exc:
@@ -1172,7 +1181,7 @@ def gather_background_processes(task_id: Optional[str] = None) -> List[Dict[str,
     return [s for s in sessions if isinstance(s, dict) and s.get("status") != "exited"]
 
 
-def draft_contract(objective: str, *, timeout: float = DEFAULT_JUDGE_TIMEOUT) -> Optional[GoalContract]:
+def draft_contract(objective: str, *, timeout: Optional[float] = None) -> Optional[GoalContract]:
     """Expand a plain-language objective into a structured completion contract.
 
     Uses the ``goal_judge`` auxiliary task (main-model-first, cache-safe — it
@@ -1210,7 +1219,7 @@ def draft_contract(objective: str, *, timeout: float = DEFAULT_JUDGE_TIMEOUT) ->
             ],
             temperature=0,
             max_tokens=_goal_judge_max_tokens(),
-            timeout=timeout,
+            timeout=_judge_timeout(timeout, model),
             extra_body=get_auxiliary_extra_body() or None,
         )
     except Exception as exc:

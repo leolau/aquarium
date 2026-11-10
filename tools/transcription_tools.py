@@ -38,6 +38,7 @@ from typing import Optional, Dict, Any
 from urllib.parse import urljoin
 
 from hermes_cli._subprocess_compat import windows_hide_flags
+from hermes_cli.timeouts import get_provider_request_timeout
 from utils import is_truthy_value
 from tools.managed_tool_gateway import resolve_managed_tool_gateway
 from tools.tool_backend_helpers import (
@@ -1291,7 +1292,10 @@ def _transcribe_groq(file_path: str, model_name: str) -> Dict[str, Any]:
 
     try:
         from openai import OpenAI, APIError, APIConnectionError, APITimeoutError
-        client = OpenAI(api_key=api_key, base_url=GROQ_BASE_URL, timeout=30, max_retries=0)
+        client = OpenAI(
+            api_key=api_key, base_url=GROQ_BASE_URL,
+            timeout=get_provider_request_timeout("groq", model_name) or 30, max_retries=0,
+        )
         try:
             with open(file_path, "rb") as audio_file:
                 transcription = client.audio.transcriptions.create(
@@ -1348,7 +1352,10 @@ def _transcribe_openai(file_path: str, model_name: str) -> Dict[str, Any]:
 
     try:
         from openai import OpenAI, APIError, APIConnectionError, APITimeoutError
-        client = OpenAI(api_key=api_key, base_url=base_url, timeout=30, max_retries=0)
+        client = OpenAI(
+            api_key=api_key, base_url=base_url,
+            timeout=get_provider_request_timeout("openai", model_name) or 30, max_retries=0,
+        )
         try:
             with open(file_path, "rb") as audio_file:
                 transcription = client.audio.transcriptions.create(
@@ -1487,7 +1494,7 @@ def _transcribe_xai(file_path: str, model_name: str) -> Dict[str, Any]:
                     "file": (Path(file_path).name, audio_file),
                 },
                 data=data,
-                timeout=120,
+                timeout=get_provider_request_timeout("xai") or 120,
             )
 
         if response.status_code != 200:
@@ -1569,7 +1576,7 @@ def _transcribe_elevenlabs(file_path: str, model_name: str) -> Dict[str, Any]:
                 headers={"xi-api-key": api_key},
                 files={"file": (Path(file_path).name, audio_file)},
                 data=data,
-                timeout=120,
+                timeout=get_provider_request_timeout("elevenlabs") or 120,
             )
 
         if response.status_code != 200:

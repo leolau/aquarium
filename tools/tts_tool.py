@@ -52,6 +52,7 @@ from pathlib import Path
 from typing import Callable, Dict, Any, Optional
 from urllib.parse import urljoin
 
+from hermes_cli.timeouts import get_provider_request_timeout
 from hermes_cli._subprocess_compat import windows_hide_flags
 from hermes_constants import display_hermes_home
 
@@ -1267,7 +1268,7 @@ def _generate_xai_tts(text: str, output_path: str, tts_config: Dict[str, Any]) -
             "User-Agent": hermes_xai_user_agent(),
         },
         json=payload,
-        timeout=60,
+        timeout=get_provider_request_timeout("xai") or 60,
     )
     response.raise_for_status()
 
@@ -1718,7 +1719,7 @@ def _generate_gemini_tts(text: str, output_path: str, tts_config: Dict[str, Any]
         params={"key": api_key},
         headers={"Content-Type": "application/json"},
         json=payload,
-        timeout=60,
+        timeout=get_provider_request_timeout("gemini") or 60,
     )
     if response.status_code != 200:
         # Surface the API error message when present

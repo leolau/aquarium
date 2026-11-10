@@ -833,10 +833,8 @@ def camofox_vision(question: str, annotate: bool = False,
         try:
             _cfg = load_config()
             _vision_cfg = cfg_get(_cfg, "auxiliary", "vision", default={})
-            _vision_timeout = float(_vision_cfg.get("timeout", 120))
             _vision_temperature = float(_vision_cfg.get("temperature", 0.1))
         except Exception:
-            _vision_timeout = 120.0
             _vision_temperature = 0.1
 
         response = call_llm(
@@ -854,7 +852,6 @@ def camofox_vision(question: str, annotate: bool = False,
             }],
             task="vision",
             temperature=_vision_temperature,
-            timeout=_vision_timeout,
         )
         analysis = (response.choices[0].message.content or "").strip() if response.choices else ""
 

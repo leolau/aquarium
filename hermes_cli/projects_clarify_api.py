@@ -358,20 +358,32 @@ def build_clarify_messages(project, *, focus: Optional[str] = None) -> list[dict
 def _call_clarify_model(messages: list[dict]) -> str:
     """One fresh, tool-less auxiliary call (``auxiliary.projects_clarify``,
     else ``compression``) — never the interactive agent loop."""
-    from agent.auxiliary_client import _get_auxiliary_task_config, call_llm
+    from agent.auxiliary_client import (
+        _get_auxiliary_task_config,
+        call_llm,
+        resolve_task_timeout,
+    )
 
     task = (
         _CLARIFY_TASK
         if _get_auxiliary_task_config(_CLARIFY_TASK).get("provider")
         else _CLARIFY_FALLBACK_TASK
     )
+    # The timeout is this feature's own (auxiliary.<task>.timeout or its
+    # default), checked against the provider/model the call really uses.
+    task_cfg = _get_auxiliary_task_config(task)
     try:
         response = call_llm(
             task,
             messages=messages,
             temperature=0.3,
             max_tokens=1_500,
-            timeout=CLARIFY_TIMEOUT_SECONDS,
+            timeout=resolve_task_timeout(
+                _CLARIFY_TASK,
+                task_cfg.get("provider"),
+                task_cfg.get("model"),
+                default=CLARIFY_TIMEOUT_SECONDS,
+            ),
         )
     except RuntimeError as exc:
         if "No LLM provider configured" in str(exc):

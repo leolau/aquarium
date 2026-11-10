@@ -1085,17 +1085,13 @@ async def vision_analyze_tool(
         logger.info("Processing image with vision model...")
         
         # Call the vision API via centralized router.
-        # Read timeout from config.yaml (auxiliary.vision.timeout), default 120s.
-        # Local vision models (llama.cpp, ollama) can take well over 30s.
-        vision_timeout = 120.0
+        # async_call_llm resolves the timeout: auxiliary.vision.timeout, then
+        # the provider/model timeout, then the 120 s default.
         vision_temperature = 0.1
         try:
             from hermes_cli.config import cfg_get, load_config
             _cfg = load_config()
             _vision_cfg = cfg_get(_cfg, "auxiliary", "vision", default={})
-            _vt = _vision_cfg.get("timeout")
-            if _vt is not None:
-                vision_timeout = float(_vt)
             _vtemp = _vision_cfg.get("temperature")
             if _vtemp is not None:
                 vision_temperature = float(_vtemp)
@@ -1106,7 +1102,6 @@ async def vision_analyze_tool(
             "messages": messages,
             "temperature": vision_temperature,
             "max_tokens": 2000,
-            "timeout": vision_timeout,
         }
         if model:
             call_kwargs["model"] = model
@@ -1576,15 +1571,15 @@ async def video_analyze_tool(
             }
         ]
 
-        vision_timeout = 180.0
+        from agent.auxiliary_client import resolve_task_timeout
+
+        # Video needs at least 180 s whatever the vision timeout says.
+        vision_timeout = max(resolve_task_timeout("vision", model=model or None), 180.0)
         vision_temperature = 0.1
         try:
             from hermes_cli.config import cfg_get, load_config
             _cfg = load_config()
             _vision_cfg = cfg_get(_cfg, "auxiliary", "vision", default={})
-            _vt = _vision_cfg.get("timeout")
-            if _vt is not None:
-                vision_timeout = max(float(_vt), 180.0)
             _vtemp = _vision_cfg.get("temperature")
             if _vtemp is not None:
                 vision_temperature = float(_vtemp)
