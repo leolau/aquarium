@@ -231,6 +231,12 @@ describe("ProjectRow", () => {
     expect(html).toContain("ok");
   });
 
+  it("puts the reference before the project title", () => {
+    const html = renderToStaticMarkup(<ProjectRow project={{ ...ITEM, ref: "P12" }} />);
+    expect(html.indexOf('data-ref="P12"')).toBeGreaterThan(-1);
+    expect(html.indexOf('data-ref="P12"')).toBeLessThan(html.indexOf("Send the Monday digest"));
+  });
+
   it("shows the goal as the dimmed line and the backend's headline verbatim", () => {
     const html = renderToStaticMarkup(<ProjectRow project={ITEM} />);
     expect(html).toContain("The team starts Monday already briefed");

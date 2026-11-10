@@ -32,7 +32,6 @@ import {
   HEALTH_LABEL,
 } from "@/components/projects/ProjectRow";
 import { BusyRegion } from "@/components/ui/BusyRegion";
-import { RefBadge } from "@/components/refs/RefBadge";
 import { Pill, type Tone } from "@/components/ui/Pill";
 import { useRefresh } from "@/components/ui/useRefresh";
 import { useProjectEvents } from "@/components/projects/useProjectEvents";
@@ -310,7 +309,6 @@ export function ProjectDetailView({
                 >
                   {CADENCE_GLYPH[project.cadence]}
                 </span>
-                <RefBadge value={project.ref} />
                 <span className="min-w-0 flex-1 truncate text-sm text-[var(--color-muted)]">
                   {meta}
                 </span>

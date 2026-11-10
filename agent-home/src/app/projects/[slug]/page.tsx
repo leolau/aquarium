@@ -6,6 +6,7 @@ import { isTaskCadence } from "@/components/projects/task/viewMode";
 import { ProjectViewSwitch } from "@/components/projects/task/ProjectViewSwitch";
 import { projectViewContext } from "@/components/projects/task/viewModeServer";
 import { ProjectDetailView } from "@/components/projects/ProjectDetailView";
+import { RefBadge } from "@/components/refs/RefBadge";
 import { HermesApiError } from "@/lib/api/client";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
 import type {
@@ -79,7 +80,19 @@ export default async function Page({
   const isInstanceAdmin = principal.role === "owner" || principal.role === "admin";
 
   return (
-    <MobileShell title={project.name} wide>
+    <MobileShell
+      title={
+        project.ref ? (
+          <span className="inline-flex min-w-0 items-center gap-2">
+            <RefBadge value={project.ref} className="text-[13px]" />
+            <span className="min-w-0">{project.name}</span>
+          </span>
+        ) : (
+          project.name
+        )
+      }
+      wide
+    >
       <ProjectViewSwitch
         initialMode={view.mode}
         task={{

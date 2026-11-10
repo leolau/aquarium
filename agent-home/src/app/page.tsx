@@ -1,6 +1,7 @@
 import { MobileShell } from "@/components/MobileShell";
 import { LandingClient } from "@/components/landing/LandingClient";
 import { activeEnrolments, enrolmentRoles, type ProfileRole } from "@/lib/api/my-profiles";
+import { accountName } from "@/lib/auth/account-name";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
 import { readSession } from "@/lib/auth/session";
 import { storageConfigured } from "@/lib/env";
@@ -34,7 +35,7 @@ export default async function HomePage() {
       <LandingClient
         profiles={profiles}
         currentProfile={currentProfile}
-        accountName={principal.display || null}
+        accountName={accountName(principal)}
         accountRole={principal.role ?? null}
         accountRoles={roles}
         storageEnabled={storageConfigured()}

@@ -101,6 +101,7 @@ export function ProjectCardBody({
         <span aria-hidden className="text-[var(--color-muted)]">
           {CADENCE_GLYPH[project.cadence]}
         </span>
+        <RefBadge value={project.ref} />
         <Link
           href={`/projects/${encodeURIComponent(project.slug)}`}
           draggable={false}
@@ -108,7 +109,6 @@ export function ProjectCardBody({
         >
           {project.name}
         </Link>
-        <RefBadge value={project.ref} />
         {awaiting > 0 && !nextStep ? (
           <Pill tone="warning">{awaiting} to accept</Pill>
         ) : null}

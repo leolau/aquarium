@@ -13,7 +13,7 @@ import { usePopover } from "./usePopover";
 /**
  * Figma `account` (5:64): initial avatar → account, settings and sign out.
  * From `md` the trigger also shows the name and the role in the current
- * profile; the menu lists the role in every enrolled profile.
+ * profile; the menu lists the role in each enrolled profile.
  */
 export function AccountMenu({
   name,
@@ -38,7 +38,7 @@ export function AccountMenu({
       ? t("account.openNamedRole", { name: trimmed, role: roleLabel })
       : t("account.openNamed", { name: trimmed })
     : t("account.open");
-  const showRoleList = roles.length > 1;
+  const showRoleList = roles.length > 0;
   return (
     <div ref={popRef} data-component="AccountMenu" className="relative shrink-0">
       <button
@@ -57,9 +57,9 @@ export function AccountMenu({
         >
           {initial ?? <UserIcon size={16} />}
         </span>
-        {trimmed ? (
+        {trimmed || roleLabel ? (
           <span aria-hidden data-testid="account-identity" className="hidden min-w-0 flex-col items-start text-left md:flex">
-            <span className="max-w-full truncate text-[13px] font-medium leading-4">{trimmed}</span>
+            {trimmed ? <span className="max-w-full truncate text-[13px] font-medium leading-4">{trimmed}</span> : null}
             {roleLabel ? (
               <span className="max-w-full truncate text-[11px] leading-[14px] text-[var(--color-muted)]">{roleLabel}</span>
             ) : null}
@@ -74,15 +74,17 @@ export function AccountMenu({
           role="menu"
           className="absolute right-0 top-full z-[65] mt-2 w-64 max-w-[calc(100vw-2rem)] rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg)] p-2 text-sm shadow-xl"
         >
-          {trimmed ? (
+          {trimmed || roleLabel ? (
             <div data-testid="account-summary" className="px-2 pb-2 pt-1">
-              <p className="truncate text-xs text-[var(--color-muted)]">{t("account.signedInAs", { name: trimmed })}</p>
+              {trimmed ? (
+                <p className="truncate text-xs text-[var(--color-muted)]">{t("account.signedInAs", { name: trimmed })}</p>
+              ) : null}
               {roleLabel ? (
                 <p className="mt-1 flex items-center gap-1.5 text-xs">
                   <span className="rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 font-medium text-[var(--color-fg)]">
                     {roleLabel}
                   </span>
-                  {currentProfile && showRoleList ? (
+                  {currentProfile && roles.length > 1 ? (
                     <span className="truncate text-[var(--color-muted)]">{currentProfile}</span>
                   ) : null}
                 </p>
@@ -109,7 +111,7 @@ export function AccountMenu({
               </ul>
             </div>
           ) : null}
-          <div className={trimmed || showRoleList ? "border-t border-[var(--color-border)] pt-1" : undefined}>
+          <div className={trimmed || roleLabel || showRoleList ? "border-t border-[var(--color-border)] pt-1" : undefined}>
             <Link role="menuitem" href="/settings/account" className="block rounded-[var(--radius-sm)] px-2 py-1.5 hover:bg-[var(--color-surface-2)]">
               Account
             </Link>
