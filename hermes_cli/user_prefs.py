@@ -19,12 +19,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import hermes_constants
+from hermes_cli.aquarium_creatures import fallback_creature, is_creature, random_creature
+
+logger = logging.getLogger(__name__)
 
 #: Languages agent-home ships strings for. ``en`` is the default.
 SUPPORTED_LANGUAGES = ("en", "zh-Hant")
@@ -94,6 +98,40 @@ def set_language(user_id: str, language: str) -> str:
         )
     _write(user_id, {"language": language})
     return language
+
+
+def get_creature(user_id: str) -> Optional[str]:
+    """The saved aquarium creature, or ``None`` when none (or an unknown one) is saved."""
+    value = read_prefs(user_id).get("creature")
+    return value if is_creature(value) else None
+
+
+def creature_for(user_id: str) -> tuple[str, bool]:
+    """``(creature, chosen)``: the saved creature, else the stable fallback."""
+    saved = get_creature(user_id)
+    return (saved, True) if saved else (fallback_creature(user_id), False)
+
+
+def set_creature(user_id: str, creature: Any) -> str:
+    """Save ``creature`` for this person; raises ``ValueError`` if unknown."""
+    if not is_creature(creature):
+        raise ValueError(f"unknown creature {creature!r}")
+    _write(user_id, {"creature": creature})
+    return creature
+
+
+def assign_random_creature(user_id: str) -> Optional[str]:
+    """Give a newly created person a random creature unless one is saved.
+
+    Best effort: a failed write is logged and never fails the enrolment.
+    """
+    try:
+        if get_creature(user_id):
+            return None
+        return set_creature(user_id, random_creature())
+    except Exception:
+        logger.warning("could not assign an aquarium creature to %s", user_id, exc_info=True)
+        return None
 
 
 #: The two views of a project and the device classes a choice is kept for.

@@ -18,6 +18,7 @@ import { activeEnrolments } from "@/lib/api/my-profiles";
 import type { SkillVersionDetail, SkillVersionDiff, SkillVersionList } from "@/lib/skills/versions";
 import { hermesApiBaseUrl } from "@/lib/env";
 import type { SecurityBasicsResult } from "@/lib/api/security-basics";
+import type { AquariumSnapshot, CreatureId } from "@/lib/aquarium/creatures";
 import type { SkillUsageEvent, SkillUsageList } from "@/lib/skills/usage";
 import type { PinResponse, PinSuggestionsResponse } from "@/types/landing";
 import type {
@@ -266,6 +267,7 @@ const BOX_WIDE_PATHS = [
   "/api/wa-bridges",
   "/api/email-accounts",
   "/api/comms/people",
+  "/api/aquarium",
 ] as const;
 
 export function isBoxWidePath(path: string): boolean {
@@ -808,6 +810,34 @@ export class HermesApiClient {
   /** Save the signed-in person's own language; nobody else's. */
   async setMyLanguage(language: string): Promise<{ language: string }> {
     return this.request("/api/me/preferences", { method: "PUT", json: { language } });
+  }
+
+  /** Every active person as a creature with their usage (cached ≤ 4 s upstream). */
+  async aquariumSnapshot(): Promise<AquariumSnapshot> {
+    return this.request("/api/aquarium/snapshot");
+  }
+
+  /** Seconds before the aquarium dashboard goes idle. Any signed-in person. */
+  async aquariumSettings(): Promise<{ idle_seconds: number }> {
+    return this.request("/api/aquarium/settings");
+  }
+
+  /** Change the box-wide idle seconds. Owner/admin only (Python re-checks). */
+  async setAquariumSettings(idleSeconds: number): Promise<{ idle_seconds: number }> {
+    return this.request("/api/aquarium/settings", {
+      method: "PUT",
+      json: { idle_seconds: idleSeconds },
+    });
+  }
+
+  /** The signed-in person's creature; `chosen` is false for the fallback. */
+  async myCreature(): Promise<{ creature: CreatureId; chosen: boolean }> {
+    return this.request("/api/me/creature");
+  }
+
+  /** Save the signed-in person's own creature; nobody else's. */
+  async setMyCreature(creature: CreatureId): Promise<{ creature: CreatureId; chosen: boolean }> {
+    return this.request("/api/me/creature", { method: "PUT", json: { creature } });
   }
 
   /** List the interactive auth providers (login-page bootstrap). Unauthed. */

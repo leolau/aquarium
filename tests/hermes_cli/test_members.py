@@ -644,6 +644,42 @@ async def test_create_member_enrolls_existing_account_without_invitation(
 
 
 @pytest.mark.asyncio
+async def test_create_member_gives_a_new_person_a_random_creature() -> None:
+    from hermes_cli import user_prefs
+    from hermes_cli.aquarium_creatures import CREATURES
+
+    store, admin = _FakeStore(), _FakeAdmin()
+    created = await _service(store, admin).create_member(
+        _principal("owner"), email="new@x.io", profile="default", role="member"
+    )
+    creature, chosen = user_prefs.creature_for(created.principal.user_id)
+    assert chosen is True and creature in CREATURES
+
+
+@pytest.mark.asyncio
+async def test_create_member_survives_a_failed_creature_write() -> None:
+    store, admin = _FakeStore(), _FakeAdmin()
+    with patch("hermes_cli.user_prefs._write", side_effect=OSError("read-only")):
+        created = await _service(store, admin).create_member(
+            _principal("owner"), email="new@x.io", profile="default", role="member"
+        )
+    assert created.principal.user_id in store.principals
+    assert created.invitation_token == "token-1"
+
+
+@pytest.mark.asyncio
+async def test_enrolling_an_existing_account_keeps_their_creature() -> None:
+    from hermes_cli import user_prefs
+
+    user_prefs.set_creature(_SUB, "whale")
+    admin = _FakeAdmin(users={_SUB: {"id": _SUB, "email": "mia@x.io"}})
+    await _service(_FakeStore(), admin).create_member(
+        _principal("owner"), email="mia@x.io", profile="default", role="viewer"
+    )
+    assert user_prefs.get_creature(_SUB) == "whale"
+
+
+@pytest.mark.asyncio
 async def test_create_member_refuses_somebody_already_enrolled_here(
     audit_events: list[dict[str, Any]],
 ) -> None:
