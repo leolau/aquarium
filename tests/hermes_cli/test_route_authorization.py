@@ -128,6 +128,11 @@ SIGNED_IN = {
     # user_prefs: the acting person's own language; no user id is taken from the request
     "GET /api/me/preferences",
     "PUT /api/me/preferences",
+    # FG-35 aquarium: the box-wide snapshot + idle setting, and the caller's own creature
+    "GET /api/aquarium/snapshot",
+    "GET /api/aquarium/settings",
+    "GET /api/me/creature",
+    "PUT /api/me/creature",
     # own login only (session subject, never a body id): password + two-factor
     "GET /api/account/security",
     "POST /api/account/password",

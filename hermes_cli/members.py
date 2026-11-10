@@ -78,6 +78,7 @@ from hermes_cli.ownership import (
     OwnershipOutcome,
     resolve_owned_rows,
 )
+from hermes_cli.user_prefs import assign_random_creature
 
 logger = logging.getLogger(__name__)
 
@@ -969,6 +970,7 @@ class MemberService:
             await self._store.unenroll(user_id)
             self._rollback_account(user_id)
             raise
+        assign_random_creature(user_id)
         await self._audit(
             actor,
             "user.create",

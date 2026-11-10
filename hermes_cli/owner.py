@@ -16,6 +16,7 @@ from hermes_cli.access import (
     ensure_read_role,
 )
 from hermes_cli.datastore import SupabaseAppStore, get_store
+from hermes_cli.user_prefs import assign_random_creature
 
 #: Env var carrying the serving read role's password (a credential → ``.env``).
 READ_ROLE_PASSWORD_ENV = "HERMES_APP_READ_DB_PASSWORD"
@@ -63,6 +64,7 @@ def owner_init_command(args: argparse.Namespace) -> int:
         principal = asyncio.run(
             store.enroll(args.user_id, display=args.display, role="owner")
         )
+        assign_random_creature(principal.user_id)
     except (KeyError, RuntimeError, ValueError) as error:
         print(f"Owner init failed: {error}", file=sys.stderr)
         raise SystemExit(1) from error
