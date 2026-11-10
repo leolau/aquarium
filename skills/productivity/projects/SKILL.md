@@ -48,6 +48,23 @@ hermes projects summarise <slug>          # rolling "where this stands" — read
 hermes projects doctor    [--slug s] [--json]
 ```
 
+## Short refs
+
+Every project, card and run has a short ref that users type in prompts:
+`P12` (project), `T345` (project card), `P12-R3` (run 3 of P12). Refs are
+case-insensitive, never change on rename, and sit beside the internal ids
+(slug, `t_xxxxxxxx`), which keep working everywhere. When a user mentions a
+ref, resolve it rather than guessing:
+
+```
+hermes ref P12 [--actor <user>] [--json]   # kind, id, title, status, agent-home URL
+```
+
+A project's ref also works wherever a `<slug>` does (`hermes projects show
+P12`). `hermes ref` answers "ref not found" both for refs that name nothing
+and for items the actor may not see. Quote refs back to the user (`T345`)
+instead of internal ids.
+
 Every read verb accepts `--json` for machine-readable output. The agent parses
 JSON; the human reads the lines. One flag, both audiences.
 

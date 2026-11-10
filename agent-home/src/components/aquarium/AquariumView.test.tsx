@@ -16,7 +16,8 @@ vi.mock("next/link", () => ({
 
 const SNAPSHOT: AquariumSnapshot = {
   generated_at: 1,
-  idle_seconds: 30, name: "Aquarium",
+  idle_seconds: 30,
+  name: "Reef Lab",
   users: [
     {
       user_id: "u1",
@@ -69,6 +70,21 @@ describe("AquariumView", () => {
     expect(people.textContent).toContain("Ann, Octopus: 4 chats, 1 profiles");
     expect(people.textContent).toContain("Bo, Shark");
     expect(container.querySelector('[data-component="AquariumOffline"]')).toBeNull();
+  });
+
+  it("titles the dashboard and the browser tab with the aquarium name", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => respond(SNAPSHOT)));
+    document.title = "Before";
+    const { container, unmount } = render(<AquariumView />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const title = container.querySelector('[data-component="AquariumTitle"]')!;
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toContain("Reef Lab");
+    expect(title.querySelectorAll(".aq-title-char")).toHaveLength("ReefLab".length);
+    expect(document.title).toBe("Reef Lab");
+    unmount();
+    expect(document.title).toBe("Before");
   });
 
   it("keeps the last state and shows the offline badge when a poll fails, then recovers", async () => {

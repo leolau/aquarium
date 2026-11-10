@@ -1,4 +1,4 @@
-"""FG-35 aquarium: creature prefs, idle setting, snapshot aggregation + routes.
+"""FG-35 aquarium: creature prefs, idle setting and name, snapshot aggregation + routes.
 
 Real path: a throwaway box root with real per-profile ``state.db`` files and a
 real projects DB; only the profile registry, the per-profile principal
@@ -14,12 +14,18 @@ from types import SimpleNamespace
 import pytest
 
 from hermes_cli.aquarium_creatures import (
+    AQUARIUM_NAME_DEFAULT,
+    AQUARIUM_NAME_MAX,
     CREATURES,
     IDLE_SECONDS_DEFAULT,
     IDLE_SECONDS_MAX,
     IDLE_SECONDS_MIN,
     fallback_creature,
+    random_creature,
 )
+
+DEFAULTS = {"idle_seconds": IDLE_SECONDS_DEFAULT, "name": AQUARIUM_NAME_DEFAULT}
+REPO = Path(__file__).resolve().parents[2]
 
 
 def _person(user_id, display, role="member"):
@@ -41,6 +47,39 @@ def root(tmp_path, monkeypatch):
     aquarium_api.invalidate_snapshot()
     yield root
     aquarium_api.invalidate_snapshot()
+
+
+# -- creature list ------------------------------------------------------------
+
+
+def test_creatures_are_unique_and_match_the_ui_list():
+    import re
+
+    ts = (REPO / "agent-home/src/lib/aquarium/creatures.ts").read_text(encoding="utf-8")
+    block = ts.split("export const CREATURES = [", 1)[1].split("] as const", 1)[0]
+    assert tuple(re.findall(r'\bid: "([a-z-]+)"', block)) == CREATURES
+    assert len(set(CREATURES)) == len(CREATURES) == 40
+
+
+def test_every_creature_has_a_sprite():
+    sprites = REPO / "agent-home/public/aquarium/creatures"
+    assert [c for c in CREATURES if not (sprites / f"{c}.webp").is_file()] == []
+
+
+def test_fallback_stays_within_the_original_twenty():
+    original = CREATURES[:20]
+    picks = {fallback_creature(f"user-{i}") for i in range(2000)}
+    assert picks == set(original)
+    assert fallback_creature("amy") == fallback_creature("amy")
+
+
+def test_random_creature_reaches_the_new_ids(monkeypatch):
+    from hermes_cli import aquarium_creatures
+
+    assert {random_creature() for _ in range(2000)} <= set(CREATURES)
+    monkeypatch.setattr(aquarium_creatures.secrets, "choice", lambda seq: seq[-1])
+    assert random_creature() == CREATURES[-1]
+    assert random_creature() not in CREATURES[:20]
 
 
 # -- creature preference -----------------------------------------------------
@@ -106,6 +145,31 @@ def test_idle_seconds_default_bounds_and_hand_edits():
         assert set_idle_seconds(config, good) == good
         assert idle_seconds(config) == good
     assert config == {"aquarium": {"idle_seconds": IDLE_SECONDS_MAX}}
+
+
+def test_name_default_trim_control_chars_and_hand_edits():
+    from hermes_cli.aquarium_api import aquarium_name, set_aquarium_name
+
+    assert aquarium_name({}) == AQUARIUM_NAME_DEFAULT
+    config = {"aquarium": {"idle_seconds": 60}}
+    assert set_aquarium_name(config, "  Reef Team  ") == "Reef Team"
+    assert config == {"aquarium": {"idle_seconds": 60, "name": "Reef Team"}}
+    assert set_aquarium_name(config, "Re\x00ef\x1b\u202e Te\x7fam\n") == "Reef Team"
+    assert set_aquarium_name(config, "海底 🐙") == "海底 🐙"
+    assert set_aquarium_name(config, "x" * AQUARIUM_NAME_MAX) == "x" * AQUARIUM_NAME_MAX
+    assert set_aquarium_name(config, f"  {'y' * AQUARIUM_NAME_MAX}  ") == "y" * AQUARIUM_NAME_MAX
+    assert aquarium_name(config) == "y" * AQUARIUM_NAME_MAX
+    for blank in ("", "   ", "\t\n", "\x00\x01"):
+        config["aquarium"]["name"] = "Reef"
+        assert set_aquarium_name(config, blank) == AQUARIUM_NAME_DEFAULT
+        assert "name" not in config["aquarium"]
+        assert aquarium_name(config) == AQUARIUM_NAME_DEFAULT
+    for bad in ("z" * (AQUARIUM_NAME_MAX + 1), None, 3, True, ["Reef"], {"n": 1}):
+        with pytest.raises(ValueError):
+            set_aquarium_name(config, bad)
+        assert aquarium_name({"aquarium": {"name": bad}}) == AQUARIUM_NAME_DEFAULT
+    assert config == {"aquarium": {"idle_seconds": 60}}
+    assert aquarium_name({"aquarium": {"name": " Reef\x07 "}}) == "Reef"
 
 
 # -- snapshot aggregation -----------------------------------------------------
@@ -214,6 +278,7 @@ async def test_snapshot_aggregates_every_profile(box):
     user_prefs.set_creature("ben", "whale")
     snap = await build_snapshot()
     assert snap["idle_seconds"] == IDLE_SECONDS_DEFAULT
+    assert snap["name"] == AQUARIUM_NAME_DEFAULT
     assert abs(snap["generated_at"] - time.time()) < 60
     users = _by_id(snap)
     assert set(users) == {"amy", "ben", "cat"}
@@ -395,32 +460,83 @@ def test_snapshot_route_marks_only_the_caller(box, client, acting):
     assert [u for u in users if users[u]["is_self"]] == ["ben"]
 
 
-def test_a_member_reads_but_cannot_change_idle_seconds(root, client, acting):
+@pytest.mark.parametrize(
+    "body", [{"idle_seconds": 60}, {"name": "Reef"}, {"idle_seconds": 60, "name": "Reef"}]
+)
+def test_a_member_reads_but_cannot_change_the_settings(root, client, acting, body):
     acting["subject"] = "amy-session"
-    assert client.get("/api/aquarium/settings").json() == {"idle_seconds": IDLE_SECONDS_DEFAULT}
-    r = client.put("/api/aquarium/settings", json={"idle_seconds": 60})
+    assert client.get("/api/aquarium/settings").json() == DEFAULTS
+    r = client.put("/api/aquarium/settings", json=body)
     assert r.status_code == 403
-    assert client.get("/api/aquarium/settings").json() == {"idle_seconds": IDLE_SECONDS_DEFAULT}
+    assert client.get("/api/aquarium/settings").json() == DEFAULTS
 
 
 @pytest.mark.parametrize("who", [BEN, _person("own", "Own", "owner")])
 def test_owner_and_admin_change_idle_seconds(root, client, acting, who):
     acting["as"], acting["subject"] = who, "session"
     r = client.put("/api/aquarium/settings", json={"idle_seconds": 120})
-    assert r.status_code == 200 and r.json() == {"idle_seconds": 120}
+    assert r.status_code == 200 and r.json() == {**DEFAULTS, "idle_seconds": 120}
     acting["as"] = AMY
-    assert client.get("/api/aquarium/settings").json() == {"idle_seconds": 120}
+    assert client.get("/api/aquarium/settings").json() == {**DEFAULTS, "idle_seconds": 120}
     from hermes_cli.config import load_config
 
     assert load_config()["aquarium"]["idle_seconds"] == 120
 
 
-@pytest.mark.parametrize("value", [0, IDLE_SECONDS_MIN - 1, IDLE_SECONDS_MAX + 1, "60", 6.5, None])
-def test_out_of_range_idle_seconds_is_400(root, client, acting, value):
+def test_settings_put_takes_any_subset_and_returns_everything(root, client, acting):
+    from hermes_cli.config import load_config
+
     acting["as"], acting["subject"] = BEN, "session"
-    r = client.put("/api/aquarium/settings", json={"idle_seconds": value})
+    r = client.put("/api/aquarium/settings", json={"name": "  Reef Team "})
+    assert r.status_code == 200 and r.json() == {**DEFAULTS, "name": "Reef Team"}
+    r = client.put("/api/aquarium/settings", json={"idle_seconds": 90})
+    assert r.json() == {"idle_seconds": 90, "name": "Reef Team"}
+    r = client.put("/api/aquarium/settings", json={"idle_seconds": 45, "name": "Kelp"})
+    assert r.json() == {"idle_seconds": 45, "name": "Kelp"}
+    assert load_config()["aquarium"] == {"idle_seconds": 45, "name": "Kelp"}
+    r = client.put("/api/aquarium/settings", json={"name": "   "})
+    assert r.json() == {"idle_seconds": 45, "name": AQUARIUM_NAME_DEFAULT}
+    assert "name" not in load_config()["aquarium"]
+    acting["as"] = AMY
+    assert client.get("/api/aquarium/settings").json() == {
+        "idle_seconds": 45,
+        "name": AQUARIUM_NAME_DEFAULT,
+    }
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"other": 1},
+        {"idle_seconds": 0},
+        {"idle_seconds": IDLE_SECONDS_MIN - 1},
+        {"idle_seconds": IDLE_SECONDS_MAX + 1},
+        {"idle_seconds": "60"},
+        {"idle_seconds": 6.5},
+        {"idle_seconds": None},
+        {"name": "n" * (AQUARIUM_NAME_MAX + 1)},
+        {"name": None},
+        {"name": 7},
+        {"name": ["Reef"]},
+        {"idle_seconds": 60, "name": 7},
+        {"idle_seconds": 1, "name": "Reef"},
+    ],
+)
+def test_bad_settings_are_400_and_save_nothing(root, client, acting, body):
+    acting["as"], acting["subject"] = BEN, "session"
+    r = client.put("/api/aquarium/settings", json=body)
     assert r.status_code == 400
-    assert client.get("/api/aquarium/settings").json() == {"idle_seconds": IDLE_SECONDS_DEFAULT}
+    assert client.get("/api/aquarium/settings").json() == DEFAULTS
+
+
+def test_a_renamed_aquarium_shows_in_the_next_snapshot(box, client, acting):
+    assert client.get("/api/aquarium/snapshot").json()["name"] == AQUARIUM_NAME_DEFAULT
+    acting["as"], acting["subject"] = BEN, "session"
+    assert client.put("/api/aquarium/settings", json={"name": "Reef"}).status_code == 200
+    acting["as"], acting["subject"] = AMY, ""
+    snap = client.get("/api/aquarium/snapshot").json()
+    assert snap["name"] == "Reef" and snap["idle_seconds"] == IDLE_SECONDS_DEFAULT
 
 
 def test_creature_routes_act_only_on_the_caller(root, client, acting):

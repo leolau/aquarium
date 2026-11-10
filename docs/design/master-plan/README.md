@@ -254,6 +254,14 @@ Project plans route each step to the profile best equipped for it — by skills,
 |----|-------|------|-----------------------|
 | [34](./feature-groups/FG-34-skill-aware-plan-assignment.md) | Skill-aware plan assignment (best-suited profile per card, with the reason shown) | **P9-A** — PLAN | `projects_api` plan drafter, `kanban_decompose`, `profile_describer`, `task_runs`, `PlanPanel.tsx` |
 
+### Phase 10 — FG-36 (short refs)
+
+Every project, card, run, chat, to-do and inbox message gets a short, typeable ref (`P12`, `T345`, `P12-R3`, `C1024`, `D88`, `M512`) on top of its internal id, so people can name it in later prompts.
+
+| FG | Title | Wave | Primary reuse anchors |
+|----|-------|------|-----------------------|
+| [36](./feature-groups/FG-36-short-refs.md) | Short refs: box-unique type letter + running number, resolver, `/go/[ref]`, copyable badge | **P10** — PR 1 (P/T/R) BUILT; PR 2 (C), PR 3 (D/M) PLAN | `projects_db_path()`, `sqlite_util.write_txn`, `projects_api` read gate, `CopyButton.tsx` |
+
 ---
 
 ## 4. Cross-cutting shared contracts (Wave 0 — must merge FIRST)
@@ -855,3 +863,4 @@ transient, and in-place-resize to 8/32 (same-family, ~5 min, no data migration
 | 2026-10-25 | 31 | devin (for Yan) | FG-33 local-app decisions answered (all except external-only 11, 12): path routing, one dev + one prod Node per tool, separate dev Supabase instance, Settings panels for limits/storage/GitHub token, members act within limits, D21 accepted. | FG-33 §Decisions recorded |
 | 2026-10-25 | 32 | devin (for Leo) | FG-33 / D21 | **Added the missing locked-decision row D21 to §1** (the table stopped at D20 although D21 was accepted 2026-10-25). Wording taken from FG-33: local apps = in-house on the box (one Node process per app per mode; database per app per mode in the dedicated apps Postgres cluster); external apps = same unit template on approved providers (Vercel + supabase.com first, then Railway, AWS Amplify, Alibaba FC) with data on provider-hosted Supabase; D3 extended, D4 scoped to Aquarium-hosted data; C6-gated spend caps. Docs-only. | Leo/Yan: "D21 accepted; add the missing locked-decision row" |
 | 2026-11-08 | 33 | devin (for Yan) | FG-34 | **Phase 9 added: FG-34 skill-aware plan assignment, status PLAN.** Yan: the planner may pick any profile the signed-in user can access, and past results count as a signal. Work items W1–W6 in the FG doc. | The project planner had no profile roster, so every step fell to the host profile and the plan never said why. |
+| 2026-11-10 | 34 | devin (for Leo) | FG-36 | **Phase 10 added: FG-36 short refs.** PR 1 builds the box-wide registry (`short_refs.db` beside `projects.db`), `P`/`T` refs, derived `P12-R3` run refs, `GET /api/refs/{ref}` (hidden = 404), `hermes ref`, `/go/[ref]` and the agent-home badge. PR 2 (chats, `C`) and PR 3 (to-dos `D`, inbox `M`) are planned in the FG doc. | Leo: short, typeable unique ids for projects, tasks and chats so they can be referenced in later prompts. |

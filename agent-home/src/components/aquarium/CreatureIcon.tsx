@@ -1,6 +1,4 @@
-import type { CreatureId } from "@/lib/aquarium/creatures";
-
-import { CREATURE_ART, VIEWBOX } from "./creatures";
+import { creatureSprite, isCreatureId, type CreatureId } from "@/lib/aquarium/creatures";
 
 export interface CreatureIconProps {
   id: CreatureId;
@@ -10,35 +8,24 @@ export interface CreatureIconProps {
   className?: string;
 }
 
-/** One of the 20 FG-35 creatures as an inline SVG, facing right. */
+/** One of the FG-35 creatures as its Canva sprite, facing right, letterboxed into a `size` square. */
 export function CreatureIcon({ id, size = 48, label, className }: CreatureIconProps) {
-  const art = CREATURE_ART[id];
-  if (!art) return null;
+  if (!isCreatureId(id)) return null;
   const decorative = !label;
   return (
-    <svg
-      viewBox={`0 0 ${VIEWBOX} ${VIEWBOX}`}
+    // eslint-disable-next-line @next/next/no-img-element -- static sprite, already optimised WebP
+    <img
+      src={creatureSprite(id)}
       width={size}
       height={size}
-      className={className}
-      data-creature={id}
-      role={decorative ? undefined : "img"}
-      aria-label={decorative ? undefined : label}
+      alt={decorative ? "" : label}
       aria-hidden={decorative ? true : undefined}
-      focusable="false"
-    >
-      {art.parts.map((p, i) => (
-        <path
-          key={i}
-          d={p.d}
-          fill={p.fill ?? "none"}
-          stroke={p.stroke}
-          strokeWidth={p.stroke ? (p.width ?? 1) : undefined}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          opacity={p.opacity}
-        />
-      ))}
-    </svg>
+      data-creature={id}
+      draggable={false}
+      decoding="async"
+      loading="lazy"
+      className={`inline-block shrink-0 object-contain ${className ?? ""}`}
+      style={{ width: size, height: size }}
+    />
   );
 }

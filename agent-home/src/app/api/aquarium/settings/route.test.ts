@@ -15,7 +15,12 @@ vi.mock("@/lib/env", async (orig) => ({
 }));
 
 import { SESSION_COOKIE, serializeSession } from "@/lib/auth/session";
-import { IDLE_SECONDS_MAX, IDLE_SECONDS_MIN } from "@/lib/aquarium/creatures";
+import {
+  AQUARIUM_NAME_DEFAULT,
+  AQUARIUM_NAME_MAX,
+  IDLE_SECONDS_MAX,
+  IDLE_SECONDS_MIN,
+} from "@/lib/aquarium/creatures";
 
 import { GET, PUT } from "./route";
 
@@ -63,20 +68,23 @@ describe("/api/aquarium/settings", () => {
     expect(seen).toHaveLength(0);
   });
 
-  it("lets any signed-in person read the idle seconds", async () => {
+  it("lets any signed-in person read the settings", async () => {
     signIn("member");
-    upstream = () => Response.json({ idle_seconds: 30 });
+    upstream = () => Response.json({ idle_seconds: 30, name: AQUARIUM_NAME_DEFAULT });
     const res = await GET();
-    expect(await res.json()).toEqual({ idle_seconds: 30 });
+    expect(await res.json()).toEqual({ idle_seconds: 30, name: AQUARIUM_NAME_DEFAULT });
     expect(seen[0].url.pathname).toBe("/api/aquarium/settings");
     expect(seen[0].url.search).toBe("");
   });
 
-  it("refuses a member's change before anything is sent", async () => {
-    signIn("member");
-    expect((await PUT(put(URL_, { idle_seconds: 60 }))).status).toBe(403);
-    expect(seen).toHaveLength(0);
-  });
+  it.each([{ idle_seconds: 60 }, { name: "Reef" }])(
+    "refuses a member's change before anything is sent (%j)",
+    async (body) => {
+      signIn("member");
+      expect((await PUT(put(URL_, body))).status).toBe(403);
+      expect(seen).toHaveLength(0);
+    },
+  );
 
   it.each(["owner", "admin"] as const)("forwards a %s's change", async (role) => {
     signIn(role);
@@ -96,6 +104,52 @@ describe("/api/aquarium/settings", () => {
       expect(seen).toHaveLength(0);
     },
   );
+
+  it.each([
+    [{ name: "  Reef  " }, { name: "  Reef  " }],
+    [{ idle_seconds: 90, name: "" }, { idle_seconds: 90, name: "" }],
+    [{ name: "x", other: true }, { name: "x" }],
+  ])("forwards only the given fields (%j)", async (body, sent) => {
+    signIn("admin");
+    upstream = () => Response.json({ idle_seconds: 90, name: "Reef" });
+    const res = await PUT(put(URL_, body));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ idle_seconds: 90, name: "Reef" });
+    expect(JSON.parse(String(seen[0].init?.body))).toEqual(sent);
+  });
+
+  it.each([
+    {},
+    { other: 1 },
+    { name: null },
+    { name: 7 },
+    { name: ["Reef"] },
+    { name: "n".repeat(AQUARIUM_NAME_MAX + 1) },
+    { idle_seconds: 60, name: 7 },
+    { idle_seconds: 1, name: "Reef" },
+  ])("400s a bad or empty body (%j)", async (body) => {
+    signIn("owner");
+    expect((await PUT(put(URL_, body))).status).toBe(400);
+    expect(seen).toHaveLength(0);
+  });
+
+  it.each(["not json", "null", "5"])("400s a non-object body (%s)", async (body) => {
+    signIn("owner");
+    expect((await PUT(put(URL_, body))).status).toBe(400);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("measures the name like Python: trimmed, without control characters, by code point", async () => {
+    signIn("admin");
+    upstream = () => Response.json({ idle_seconds: 30, name: "ok" });
+    for (const name of [
+      ` ${"a".repeat(AQUARIUM_NAME_MAX)}\n`,
+      `${"b".repeat(AQUARIUM_NAME_MAX)}\u0000\u202e`,
+      "🐙".repeat(AQUARIUM_NAME_MAX),
+    ]) {
+      expect((await PUT(put(URL_, { name }))).status).toBe(200);
+    }
+  });
 
   it("accepts the bounds", async () => {
     signIn("admin");

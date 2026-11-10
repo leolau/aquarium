@@ -18,7 +18,7 @@ import { activeEnrolments } from "@/lib/api/my-profiles";
 import type { SkillVersionDetail, SkillVersionDiff, SkillVersionList } from "@/lib/skills/versions";
 import { hermesApiBaseUrl } from "@/lib/env";
 import type { SecurityBasicsResult } from "@/lib/api/security-basics";
-import type { AquariumSnapshot, CreatureId } from "@/lib/aquarium/creatures";
+import type { AquariumSettings, AquariumSnapshot, CreatureId } from "@/lib/aquarium/creatures";
 import type { SkillUsageEvent, SkillUsageList } from "@/lib/skills/usage";
 import type { PinResponse, PinSuggestionsResponse } from "@/types/landing";
 import type {
@@ -98,6 +98,7 @@ import type {
   Project,
   ProjectBoardView,
   ProjectCardDetail,
+  RefResolution,
   ProjectContact,
   ProjectDetail,
   ProjectDirectivesResponse,
@@ -817,17 +818,14 @@ export class HermesApiClient {
     return this.request("/api/aquarium/snapshot");
   }
 
-  /** Seconds before the aquarium dashboard goes idle. Any signed-in person. */
-  async aquariumSettings(): Promise<{ idle_seconds: number }> {
+  /** The box-wide idle seconds and aquarium name. Any signed-in person. */
+  async aquariumSettings(): Promise<AquariumSettings> {
     return this.request("/api/aquarium/settings");
   }
 
-  /** Change the box-wide idle seconds. Owner/admin only (Python re-checks). */
-  async setAquariumSettings(idleSeconds: number): Promise<{ idle_seconds: number }> {
-    return this.request("/api/aquarium/settings", {
-      method: "PUT",
-      json: { idle_seconds: idleSeconds },
-    });
+  /** Change any of the box-wide aquarium settings; returns all. Owner/admin only (Python re-checks). */
+  async setAquariumSettings(patch: Partial<AquariumSettings>): Promise<AquariumSettings> {
+    return this.request("/api/aquarium/settings", { method: "PUT", json: patch });
   }
 
   /** The signed-in person's creature; `chosen` is false for the fallback. */
@@ -2346,6 +2344,11 @@ export class HermesApiClient {
   }
 
   /** One card, re-checked under the caller's principal. */
+  /** What a short ref (`P12`, `T345`, `P12-R3`) names — 404 when hidden. */
+  async resolveRef(ref: string): Promise<RefResolution> {
+    return this.request(`/api/refs/${encodeURIComponent(ref)}`);
+  }
+
   async projectCard(
     slug: string,
     taskId: string,

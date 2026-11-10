@@ -12,6 +12,7 @@ import { AssignmentDetails, hasAssignment } from "@/components/projects/plan/Ste
 import { parkedText } from "@/components/projects/live/liveState";
 import { useCardLive } from "@/components/projects/useCardLive";
 import { Spinner } from "@/components/ui/Spinner";
+import { RefBadge } from "@/components/refs/RefBadge";
 import { Pill, type Tone } from "@/components/ui/Pill";
 import { useServerState } from "@/components/ui/useRefresh";
 import type { ProjectCardDetail } from "@/types";
@@ -133,6 +134,7 @@ export function CardDetailView({
       >
         <div className="flex items-center gap-2">
           <h1 className="min-w-0 flex-1 text-lg font-semibold">{card.title}</h1>
+          <RefBadge value={card.ref} />
           <Pill tone={tone}>{card.status}</Pill>
         </div>
         <p className="mt-1 text-xs text-[var(--color-muted)]">
