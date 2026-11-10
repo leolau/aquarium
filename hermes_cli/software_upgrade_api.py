@@ -179,6 +179,27 @@ def _job_view(job: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     }
 
 
+def _sha(value: Any) -> Optional[str]:
+    return value[:9] if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{4,40}", value) else None
+
+
+def _checkout_view(raw: Any) -> Optional[Dict[str, Any]]:
+    """A branch checkout's comparison with its branch on GitHub (``None`` when not compared)."""
+    if not isinstance(raw, dict):
+        return None
+    behind = raw.get("behind")
+    return {
+        "branch": scrub(raw.get("branch"), 80) or None,
+        "commit": _sha(raw.get("commit")),
+        "behind": behind if isinstance(behind, int) and not isinstance(behind, bool) and behind >= 0 else None,
+        "tip": _sha(raw.get("tip")),
+        "commits": [{"sha": _sha(c.get("sha")), "title": scrub(c.get("title"), 200),
+                     "date": str(c.get("date") or "")[:40] or None}
+                    for c in (raw.get("commits") or [])[:20] if isinstance(c, dict)],
+        "error": scrub(raw.get("error")) or None,
+    }
+
+
 def status_view(raw: Dict[str, Any], rel: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """What the page needs from ``upgrade status`` (+ ``upgrade releases``)."""
     if raw.get("unavailable") or not raw.get("ok"):
@@ -215,6 +236,7 @@ def status_view(raw: Dict[str, Any], rel: Optional[Dict[str, Any]] = None) -> Di
         out["releases"] = select_releases(listed, installed["version"], installed["channel"])
         out["checked_at"] = rel.get("checked_at") or out["checked_at"]
         out["release_error"] = scrub(rel.get("error")) or None
+        out["checkout"] = _checkout_view(rel.get("checkout")) if installed["kind"] == "checkout" else None
     return out
 
 

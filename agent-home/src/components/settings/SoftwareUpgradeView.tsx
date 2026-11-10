@@ -149,6 +149,7 @@ export function SoftwareUpgradeView({ initial }: { initial: SoftwareUpgradeStatu
       ) : (
         <>
           <InstalledCard status={status} checking={checking} checkError={checkError} onCheck={checkNow} />
+          {status.installed?.kind === "checkout" && status.checkout ? <CheckoutCard checkout={status.checkout} /> : null}
           <ReleasePicker
             status={status}
             selected={selected}
@@ -247,6 +248,42 @@ function InstalledCard({
   );
 }
 
+/* ── branch checkout: commits not installed yet ────────────────────── */
+
+function CheckoutCard({ checkout }: { checkout: NonNullable<SoftwareUpgradeStatus["checkout"]> }) {
+  const t = useT("upgrade");
+  const branch = checkout.branch ?? "";
+  const behind = checkout.behind;
+  return (
+    <section data-section="checkout" data-testid="upgrade-checkout" className={CARD}>
+      {behind == null ? (
+        <p className="text-sm text-[var(--color-muted)]">
+          {t("behindUnknown", { branch, detail: checkout.error ?? "" })}
+        </p>
+      ) : behind === 0 ? (
+        <p className="text-sm">{t("behindNone", { branch })}</p>
+      ) : (
+        <>
+          <p className="text-sm">
+            <b>{behind === 1 ? t("behindOne", { branch }) : t("behindMany", { branch, count: behind })}</b>
+          </p>
+          <p className="mt-1 text-xs text-[var(--color-muted)]">{t("behindHint", { branch })}</p>
+          {checkout.commits.length ? (
+            <ul className="mt-3 space-y-1 text-sm">
+              {checkout.commits.map((c, i) => (
+                <li key={c.sha ?? i} className="flex min-w-0 gap-2">
+                  <code className="shrink-0 text-xs text-[var(--color-muted)]">{c.sha?.slice(0, 7)}</code>
+                  <span className="min-w-0 break-words">{c.title}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </>
+      )}
+    </section>
+  );
+}
+
 /* ── choose a release ──────────────────────────────────────────────── */
 
 function ReleasePicker({
@@ -287,7 +324,7 @@ function ReleasePicker({
             {latest ? t("latestIs", { tag: latest.tag, date: time(epoch(latest.published_at), "date") }) : null}
           </>
         ) : (
-          <b>{t("upToDate")}</b>
+          <b>{status.installed?.kind === "checkout" ? t("noNewerTagged") : t("upToDate")}</b>
         )}
       </div>
       <section data-section="choose-release" className={CARD}>

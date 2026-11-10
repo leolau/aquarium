@@ -2806,6 +2806,7 @@ def cmd_offsite(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
 UPGRADE_STATUS = "/var/lib/aquarium/upgrade-status.json"
 UPGRADE_REQUEST = "/var/lib/aquarium/upgrade-request.json"
 UPGRADE_RELEASES = "/var/lib/aquarium/upgrade-releases.json"
+UPGRADE_BEHIND_SHOWN = 20
 UPGRADE_LOG_DIR = "/var/log/aquarium-upgrade"
 UPGRADE_UNIT = "aquarium-upgrade"
 UPGRADE_FLOW = {
@@ -2906,11 +2907,39 @@ def _trim_release(raw: Dict) -> Optional[Dict]:
             "packaged": TARBALL.format(version=tag) in names}
 
 
+def checkout_behind(cfg: Dict[str, str]) -> Optional[Dict]:
+    """For a git checkout on a branch: the branch's commits on GitHub that it does not run yet."""
+    if layout(cfg) != "git":
+        return None
+    commit = _git_out(cfg, "rev-parse", "HEAD")
+    branch = _git_out(cfg, "symbolic-ref", "--short", "-q", "HEAD")
+    if not commit or not branch:
+        return None
+    info: Dict = {"commit": commit, "branch": branch, "behind": None, "tip": None, "commits": [], "error": ""}
+    try:
+        raw = api_get(f"{cfg['RELEASE_API']}/compare/{commit}...{urllib.parse.quote(branch, safe='')}")
+    except Fail as error:
+        info["error"] = str(error)
+        return info
+    if not isinstance(raw, dict):
+        info["error"] = "GitHub sent an unexpected answer"
+        return info
+    behind = raw.get("ahead_by")  # commits the branch has that this checkout lacks
+    info["behind"] = behind if isinstance(behind, int) and behind >= 0 else None
+    commits = [c for c in raw.get("commits") or [] if isinstance(c, dict)]
+    info["tip"] = (str(commits[-1].get("sha") or "")[:9] or None) if commits else None
+    info["commits"] = [{"sha": str(c.get("sha") or "")[:9],
+                        "title": str(((c.get("commit") or {}).get("message") or "")).split("\n", 1)[0][:200],
+                        "date": str(((c.get("commit") or {}).get("committer") or {}).get("date") or "")}
+                       for c in reversed(commits[-UPGRADE_BEHIND_SHOWN:])]
+    return info
+
+
 def refresh_releases(cfg: Dict[str, str]) -> Dict:
     raw = api_get(f"{cfg['RELEASE_API']}/releases?per_page=50")
     rels = [r for r in (_trim_release(x) for x in (raw if isinstance(raw, list) else []) if isinstance(x, dict)) if r]
     rels.sort(key=lambda r: version_key(r["tag"]), reverse=True)
-    data = {"checked_at": now_iso(), "releases": rels, "error": ""}
+    data = {"checked_at": now_iso(), "releases": rels, "error": "", "checkout": checkout_behind(cfg)}
     write_private(P(UPGRADE_RELEASES), json.dumps(data, sort_keys=True).encode())
     return data
 
@@ -2924,6 +2953,8 @@ def cached_releases(cfg: Dict[str, str], *, refresh: bool = False) -> Dict:
     except (OSError, ValueError):
         data = {}
     age = _age_seconds(data.get("checked_at", ""))
+    if not refresh and layout(cfg) == "git":  # a deploy since the last check makes "behind" stale
+        refresh = (data.get("checkout") or {}).get("commit") != (_git_out(cfg, "rev-parse", "HEAD") or None)
     if refresh or age is None or age > UPGRADE_RELEASES_MAX_AGE:
         try:
             return refresh_releases(cfg)
@@ -2932,6 +2963,7 @@ def cached_releases(cfg: Dict[str, str], *, refresh: bool = False) -> Dict:
     data.setdefault("checked_at", "")
     data.setdefault("releases", [])
     data.setdefault("error", "")
+    data.setdefault("checkout", None)
     return data
 
 
