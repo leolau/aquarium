@@ -30,7 +30,7 @@ describe("creature drawings", () => {
 describe("CreatureIcon", () => {
   it("renders a labelled SVG for every creature", () => {
     for (const c of CREATURES) {
-      const html = renderToStaticMarkup(<CreatureIcon id={c.id} size={40} />);
+      const html = renderToStaticMarkup(<CreatureIcon id={c.id} size={40} label={c.label} />);
       expect(html).toContain(`data-creature="${c.id}"`);
       expect(html).toContain(`aria-label="${c.label}"`);
       expect(html).toContain('width="40"');
@@ -38,9 +38,14 @@ describe("CreatureIcon", () => {
     }
   });
 
-  it("is hidden from assistive tech when decorative", () => {
-    const html = renderToStaticMarkup(<CreatureIcon id="crab" label="" />);
-    expect(html).toContain('aria-hidden="true"');
-    expect(html).not.toContain("role=");
+  it("is hidden from assistive tech unless given a label", () => {
+    for (const html of [
+      renderToStaticMarkup(<CreatureIcon id="crab" />),
+      renderToStaticMarkup(<CreatureIcon id="crab" label="" />),
+    ]) {
+      expect(html).toContain('aria-hidden="true"');
+      expect(html).not.toContain("role=");
+      expect(html).not.toContain("aria-label");
+    }
   });
 });

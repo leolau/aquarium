@@ -31,7 +31,7 @@ export function CreatureCard({ user, profile, ref }: CreatureCardProps) {
     >
       {follower && (
         <div className="mb-2 flex items-center gap-2 border-b border-white/15 pb-2">
-          <CreatureIcon id={profileCreature(follower.name)} size={28} label="" />
+          <CreatureIcon id={profileCreature(follower.name)} size={28} />
           <div className="min-w-0">
             <div className="truncate font-semibold">{follower.display_name}</div>
             <div className="text-white/70">{t("card.profileOf", { name: user.name })}</div>
@@ -39,7 +39,7 @@ export function CreatureCard({ user, profile, ref }: CreatureCardProps) {
         </div>
       )}
       <div className="flex items-center gap-2">
-        <CreatureIcon id={user.creature} size={36} label="" />
+        <CreatureIcon id={user.creature} size={36} />
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold">
             {user.name}

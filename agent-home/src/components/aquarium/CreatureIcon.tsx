@@ -1,11 +1,11 @@
-import { CREATURES, type CreatureId } from "@/lib/aquarium/creatures";
+import type { CreatureId } from "@/lib/aquarium/creatures";
 
 import { CREATURE_ART, VIEWBOX } from "./creatures";
 
 export interface CreatureIconProps {
   id: CreatureId;
   size?: number;
-  /** Accessible name; defaults to the creature's label. Pass `""` when decorative. */
+  /** Accessible name. Omit when a visible label sits next to the icon (decorative). */
   label?: string;
   className?: string;
 }
@@ -14,8 +14,7 @@ export interface CreatureIconProps {
 export function CreatureIcon({ id, size = 48, label, className }: CreatureIconProps) {
   const art = CREATURE_ART[id];
   if (!art) return null;
-  const name = label ?? CREATURES.find((c) => c.id === id)?.label ?? id;
-  const decorative = name === "";
+  const decorative = !label;
   return (
     <svg
       viewBox={`0 0 ${VIEWBOX} ${VIEWBOX}`}
@@ -24,7 +23,7 @@ export function CreatureIcon({ id, size = 48, label, className }: CreatureIconPr
       className={className}
       data-creature={id}
       role={decorative ? undefined : "img"}
-      aria-label={decorative ? undefined : name}
+      aria-label={decorative ? undefined : label}
       aria-hidden={decorative ? true : undefined}
       focusable="false"
     >

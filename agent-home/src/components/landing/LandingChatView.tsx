@@ -29,6 +29,7 @@ export function LandingChatView({
   renamedTitle,
   highlight,
   storageEnabled,
+  onBusyChange,
   onClose,
 }: {
   sessionId: string;
@@ -40,6 +41,8 @@ export function LandingChatView({
   /** Message-search words to highlight. */
   highlight?: string;
   storageEnabled: boolean;
+  /** A turn is streaming in this chat (`true`) or has finished (`false`). */
+  onBusyChange?: (busy: boolean) => void;
   onClose: () => void;
 }) {
   const t = useT("chatPage");
@@ -67,6 +70,11 @@ export function LandingChatView({
     findSession: (id) => sessions?.find((s) => s.id === id),
     onSessionsStale: () => void refresh(),
   });
+  const busy = conv.selBusy;
+  useEffect(() => {
+    onBusyChange?.(busy);
+  }, [busy, onBusyChange]);
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
   const listed = sessions?.find((s) => s.id === sessionId);
   const session =
     listed && renamedTitle !== undefined ? { ...listed, title: renamedTitle || null } : listed;
