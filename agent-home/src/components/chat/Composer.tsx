@@ -123,6 +123,8 @@ export function Composer({
   launcherClearance = true,
   pending = [],
   onRemovePending,
+  narrow = false,
+  onMenuOpenChange,
 }: {
   sending: boolean;
   /** A Stop was requested and the server is winding the turn down. */
@@ -156,6 +158,13 @@ export function Composer({
   pending?: PendingChatInput[];
   /** Take back a queued message before it starts. */
   onRemovePending?: (itemId: string) => void;
+  /**
+   * The composer sits in a narrow panel (the lead chat), so while working it
+   * uses the phone layout at every screen width: actions below the input.
+   */
+  narrow?: boolean;
+  /** The mode menu opened or closed (the host may need to lift itself too). */
+  onMenuOpenChange?: (open: boolean) => void;
 }) {
   const [text, setText] = useState(initialText);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
@@ -195,6 +204,17 @@ export function Composer({
   // While the agent works a message goes to the running turn, which takes
   // text only — attachments stay in the box for the next normal turn.
   const attachmentsWait = sending && attachments.length > 0;
+  const menuShown = sending && menuOpen;
+  useEffect(() => onMenuOpenChange?.(menuShown), [menuShown, onMenuOpenChange]);
+  // Working on a phone (or in a narrow panel) the actions wrap below a
+  // full-width input; the left-launcher reserve then moves onto that row.
+  const reserve = launcherClearance
+    ? !sending
+      ? " ml-14"
+      : narrow
+        ? ""
+        : " ml-14 max-sm:ml-0"
+    : "";
   const canSend =
     !uploading &&
     (sending ? text.trim() !== "" : text.trim() !== "" || attachments.length > 0);
@@ -323,11 +343,8 @@ export function Composer({
       ref={rootRef}
       data-component="Composer"
       // Lift the open mode menu (and its phone backdrop) above the floating launchers.
-      className={`sticky bottom-0 mt-3 bg-[var(--color-bg)] pt-2${menuOpen ? " z-[70]" : ""}`}
-      style={{
-        bottom: "var(--safe-bottom)",
-        marginLeft: launcherClearance ? "calc(2.75rem + 0.75rem)" : undefined,
-      }}
+      className={`sticky bottom-0 mt-3 bg-[var(--color-bg)] pt-2${reserve}${menuShown ? " z-[70]" : ""}`}
+      style={{ bottom: "var(--safe-bottom)" }}
     >
       {sending ? <PendingInputs pending={pending} onRemove={onRemovePending} /> : null}
       {attachments.length > 0 ? (
@@ -394,7 +411,9 @@ export function Composer({
         </div>
       ) : null}
       {/* On a phone while working, the input takes the full width and the actions wrap below it. */}
-      <div className={`flex items-end gap-2${sending ? " max-sm:flex-wrap" : ""}`}>
+      <div
+        className={`flex items-end gap-2${sending ? (narrow ? " flex-wrap" : " max-sm:flex-wrap") : ""}`}
+      >
         {storageEnabled ? (
           <>
             <input
@@ -413,7 +432,9 @@ export function Composer({
               title="Attach a file (image, PDF, DOC, XLS, …)"
               disabled={uploading}
               onClick={() => fileRef.current?.click()}
-              className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3 text-sm disabled:opacity-60"
+              className={`rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3 text-sm disabled:opacity-60${
+                sending && launcherClearance ? (narrow ? " ml-14" : " max-sm:ml-14") : ""
+              }`}
             >
               {uploading ? "…" : "+"}
             </button>
@@ -436,12 +457,20 @@ export function Composer({
               : "Message your agent… (Shift+Enter for a new line)"
           }
           className={`max-h-48 min-h-[46px] flex-1 resize-none overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3 text-sm${
-            sending ? " max-sm:order-first max-sm:basis-full" : ""
+            sending
+              ? narrow
+                ? " order-first basis-full"
+                : " max-sm:order-first max-sm:basis-full"
+              : ""
           }`}
         />
         {sending ? (
           <>
-            <span className="hidden self-center whitespace-nowrap text-xs text-[var(--color-muted)] lg:inline">
+            <span
+              className={`hidden self-center whitespace-nowrap text-xs text-[var(--color-muted)]${
+                narrow ? "" : " lg:inline"
+              }`}
+            >
               Agent is working · {modeInfo(mode).enter}
             </span>
             <ActionButton
@@ -451,10 +480,12 @@ export function Composer({
               busyLabel="Stopping…"
               aria-label={stopping ? "Stopping the agent" : "Stop the agent"}
               title={stopping ? "Stopping the agent" : "Stop the agent"}
-              className="flex items-center gap-1.5 rounded-xl bg-red-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60 max-sm:ml-auto max-sm:px-3"
+              className={`flex items-center gap-1.5 rounded-xl bg-red-600 py-3 text-sm font-semibold text-white disabled:opacity-60 ${
+                narrow ? "ml-auto px-3" : "px-4 max-sm:ml-auto max-sm:px-3"
+              }`}
             >
               <span aria-hidden="true" className="h-3 w-3 rounded-[3px] bg-white" />
-              <span className="max-sm:sr-only">Stop</span>
+              <span className={narrow ? "sr-only" : "max-sm:sr-only"}>Stop</span>
             </ActionButton>
             <div ref={splitRef} data-component="SendSplit" className="relative flex">
               <ActionButton

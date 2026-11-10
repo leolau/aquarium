@@ -220,6 +220,49 @@ describe("Composer layout while working", () => {
     fireEvent.click(screen.getByRole("menuitemradio", { name: /queue/i }));
     expect(box().className).not.toContain("z-[70]");
   });
+
+  it("tells the host when the mode menu opens and closes", () => {
+    const onMenuOpenChange = vi.fn();
+    working({ onMenuOpenChange });
+    fireEvent.click(screen.getByRole("button", { name: /choose how to send/i }));
+    expect(onMenuOpenChange).toHaveBeenLastCalledWith(true);
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /queue/i }));
+    expect(onMenuOpenChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("in a narrow panel puts the actions below the input at every screen width", () => {
+    working({ narrow: true });
+    const input = screen.getByRole("textbox");
+    const row = input.parentElement as HTMLElement;
+    expect(row.classList.contains("flex-wrap")).toBe(true);
+    expect(input.classList.contains("basis-full")).toBe(true);
+    expect(input.classList.contains("order-first")).toBe(true);
+    const stop = screen.getByRole("button", { name: /stop the agent/i });
+    expect(stop.classList.contains("ml-auto")).toBe(true);
+    // No desktop-only status text squeezing the panel's action row.
+    expect(screen.getByText(/agent is working/i).className).not.toContain("lg:inline");
+  });
+
+  it("drops the left-launcher reserve from the input while working on a phone, keeping it on the action row", () => {
+    working({ storageEnabled: true });
+    const attach = screen.getByRole("button", { name: /attach file/i });
+    expect(box().classList.contains("ml-14")).toBe(true);
+    expect(box().classList.contains("max-sm:ml-0")).toBe(true);
+    expect(attach.classList.contains("max-sm:ml-14")).toBe(true);
+  });
+
+  it("keeps the reserve on the whole composer when idle, and none where the layout clears the launcher", () => {
+    const idle = render(
+      <Composer sending={false} storageEnabled sessionId="s1" onSend={() => true} />,
+    );
+    expect(box().classList.contains("ml-14")).toBe(true);
+    expect(box().className).not.toContain("max-sm:ml-0");
+    expect(screen.getByRole("button", { name: /attach file/i }).className).not.toContain("ml-14");
+    idle.unmount();
+    working({ storageEnabled: true, launcherClearance: false });
+    expect(box().className).not.toContain("ml-14");
+    expect(screen.getByRole("button", { name: /attach file/i }).className).not.toContain("ml-14");
+  });
 });
 
 describe("Composer with a file waiting while the agent works", () => {

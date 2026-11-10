@@ -89,6 +89,7 @@ export function LeadChatHost({
   storageEnabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [composerMenuOpen, setComposerMenuOpen] = useState(false);
   const composerClearance = useComposerClearance();
   const [leadSession, setLeadSession] = useState<string | null>(null);
   const [rect, setRect] = usePersistentState<LeadChatRect | null>(
@@ -635,8 +636,8 @@ export function LeadChatHost({
           className="leadchat-panel"
           role="dialog"
           aria-label="Lead chat"
-          style={
-            effectiveRect
+          style={{
+            ...(effectiveRect
               ? {
                   left: effectiveRect.x,
                   top: effectiveRect.y,
@@ -645,8 +646,11 @@ export function LeadChatHost({
                   width: effectiveRect.w,
                   height: effectiveRect.h,
                 }
-              : undefined
-          }
+              : {}),
+            // The composer's mode sheet and its backdrop must cover every
+            // floating launcher (z-60), and they can't rise above the panel.
+            ...(composerMenuOpen ? { zIndex: 70 } : {}),
+          }}
         >
           <div className="mb-2 flex items-start justify-between gap-2 px-1">
             <div
@@ -719,16 +723,21 @@ export function LeadChatHost({
               </p>
             ) : null}
           </div>
-          <Composer
-            sending={sending}
-            stopping={turn?.stopping ?? false}
-            storageEnabled={storageEnabled}
-            sessionId={leadSession}
-            onSend={(text, attachments, mode) => send(text, attachments, mode)}
-            onStop={() => void stopTurn()}
-            pending={pending}
-            onRemovePending={(itemId) => void removePending(itemId)}
-          />
+          {/* Above the corner resize grip, so the grip never takes the Send arrow's taps. */}
+          <div data-component="LeadChatComposer" className="relative z-[1]">
+            <Composer
+              narrow
+              onMenuOpenChange={setComposerMenuOpen}
+              sending={sending}
+              stopping={turn?.stopping ?? false}
+              storageEnabled={storageEnabled}
+              sessionId={leadSession}
+              onSend={(text, attachments, mode) => send(text, attachments, mode)}
+              onStop={() => void stopTurn()}
+              pending={pending}
+              onRemovePending={(itemId) => void removePending(itemId)}
+            />
+          </div>
           <div
             className="leadchat-resize-tl"
             onPointerDown={startPointer("resize-tl")}

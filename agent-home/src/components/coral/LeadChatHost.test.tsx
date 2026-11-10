@@ -540,6 +540,38 @@ describe("LeadChatHost: sends that do not get through", () => {
 
   const steerBox = () => screen.findByPlaceholderText(/steer the agent/i) as Promise<HTMLTextAreaElement>;
 
+  it("fits the panel while working: the actions wrap below a full-width input", async () => {
+    leadFetch();
+    await startTurn();
+    const box = await steerBox();
+    expect(box.classList.contains("basis-full")).toBe(true);
+    expect((box.parentElement as HTMLElement).classList.contains("flex-wrap")).toBe(true);
+  });
+
+  it("keeps the composer controls above the corner resize grip", async () => {
+    leadFetch();
+    await startTurn();
+    await steerBox();
+    const layer = document.querySelector('[data-component="LeadChatComposer"]') as HTMLElement;
+    expect(layer.classList.contains("relative")).toBe(true);
+    expect(layer.classList.contains("z-[1]")).toBe(true);
+    expect(layer.contains(screen.getByRole("button", { name: /choose how to send/i }))).toBe(true);
+    expect(layer.contains(document.querySelector(".leadchat-resize"))).toBe(false);
+  });
+
+  it("lifts the panel above the floating launchers while the mode sheet is open", async () => {
+    leadFetch();
+    await startTurn();
+    await steerBox();
+    const panel = screen.getByRole("dialog", { name: /lead chat/i });
+    expect(panel.style.zIndex).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: /choose how to send/i }));
+    await waitFor(() => expect(panel.style.zIndex).toBe("70"));
+    expect(panel.contains(document.querySelector('[data-component="SendModeBackdrop"]'))).toBe(true);
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /queue/i }));
+    await waitFor(() => expect(panel.style.zIndex).toBe(""));
+  });
+
   it("gives the draft back while the run id is still pending", async () => {
     leadFetch();
     await startTurn();
