@@ -391,14 +391,68 @@ def test_steer_the_turn_did_not_read_becomes_the_next_turn(base, chat, real_agen
     ]
 
 
+def test_steer_written_into_an_interrupted_tool_result_runs_after_the_interrupt(
+    base, chat, real_agent
+):
+    from agent.prompt_builder import STEER_MARKER_OPEN
+
+    real_agent.replies[:] = [
+        _tool_call_response(),
+        _mock_response("looking at nginx"),
+        _mock_response("checked auth.log too"),
+    ]
+
+    async def _scenario():
+        async with _client(base) as ac:
+            primary = asyncio.create_task(_stream(ac, chat, "what's in /var/log?"))
+            run_id = await _live_run(ac, chat)
+            await asyncio.to_thread(real_agent.tool_entered.wait, 10)
+            steer = (await _send(ac, chat, run_id, "also check auth.log")).json()
+            stop = (await _send(ac, chat, run_id, "no, look at nginx instead", "interrupt")).json()
+            real_agent.tool_release.set()
+            bodies = await _chain_bodies(ac, chat, await primary)
+            await _until_idle(ac, chat)
+            return steer, stop, bodies
+
+    steer, stop, bodies = asyncio.run(_scenario())
+    assert len(bodies) == 3
+    first = _events(bodies[0])
+    # The steer reached the tool result but no request carried it: not delivered.
+    assert not [d for b in bodies for n, d in _events(b) if n == "input.steered"]
+    assert [d["item_id"] for n, d in first if n == "input.deferred"] == [steer["item_id"]]
+    chained = [next(d for n, d in _events(b) if n == "run.chained") for b in bodies[:2]]
+    assert [(c["item_id"], c["source"]) for c in chained] == [
+        (stop["item_id"], "interrupt"), (steer["item_id"], "steer_leftover")
+    ]
+    assert len(real_agent.calls) == 3
+    assert real_agent.calls[1][-1]["content"] == "no, look at nginx instead"
+    assert real_agent.calls[2][-1]["content"] == "also check auth.log"
+    for call in real_agent.calls:
+        _assert_alternates(call)
+        assert not any(STEER_MARKER_OPEN in str(m.get("content")) for m in call)
+
+    import hermes_state
+
+    db = hermes_state.SessionDB()
+    try:
+        stored = db.get_messages_as_conversation(chat)
+    finally:
+        db.close()
+    assert [m["content"] for m in stored if m["role"] == "user"] == [
+        "what's in /var/log?", "no, look at nginx instead", "also check auth.log"
+    ]
+    assert not any(STEER_MARKER_OPEN in str(m.get("content")) for m in stored)
+
+
 # ---------------------------------------------------------------------------
 # Chaining (stubbed turn)
 # ---------------------------------------------------------------------------
 
 
 class _StubAgent:
-    def __init__(self, gate):
+    def __init__(self, gate, session_id=None):
         self.gate = gate
+        self.session_id = session_id
         self.steers: list = []
         self.interrupted = False
         self.steer_delivered_callback = None
@@ -432,7 +486,7 @@ class _Turns:
 
     def __call__(self, *, session_db, user_message, conversation_history,
                  session_id=None, on_agent_ready=None, principal=None, **kwargs):
-        agent = _StubAgent(self.gates.get(user_message))
+        agent = _StubAgent(self.gates.get(user_message), session_id)
         self.messages.append(user_message)
         self.histories.append([(m["role"], m["content"]) for m in conversation_history])
         self.agents.append(agent)
@@ -441,6 +495,16 @@ class _Turns:
             self.before_ready.wait(10)
         if on_agent_ready is not None:
             on_agent_ready(agent)
+        fork = getattr(self, "compress_into", {}).get(user_message)
+        if fork:
+            # What context compression does mid-turn: end this session and
+            # carry on under a continuation child.
+            session_db.end_session(session_id, "compression")
+            session_db.ensure_session(
+                fork, source="agent_home", user_id="root", parent_session_id=session_id
+            )
+            agent.session_id = fork
+            self.compressed.set()
         if agent.gate is not None:
             agent.gate.wait(10)
         reply = "stopped" if agent.interrupted else f"re:{user_message}"
@@ -835,3 +899,90 @@ def test_someone_elses_run_is_rejected_like_cancel(client, acting, who):
     # The conversation's owner is let through.
     acting["as"] = OWNER
     assert _steer(client, "s-tom", "run_tom", "owner note").status_code == 200
+
+
+def test_the_live_run_is_found_after_compression_forks_the_session(base, chat, turns):
+    import hermes_state
+
+    from hermes_cli.web_server import _resolved_chat_session_id
+
+    # The conversation was already compressed once: the client keeps its root
+    # id, the next turn runs under the continuation.
+    db = hermes_state.SessionDB()
+    try:
+        db.end_session(chat, "compression")
+        db.ensure_session("s-chat-2", source="agent_home", user_id="root", parent_session_id=chat)
+    finally:
+        db.close()
+    assert _resolved_chat_session_id(chat) == "s-chat-2"
+    turns.compressed = threading.Event()
+    turns.compress_into = {"first": "s-chat-3"}
+    turns.hold("first")
+
+    async def _scenario():
+        async with _client(base) as ac:
+            primary = asyncio.create_task(_stream(ac, chat, "first"))
+            run_id = await _live_run(ac, chat)
+            await asyncio.to_thread(turns.compressed.wait, 10)
+            assert _resolved_chat_session_id(chat) == "s-chat-3"
+            again = await ac.post(f"/api/sessions/{chat}/chat/stream", json={"message": "second"})
+            active = (await ac.get(f"/api/sessions/{chat}/active_run")).json()
+            steered = await _send(ac, chat, run_id, "keep going")
+            steered_tip = await _send(ac, "s-chat-3", run_id, "and this")
+            turns.release("first")
+            await primary
+            await _until_idle(ac, chat)
+            return run_id, again, active, steered, steered_tip
+
+    run_id, again, active, steered, steered_tip = asyncio.run(_scenario())
+    assert again.status_code == 409
+    assert again.json() == {"detail": "turn_in_progress", "run_id": run_id}
+    assert active["run_id"] == run_id
+    assert steered.status_code == 200, steered.text
+    assert steered_tip.status_code == 200, steered_tip.text
+    assert turns.agents[0].steers == ["keep going", "and this"]
+    # The stub never reads them, so they run next — in the same conversation.
+    assert turns.messages == ["first", "keep going\nand this"]
+
+
+def test_a_chain_that_cannot_start_hands_every_input_back(base, chat, turns, monkeypatch):
+    import hermes_state
+
+    turns.hold("first")
+    broken = threading.Event()
+    real_load = hermes_state.SessionDB.get_messages_as_conversation
+
+    def _load(self, *a, **kw):
+        if broken.is_set():
+            raise RuntimeError("disk gone")
+        return real_load(self, *a, **kw)
+
+    monkeypatch.setattr(hermes_state.SessionDB, "get_messages_as_conversation", _load)
+
+    async def _scenario():
+        async with _client(base) as ac:
+            primary = asyncio.create_task(_stream(ac, chat, "first"))
+            run_id = await _live_run(ac, chat)
+            a = (await _send(ac, chat, run_id, "second", "queue")).json()
+            b = (await _send(ac, chat, run_id, "third", "queue")).json()
+            broken.set()
+            turns.release("first")
+            body = await primary
+            await _until_idle(ac, chat)
+            broken.clear()
+            after = await _stream(ac, chat, "fourth")
+            return a, b, body, after
+
+    a, b, body, after = asyncio.run(_scenario())
+    events = _events(body)
+    names = [n for n, _ in events]
+    assert "run.chained" not in names
+    removed = [d for n, d in events if n == "input.removed"]
+    assert [(d["item_id"], d["text"], d["reason"]) for d in removed] == [
+        (a["item_id"], "second", "chain_failed"), (b["item_id"], "third", "chain_failed")
+    ]
+    assert "error" in names and names.index("error") < names.index("done")
+    _assert_run_ids(body)
+    # The conversation is not left looking busy.
+    assert turns.messages == ["first", "fourth"]
+    assert "done" in [n for n, _ in _events(after)]

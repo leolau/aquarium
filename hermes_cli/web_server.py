@@ -12495,12 +12495,23 @@ def _chat_run_is_live(entry: dict) -> bool:
     return not entry["done"] and not entry.get("next_run_id")
 
 
+def _chat_run_session_ids(entry: dict) -> set:
+    """Every id the run's conversation goes by: the one it started under and,
+    once context compression forks a continuation mid-turn, the agent's new
+    one (which is what a later request resolves the conversation to)."""
+    ids = {entry["session_id"]}
+    agent_sid = getattr(entry.get("agent"), "session_id", None)
+    if isinstance(agent_sid, str) and agent_sid:
+        ids.add(agent_sid)
+    return ids
+
+
 def _live_chat_run_id(session_ids, profile: Optional[str]) -> Optional[str]:
     ids = {s for s in session_ids if s}
     for run_id, entry in list(_CHAT_RUNS.items()):
         if (
             _chat_run_is_live(entry)
-            and entry["session_id"] in ids
+            and _chat_run_session_ids(entry) & ids
             and (entry.get("profile") or None) == (profile or None)
         ):
             return run_id
@@ -12567,9 +12578,13 @@ def _close_chat_run_inputs(entry: dict, result) -> tuple:
             "mode": "steer",
             "text": leftover_text,
             "created_at": leftover[0]["created_at"] if leftover else time.time(),
+            # Waits in the successor's queue behind an interrupt item.
+            "source": "steer_leftover",
         }
         chain.append((merged, "steer_leftover"))
-    chain.extend((item, "queue") for item in queued if item["mode"] != "interrupt")
+    chain.extend(
+        (item, item.get("source", "queue")) for item in queued if item["mode"] != "interrupt"
+    )
     return chain, leftover, []
 
 
@@ -12616,6 +12631,15 @@ def _launch_chat_run(
         "next_run_id": None,
     }
     _CHAT_RUNS[run_id] = run_entry
+    try:
+        return _start_chat_run(run_id, run_entry, loop, principal, profile, sid, user_message, history, primary_queue)
+    except BaseException:
+        # A half-registered run would report the session busy forever.
+        _CHAT_RUNS.pop(run_id, None)
+        raise
+
+
+def _start_chat_run(run_id, run_entry, loop, principal, profile, sid, user_message, history, primary_queue) -> tuple:
     trace, ledger = _agent_home_trace(principal, sid)
     _trace_emit(trace, "inbound", sid, "agent-home chat message")
 
@@ -12782,20 +12806,39 @@ def _launch_chat_run(
         if not chain:
             return
         (item, source), rest = chain[0], [i for i, _ in chain[1:]]
-        db = _open_session_db_for_profile(profile)
         try:
-            next_sid = db.resolve_resume_session_id(eff_sid) or eff_sid
-            next_history = db.get_messages_as_conversation(next_sid)
-        finally:
-            db.close()
-        next_run_id, _ = _launch_chat_run(
-            principal=principal,
-            profile=profile,
-            sid=next_sid,
-            user_message=item["text"],
-            history=next_history,
-            queued=rest,
-        )
+            db = _open_session_db_for_profile(profile)
+            try:
+                next_sid = db.resolve_resume_session_id(eff_sid) or eff_sid
+                next_history = db.get_messages_as_conversation(next_sid)
+            finally:
+                db.close()
+            next_run_id, _ = _launch_chat_run(
+                principal=principal,
+                profile=profile,
+                sid=next_sid,
+                user_message=item["text"],
+                history=next_history,
+                queued=rest,
+            )
+        except Exception:
+            # Nothing will run what the user sent: hand every input back
+            # (with its text, so the client can restore it to the composer).
+            _log.exception("[agent-home] chaining the next turn failed run=%s", run_id)
+            for owed, _source in chain:
+                for owed_id in owed.get("item_ids") or [owed["item_id"]]:
+                    text = next(
+                        (i["text"] for i in deferred if i["item_id"] == owed_id), owed["text"]
+                    )
+                    _enqueue(
+                        "input.removed",
+                        {"item_id": owed_id, "text": text, "reason": "chain_failed", "run_id": run_id},
+                    )
+            _enqueue(
+                "error",
+                {"message": "Your follow-up could not be started; send it again.", "run_id": run_id},
+            )
+            return
         run_entry["next_run_id"] = next_run_id
         payload = {
             "next_run_id": next_run_id,
@@ -12818,7 +12861,8 @@ def _launch_chat_run(
         eff_sid = sid
         try:
             result, usage = await loop.run_in_executor(None, _run)
-            final_response = result.get("final_response", "") if isinstance(result, dict) else ""
+            # An interrupted turn reports ``final_response: None``.
+            final_response = (result.get("final_response") or "") if isinstance(result, dict) else ""
             eff_sid = result.get("session_id", sid) if isinstance(result, dict) else sid
             if run_entry["cancel_requested"]:
                 _enqueue("run.cancelled", {"run_id": run_id, "session_id": eff_sid})
@@ -13272,10 +13316,11 @@ def _chat_run_for(session_id: str, run_id: str, profile: Optional[str]) -> Optio
     entry = _CHAT_RUNS.get(run_id)
     if entry is None or (entry.get("profile") or None) != (profile or None):
         return None
-    if entry["session_id"] != session_id:
+    sids = _chat_run_session_ids(entry)
+    if session_id not in sids:
         # Same chain check as active_run: the caller may hold the root id of a
         # conversation whose turn runs under a continuation id.
-        if entry["session_id"] != _resolved_chat_session_id(session_id, profile):
+        if _resolved_chat_session_id(session_id, profile) not in sids:
             return None
     return entry
 
