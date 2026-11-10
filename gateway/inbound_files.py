@@ -92,7 +92,7 @@ def _principal_for(source: Any) -> Optional[Any]:
 # starts) recovers within 60 s without hammering Postgres on every attachment.
 _owner_principal: Optional[Any] = None
 _owner_resolved: bool = False
-_owner_last_attempt: float = 0.0
+_owner_last_attempt: float = float("-inf")
 _OWNER_RETRY_INTERVAL_SEC: float = 60.0
 
 

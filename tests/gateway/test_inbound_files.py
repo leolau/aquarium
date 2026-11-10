@@ -169,7 +169,7 @@ async def test_unenrolled_sender_falls_back_to_owner(tmp_path) -> None:
     # Reset the module-level owner cache so this test is independent.
     inbound_files_mod._owner_principal = None
     inbound_files_mod._owner_resolved = False
-    inbound_files_mod._owner_last_attempt = 0.0
+    inbound_files_mod._owner_last_attempt = float("-inf")
 
     cached = tmp_path / "doc_0123456789ab_resume.pdf"
     cached.write_bytes(b"%PDF-1.7 resume")
@@ -200,7 +200,7 @@ async def test_unenrolled_sender_with_no_owner_still_skips(tmp_path) -> None:
     """When the store has no owner, the fallback is inactive and skips."""
     inbound_files_mod._owner_principal = None
     inbound_files_mod._owner_resolved = False
-    inbound_files_mod._owner_last_attempt = 0.0
+    inbound_files_mod._owner_last_attempt = float("-inf")
 
     cached = tmp_path / "doc_0123456789ab_x.bin"
     cached.write_bytes(b"x")
@@ -238,3 +238,17 @@ async def test_an_event_without_attachments_touches_nothing() -> None:
     registry = _Registry()
     assert await register_event_files(_Event(), _Source(), registry=registry) == []
     assert registry.calls == []
+
+
+
+@pytest.mark.asyncio
+async def test_owner_resolves_on_first_try_right_after_boot(monkeypatch) -> None:
+    """``time.monotonic()`` counts from boot: within 60 s of it, the first lookup must not be throttled."""
+    import importlib.util
+
+    spec = importlib.util.find_spec("gateway.inbound_files")
+    fresh = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fresh)  # a fresh copy with the module's own defaults
+    monkeypatch.setattr(fresh.time, "monotonic", lambda: 5.0)
+    owner = _OwnerPrincipal(user_id="leo", display="Leo")
+    assert await fresh._resolve_owner_principal(_PrincipalStore(owner=owner)) is owner

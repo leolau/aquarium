@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # the next batch instead of needing a restart.
 _owner_principal: Optional[object] = None
 _owner_resolved: bool = False
-_owner_last_attempt: float = 0.0
+_owner_last_attempt: float = float("-inf")
 _OWNER_RETRY_INTERVAL_SEC: float = 60.0
 
 #: Most of what triage reads implies *something* that could be written down.

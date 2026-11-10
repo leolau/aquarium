@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # recovers on the next message instead of needing a restart.
 _owner_principal: Optional[object] = None
 _owner_resolved: bool = False
-_owner_last_attempt: float = 0.0
+_owner_last_attempt: float = float("-inf")
 _OWNER_RETRY_INTERVAL_SEC: float = 60.0
 
 
