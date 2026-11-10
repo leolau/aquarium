@@ -7035,17 +7035,21 @@ _AUX_TASK_CTX: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
 )
 
 
-def _usage_to_dict(usage) -> Dict[str, int]:
-    """Normalize a usage object/dict to api_call_log keys."""
-    if usage is None:
-        return {}
+def _aux_canonical_usage(usage):
+    """Normalize any aux reply's usage (OpenAI ``prompt_tokens`` shape,
+    Anthropic ``input_tokens`` shape, or the ledger's own dict keys) to the
+    same ``CanonicalUsage`` buckets the main loop records — input tokens
+    exclude cached ones, so tokens and cost compare across rows."""
+    from agent.usage_pricing import CanonicalUsage, normalize_usage
 
-    def _get(*names: str) -> int:
+    if not usage:
+        return CanonicalUsage()
+    if isinstance(usage, dict):
+        usage = SimpleNamespace(**usage)
+
+    def _int(*names: str) -> int:
         for name in names:
-            if isinstance(usage, dict):
-                v = usage.get(name)
-            else:
-                v = getattr(usage, name, None)
+            v = getattr(usage, name, None)
             if v:
                 try:
                     return int(v)
@@ -7053,12 +7057,75 @@ def _usage_to_dict(usage) -> Dict[str, int]:
                     continue
         return 0
 
+    reasoning = _int("reasoning_tokens")
+    if not reasoning:
+        details = getattr(usage, "completion_tokens_details", None) or getattr(
+            usage, "output_tokens_details", None)
+        if isinstance(details, dict):
+            details = SimpleNamespace(**details)
+        try:
+            reasoning = int(getattr(details, "reasoning_tokens", 0) or 0)
+        except (TypeError, ValueError):
+            reasoning = 0
+    if getattr(usage, "prompt_tokens", None) is not None:
+        cu = normalize_usage(usage)
+        return CanonicalUsage(
+            input_tokens=cu.input_tokens,
+            output_tokens=cu.output_tokens,
+            cache_read_tokens=cu.cache_read_tokens,
+            cache_write_tokens=cu.cache_write_tokens,
+            reasoning_tokens=reasoning,
+        )
+    return CanonicalUsage(
+        input_tokens=_int("input_tokens"),
+        output_tokens=_int("output_tokens", "completion_tokens"),
+        cache_read_tokens=_int("cache_read_input_tokens", "cache_read_tokens"),
+        cache_write_tokens=_int("cache_creation_input_tokens", "cache_write_tokens"),
+        reasoning_tokens=reasoning,
+    )
+
+
+def _usage_to_dict(usage) -> Dict[str, int]:
+    """Normalize a usage object/dict to api_call_log keys."""
+    if usage is None:
+        return {}
+    cu = _aux_canonical_usage(usage)
     return {
-        "input_tokens": _get("input_tokens", "prompt_tokens"),
-        "output_tokens": _get("output_tokens", "completion_tokens"),
-        "cache_read_tokens": _get("cache_read_tokens"),
-        "reasoning_tokens": _get("reasoning_tokens"),
+        "input_tokens": cu.input_tokens,
+        "output_tokens": cu.output_tokens,
+        "cache_read_tokens": cu.cache_read_tokens,
+        "cache_write_tokens": cu.cache_write_tokens,
+        "reasoning_tokens": cu.reasoning_tokens,
     }
+
+
+def _aux_call_cost(model, provider, usage: Dict[str, int]):
+    """``(cost_usd, cost_status)`` for one finished aux call. Aux calls never
+    reach the sessions table, so the ledger row is their only cost record.
+    ``cost_usd`` is None when no price is known for the model on this route."""
+    try:
+        from agent.usage_pricing import CanonicalUsage, estimate_usage_cost
+
+        if not any(usage.get(k) for k in (
+                "input_tokens", "output_tokens", "cache_read_tokens",
+                "cache_write_tokens")):
+            # The provider sent no usage — nothing to price.
+            return None, "unknown"
+        result = estimate_usage_cost(
+            model or "",
+            CanonicalUsage(
+                input_tokens=usage.get("input_tokens") or 0,
+                output_tokens=usage.get("output_tokens") or 0,
+                cache_read_tokens=usage.get("cache_read_tokens") or 0,
+                cache_write_tokens=usage.get("cache_write_tokens") or 0,
+                reasoning_tokens=usage.get("reasoning_tokens") or 0,
+            ),
+            provider=provider,
+        )
+        amount = float(result.amount_usd) if result.amount_usd is not None else None
+        return amount, result.status
+    except Exception:
+        return None, "unknown"
 
 
 def _aux_usage_dict(response) -> Dict[str, int]:
@@ -7083,12 +7150,17 @@ def _aux_record(caller, provider, model, started, *, status="ok",
     """One aux-call attempt into api_call_log — fire-and-forget."""
     try:
         from hermes_state import record_api_call as _record
+        usage = usage if usage is not None else _aux_usage_dict(response)
+        model = model or _aux_response_model(response, model)
+        cost_usd, cost_status = (
+            _aux_call_cost(model, provider, usage) if status == "ok" else (None, None)
+        )
         _record(
             None,
             started_at=started,
             ts=time.time(),
             caller=caller,
-            model=model or _aux_response_model(response, model),
+            model=model,
             served_model=getattr(response, "model", None) if response is not None else None,
             provider=provider,
             duration_ms=(time.time() - started) * 1000,
@@ -7096,7 +7168,9 @@ def _aux_record(caller, provider, model, started, *, status="ok",
             finish_reason=_aux_finish_reason(response),
             error_type=type(exc).__name__ if exc else None,
             status_code=getattr(exc, "status_code", None) or getattr(exc, "code", None),
-            usage=usage if usage is not None else _aux_usage_dict(response),
+            usage=usage,
+            cost_usd=cost_usd,
+            cost_status=cost_status,
         )
     except Exception:
         pass
@@ -7230,8 +7304,26 @@ def _logged_create_sync(orig, kwargs, provider, model_hint):
     except Exception as exc:
         _aux_record(caller, provider, model, started, status="error", exc=exc)
         raise
+    if inspect.isawaitable(resp):
+        # AsyncOpenAI's ``create`` is a plain function returning a coroutine
+        # (``inspect.iscoroutinefunction`` is False for it), so it lands on
+        # this sync shim. Record when the request actually finishes, not
+        # when the coroutine object is created.
+        return _record_awaited(resp, kwargs, caller, provider, model, started)
     if kwargs.get("stream"):
         return _LoggedStream(resp, caller, provider, model, started)
+    _aux_record(caller, provider, model, started, response=resp)
+    return resp
+
+
+async def _record_awaited(awaitable, kwargs, caller, provider, model, started):
+    try:
+        resp = await awaitable
+    except Exception as exc:
+        _aux_record(caller, provider, model, started, status="error", exc=exc)
+        raise
+    if kwargs.get("stream"):
+        return _LoggedAsyncStream(resp, caller, provider, model, started)
     _aux_record(caller, provider, model, started, response=resp)
     return resp
 
