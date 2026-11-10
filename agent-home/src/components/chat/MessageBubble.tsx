@@ -195,6 +195,7 @@ export const MessageBubble = memo(function MessageBubble({
         data-component="MessageBubble"
         data-msg-index={msgIndex}
         data-role={message.role}
+        data-sent-while-working={isUser && message.sentWhileWorking ? "true" : undefined}
         style={ROW_STYLE}
         className={`group flex gap-1 ${isUser ? "justify-end" : "justify-start"}`}
       >
@@ -206,7 +207,12 @@ export const MessageBubble = memo(function MessageBubble({
           }`}
         >
           {isUser ? (
-            <UserContent content={content} highlightTerm={highlightTerm} />
+            <>
+              {message.sentWhileWorking ? (
+                <div className="mb-0.5 text-[11px] font-medium opacity-80">Sent while working</div>
+              ) : null}
+              <UserContent content={content} highlightTerm={highlightTerm} />
+            </>
           ) : (
             <>
               {reasoning !== "" ? (

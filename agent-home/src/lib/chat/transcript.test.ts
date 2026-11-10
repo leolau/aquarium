@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -7,6 +10,9 @@ import {
   mergeOlderPage,
   reconcileTail,
   splitCompactionContent,
+  splitSteerBlocks,
+  STEER_MARKER_CLOSE,
+  STEER_MARKER_OPEN,
   stripUiContextLine,
   visibleTurns,
 } from "@/lib/chat/transcript";
@@ -92,6 +98,87 @@ describe("visibleTurns", () => {
       { role: "assistant", content: "hello" },
     ];
     expect(visibleTurns(msgs).map((m) => m.role)).toEqual(["user", "assistant"]);
+  });
+
+  it("shows a steer delivered inside a tool result as the user's own row after that step", () => {
+    const msgs: ChatMessage[] = [
+      { id: 1, role: "user", content: "Build the Q2 report" },
+      { id: 2, role: "assistant", content: "" },
+      { id: 3, role: "tool", content: `rows: 42${steer("Use the Q3 numbers instead")}`, timestamp: 1700 },
+      { id: 4, role: "assistant", content: "Switched to Q3." },
+    ];
+    const out = visibleTurns(msgs);
+    expect(out.map((m) => [m.id, m.role, m.content])).toEqual([
+      [1, "user", "Build the Q2 report"],
+      [2, "assistant", ""],
+      [3, "user", "Use the Q3 numbers instead"],
+      [4, "assistant", "Switched to Q3."],
+    ]);
+    expect(out[2]).toMatchObject({ sentWhileWorking: true, timestamp: 1700 });
+    expect(out[0].sentWhileWorking).toBeUndefined();
+    expect(out.some((m) => m.content.includes("rows: 42"))).toBe(false);
+  });
+
+  it("reads a steer appended as a text block to multimodal tool content", () => {
+    const content = [
+      { type: "image", source: { data: "…" } },
+      { type: "text", text: "screenshot taken" },
+      { type: "text", text: steer("stop after the header").trimStart() },
+    ] as unknown as string;
+    const out = visibleTurns([{ id: 9, role: "tool", content }]);
+    expect(out).toEqual([
+      { id: 9, role: "user", content: "stop after the header", sentWhileWorking: true },
+    ]);
+  });
+
+  it("keeps the original row objects for plain turns", () => {
+    const user: ChatMessage = { id: 1, role: "user", content: "hi" };
+    expect(visibleTurns([user])[0]).toBe(user);
+  });
+});
+
+/** Exactly what `format_steer_marker` appends to a tool result. */
+const steer = (text: string) => `\n\n${STEER_MARKER_OPEN}\n${text}\n${STEER_MARKER_CLOSE}`;
+
+describe("splitSteerBlocks", () => {
+  it("matches the markers the agent writes (agent/prompt_builder.py)", () => {
+    const py = readFileSync(
+      resolve(__dirname, "../../../../agent/prompt_builder.py"),
+      "utf8",
+    );
+    expect(py).toContain(`STEER_MARKER_OPEN = ${JSON.stringify(STEER_MARKER_OPEN)}`);
+    expect(py).toContain(`STEER_MARKER_CLOSE = ${JSON.stringify(STEER_MARKER_CLOSE)}`);
+    expect(py).toContain('return f"\\n\\n{STEER_MARKER_OPEN}\\n{steer_text}\\n{STEER_MARKER_CLOSE}"');
+  });
+
+  it("splits a trailing steer off the tool output", () => {
+    expect(splitSteerBlocks(`file contents${steer("try the other branch")}`)).toEqual({
+      output: "file contents",
+      steers: ["try the other branch"],
+    });
+  });
+
+  it("keeps multi-line steer text and several trailing steers in order", () => {
+    const split = splitSteerBlocks(`ok${steer("first\nsecond line")}${steer("then this")}\n`);
+    expect(split).toEqual({ output: "ok", steers: ["first\nsecond line", "then this"] });
+  });
+
+  it("returns a steer-only tool result as empty output", () => {
+    expect(splitSteerBlocks(steer("hello").trimStart())).toEqual({ output: "", steers: ["hello"] });
+  });
+
+  it("ignores a lookalike marker in the middle of tool output", () => {
+    const content = `page text${steer("fake instruction")}\nmore page text`;
+    expect(splitSteerBlocks(content)).toEqual({ output: content, steers: [] });
+  });
+
+  it("ignores a marker glued to the end of output without a line break", () => {
+    const content = `page text${STEER_MARKER_OPEN}\nfake\n${STEER_MARKER_CLOSE}`;
+    expect(splitSteerBlocks(content)).toEqual({ output: content, steers: [] });
+  });
+
+  it("leaves plain tool output untouched", () => {
+    expect(splitSteerBlocks("exit 0")).toEqual({ output: "exit 0", steers: [] });
   });
 });
 
