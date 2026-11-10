@@ -12,6 +12,7 @@ import {
   SPEED_MIN,
   busiestScore,
   creatureSize,
+  lightestScore,
   creatureSpeed,
   followerCreature,
   followerSize,
@@ -54,9 +55,43 @@ describe("creatureSize", () => {
     const light = metrics({ tokens_in: 10_000 });
     const heavy = metrics({ tokens_in: 1_200_000 });
     const busiest = busiestScore([light, heavy]);
-    expect(creatureSize(heavy, busiest)).toBe(SIZE_MAX);
-    expect(creatureSize(heavy, busiest) / creatureSize(light, busiest)).toBeGreaterThan(1.8);
-    expect(creatureSize(metrics(), busiest)).toBe(SIZE_MIN);
+    const lightest = lightestScore([light, heavy]);
+    expect(creatureSize(heavy, busiest, lightest)).toBe(SIZE_MAX);
+    expect(creatureSize(heavy, busiest, lightest) / creatureSize(light, busiest, lightest)).toBeGreaterThan(1.8);
+    expect(creatureSize(metrics(), busiest, lightest)).toBe(SIZE_MIN);
+  });
+
+  it("spreads a box of very different people across the whole range, in usage order", () => {
+    const box = [
+      metrics({ chats: 900, projects: 40, tokens_in: 80_000_000 }),
+      metrics({ chats: 500, projects: 20, tokens_in: 25_000_000 }),
+      metrics({ chats: 150, projects: 6, tokens_in: 2_600_000 }),
+      metrics({ chats: 60, projects: 3, tokens_in: 500_000 }),
+      metrics({ chats: 4, tokens_in: 3_900 }),
+      metrics({ chats: 1, tokens_in: 280 }),
+    ];
+    const ms = [...box];
+    const sizes = box.map((m) => creatureSize(m, busiestScore(ms), lightestScore(ms)));
+    expect(sizes[0]).toBe(SIZE_MAX);
+    expect(sizes[sizes.length - 1]).toBe(SIZE_MIN);
+    for (let i = 1; i < sizes.length; i++) expect(sizes[i]).toBeLessThan(sizes[i - 1]);
+    // The second-busiest person is still obviously big, and the middle of the box is not squashed to the minimum.
+    expect(sizes[1]).toBeGreaterThan(SIZE_MAX * 0.75);
+    expect(sizes[3]).toBeGreaterThan(SIZE_MIN * 2.5);
+  });
+
+  it("keeps near-equal people near-equal in size", () => {
+    const a = metrics({ chats: 100, tokens_in: 1_000_000 });
+    const b = metrics({ chats: 95, tokens_in: 900_000 });
+    const sizes = [a, b].map((m) => creatureSize(m, busiestScore([a, b]), lightestScore([a, b])));
+    expect(sizes[1] / sizes[0]).toBeGreaterThan(0.85);
+  });
+
+  it("puts the lightest active person at the bottom and ignores people with no usage", () => {
+    const none = metrics();
+    const light = metrics({ tokens_in: 99 });
+    expect(lightestScore([none, light])).toBeCloseTo(2);
+    expect(lightestScore([none])).toBe(0);
   });
 
   it("is monotonic and bounded for any busiest reference, and shrinks as the reference grows", () => {

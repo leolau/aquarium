@@ -8,6 +8,7 @@ import type { AquariumProfile, AquariumSnapshot, AquariumUser, CreatureId } from
 import {
   busiestScore,
   creatureSize,
+  lightestScore,
   creatureSpeed,
   followerCreature,
   followerSeed,
@@ -139,6 +140,8 @@ export interface Scene {
   rng: () => number;
   /** Usage score of the busiest person, the size reference. */
   busiest: number;
+  /** Lightest non-zero usage score, the bottom of the size scale. */
+  lightest: number;
   /** Person whose follower chips stay visible when the tank is crowded (hover/tap). */
   focus: string | null;
   /** Label text width in CSS px; the renderer swaps in canvas `measureText`. */
@@ -154,7 +157,7 @@ function estimateWidth(text: string, kind: LabelKind): number {
 }
 
 export function createScene(rng: () => number = Math.random): Scene {
-  return { leaders: new Map(), bubbles: [], ambientClock: 0, rng, busiest: 0, focus: null, measure: estimateWidth };
+  return { leaders: new Map(), bubbles: [], ambientClock: 0, rng, busiest: 0, lightest: 0, focus: null, measure: estimateWidth };
 }
 
 /** Frame-rate independent exponential approach of `target`. */
@@ -262,11 +265,13 @@ function spawnFollower(profile: AquariumProfile, leader: Leader, slot: number, n
 /** Diffs a snapshot into the scene: new people fade in, missing ones fade out. */
 export function applySnapshot(scene: Scene, snapshot: AquariumSnapshot, bounds: Bounds): void {
   const { rng } = scene;
-  scene.busiest = busiestScore(snapshot.users.map((u) => u.metrics));
+  const metrics = snapshot.users.map((u) => u.metrics);
+  scene.busiest = busiestScore(metrics);
+  scene.lightest = lightestScore(metrics);
   const seen = new Set<string>();
   for (const user of snapshot.users) {
     seen.add(user.user_id);
-    const size = creatureSize(user.metrics, scene.busiest);
+    const size = creatureSize(user.metrics, scene.busiest, scene.lightest);
     const speed = creatureSpeed(user.metrics, size);
     let leader = scene.leaders.get(user.user_id);
     if (!leader) {
