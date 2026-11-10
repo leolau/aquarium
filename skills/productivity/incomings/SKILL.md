@@ -53,6 +53,7 @@ hermes incomings show <item-id>
 | `hermes incomings show <id>` | full body + attachments of one arrival |
 | `--cursor <token>` | next page: re-run the `more:` line printed under a page |
 | `--json` | machine-readable output on any verb |
+| `hermes ref M512` | the arrival a user's short ref (`M512`) names: id, title, channel, profile |
 
 ## Procedure
 

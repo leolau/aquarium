@@ -522,10 +522,16 @@ class TodoStore:
                         to_stage=stage,
                         actor=actor or principal.user_id,
                     )
-            return _row_to_todo(row, created=created)
+            todo = _row_to_todo(row, created=created)
         finally:
             if own:
                 await conn.close()
+        if created:
+            # FG-36: the to-do's short ref (D88), numbered at create.
+            from hermes_cli.profile_refs import TODO, assign as assign_ref
+
+            await assign_ref(TODO, todo.id, todo.created_at)
+        return todo
 
     async def set_stage(
         self,

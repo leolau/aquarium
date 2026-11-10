@@ -22,8 +22,8 @@ Approved format: **type letter + running number, unique on the box**.
 | `T345` | project card (kanban task linked to a project) | registry | box-wide (row records the board) | 1 |
 | `P12-R3` | run 3 of P12 | **derived**: project ref + existing `project_runs.run_no` | follows the project | 1 |
 | `C1024` | chat (conversation) | registry | per profile | 2 |
-| `D88` | to-do | registry | per profile | 3 |
-| `M512` | inbox message | registry | per profile | 3 |
+| `D88` | to-do | registry | per profile (row records it) | 3 — built |
+| `M512` | inbox message | registry | per profile (row records it) | 3 — built |
 
 Rules:
 
@@ -68,7 +68,9 @@ short_ref_backfills(kind PRIMARY KEY, done_at)
 - **Backfill**: `BACKFILL_SOURCES` maps a kind to its existing items (`P` →
   projects by `created_at`, `T` → project-linked cards by `created_at`);
   `backfill()` runs once per kind, oldest first, then marks the kind done in
-  `short_ref_backfills`. C, D and M add their source in their PR.
+  `short_ref_backfills`. `D` → every profile's to-dos by `created_at`, `M` →
+  every profile's inbox messages by `registered_at` (PR 3); C adds its source
+  in its PR.
 
 ## Surfaces (PR 1)
 
@@ -107,13 +109,43 @@ short_ref_backfills(kind PRIMARY KEY, done_at)
   synthetic message (role alternation), and silently skips refs the sender
   may not see.
 
-## PR 3 — to-dos (`D`) and inbox messages (`M`), not built here
+## PR 3 — to-dos (`D`) and inbox messages (`M`)
 
-- To-dos live in Postgres `tasks` via `hermes_cli/todo_store.py`; inbox
-  messages in their profile's store. Both are profile-scoped rows in the same
-  registry, assigned at create plus `ensure_refs` on list, with a creation-
-  order backfill hook and a resolver branch that reuses each store's own
-  visibility check.
+To-dos live in Postgres `tasks` (`hermes_cli/todo_store.py`) and inbox
+messages in `inbound_items` (`hermes_cli/inbound_registry.py`), both in each
+profile's own app schema. `hermes_cli/profile_refs.py` is the glue between
+those async stores and the sync registry; the rows record the profile.
+
+- **Assignment** at the stores' single write paths, after the row exists:
+  `TodoStore.create` (a newly inserted row — a deduped collapse onto a live
+  to-do gets no second number), which covers the to-dos API, `hermes todos
+  add` and the triage bridge; `InboundRegistry.register`, which covers the
+  gateway mirror, the email/IMAP pollers and `hermes incomings backfill`
+  (a re-polled arrival keeps its ref). `profile_refs.assign` never fails the
+  write.
+- **Backfill** (`todo_items`, `message_items`): every profile from
+  `profiles_to_serve(multiplex=True)`, each read in that profile's scope with
+  an owner-role binding (the tables' RLS is FORCEd, and the registry numbers
+  every row whoever may see it). A profile whose datastore is unreachable is
+  skipped and its rows are numbered lazily on read.
+- **Payloads:** `ref` on to-do list/detail/create and inbox list/detail
+  (`profile_refs.attach` = `ensure_refs` in the current profile).
+- **Search:** a `D`/`M` ref typed into the to-dos / inbox search (`q`) puts
+  that item first on the first page, read through the store's own scoped
+  `get` (nothing is pinned when the ref names nothing visible in this
+  profile); the text still runs as an ordinary search, as project search does
+  since #820, so "M3" in a mail subject is still found.
+- **Resolver:** `D`/`M` read through `TodoStore.get` / `InboundRegistry.get`
+  (C2 scope + RLS) **in `record.profile`**. In the acting profile the caller's
+  principal is used as the to-do / inbox routes use it; for another profile
+  the caller is re-resolved there (verified login subject, else the
+  principal's user id → alias → live principal), never that profile's owner.
+  Not enrolled, suspended, invisible and absent are all the same 404. The
+  response carries `profile`; `url` is `/todos/<id>` / `/inbox/<id>`.
+- **agent-home:** `RefBadge` on to-do and inbox rows and detail pages;
+  `RefJump` ("Open D88") under both search boxes; `/go/D88`, `/go/M512`.
+- **CLI:** `hermes ref D88` / `hermes ref M512` (prints the profile);
+  documented in the todos and incomings skills.
 
 ## Decisions made in PR 1
 
@@ -122,3 +154,15 @@ short_ref_backfills(kind PRIMARY KEY, done_at)
   project has no agent-home page, so numbering it would hand out refs that can
   only ever 404. Extending `T` to all kanban tasks later is additive.
 - **Refs are not reused** after a delete; a gap in the sequence is fine.
+
+## Decisions made in PR 3
+
+- **Creation order for inbox messages is `registered_at`** (when the box
+  learned of the arrival), not `occurred_at`: a backfill of last year's mail
+  is numbered after this morning's live messages, and a number never depends
+  on a sender's clock.
+- **A ref opens in the session's profile.** agent-home's `/todos/<id>` and
+  `/inbox/<id>` pages read in the profile the session is on, so `/go/D88` for
+  a to-do in another profile resolves (and names that profile) but its page
+  answers not-found until the user switches profile. Carrying the profile
+  through the redirect is a follow-up once those pages take one.

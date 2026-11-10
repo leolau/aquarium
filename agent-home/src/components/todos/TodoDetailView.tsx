@@ -6,6 +6,7 @@ import { useState } from "react";
 import { surfaceGlyph } from "@/components/inbox/IncomingRow";
 import { AddToProjectSheet } from "@/components/projects/AddToProjectSheet";
 import { TodoCompleteForm } from "@/components/todos/TodoCompleteForm";
+import { RefBadge } from "@/components/refs/RefBadge";
 import { ActionButton } from "@/components/ui/ActionButton";
 import { useAction } from "@/lib/use-action";
 import { STAGE_LABEL, sourceGlyph } from "@/components/todos/TodoRow";
@@ -152,7 +153,8 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
       <div className="min-w-0 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
         <p className="flex items-start gap-2 text-sm font-semibold">
           <span aria-hidden>{sourceGlyph(current.source_kind)}</span>
-          <span className="min-w-0 break-words">{current.title}</span>
+          <span className="min-w-0 flex-1 break-words">{current.title}</span>
+          <RefBadge value={current.ref} />
         </p>
 
         <dl className="mt-3 grid grid-cols-[112px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-xs [overflow-wrap:anywhere]">
