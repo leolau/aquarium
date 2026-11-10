@@ -173,9 +173,11 @@ def test_questions_job_records_a_round_from_the_model(env, model):
     client, _ = env
     project = _create(env)
     slug = project["slug"]
+    model.gate = threading.Event()
     resp = _ask(client, slug)
     assert resp.status_code == 200, resp.text
     assert resp.json()["job"]["status"] == "running"
+    model.gate.set()
 
     state = _wait_job(client, slug)
     assert state["job"]["status"] == "done"
