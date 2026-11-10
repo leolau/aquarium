@@ -17759,8 +17759,8 @@ def _agent_home_nav_body(config: dict, role: str, is_owner: bool) -> dict:
 async def get_agent_home_nav(request: Request):
     """Which agent-home menu items the caller may see.
 
-    ``hidden`` is the caller's effective list (always empty for the owner);
-    owner/admin also get every role's stored list under ``roles``. Read from
+    ``hidden`` is the caller's effective list (the owner's own list for the
+    owner); owner/admin also get every role's stored list under ``roles``. Read from
     ``agent_home.nav`` in the default profile's config.yaml.
     """
     role, is_owner = await _agent_home_nav_caller(request)
@@ -17773,8 +17773,8 @@ async def get_agent_home_nav(request: Request):
 async def update_agent_home_nav(role: str, body: AgentHomeNavUpdate, request: Request):
     """Replace *role*'s hidden menu items (``agent_home.nav.roles.<role>.hidden``).
 
-    Owner and admin only. 400 for an unknown role (the owner is not editable)
-    or an unknown, duplicate or locked (home/settings) app id.
+    Owner and admin only; only the owner may change the owner's list. 400 for
+    an unknown role or an unknown, duplicate or locked (home/settings) app id.
     """
     from hermes_cli import agent_home_nav as nav
 
@@ -17782,6 +17782,8 @@ async def update_agent_home_nav(role: str, body: AgentHomeNavUpdate, request: Re
         request, detail="Only the owner or an admin can change the menu."
     )
     caller_role, is_owner = await _agent_home_nav_caller(request)
+    if role == "owner" and not is_owner:
+        raise HTTPException(status_code=403, detail="Only the owner can change the owner's menu.")
     with _profile_scope("default"):
         config = load_config()
         try:

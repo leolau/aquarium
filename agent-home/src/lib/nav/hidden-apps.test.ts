@@ -40,10 +40,13 @@ describe("getHiddenApps", () => {
     vi.useRealTimers();
   });
 
-  it("returns nothing for the owner without asking the API", async () => {
-    expect(await getHiddenApps({ role: "owner", is_owner: true }, "tok")).toEqual([]);
-    expect(await getHiddenApps({ role: "admin", is_owner: true }, "tok")).toEqual([]);
-    expect(agentHomeNav).not.toHaveBeenCalled();
+  it("gives the owner the owner's list, cached under the owner key", async () => {
+    expect(await getHiddenApps({ role: "owner", is_owner: true }, "tok")).toEqual(["graph"]);
+    expect(await getHiddenApps({ role: "admin", is_owner: true }, "tok")).toEqual(["graph"]);
+    expect(cacheKeys).toEqual([
+      ["agent-home-nav-hidden", "owner"],
+      ["agent-home-nav-hidden", "owner"],
+    ]);
   });
 
   it("returns the role's sanitized list, keyed by role and never the token", async () => {

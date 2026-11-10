@@ -10,7 +10,7 @@ const NAV = {
   hidden: [],
   locked: ["home", "settings"],
   apps: [],
-  roles: { admin: [], member: ["graph"], viewer: [] },
+  roles: { owner: [], admin: [], member: ["graph"], viewer: [] },
 };
 
 const fetchMock = vi.fn();
@@ -32,7 +32,7 @@ describe("MenuSection", () => {
   it("shows one tab per role and launcher groups", async () => {
     fetchMock.mockReturnValue(reply(NAV));
     render(<MenuSection />);
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Admin", "Member", "Viewer"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Owner", "Admin", "Member", "Viewer"]);
     await screen.findByRole("tabpanel");
     for (const g of ["main", "workspace", "system"]) {
       expect(document.querySelector(`[data-group="${g}"]`)).toBeTruthy();
@@ -126,13 +126,30 @@ describe("MenuSection", () => {
     expect((screen.getByLabelText(/show to-dos to member/i) as HTMLInputElement).checked).toBe(false);
   });
 
-  it("labels Profiles and Skills 'Admins only' and says the owner sees everything", async () => {
+  it("labels Profiles and Skills 'Admins only' and lets the owner edit the Owner tab", async () => {
     fetchMock.mockReturnValueOnce(reply({ ...NAV, role: "owner", is_owner: true }));
     render(<MenuSection />);
     await screen.findByRole("tabpanel");
     const labels = [...document.querySelectorAll('[data-locked-off="true"]')].map((n) => n.textContent);
     expect(labels).toEqual(["Admins only", "Admins only"]);
-    expect(document.body.textContent).toContain("You are the owner, so your own menu always shows everything");
+    expect(document.body.textContent).toContain("the Owner tab is your own menu");
+    fireEvent.click(screen.getByRole("tab", { name: "Owner" }));
+    const graph = screen.getByLabelText(/show graph to owner/i) as HTMLInputElement;
+    expect(graph.disabled).toBe(false);
+    fireEvent.click(graph);
+    fetchMock.mockReturnValueOnce(reply({ ...NAV, role: "owner", is_owner: true, roles: { ...NAV.roles, owner: ["graph"] } }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith("/api/settings/menu/owner", expect.anything()));
+    expect(JSON.parse(fetchMock.mock.lastCall![1].body)).toEqual({ hidden: ["graph"] });
+  });
+
+  it("shows admins the Owner tab read-only", async () => {
+    fetchMock.mockReturnValueOnce(reply(NAV));
+    render(<MenuSection />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Owner" }));
+    expect((screen.getByLabelText(/show graph to owner/i) as HTMLInputElement).disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    expect(document.body.textContent).toContain("only the owner can change the Owner tab");
   });
 
   it("is read-only without per-role lists", async () => {

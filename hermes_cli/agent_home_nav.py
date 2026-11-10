@@ -1,8 +1,8 @@
 """Which agent-home menu items each role sees.
 
 Stored in the default profile's config.yaml as
-``agent_home.nav.roles.<role>.hidden: [app ids]``. The owner always sees every
-item; ``home`` and ``settings`` are locked visible for every role so nobody can
+``agent_home.nav.roles.<role>.hidden: [app ids]``. The owner has a list too
+(only the owner may change it); ``home`` and ``settings`` are locked visible for every role so nobody can
 hide their way out. ``ADMIN_ONLY_APP_IDS`` (Profiles, Skills) are the reverse:
 locked hidden for members and viewers, because only an owner/admin can change
 anything there and the API refuses everyone else anyway. ``KNOWN_APP_IDS`` mirrors the Coral registry in
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List
 
-NAV_ROLES = ("admin", "member", "viewer")
+NAV_ROLES = ("owner", "admin", "member", "viewer")
 
 LOCKED_APP_IDS = ("home", "settings")
 
@@ -81,9 +81,15 @@ def all_role_hidden(config: Dict[str, Any]) -> Dict[str, List[str]]:
     return {role: role_hidden(config, role) for role in NAV_ROLES}
 
 
+def nav_role(role: str, is_owner: bool) -> str:
+    """The menu list that applies to the caller: the owner's list for the owner."""
+    return "owner" if is_owner else role
+
+
 def effective_hidden(config: Dict[str, Any], role: str, is_owner: bool) -> List[str]:
-    """What the caller must not see: nothing for the owner (or an unknown role)."""
-    if is_owner or role not in NAV_ROLES:
+    """What the caller must not see; nothing for an unknown role."""
+    role = nav_role(role, is_owner)
+    if role not in NAV_ROLES:
         return []
     return role_hidden(config, role)
 
@@ -91,14 +97,13 @@ def effective_hidden(config: Dict[str, Any], role: str, is_owner: bool) -> List[
 def set_role_hidden(config: Dict[str, Any], role: str, hidden: Iterable[Any]) -> List[str]:
     """Store *hidden* for *role* in *config*; returns what was stored.
 
-    Raises ``ValueError`` for an unknown role (the owner is not editable) or an
+    Raises ``ValueError`` for an unknown role or an
     unknown, duplicate or locked app id. Admin-only apps are always stored as
     hidden for members and viewers, whatever *hidden* says.
     """
     if role not in NAV_ROLES:
         raise ValueError(
-            f"Unknown role {role!r}: choose one of {', '.join(NAV_ROLES)} "
-            "(the owner always sees everything)."
+            f"Unknown role {role!r}: choose one of {', '.join(NAV_ROLES)}."
         )
     clean: List[str] = []
     for item in hidden:
