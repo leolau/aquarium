@@ -130,9 +130,11 @@ those async stores and the sync registry; the rows record the profile.
   skipped and its rows are numbered lazily on read.
 - **Payloads:** `ref` on to-do list/detail/create and inbox list/detail
   (`profile_refs.attach` = `ensure_refs` in the current profile).
-- **Search:** a `D`/`M` ref typed into the to-dos / inbox search (`q`) returns
-  exactly that item through the store's own scoped `get` — or nothing, when
-  the ref names nothing in this profile. Other filters are ignored for a ref.
+- **Search:** a `D`/`M` ref typed into the to-dos / inbox search (`q`) puts
+  that item first on the first page, read through the store's own scoped
+  `get` (nothing is pinned when the ref names nothing visible in this
+  profile); the text still runs as an ordinary search, as project search does
+  since #820, so "M3" in a mail subject is still found.
 - **Resolver:** `D`/`M` read through `TodoStore.get` / `InboundRegistry.get`
   (C2 scope + RLS) **in `record.profile`**. In the acting profile the caller's
   principal is used as the to-do / inbox routes use it; for another profile

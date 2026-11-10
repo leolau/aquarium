@@ -328,18 +328,29 @@ async def test_todo_list_detail_and_create_payloads_carry_refs(todo_routes):
 
 
 @pytest.mark.asyncio
-async def test_a_todo_ref_in_search_finds_exactly_that_todo(todo_routes):
+async def test_a_todo_ref_in_search_puts_that_todo_first(todo_routes):
     for q in ("D3", "d3", " D3 "):
         page = await todos_api.list_todos(request=None, q=q)
-        assert [i["id"] for i in page["items"]] == [U(2)], q
-        assert page["next_cursor"] is None
-    assert todo_routes.listed == 0
-    # D2 lives in another profile; D99 names nothing: both find nothing here.
-    for q in ("D2", "D99"):
-        assert (await todos_api.list_todos(request=None, q=q))["items"] == []
-    # Other kinds and plain words are ordinary searches.
-    await todos_api.list_todos(request=None, q="M1")
-    assert todo_routes.listed == 1
+        # The ref's to-do first, then the text matches (the stub matches all).
+        assert [i["id"] for i in page["items"]] == [U(2), U(1)], q
+    # Later pages are the text search alone: the pinned item isn't repeated.
+    page = await todos_api.list_todos(request=None, q="D3", cursor="c")
+    assert [i["id"] for i in page["items"]] == [U(1), U(2)]
+    # D2 lives in another profile; D99 names nothing; M1 is another kind:
+    # each is an ordinary text search here.
+    for q in ("D2", "D99", "M1"):
+        page = await todos_api.list_todos(request=None, q=q)
+        assert [i["id"] for i in page["items"]] == [U(1), U(2)], q
+
+
+@pytest.mark.asyncio
+async def test_a_todo_ref_the_caller_cannot_see_pins_nothing(todo_routes, monkeypatch):
+    async def _hidden(principal, todo_id):
+        return None
+
+    monkeypatch.setattr(todo_routes, "get", _hidden)
+    todo_routes.todos.clear()
+    assert (await todos_api.list_todos(request=None, q="D3"))["items"] == []
 
 
 class _Tags:
@@ -381,11 +392,12 @@ async def test_inbox_list_detail_and_search_carry_and_accept_refs(inbox_routes):
     assert [(i["id"], i["ref"]) for i in page["items"]] == [(U(1), "M1")]
     detail = await incomings_api.get_incoming(request=None, item_id=U(1))
     assert detail["ref"] == "M1"
+    inbox_routes.items[U(5)] = _item(U(5), created=300)
     found = await incomings_api.list_incomings(request=None, q="m1")
-    assert [i["id"] for i in found["items"]] == [U(1)]
-    assert found["items"][0]["tags"] == []
-    assert (await incomings_api.list_incomings(request=None, q="M2"))["items"] == []
-    assert inbox_routes.listed == 1
+    assert [i["id"] for i in found["items"]] == [U(1), U(5)]  # pinned first
+    assert found["items"][0]["tags"] == [] and found["items"][0]["ref"] == "M1"
+    other = await incomings_api.list_incomings(request=None, q="M2")  # in `hr`
+    assert [i["id"] for i in other["items"]] == [U(1), U(5)]
 
 
 # ---------------------------------------------------------------------------

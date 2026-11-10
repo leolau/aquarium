@@ -6,8 +6,8 @@ import { parseRef, refHref, type RefKind } from "@/lib/refs";
 
 /**
  * "Open D88" under a search box when what was typed is a short ref of the
- * list's own kind (FG-36): the list already narrows to that item, and this
- * opens it straight away. Renders nothing for anything else.
+ * list's own kind (FG-36): the list puts that item first, and this opens
+ * it straight away. Renders nothing for anything else.
  */
 export function RefJump({
   query,

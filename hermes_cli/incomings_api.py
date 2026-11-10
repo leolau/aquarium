@@ -149,14 +149,10 @@ async def list_incomings(
     if not await _table_exists(registry):
         return {"items": [], "next_cursor": None}
 
-    # A short ref (``M512``) typed into search opens exactly that arrival.
-    is_ref, target = await profile_refs.search_target(profile_refs.MESSAGE, q)
-    if is_ref:
-        item = await registry.get(principal, target) if target else None
-        return {
-            "items": await _decorate(_tags(), principal, [item] if item else []),
-            "next_cursor": None,
-        }
+    # A short ref (``M512``) typed into search puts that arrival first (on the
+    # first page); the text still runs as an ordinary search too.
+    _, target = await profile_refs.search_target(profile_refs.MESSAGE, q)
+    pinned = await registry.get(principal, target) if target and not cursor else None
 
     page = await registry.list(
         principal,
@@ -175,8 +171,11 @@ async def list_incomings(
         limit=max(1, min(int(limit or _DEFAULT_LIMIT), _MAX_LIMIT)),
         cursor=cursor or None,
     )
+    items = page.items
+    if pinned is not None:
+        items = [pinned, *(item for item in items if item.id != pinned.id)]
     return {
-        "items": await _decorate(_tags(), principal, page.items),
+        "items": await _decorate(_tags(), principal, items),
         "next_cursor": page.next_cursor,
     }
 

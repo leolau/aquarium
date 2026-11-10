@@ -127,14 +127,10 @@ async def list_todos(
     if not await _table_ready(store):
         return {"items": [], "next_cursor": None}
 
-    # A short ref (``D88``) typed into search opens exactly that to-do.
-    is_ref, target = await profile_refs.search_target(profile_refs.TODO, q)
-    if is_ref:
-        todo = await store.get(principal, target) if target else None
-        return {
-            "items": await _with_refs([todo.as_dict()] if todo else []),
-            "next_cursor": None,
-        }
+    # A short ref (``D88``) typed into search puts that to-do first (on the
+    # first page); the text still matches titles too, as project search does.
+    _, target = await profile_refs.search_target(profile_refs.TODO, q)
+    pinned = await store.get(principal, target) if target and not cursor else None
 
     items, next_cursor = await store.list(
         principal,
@@ -148,6 +144,8 @@ async def list_todos(
         limit=max(1, min(int(limit or _DEFAULT_LIMIT), _MAX_LIMIT)),
         cursor=cursor or None,
     )
+    if pinned is not None:
+        items = [pinned, *(item for item in items if item.id != pinned.id)]
     return {
         "items": await _with_refs([item.as_dict() for item in items]),
         "next_cursor": next_cursor,
