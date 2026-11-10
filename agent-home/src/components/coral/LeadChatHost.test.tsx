@@ -20,6 +20,7 @@ vi.mock("next/link", async (importOriginal) => {
 });
 
 import { attachChatStream, cancelChatTurn, streamChatTurn } from "@/lib/chat/stream";
+import { STEER_MARKER_CLOSE, STEER_MARKER_OPEN } from "@/lib/chat/transcript";
 import { LeadChatHost } from "@/components/coral/LeadChatHost";
 
 // jsdom has no PointerEvent constructor; RTL builds one for pointer* events.
@@ -27,6 +28,8 @@ class FakePointerEvent extends MouseEvent {
   pointerType = "mouse";
 }
 (globalThis as Record<string, unknown>).PointerEvent ??= FakePointerEvent;
+
+const steerBlock = (text: string) => `\n\n${STEER_MARKER_OPEN}\n${text}\n${STEER_MARKER_CLOSE}`;
 
 const openLeadChat = () =>
   fireEvent.click(screen.getByRole("button", { name: /open lead chat/i }));
@@ -145,6 +148,33 @@ describe("LeadChatHost panel", () => {
     expect(fetchMock.mock.calls.map((c) => c[0])).toContain(
       "/api/chat/messages?sessionId=lead-abc",
     );
+  });
+
+  it("shows a steer delivered mid-turn as the user's own bubble after reload", async () => {
+    leadFetch({
+      "/api/chat/messages": {
+        messages: [
+          { id: 1, role: "user", content: "Draft the plan" },
+          { id: 2, role: "assistant", content: "" },
+          { id: 3, role: "tool", content: `TOOL-OUTPUT${steerBlock("Make it shorter")}` },
+          { id: 4, role: "assistant", content: "Here is a shorter plan." },
+        ],
+      },
+    });
+
+    render(<LeadChatHost />);
+    openLeadChat();
+
+    await waitFor(() => {
+      expect(screen.getByRole("dialog").textContent).toContain("Here is a shorter plan.");
+    });
+    const bubbles = [...screen.getByRole("dialog").querySelectorAll("[data-component=MessageBubble]")];
+    expect(bubbles.map((b) => [b.getAttribute("data-role"), b.firstElementChild?.textContent])).toEqual([
+      ["user", "Draft the plan"],
+      ["user", "Sent while workingMake it shorter"],
+      ["assistant", "Here is a shorter plan."],
+    ]);
+    expect(screen.getByRole("dialog").textContent).not.toContain("TOOL-OUTPUT");
   });
 
   it("sends every turn on the server's lead session, never a fresh one", async () => {

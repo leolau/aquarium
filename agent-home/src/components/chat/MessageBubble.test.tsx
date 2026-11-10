@@ -13,6 +13,26 @@ describe("MessageBubble", () => {
     expect(html).toContain("hello agent");
   });
 
+  it("labels a user message sent while the agent was working", () => {
+    const html = renderToStaticMarkup(
+      <MessageBubble
+        message={{ id: 3, role: "user", content: "Use the Q3 numbers", sentWhileWorking: true }}
+      />,
+    );
+    expect(html).toContain("justify-end");
+    expect(html).toContain('data-sent-while-working="true"');
+    expect(html).toContain("Sent while working");
+    expect(html).toContain("Use the Q3 numbers");
+  });
+
+  it("does not label an ordinary user turn", () => {
+    const html = renderToStaticMarkup(
+      <MessageBubble message={{ role: "user", content: "hello agent" }} />,
+    );
+    expect(html).not.toContain("Sent while working");
+    expect(html).not.toContain("data-sent-while-working");
+  });
+
   it("renders an assistant turn aligned left", () => {
     const html = renderToStaticMarkup(
       <MessageBubble message={{ role: "assistant", content: "how can I help?" }} />,

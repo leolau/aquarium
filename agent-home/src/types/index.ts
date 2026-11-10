@@ -356,6 +356,8 @@ export interface ChatMessage {
   reasoning?: string | null;
   /** Stable React key for an optimistic row that has no DB id yet. */
   clientKey?: string;
+  /** A user message delivered mid-turn (a steer) while the agent was working. */
+  sentWhileWorking?: boolean;
 }
 
 /**
