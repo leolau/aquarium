@@ -116,7 +116,8 @@
     "watchers": " (assignee + watchers)",
     "showTasks": "Show {count} more tasks",
     "hideTasks": "Show fewer tasks",
-    "loadError": "Couldn’t load the graph"
+    "loadError": "Couldn’t load the graph",
+    "loading": "Loading the graph…"
   },
   "webview": {
     "subtitle": "Watch and approve what the agent does in its own web browser.",

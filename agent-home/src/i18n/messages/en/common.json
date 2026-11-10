@@ -7,5 +7,7 @@
   "signOutConfirmTitle": "Sign out?",
   "signOutConfirmBody": "You'll need to log in again on this device.",
   "cancel": "Cancel",
-  "working": "Working…"
+  "working": "Working…",
+  "loading": "Loading…",
+  "stillWorking": "Still working… a busy server can take a few more seconds."
 }

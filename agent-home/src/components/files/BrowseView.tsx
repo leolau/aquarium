@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ResizableTable } from "@/components/get-ready/ResizableTable";
 import { useLocale, useT } from "@/i18n";
 import { htmlLang } from "@/i18n/config";
+import { BrowseSkeleton, PlacesSkeleton } from "@/components/files/FilesSkeletons";
 import { setPendingAttachments } from "@/lib/chat/pending-attachments";
 import { importFile, listDirectoryEntries, resolveFile } from "@/lib/folder-bridge/fsOps";
 import {
@@ -18,6 +19,8 @@ import {
 import type { FolderPermission } from "@/lib/folder-bridge/types";
 import type { BrowseEntry, BrowsePlace, ChatAttachment } from "@/types";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { SlowHint } from "@/components/ui/SlowHint";
+import { Spinner } from "@/components/ui/Spinner";
 import { useConfirm } from "@/components/ui/useConfirm";
 import { ChevronRightIcon } from "@/components/ui/icons";
 import { Sheet } from "@/components/ui/Sheet";
@@ -813,91 +816,30 @@ export function BrowseView() {
   );
 }
 
-const bone = "rounded-[var(--radius-sm)] bg-[var(--color-surface-2)]";
-const SKELETON_ROWS = ["w-2/5", "w-1/3", "w-3/5", "w-1/2", "w-2/5"];
-
-/**
- * Placeholder rows while a folder list loads (Figma 24:12293 notes: the
- * "Opening…" line over a skeleton). Same shape as the real rows: a table
- * (name · size · modified) from `md`, list rows with a meta line on a phone.
- */
-function BrowseSkeleton() {
-  return (
-    <div data-component="BrowseSkeleton" aria-hidden="true" className="animate-pulse">
-      <div className="hidden md:block">
-        <div className="grid grid-cols-[minmax(0,1fr)_90px_140px] gap-3 px-3 pb-2">
-          <div className={`h-3 w-12 ${bone}`} />
-          <div className={`h-3 w-10 ${bone}`} />
-          <div className={`h-3 w-16 ${bone}`} />
-        </div>
-        {SKELETON_ROWS.map((w, i) => (
-          <div
-            key={i}
-            data-skeleton-row
-            className="grid grid-cols-[minmax(0,1fr)_90px_140px] items-center gap-3 border-t border-[var(--color-border)] px-3 py-3"
-          >
-            <div className="flex min-w-0 items-center gap-2">
-              <div className={`size-5 shrink-0 ${bone}`} />
-              <div className={`h-3 ${w} ${bone}`} />
-            </div>
-            <div className={`h-3 w-10 ${bone}`} />
-            <div className={`h-3 w-16 ${bone}`} />
-          </div>
-        ))}
-      </div>
-      <ul className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] md:hidden">
-        {SKELETON_ROWS.map((w, i) => (
-          <li
-            key={i}
-            data-skeleton-row
-            className="flex items-center gap-3 border-b border-[var(--color-border)] px-3 py-3 last:border-b-0"
-          >
-            <div className={`size-5 shrink-0 ${bone}`} />
-            <div className="flex min-w-0 flex-1 flex-col gap-2">
-              <div className={`h-3 ${w} ${bone}`} />
-              <div className={`h-2.5 w-1/4 ${bone}`} />
-            </div>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-/** Placeholder place cards while the places list loads. */
-function PlacesSkeleton() {
-  return (
-    <div data-component="PlacesSkeleton" aria-hidden="true" className="animate-pulse">
-      <div className={`mx-2 mb-2 mt-2 h-2.5 w-16 ${bone}`} />
-      {[0, 1, 2].map((i) => (
-        <div
-          key={i}
-          className="mb-2 flex min-h-11 items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] p-3"
-        >
-          <div className={`size-5 shrink-0 ${bone}`} />
-          <div className="flex min-w-0 flex-1 flex-col gap-2">
-            <div className={`h-3 w-3/5 ${bone}`} />
-            <div className={`h-2.5 w-4/5 ${bone}`} />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function openingSlow(show: boolean, text: string) {
   if (!show) return null;
   return (
-    <p role="status" className="mb-2 text-xs text-[var(--color-warn-text)]">
-      {text}
-    </p>
+    <div className="mb-2">
+      <p role="status" className="text-xs text-[var(--color-warn-text)]">
+        {text}
+      </p>
+      <SlowHint className="mt-1" />
+    </div>
   );
 }
 
 function renderPreview(preview: Preview | null, t: ReturnType<typeof useT>) {
   if (!preview) return null;
   if (preview.state === "loading")
-    return <p className="text-xs text-[var(--color-muted)]">{t("file.loading")}</p>;
+    return (
+      <>
+        <p role="status" className="inline-flex items-center gap-2 text-xs text-[var(--color-muted)]">
+          <Spinner />
+          {t("file.loading")}
+        </p>
+        <SlowHint className="mt-1" />
+      </>
+    );
   if (preview.state === "image")
     // eslint-disable-next-line @next/next/no-img-element
     return <img src={preview.url} alt="" className="max-h-72 w-full rounded-lg object-contain" />;

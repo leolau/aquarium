@@ -59,5 +59,9 @@
   "pager.prev": "Previous",
   "pager.next": "Next",
   "pager.page": "Page {page} of {pages}",
-  "pager.range": "{from}–{to} of {total}"
+  "pager.range": "{from}–{to} of {total}",
+  "loadingFiles": "Loading your files…",
+  "loadingPlaces": "Loading your places…",
+  "loadingFolders": "Loading your folders…",
+  "loadingNetwork": "Loading network folders…"
 }
