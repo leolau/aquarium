@@ -741,6 +741,8 @@ def run_conversation(
                         "Pre-API-call steer drain: injected into tool msg at index %d",
                         _si,
                     )
+                    from agent.agent_runtime_helpers import notify_steer_delivered
+                    notify_steer_delivered(agent, _pre_api_steer, _sm)
                     break
             if not _injected:
                 # No tool message to inject into — put it back so

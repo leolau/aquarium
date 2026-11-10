@@ -322,3 +322,57 @@ class TestSteerCommandRegistry:
 
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-v"])
+
+
+class TestSteerDeliveryRecord:
+    """``notify_steer_delivered``: the hook both drain points call once a
+    steer is in a tool result."""
+
+    def test_callback_receives_the_drained_text(self):
+        agent = _bare_agent()
+        seen = []
+        agent.steer_delivered_callback = seen.append
+        agent.steer("first")
+        agent.steer("second")
+        messages = [
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "c1"}]},
+            {"role": "tool", "content": "out", "tool_call_id": "c1"},
+        ]
+        agent._apply_pending_steer_to_tool_results(messages, 1)
+        assert seen == ["first\nsecond"]
+
+    def test_failing_callback_does_not_break_the_turn(self):
+        from agent.agent_runtime_helpers import notify_steer_delivered
+
+        agent = _bare_agent()
+
+        def _boom(text):
+            raise RuntimeError("listener gone")
+
+        agent.steer_delivered_callback = _boom
+        notify_steer_delivered(agent, "x")
+
+    def test_rewrites_the_already_persisted_tool_row(self, tmp_path):
+        import hermes_state
+        from agent.agent_runtime_helpers import notify_steer_delivered
+        from run_agent import _DB_ROW_ID_KEY
+
+        db = hermes_state.SessionDB(db_path=tmp_path / "state.db")
+        try:
+            db.ensure_session("s1", source="test")
+            row_id = db.append_message("s1", "tool", "out", tool_call_id="c1")
+            agent = _bare_agent()
+            agent._session_db = db
+            msg = {"role": "tool", "content": "out" + format_steer_marker("hi"), _DB_ROW_ID_KEY: row_id}
+            notify_steer_delivered(agent, "hi", msg)
+            stored = db.get_messages_as_conversation("s1")
+            assert stored[-1]["content"] == "out" + format_steer_marker("hi")
+
+            # A persistence-isolated fork never writes.
+            agent._persist_disabled = True
+            msg["content"] = "changed"
+            notify_steer_delivered(agent, "hi", msg)
+            assert db.get_messages_as_conversation("s1")[-1]["content"] != "changed"
+        finally:
+            db.close()

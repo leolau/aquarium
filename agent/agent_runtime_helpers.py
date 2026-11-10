@@ -2954,6 +2954,41 @@ def apply_pending_steer_to_tool_results(agent, messages: list, num_tool_msgs: in
         len(steer_text),
         steer_text[:120] + ("..." if len(steer_text) > 120 else ""),
     )
+    notify_steer_delivered(agent, steer_text, messages[target_idx])
+
+
+def notify_steer_delivered(agent, steer_text: str, message: Optional[dict] = None) -> None:
+    """Record that *steer_text* was written into the tool result *message*.
+
+    If that tool result was already flushed to the session DB, its row is
+    rewritten so the stored transcript and the next turn's history carry the
+    steer exactly as the model saw it. Then ``agent.steer_delivered_callback``
+    (agent-home: marks the user's input delivered) is told.
+    """
+    if isinstance(message, dict):
+        _rewrite_persisted_message(agent, message)
+    callback = getattr(agent, "steer_delivered_callback", None)
+    if callback is None:
+        return
+    try:
+        callback(steer_text)
+    except Exception:
+        _ra().logger.debug("steer_delivered_callback failed", exc_info=True)
+
+
+def _rewrite_persisted_message(agent, message: dict) -> None:
+    row_id = message.get(_ra()._DB_ROW_ID_KEY)
+    db = getattr(agent, "_session_db", None)
+    if row_id is None or db is None or getattr(agent, "_persist_disabled", False):
+        return
+    content = message.get("content")
+    if not isinstance(content, str):
+        # Multimodal results are stored as a text summary; leave that row.
+        return
+    try:
+        db.update_message_content(row_id, content)
+    except Exception:
+        _ra().logger.warning("Could not persist steered tool result", exc_info=True)
 
 
 
@@ -3033,6 +3068,7 @@ __all__ = [
     "cleanup_dead_connections",
     "extract_api_error_context",
     "apply_pending_steer_to_tool_results",
+    "notify_steer_delivered",
     "_iter_pool_sockets",
     "force_close_tcp_sockets",
 ]

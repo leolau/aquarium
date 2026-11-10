@@ -258,6 +258,10 @@ _MAX_TOOL_WORKERS = 8
 # every top-level ``_``-prefixed key before the request leaves the process, so
 # this never reaches a strict OpenAI-compatible gateway.
 _DB_PERSISTED_MARKER = "_db_persisted"
+# Row id of the persisted copy (same ``_`` rule). Lets a steer written into an
+# already-flushed tool result update that row, so the stored transcript (and
+# the next turn's history) matches what the model saw.
+_DB_ROW_ID_KEY = "_db_row_id"
 
 
 # Guard so the OpenRouter metadata pre-warm thread is only spawned once per
@@ -1867,7 +1871,7 @@ class AIAgent:
                     ]
                 elif isinstance(msg.get("tool_calls"), list):
                     tool_calls_data = msg["tool_calls"]
-                self._session_db.append_message(
+                row_id = self._session_db.append_message(
                     session_id=self.session_id,
                     role=role,
                     content=content,
@@ -1883,6 +1887,8 @@ class AIAgent:
                     timestamp=_row_timestamp,
                 )
                 msg[_DB_PERSISTED_MARKER] = True
+                if isinstance(row_id, int):
+                    msg[_DB_ROW_ID_KEY] = row_id
             # The intrinsic markers are now the sole source of truth. Reset the
             # one-shot seed so no id() outlives this flush to alias a message
             # allocated next turn at a recycled address.
