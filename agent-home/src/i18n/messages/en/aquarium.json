@@ -8,16 +8,13 @@
   "person": "{name}, {creature}: {chats} chats, {profiles} profiles",
   "legend": {
     "title": "How to read the aquarium",
-    "sizeIcon": "◯",
-    "size": "Bigger = more chats, projects and tokens",
-    "speedIcon": "➶",
+    "size": "Bigger = more chats, projects and tokens (the busiest person is the biggest)",
     "speed": "Faster = more tokens in the last 24 h",
-    "followersIcon": "∘∘",
-    "followers": "Little followers = the profiles they use",
-    "activeIcon": "✦",
+    "followers": "Little followers = the profiles they use, named on their chip",
     "active": "Glow and bubbles = working right now",
-    "selfIcon": "◌",
-    "self": "Gold ring = you"
+    "self": "Gold ring = you",
+    "show": "Show how to read the aquarium",
+    "hide": "Hide how to read the aquarium"
   },
   "card": {
     "you": "(you)",

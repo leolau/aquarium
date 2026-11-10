@@ -190,6 +190,74 @@ body {
     filter: drop-shadow(0 0 6px rgb(167 139 250 / 0.85));
   }
 }
+/* FG-35 Aquarium dashboard title (components/aquarium/AquariumTitle): a
+ * wave of light runs through the letters and bubbles rise off the name. */
+.aq-title {
+  animation: aq-title-in 0.9s ease-out both;
+}
+.aq-title-char {
+  display: inline-block;
+  text-shadow: 0 2px 10px rgb(0 20 50 / 0.6);
+  animation: aq-title-wave 4.8s ease-in-out infinite;
+}
+.aq-title-bubble {
+  position: absolute;
+  bottom: 0.15em;
+  border-radius: 9999px;
+  border: 1px solid rgb(255 255 255 / 0.75);
+  background: radial-gradient(circle at 30% 30%, rgb(255 255 255 / 0.85), rgb(255 255 255 / 0.08) 60%);
+  opacity: 0;
+  pointer-events: none;
+  animation: aq-title-bubble 5.2s ease-in infinite;
+}
+@keyframes aq-title-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes aq-title-wave {
+  0%,
+  36%,
+  100% {
+    transform: translateY(0);
+    color: #ffffff;
+  }
+  14% {
+    transform: translateY(-0.12em);
+    color: #c9fbff;
+    text-shadow:
+      0 0 14px rgb(140 255 236 / 0.9),
+      0 2px 10px rgb(0 20 50 / 0.6);
+  }
+}
+@keyframes aq-title-bubble {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.6);
+  }
+  15% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(6px, -2.4em) scale(1.1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .aq-title,
+  .aq-title-char {
+    animation: none;
+  }
+  .aq-title-bubble {
+    display: none;
+  }
+}
+
 /* "Still working…" (components/ui/SlowHint): hidden until its inline
    animation-delay passes, then fades in. Pure CSS so it also runs in a
    streamed route loader before hydration. */

@@ -9,6 +9,7 @@ import { CREATURES, type AquariumSnapshot, type AquariumUser } from "@/lib/aquar
 
 import { AquariumBackdrop } from "./AquariumBackdrop";
 import { AquariumLegend } from "./AquariumLegend";
+import { AquariumTitle } from "./AquariumTitle";
 import { CreatureCard } from "./CreatureCard";
 import { drawScene } from "./render";
 import {
@@ -49,6 +50,7 @@ export function AquariumView({ load }: AquariumViewProps) {
   const pinnedRef = useRef(false);
   const [users, setUsers] = useState<AquariumUser[] | null>(null);
   const [offline, setOffline] = useState(false);
+  const [name, setName] = useState<string | null>(null);
   const [selected, setSelectedState] = useState<HitTarget | null>(null);
 
   const scene = useCallback((): Scene => (sceneRef.current ??= createScene()), []);
@@ -64,10 +66,20 @@ export function AquariumView({ load }: AquariumViewProps) {
     const onSnapshot = (snap: AquariumSnapshot) => {
       applySnapshot(scene(), snap, boundsRef.current);
       setUsers(snap.users);
+      setName(snap.name);
       setOffline(false);
     };
     return startSnapshotPolling({ load, onSnapshot, onError: () => setOffline(true) });
   }, [load, scene]);
+
+  useEffect(() => {
+    if (!name) return;
+    const previous = document.title;
+    document.title = name;
+    return () => {
+      document.title = previous;
+    };
+  }, [name]);
 
   useEffect(() => {
     const wrap = wrapRef.current;
@@ -189,21 +201,23 @@ export function AquariumView({ load }: AquariumViewProps) {
       />
       {selectedUser && <CreatureCard ref={cardRef} user={selectedUser} profile={selected?.profile} />}
 
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 p-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 grid grid-cols-[1fr_auto_1fr] items-start gap-3 p-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
         <Link
           href="/"
           data-action="aquarium-back"
-          className="pointer-events-auto inline-flex min-h-10 items-center gap-1 rounded-full bg-[rgb(3_24_52/0.62)] px-3 text-sm font-semibold text-white shadow-lg backdrop-blur-sm hover:bg-[rgb(3_24_52/0.8)]"
+          className="pointer-events-auto inline-flex min-h-10 items-center gap-1 justify-self-start rounded-full bg-[rgb(3_24_52/0.62)] px-3 text-sm font-semibold text-white shadow-lg backdrop-blur-sm hover:bg-[rgb(3_24_52/0.8)]"
         >
           <ChevronLeftIcon size={16} aria-hidden />
           {t("back")}
         </Link>
-        <h1 className="sr-only">{t("title")}</h1>
+        <div className="min-w-0 max-w-[min(64vw,44rem)] justify-self-center pt-0.5 text-center">
+          {name ? <AquariumTitle name={name} /> : <h1 className="sr-only">{t("title")}</h1>}
+        </div>
         {offline && (
           <span
             data-component="AquariumOffline"
             role="status"
-            className="pointer-events-auto rounded-full bg-[rgb(120_20_30/0.75)] px-3 py-1 text-xs font-semibold text-white shadow-lg"
+            className="pointer-events-auto justify-self-end rounded-full bg-[rgb(120_20_30/0.75)] px-3 py-1 text-xs font-semibold text-white shadow-lg"
           >
             {t("offline")}
           </span>
