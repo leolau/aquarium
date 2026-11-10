@@ -13,6 +13,7 @@ import {
   splitSteerBlocks,
   STEER_MARKER_CLOSE,
   STEER_MARKER_OPEN,
+  stripInjectedContext,
   stripUiContextLine,
   visibleTurns,
 } from "@/lib/chat/transcript";
@@ -282,5 +283,49 @@ describe("reconcileTail", () => {
       { pageHasMore: false, keep: () => true },
     );
     expect(messages.map((m) => m.id ?? m.clientKey)).toEqual([1, 2]);
+  });
+});
+
+describe("stripInjectedContext (attachment notes the backend prepends)", () => {
+  const NOTE =
+    "[The user sent a text document: 'notes.txt'. Its content has been included below. " +
+    "The file is also saved at: /home/hermes/.hermes/cache/documents/doc_1a2b_notes.txt]";
+  const FILE = "--- notes.txt ---\nline one\n\nline two of the file";
+  const REF = "[notes.txt](/api/chat/media?path=u%2Fnotes.txt)";
+  const CTX = "[app context: page /chat · last active: none]";
+
+  it("hides the note, the inlined file text and the context line, keeping the user's text and file link", () => {
+    const stored = `${NOTE}\n\n${FILE}\n\n${CTX}\nsummarise it\n\nplease\n\n${REF}`;
+    expect(stripInjectedContext(stored)).toBe(`summarise it\n\nplease\n\n${REF}`);
+  });
+
+  it("hides several notes (document, image) when there is no context line", () => {
+    const doc =
+      "[The user sent a document: 'a.pdf'. It is saved at: /cache/documents/doc_a.pdf. " +
+      "Its text is not inlined here (it's a binary format such as PDF or DOCX).]";
+    const img = "[The user sent an image: 'b.png'. It is saved at: /cache/documents/b.png.]";
+    const refs = "[a.pdf](/api/chat/media?path=a)\n![b.png](/api/chat/media?path=b)";
+    expect(stripInjectedContext(`${doc}\n\n${img}\n\nlook at these\n\n${refs}`)).toBe(
+      `look at these\n\n${refs}`,
+    );
+  });
+
+  it("never shows inlined file text when there is no context line to tell it from the user's", () => {
+    expect(stripInjectedContext(`${NOTE}\n\n${FILE}\n\nsummarise it\n\n${REF}`)).toBe(REF);
+    expect(stripInjectedContext(`${NOTE}\n\n${FILE}\n\n${REF}`)).toBe(REF);
+  });
+
+  it("hides a could-not-be-read note", () => {
+    const note =
+      "[The user attached 'x.txt' but it could not be downloaded. Tell them the upload could " +
+      "not be read and ask them to re-send it — do not invent its contents.]";
+    expect(stripInjectedContext(`${note}\n\n${CTX}\nhi`)).toBe("hi");
+  });
+
+  it("leaves ordinary messages alone", () => {
+    expect(stripInjectedContext("The user sent a document yesterday")).toBe(
+      "The user sent a document yesterday",
+    );
+    expect(stripInjectedContext(`${CTX}\nhi`)).toBe("hi");
   });
 });

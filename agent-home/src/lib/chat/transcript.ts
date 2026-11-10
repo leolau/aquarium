@@ -81,6 +81,54 @@ export function stripUiContextLine(content: string): string {
 }
 
 /**
+ * Notes `_materialize_agent_home_attachments` (hermes_cli/web_server.py)
+ * prepends to a user turn, one per attachment: the document/image notes from
+ * `gateway/run.py::_build_document_context_note` (a text file's content
+ * follows as `--- <name> ---\n<text>`) and the could-not-be-read notes.
+ */
+const ATTACHMENT_NOTE = /^\[The user (?:sent (?:a text document|a document|an image): '|attached ')/;
+const NOTE_START = /\n\n\[The user (?:sent (?:a text document|a document|an image): '|attached ')/;
+const LINK_LINE = /^!?\[[^\]\n]*\]\([^)\s]+\)$/;
+
+/** Where the trailing block of attachment links (`withAttachments`) starts. */
+function trailingLinksStart(text: string): number {
+  const lines = text.split("\n");
+  let i = lines.length;
+  while (i > 0 && LINK_LINE.test(lines[i - 1])) i--;
+  return i === lines.length ? text.length : lines.slice(0, i).join("\n").length + (i > 0 ? 1 : 0);
+}
+
+/** Remove the attachment notes the backend prepends to a user turn. */
+export function stripAttachmentNotes(content: string): string {
+  if (!ATTACHMENT_NOTE.test(content)) return content;
+  // The user's own message starts at the context line, when there is one.
+  const ctx = content.indexOf("\n\n[app context:");
+  if (ctx >= 0) return content.slice(ctx + 2);
+  let rest = content;
+  while (ATTACHMENT_NOTE.test(rest)) {
+    const close = rest.indexOf("]\n\n");
+    if (close < 0) return "";
+    rest = rest.slice(close + 3);
+    if (!rest.startsWith("--- ")) continue;
+    // Inlined file text runs to the next note. After the last one nothing
+    // marks where the file ends and the user's text starts (that is what the
+    // context line is for), so show only the attachment links: never the file.
+    const next = rest.search(NOTE_START);
+    if (next >= 0) {
+      rest = rest.slice(next + 2);
+      continue;
+    }
+    return rest.slice(trailingLinksStart(rest));
+  }
+  return rest;
+}
+
+/** What the user typed: without the attachment notes and app-context line. */
+export function stripInjectedContext(content: string): string {
+  return stripUiContextLine(stripAttachmentNotes(content));
+}
+
+/**
  * A mid-turn steer is delivered by appending
  * `\n\n<OPEN>\n<text>\n<CLOSE>` to the last tool result of a step (see
  * `format_steer_marker`), so after a reload it only exists inside a tool row.
@@ -234,7 +282,7 @@ export function reconcileTail(
     p.role === "assistant"
       ? fresh.some((f) => f.role === "assistant")
       : fresh.some(
-          (f) => f.role === p.role && stripUiContextLine(f.content).trim() === p.content.trim(),
+          (f) => f.role === p.role && stripInjectedContext(f.content).trim() === p.content.trim(),
         );
   const pending = keep
     ? current.filter((m) => m.id == null && keep(m) && !persisted(m))
@@ -244,7 +292,7 @@ export function reconcileTail(
     pending[0]?.role === "user" &&
     last?.role === "user" &&
     last.id != null &&
-    stripUiContextLine(last.content).trim() === pending[0].content.trim()
+    stripInjectedContext(last.content).trim() === pending[0].content.trim()
   ) {
     pending.shift();
   }
