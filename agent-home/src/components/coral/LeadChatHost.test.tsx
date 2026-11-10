@@ -30,6 +30,7 @@ import {
   TurnInProgressError,
 } from "@/lib/chat/stream";
 import { STEER_MARKER_CLOSE, STEER_MARKER_OPEN } from "@/lib/chat/transcript";
+import { Composer } from "@/components/chat/Composer";
 import { LeadChatHost } from "@/components/coral/LeadChatHost";
 
 // jsdom has no PointerEvent constructor; RTL builds one for pointer* events.
@@ -478,7 +479,15 @@ describe("LeadChatHost while the agent works", () => {
     await waitFor(() =>
       expect(document.querySelector('[data-sent-while-working="true"]') ?? screen.getByText("include Friday")).toBeTruthy(),
     );
-    expect(screen.queryByRole("list", { name: /sent while working/i })).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByRole("list", { name: /sent while working/i }).textContent).toContain(
+        "Delivered",
+      ),
+    );
+    await waitFor(
+      () => expect(screen.queryByRole("list", { name: /sent while working/i })).toBeNull(),
+      { timeout: 3000 },
+    );
 
     handlers!.onRunChained?.({ nextRunId: "run-2", itemId: "q1", itemIds: ["q1"], text: "then email it", source: "queue" });
     finish();
@@ -591,5 +600,36 @@ describe("LeadChatHost: sends that do not get through", () => {
     h.onInputRemoved?.("q1");
     await screen.findByText(/Not sent: \u201cthen email it\u201d/);
     expect(screen.queryByRole("list", { name: /sent while working/i })).toBeNull();
+  });
+});
+
+describe("LeadChatHost launcher and the composer", () => {
+  it("floats above a composer docked under it, and returns once it goes", async () => {
+    leadFetch();
+    vi.stubGlobal("innerWidth", 1280);
+    vi.stubGlobal("innerHeight", 820);
+    const rect = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        return this.dataset.component === "Composer"
+          ? ({ top: 700, bottom: 820, left: 300, right: 1260, width: 960, height: 120 } as DOMRect)
+          : ({ top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0 } as DOMRect);
+      });
+    const { rerender } = render(
+      <>
+        <Composer sending={false} storageEnabled={false} sessionId="s1" onSend={() => true} />
+        <LeadChatHost />
+      </>,
+    );
+    const fab = screen.getByRole("button", { name: /open lead chat/i });
+    await waitFor(() => expect(fab.style.bottom).toBe("calc(120px + 0.5rem)"));
+    rerender(
+      <>
+        {null}
+        <LeadChatHost />
+      </>,
+    );
+    await waitFor(() => expect(fab.style.bottom).toBe("calc(var(--safe-bottom) + 1rem)"));
+    rect.mockRestore();
   });
 });

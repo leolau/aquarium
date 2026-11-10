@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   dropPending,
   markDeferred,
+  markDelivered,
   notSentNotice,
   pendingFromActive,
   upsertPending,
@@ -60,5 +61,16 @@ describe("notSentNotice", () => {
         { itemId: "b", mode: "steer", text: long, status: "pending" },
       ]),
     ).toBe(`Not sent: \u201cthen C\u201d, \u201c${"x".repeat(59)}\u2026\u201d. Send it again if you still want it.`);
+  });
+});
+
+describe("delivered steers", () => {
+  it("stay delivered through late echoes and a late defer, and are never reported as not sent", () => {
+    let list = markDelivered([steer, queued], "a");
+    list = upsertPending(list, steer);
+    list = markDeferred(list, "a");
+    expect(list[0].status).toBe("delivered");
+    expect(notSentNotice([list[0]])).toBeNull();
+    expect(notSentNotice(list)).toBe("Not sent: \u201cthen C\u201d. Send it again if you still want it.");
   });
 });

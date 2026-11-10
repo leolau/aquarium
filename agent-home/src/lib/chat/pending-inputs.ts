@@ -25,14 +25,24 @@ export function upsertPending(
   const at = list.findIndex((p) => p.itemId === item.itemId);
   if (at === -1) return [...list, item];
   const cur = list[at];
-  // A deferred steer stays deferred: a late echo of the original accept must
-  // not flip "will run next" back to "after the current step".
-  const merged = { ...cur, ...item, status: cur.status === "deferred" ? cur.status : item.status };
+  // A deferred or delivered steer keeps that status: a late echo of the
+  // original accept must not flip it back to "after the current step".
+  const sticky = cur.status === "deferred" || cur.status === "delivered";
+  const merged = { ...cur, ...item, status: sticky ? cur.status : item.status };
   return list.map((p, i) => (i === at ? merged : p));
 }
 
 export function markDeferred(list: PendingChatInput[], itemId: string): PendingChatInput[] {
-  return list.map((p) => (p.itemId === itemId ? { ...p, status: "deferred" } : p));
+  return list.map((p) =>
+    p.itemId === itemId && p.status !== "delivered" ? { ...p, status: "deferred" } : p,
+  );
+}
+
+/** How long a steer chip says "Delivered" before it goes. */
+export const DELIVERED_MS = 2000;
+
+export function markDelivered(list: PendingChatInput[], itemId: string): PendingChatInput[] {
+  return list.map((p) => (p.itemId === itemId ? { ...p, status: "delivered" } : p));
 }
 
 export function dropPending(list: PendingChatInput[], itemId: string): PendingChatInput[] {
@@ -65,7 +75,8 @@ export function pendingFromActive(raw: unknown): PendingChatInput[] {
  * The line shown when messages sent while the agent worked disappear without
  * reaching it (a Stop discarded them, or the server could not start them).
  */
-export function notSentNotice(items: PendingChatInput[]): string | null {
+export function notSentNotice(all: PendingChatInput[]): string | null {
+  const items = all.filter((i) => i.status !== "delivered");
   if (items.length === 0) return null;
   const quoted = items
     .map((i) => `“${i.text.length > 60 ? `${i.text.slice(0, 59)}…` : i.text}”`)

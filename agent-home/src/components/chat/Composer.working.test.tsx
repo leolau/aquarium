@@ -220,3 +220,18 @@ describe("Composer with a file waiting while the agent works", () => {
     expect(box().value).toBe("");
   });
 });
+
+describe("Composer delivered steer", () => {
+  it("shows a delivered steer as Delivered, without a remove control", () => {
+    working({
+      pending: [{ itemId: "i1", mode: "steer", text: "use staging", status: "delivered" }],
+      onRemovePending: () => {},
+    });
+    const chip = within(screen.getByRole("list", { name: /sent while working/i })).getByRole(
+      "listitem",
+    );
+    expect(chip.textContent).toContain("Delivered");
+    expect(chip.textContent).not.toContain("will be read");
+    expect(within(chip).queryByRole("button")).toBeNull();
+  });
+});

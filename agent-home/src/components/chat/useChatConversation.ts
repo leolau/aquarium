@@ -14,7 +14,9 @@ import {
 import {
   dropPending,
   initialStatus,
+  DELIVERED_MS,
   markDeferred,
+  markDelivered,
   notSentNotice,
   pendingFromActive,
   upsertPending,
@@ -396,7 +398,12 @@ export function useChatConversation({
         ),
       onInputSteered: (itemId) => {
         const item = pendingRef.current.get(turnKey)?.find((p) => p.itemId === itemId);
-        updatePending(turnKey, (cur) => dropPending(cur, itemId));
+        // The chip says "Delivered" for a moment; the bubble carries the label.
+        updatePending(turnKey, (cur) => markDelivered(cur, itemId));
+        window.setTimeout(
+          () => updatePending(turnKey, (cur) => dropPending(cur, itemId)),
+          DELIVERED_MS,
+        );
         if (!item) return;
         const buf = liveRef.current.get(turnKey);
         if (buf) buf.steered = [...(buf.steered ?? []), item.text];

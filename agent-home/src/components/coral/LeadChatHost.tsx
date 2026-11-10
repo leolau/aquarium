@@ -12,11 +12,14 @@ import {
   onLeadChatRequest,
   reportLeadChatOpen,
 } from "@/components/coral/coral-interlock";
+import { useComposerClearance } from "@/lib/chat/composer-dock";
 import { insertSteeredBubble } from "@/lib/chat/messages";
 import {
   dropPending,
   initialStatus,
+  DELIVERED_MS,
   markDeferred,
+  markDelivered,
   notSentNotice,
   pendingFromActive,
   upsertPending,
@@ -86,6 +89,7 @@ export function LeadChatHost({
   storageEnabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const composerClearance = useComposerClearance();
   const [leadSession, setLeadSession] = useState<string | null>(null);
   const [rect, setRect] = usePersistentState<LeadChatRect | null>(
     "agent-home:leadchat-rect",
@@ -378,7 +382,9 @@ export function LeadChatHost({
         updatePending((cur) => upsertPending(cur, { ...input, status: initialStatus(input.mode) })),
       onInputSteered: (itemId) => {
         const item = pendingRef.current.find((p) => p.itemId === itemId);
-        updatePending((cur) => dropPending(cur, itemId));
+        // The chip says "Delivered" for a moment; the bubble carries the label.
+        updatePending((cur) => markDelivered(cur, itemId));
+        window.setTimeout(() => updatePending((cur) => dropPending(cur, itemId)), DELIVERED_MS);
         if (item) setMessages((prev) => insertSteeredBubble(prev, item.text));
         touch(() => ({}));
       },
@@ -747,7 +753,10 @@ export function LeadChatHost({
         className="coral-fab fixed z-[60] flex h-14 w-14 items-center justify-center rounded-full text-xl text-[var(--color-accent-fg)]"
         style={{
           right: "1rem",
-          bottom: "calc(var(--safe-bottom) + 1rem)",
+          // Float above a composer docked at the bottom (its Send controls).
+          bottom: composerClearance
+            ? `calc(${composerClearance}px + 0.5rem)`
+            : "calc(var(--safe-bottom) + 1rem)",
           background:
             "linear-gradient(135deg, var(--color-accent), color-mix(in srgb, var(--color-accent) 60%, #ff7e6b))",
         }}

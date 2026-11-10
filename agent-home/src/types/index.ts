@@ -371,7 +371,8 @@ export interface PendingChatInput {
   itemId: string;
   mode: ChatInputMode;
   text: string;
-  status: "pending" | "queued" | "deferred";
+  /** `delivered`: the agent just read it (shown briefly, then dropped). */
+  status: "pending" | "queued" | "deferred" | "delivered";
 }
 
 export interface ChatMessage {

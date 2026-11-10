@@ -109,7 +109,11 @@ describe("useChatConversation while a turn runs", () => {
     ]);
 
     act(() => turns[0].h.onInputSteered?.("i1"));
-    expect(result.current.selPending).toEqual([]);
+    // The chip says "Delivered" for a moment, then goes.
+    expect(result.current.selPending).toEqual([
+      { itemId: "i1", mode: "steer", text: "use the staging config", status: "delivered" },
+    ]);
+    await waitFor(() => expect(result.current.selPending).toEqual([]), { timeout: 3000 });
     const steered = result.current.messages.filter((m) => m.sentWhileWorking);
     expect(steered).toEqual([
       { role: "user", content: "use the staging config", sentWhileWorking: true },

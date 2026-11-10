@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ActionButton } from "@/components/ui/ActionButton";
 import { useAction } from "@/lib/use-action";
 
+import { dockComposer } from "@/lib/chat/composer-dock";
 import { takePendingAttachments } from "@/lib/chat/pending-attachments";
 import { parseJsonObject, uploadFailureMessage } from "@/lib/chat/upload-error";
 import { formatUploadLimit, UPLOAD_WARN_BYTES } from "@/lib/chat/upload-limit";
@@ -50,6 +51,7 @@ function ModeIcon({ mode }: { mode: ChatInputMode }) {
 function chipText(p: PendingChatInput): { label: string; suffix: string | null } {
   if (p.mode === "queue") return { label: "Queued next", suffix: null };
   if (p.mode === "interrupt") return { label: "Stop & send", suffix: "starts once the agent stops" };
+  if (p.status === "delivered") return { label: "Delivered ✓", suffix: null };
   return {
     label: "Steer",
     suffix: p.status === "deferred" ? "will run next" : "will be read after the current step",
@@ -185,6 +187,10 @@ export function Composer({
   const [mode, setMode] = useState<ChatInputMode>("steer");
   const [menuOpen, setMenuOpen] = useState(false);
   const splitRef = useRef<HTMLDivElement | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  // Keep the floating lead-chat launcher off the Send controls.
+  useEffect(() => (rootRef.current ? dockComposer(rootRef.current) : undefined), []);
 
   // While the agent works a message goes to the running turn, which takes
   // text only — attachments stay in the box for the next normal turn.
@@ -314,6 +320,7 @@ export function Composer({
 
   return (
     <div
+      ref={rootRef}
       data-component="Composer"
       className="sticky bottom-0 mt-3 bg-[var(--color-bg)] pt-2"
       style={{
