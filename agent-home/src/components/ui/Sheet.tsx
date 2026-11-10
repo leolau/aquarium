@@ -14,6 +14,7 @@ export function Sheet({
   footer,
   side = false,
   wide = false,
+  full = false,
   component = "Sheet",
 }: {
   title: ReactNode;
@@ -22,6 +23,8 @@ export function Sheet({
   footer?: ReactNode;
   side?: boolean;
   wide?: boolean;
+  /** Near full-screen on desktop (e.g. a maximized panel). */
+  full?: boolean;
   component?: string;
 }) {
   useEffect(() => {
@@ -45,7 +48,7 @@ export function Sheet({
     : "sm:items-center sm:p-4";
   const panel = side
     ? "sm:h-full sm:max-w-md sm:rounded-none sm:border-y-0 sm:border-r-0"
-    : `sm:rounded-2xl ${wide ? "sm:max-w-2xl" : "sm:max-w-lg"}`;
+    : `sm:rounded-2xl ${full ? "sm:h-[90vh] sm:max-w-5xl" : wide ? "sm:max-w-2xl" : "sm:max-w-lg"}`;
 
   return (
     <div

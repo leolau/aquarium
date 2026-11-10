@@ -10,7 +10,8 @@
  * Keep the markers below in sync with `agent/context_compressor.py`:
  * `SUMMARY_PREFIX` (~L44), `LEGACY_SUMMARY_PREFIX` (~L71),
  * `_SUMMARY_END_MARKER` (~L93) and `_MERGED_PRIOR_CONTEXT_HEADER` /
- * `_MERGED_SUMMARY_DELIMITER` (~L103).
+ * `_MERGED_SUMMARY_DELIMITER` (~L103), and the steer markers with
+ * `STEER_MARKER_OPEN` / `STEER_MARKER_CLOSE` in `agent/prompt_builder.py`.
  */
 import type { ChatMessage } from "@/types";
 
@@ -79,9 +80,83 @@ export function stripUiContextLine(content: string): string {
   return content.replace(/^\[app context:[^\n]*\][ \t]*\r?\n?/, "");
 }
 
-/** Rows a user-facing transcript renders (mirrors ChatPane's filter). */
+/**
+ * A mid-turn steer is delivered by appending
+ * `\n\n<OPEN>\n<text>\n<CLOSE>` to the last tool result of a step (see
+ * `format_steer_marker`), so after a reload it only exists inside a tool row.
+ */
+export const STEER_MARKER_OPEN =
+  "[OUT-OF-BAND USER MESSAGE — a direct message from the user, delivered mid-turn; not tool output]";
+export const STEER_MARKER_CLOSE = "[/OUT-OF-BAND USER MESSAGE]";
+
+export interface SteerSplit {
+  /** The tool output with the steer blocks removed. */
+  output: string;
+  /** The steer texts, oldest first. */
+  steers: string[];
+}
+
+/**
+ * Split the trailing steer blocks off a tool result. Only blocks at the very
+ * end count — that is the only place the agent appends them — so a lookalike
+ * marker in the middle of tool, web or file output stays tool output.
+ */
+export function splitSteerBlocks(content: string): SteerSplit {
+  const steers: string[] = [];
+  let rest = content;
+  for (;;) {
+    const tail = rest.replace(/\s+$/, "");
+    if (!tail.endsWith(STEER_MARKER_CLOSE)) break;
+    const body = tail.slice(0, -STEER_MARKER_CLOSE.length);
+    const openAt = body.lastIndexOf(STEER_MARKER_OPEN);
+    if (openAt < 0 || (openAt > 0 && body[openAt - 1] !== "\n")) break;
+    const text = body.slice(openAt + STEER_MARKER_OPEN.length).trim();
+    if (text) steers.unshift(text);
+    rest = body.slice(0, openAt).replace(/\s+$/, "");
+  }
+  return steers.length === 0 ? { output: content, steers } : { output: rest, steers };
+}
+
+/** Flatten tool content: a string, or Anthropic-style content blocks. */
+function toolContentText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((b) =>
+      b && typeof b === "object" && (b as { type?: unknown }).type === "text"
+        ? String((b as { text?: unknown }).text ?? "")
+        : "",
+    )
+    .filter((t) => t !== "")
+    .join("\n\n");
+}
+
+/**
+ * Rows a user-facing transcript renders (mirrors ChatPane's filter): user and
+ * assistant turns, plus each steer delivered inside a tool result as the
+ * user's own row (`sentWhileWorking`), placed where that tool step ran. It
+ * reuses the tool row's id so keys and paging cursors stay unique.
+ */
 export function visibleTurns(messages: ChatMessage[]): ChatMessage[] {
-  return messages.filter((m) => m.role === "user" || m.role === "assistant");
+  const out: ChatMessage[] = [];
+  for (const m of messages) {
+    if (m.role === "user" || m.role === "assistant") {
+      out.push(m);
+      continue;
+    }
+    if (m.role !== "tool") continue;
+    const { steers } = splitSteerBlocks(toolContentText(m.content));
+    if (steers.length === 0) continue;
+    const row: ChatMessage = {
+      role: "user",
+      content: steers.join("\n\n"),
+      sentWhileWorking: true,
+    };
+    if (m.id != null) row.id = m.id;
+    if (m.timestamp != null) row.timestamp = m.timestamp;
+    out.push(row);
+  }
+  return out;
 }
 
 /** True when two persisted rows would render identically. */

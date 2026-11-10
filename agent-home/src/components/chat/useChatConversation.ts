@@ -39,6 +39,7 @@ import {
   type TurnActivity,
 } from "@/lib/chat/turn-activity";
 import { notifySessionsChanged } from "@/lib/chat/sessions-changed";
+import { visibleTurns } from "@/lib/chat/transcript";
 import { mayGetAutoTitle, waitForAutoTitle } from "@/lib/landing/titles";
 import { useAction } from "@/lib/use-action";
 import type {
@@ -58,10 +59,6 @@ export const keyOf = (id: string | null): string => id ?? NEW_KEY;
 const ACTIVE_WATCH_MS = 10_000;
 
 /** Only user/assistant turns are shown in the visible thread. */
-function visible(messages: ChatMessage[]): ChatMessage[] {
-  return messages.filter((m) => m.role === "user" || m.role === "assistant");
-}
-
 function dropTrailingEmptyAssistant(prev: ChatMessage[]): ChatMessage[] {
   const last = prev[prev.length - 1];
   return last && last.role === "assistant" && last.content === ""
@@ -123,7 +120,7 @@ export function useChatConversation({
     notifySessionsChanged({ profile });
   };
   const [sessionId, setSessionId] = useState<string | null>(initialSessionId);
-  const [messages, setMessages] = useState<ChatMessage[]>(visible(initialMessages));
+  const [messages, setMessages] = useState<ChatMessage[]>(visibleTurns(initialMessages));
   const [loadingThread, setLoadingThread] = useState(loadOnMount && initialSessionId !== null);
   // Per-session state, keyed by session id (or NEW_KEY). Turns run per session
   // so the user can switch conversations at any time without cancelling or
@@ -267,7 +264,7 @@ export function useChatConversation({
       // overlay it onto the persisted history.
       if (selectedRef.current === id) {
         setMessages(
-          withLiveTurn(visible(body.messages ?? []), liveRef.current.get(keyOf(id))),
+          withLiveTurn(visibleTurns(body.messages ?? []), liveRef.current.get(keyOf(id))),
         );
         markSessionRead(id);
       }
@@ -295,7 +292,7 @@ export function useChatConversation({
       if (!res.ok) return;
       if (selectedRef.current === id) {
         setMessages(
-          withLiveTurn(visible(body.messages ?? []), liveRef.current.get(keyOf(id))),
+          withLiveTurn(visibleTurns(body.messages ?? []), liveRef.current.get(keyOf(id))),
         );
         markSessionRead(id);
       }

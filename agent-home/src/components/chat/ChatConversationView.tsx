@@ -1,10 +1,13 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
+
 import { ApprovalCard } from "@/components/chat/thread/ApprovalCard";
 import { Composer } from "@/components/chat/Composer";
 import { LiveActivity } from "@/components/chat/LiveActivity";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { StatusIndicator } from "@/components/chat/StatusIndicator";
+import { chatTranscriptText, copyText } from "@/lib/chat/copy-chat";
 import {
   assistantIsEmpty,
   type ChatConversation,
@@ -44,9 +47,24 @@ export function ChatConversationView({
     threadRef,
     highlightTerm,
   } = conv;
+  const live = liveActivity[selKey];
+  const canCopy =
+    messages.length > 0 || (live?.tools.length ?? 0) > 0 || (live?.reasoning ?? "") !== "";
 
   return (
     <>
+      {canCopy ? (
+        <div className="mb-1 flex justify-end">
+          <CopyChatButton
+            getText={() =>
+              chatTranscriptText(
+                messages,
+                live ? { tools: live.tools, reasoning: live.reasoning } : null,
+              )
+            }
+          />
+        </div>
+      ) : null}
       <div
         ref={threadRef}
         className="min-h-0 flex-1 space-y-3 overflow-y-auto rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3"
@@ -122,5 +140,35 @@ export function ChatConversationView({
         launcherClearance={composerLauncherClearance}
       />
     </>
+  );
+}
+
+/** Copies the whole conversation, including each turn's reasoning and the live activity. */
+function CopyChatButton({ getText }: { getText: () => string }) {
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
+  const copy = async () => {
+    const ok = await copyText(getText());
+    setState(ok ? "copied" : "failed");
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setState("idle"), 1500);
+  };
+  return (
+    <button
+      type="button"
+      data-action="copy-chat"
+      aria-label="Copy entire chat"
+      title="Copy the whole conversation, including agent activity"
+      onClick={() => void copy()}
+      className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-xs text-[var(--color-muted)] hover:text-[var(--color-fg)] lg:!min-h-0"
+    >
+      {state === "copied" ? "Copied" : state === "failed" ? "Copy failed" : "Copy chat"}
+    </button>
   );
 }
