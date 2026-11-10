@@ -1,0 +1,31 @@
+{
+  "title": "水族館",
+  "back": "返回",
+  "offline": "離線中——顯示最後一次更新",
+  "empty": "這裏暫時還沒有人。",
+  "peopleList": "水族館裏的人",
+  "person": "{name}，{creature}：{chats} 個對話，{profiles} 個設定檔",
+  "legend": {
+    "title": "如何看水族館",
+    "sizeIcon": "◯",
+    "size": "越大 = 對話、項目和 token 越多",
+    "speedIcon": "➶",
+    "speed": "越快 = 過去 24 小時用的 token 越多",
+    "followersIcon": "∘∘",
+    "followers": "跟着的小生物 = 他們使用的設定檔",
+    "activeIcon": "✦",
+    "active": "發光和泡泡 = 正在工作",
+    "selfIcon": "◌",
+    "self": "金色圈 = 你"
+  },
+  "card": {
+    "you": "（你）",
+    "activeNow": "正在工作",
+    "chats": "對話",
+    "projects": "項目",
+    "tokens": "Token",
+    "profiles": "設定檔",
+    "noProfiles": "暫時沒有",
+    "profileOf": "{name} 的設定檔"
+  }
+}
