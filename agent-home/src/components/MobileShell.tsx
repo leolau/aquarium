@@ -7,6 +7,7 @@ import { ProfileSwitcher } from "@/components/ProfileSwitcher";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { ShellTopBar } from "@/components/shell/ShellTopBar";
 import { ShellFrame } from "@/components/ShellFrame";
+import { accountName as accountNameOf } from "@/lib/auth/account-name";
 import { getPrincipal } from "@/lib/auth/principal";
 import { readSession } from "@/lib/auth/session";
 import { HermesApiClient } from "@/lib/api/client";
@@ -80,7 +81,7 @@ export async function MobileShell({
   labels,
   hideHeader = false,
 }: {
-  title: string;
+  title: ReactNode;
   children: ReactNode;
   showCoral?: boolean;
   wide?: boolean;
@@ -116,7 +117,7 @@ export async function MobileShell({
     try {
       const principal = await getPrincipal();
       if (principal) {
-        accountName = principal.display || null;
+        accountName = accountNameOf(principal);
         accountRole = principal.role ?? null;
         const session = await readSession();
         hiddenApps = await getHiddenApps(principal, session?.hermesToken);

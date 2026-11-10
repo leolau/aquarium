@@ -62,10 +62,20 @@ describe("AccountMenu", () => {
     expect(rows.map((r) => r.textContent)).toEqual(["default · currentAdmin", "salesViewer"]);
   });
 
-  it("shows only the current role when the account is in one profile", () => {
+  it("lists the role even when the account is in one profile", () => {
     render(<AccountMenu name="Yan" role="member" currentProfile="default" roles={[{ profile: "default", role: "member" }]} />);
     fireEvent.click(screen.getByRole("button", { name: "Account: Yan, Member" }));
     expect(screen.getByTestId("account-summary").textContent).toContain("Member");
-    expect(screen.queryByTestId("account-roles")).toBeNull();
+    const rows = within(screen.getByTestId("account-roles")).getAllByRole("listitem");
+    expect(rows.map((r) => r.textContent)).toEqual(["default · currentMember"]);
+  });
+
+  it("shows the role and the role list when the account has no name", () => {
+    render(<AccountMenu name="" role="owner" currentProfile="default" roles={[{ profile: "default", role: "owner" }]} />);
+    const btn = screen.getByRole("button", { name: "Account" });
+    expect(within(btn).getByTestId("account-identity").textContent).toBe("Owner");
+    fireEvent.click(btn);
+    expect(screen.getByTestId("account-summary").textContent).toContain("Owner");
+    expect(within(screen.getByTestId("account-roles")).getAllByRole("listitem")).toHaveLength(1);
   });
 });
