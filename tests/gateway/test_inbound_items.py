@@ -57,7 +57,7 @@ def _reset_owner_cache():
 
     files_mod._owner_principal = None
     files_mod._owner_resolved = False
-    files_mod._owner_last_attempt = 0.0
+    files_mod._owner_last_attempt = float("-inf")
     yield
 
 
