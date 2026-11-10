@@ -8,9 +8,10 @@
  * the caller renders an approve/deny card and resolves it via
  * `POST /api/chat/approval`. Runs in the browser (client component only).
  */
-import type { ChatApprovalRequest, ChatAttachment } from "@/types";
+import type { ChatApprovalRequest, ChatAttachment, ChatInputMode } from "@/types";
 
 import { formatUiContext, getUiContext } from "@/lib/app-mcp/state";
+import { isInputMode } from "@/lib/chat/pending-inputs";
 
 export interface ChatStreamHandlers {
   /** The server registered the turn (first frame, before the model runs). */
@@ -31,7 +32,50 @@ export interface ChatStreamHandlers {
   onCompleted?(content: string, sessionId: string): void;
   /** A terminal, user-safe error message from the stream. */
   onError?(message: string): void;
+  /** The server took a message sent while this turn runs. */
+  onInputAccepted?(input: { itemId: string; mode: ChatInputMode; text: string }): void;
+  /** A steer was injected after the agent's current tool step. */
+  onInputSteered?(itemId: string): void;
+  /** A steer the turn finished before reading; it runs as the next turn. */
+  onInputDeferred?(itemId: string): void;
+  /** A queued message was removed before it started. */
+  onInputRemoved?(itemId: string): void;
+  /**
+   * The server started the next turn itself (a queued message, a leftover
+   * steer, or a Stop & send). Arrives before `done`; attach to `nextRunId`.
+   */
+  onRunChained?(chain: ChatRunChain): void;
 }
+
+/** `run.chained`: the follow-up turn the server started on its own. */
+export interface ChatRunChain {
+  nextRunId: string;
+  itemId: string;
+  text: string;
+  source: "queue" | "steer_leftover" | "interrupt";
+}
+
+/**
+ * `POST /api/chat/stream` refused because a turn is already live on this
+ * session (started elsewhere, or not yet seen by this page). Carries that
+ * run's id so the caller can hand the message to it instead.
+ */
+export class TurnInProgressError extends Error {
+  constructor(readonly runId: string) {
+    super("A turn is already running in this conversation.");
+    this.name = "TurnInProgressError";
+  }
+}
+
+/** The run ended before the message reached it; send a normal turn instead. */
+export class RunFinishedError extends Error {
+  constructor() {
+    super("The agent already finished that turn.");
+    this.name = "RunFinishedError";
+  }
+}
+
+const CHAIN_SOURCES: readonly ChatRunChain["source"][] = ["queue", "steer_leftover", "interrupt"];
 
 /** A tool lifecycle event (id + name only — args/results stay server-side). */
 export interface ChatToolEvent {
@@ -106,9 +150,11 @@ export async function streamChatTurn(
   if (!res.ok || !res.body) {
     let detail = "The message could not be sent.";
     try {
-      const body = (await res.json()) as { detail?: string };
+      const body = (await res.json()) as { detail?: string; runId?: string };
+      if (res.status === 409 && body.runId) throw new TurnInProgressError(body.runId);
       if (body.detail) detail = body.detail;
-    } catch {
+    } catch (err) {
+      if (err instanceof TurnInProgressError) throw err;
       // Non-JSON error body — keep the generic message.
     }
     throw new Error(detail);
@@ -202,6 +248,32 @@ async function consumeStream(
       landedSessionId = str(data.session_id) ?? landedSessionId;
     } else if (event === "error") {
       handlers.onError?.(str(data.message) ?? "The turn failed.");
+    } else if (event === "input.accepted") {
+      const itemId = str(data.item_id);
+      const mode = data.mode;
+      if (itemId && isInputMode(mode)) {
+        handlers.onInputAccepted?.({ itemId, mode, text: str(data.text) ?? "" });
+      }
+    } else if (event === "input.steered") {
+      const itemId = str(data.item_id);
+      if (itemId) handlers.onInputSteered?.(itemId);
+    } else if (event === "input.deferred") {
+      const itemId = str(data.item_id);
+      if (itemId) handlers.onInputDeferred?.(itemId);
+    } else if (event === "input.removed") {
+      const itemId = str(data.item_id);
+      if (itemId) handlers.onInputRemoved?.(itemId);
+    } else if (event === "run.chained") {
+      const nextRunId = str(data.next_run_id);
+      const source = str(data.source) as ChatRunChain["source"] | undefined;
+      if (nextRunId) {
+        handlers.onRunChained?.({
+          nextRunId,
+          itemId: str(data.item_id) ?? "",
+          text: str(data.text) ?? "",
+          source: source && CHAIN_SOURCES.includes(source) ? source : "queue",
+        });
+      }
     }
   };
 
@@ -241,6 +313,77 @@ export async function cancelChatTurn(params: {
     }
     throw new Error(detail);
   }
+}
+
+async function errorDetail(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await res.json()) as { detail?: string };
+    return body.detail || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Send a message to a turn that is still running (`mode` says how it is
+ * delivered). Resolves with the server's item id and initial status; rejects
+ * with {@link RunFinishedError} when the run already ended.
+ */
+export async function steerChatTurn(params: {
+  sessionId: string;
+  runId: string;
+  text: string;
+  mode: ChatInputMode;
+  profile?: string;
+}): Promise<{ itemId: string; mode: ChatInputMode; status: "pending" | "queued" }> {
+  const res = await fetch("/api/chat/steer", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionId: params.sessionId,
+      runId: params.runId,
+      text: params.text,
+      mode: params.mode,
+      profile: params.profile,
+    }),
+  });
+  if (!res.ok) {
+    const detail = await errorDetail(res, "The message could not be sent.");
+    if (res.status === 409 && detail === "run_finished") throw new RunFinishedError();
+    throw new Error(detail);
+  }
+  const body = (await res.json()) as {
+    item_id?: string;
+    mode?: ChatInputMode;
+    status?: "pending" | "queued";
+  };
+  return {
+    itemId: body.item_id ?? "",
+    mode: body.mode ?? params.mode,
+    status: body.status ?? (params.mode === "steer" ? "pending" : "queued"),
+  };
+}
+
+/** Remove a queued message before it starts; resolves whether it was removed. */
+export async function removeQueuedInput(params: {
+  sessionId: string;
+  runId: string;
+  itemId: string;
+  profile?: string;
+}): Promise<boolean> {
+  const res = await fetch("/api/chat/queue/remove", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionId: params.sessionId,
+      runId: params.runId,
+      itemId: params.itemId,
+      profile: params.profile,
+    }),
+  });
+  if (!res.ok) throw new Error(await errorDetail(res, "That message could not be removed."));
+  const body = (await res.json()) as { removed?: boolean };
+  return Boolean(body.removed);
 }
 
 /**

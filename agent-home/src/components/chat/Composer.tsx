@@ -8,10 +8,101 @@ import { takePendingAttachments } from "@/lib/chat/pending-attachments";
 import { parseJsonObject, uploadFailureMessage } from "@/lib/chat/upload-error";
 import { formatUploadLimit, UPLOAD_WARN_BYTES } from "@/lib/chat/upload-limit";
 import { uploadLimitBytes } from "@/lib/chat/upload-limit-client";
-import type { ChatAttachment } from "@/types";
+import type { ChatAttachment, ChatInputMode, PendingChatInput } from "@/types";
 
 /** Smallest limit Settings → Uploads allows: smaller files skip the lookup. */
 const MIN_LIMIT_BYTES = 1024 * 1024;
+
+/** The Send split button's modes while the agent works, in menu order. */
+const INPUT_MODES: { mode: ChatInputMode; label: string; hint: string; enter: string }[] = [
+  {
+    mode: "steer",
+    label: "Steer",
+    hint: "Agent reads it after its current step and changes course",
+    enter: "Enter steers",
+  },
+  {
+    mode: "queue",
+    label: "Queue",
+    hint: "Runs as the next turn when this one finishes",
+    enter: "Enter queues",
+  },
+  {
+    mode: "interrupt",
+    label: "Stop & send",
+    hint: "Stops now and starts this message",
+    enter: "Enter stops & sends",
+  },
+];
+
+function modeInfo(mode: ChatInputMode) {
+  return INPUT_MODES.find((m) => m.mode === mode) ?? INPUT_MODES[0];
+}
+
+function ModeIcon({ mode }: { mode: ChatInputMode }) {
+  if (mode === "interrupt") {
+    return <span aria-hidden="true" className="inline-block h-2.5 w-2.5 rounded-[2px] bg-current" />;
+  }
+  return <span aria-hidden="true">{mode === "queue" ? "◷" : "↪"}</span>;
+}
+
+/** One chip's wording: what will happen to a message sent while working. */
+function chipText(p: PendingChatInput): { label: string; suffix: string | null } {
+  if (p.mode === "queue") return { label: "Queued next", suffix: null };
+  if (p.mode === "interrupt") return { label: "Stop & send", suffix: "starts once the agent stops" };
+  return {
+    label: "Steer",
+    suffix: p.status === "deferred" ? "will run next" : "will be read after the current step",
+  };
+}
+
+/**
+ * Messages sent while the agent works that have not reached the model yet.
+ * Queued ones can still be taken back (✕) until they start.
+ */
+function PendingInputs({
+  pending,
+  onRemove,
+}: {
+  pending: PendingChatInput[];
+  onRemove?: (itemId: string) => void;
+}) {
+  if (pending.length === 0) return null;
+  return (
+    <ul data-component="PendingInputs" aria-label="Sent while working" className="mb-2 flex flex-col items-start gap-1.5">
+      {pending.map((p) => {
+        const { label, suffix } = chipText(p);
+        return (
+          <li
+            key={p.itemId}
+            data-mode={p.mode}
+            data-status={p.status}
+            className="flex max-w-full items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-xs"
+          >
+            <span className="shrink-0 text-[var(--color-muted)]">
+              <ModeIcon mode={p.mode} />
+            </span>
+            <span className="shrink-0 font-semibold">{label}</span>
+            <span className="min-w-0 truncate text-[var(--color-muted)]">
+              “{p.text}”{suffix ? ` · ${suffix}` : ""}
+            </span>
+            {p.mode === "queue" && onRemove ? (
+              <button
+                type="button"
+                aria-label={`Remove queued message: ${p.text}`}
+                title="Remove from the queue"
+                onClick={() => onRemove(p.itemId)}
+                className="shrink-0 px-0.5 text-[var(--color-muted)]"
+              >
+                ✕
+              </button>
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
 
 /**
  * The message composer: an auto-clearing text field, an optional attach button
@@ -28,6 +119,8 @@ export function Composer({
   stopping = false,
   initialText = "",
   launcherClearance = true,
+  pending = [],
+  onRemovePending,
 }: {
   sending: boolean;
   /** A Stop was requested and the server is winding the turn down. */
@@ -42,7 +135,12 @@ export function Composer({
    * its attachments back so nothing is lost to a flaky network. Any other
    * resolution (void/true/undefined) leaves the field cleared.
    */
-  onSend: (text: string, attachments: ChatAttachment[]) => void | Promise<boolean | void> | boolean;
+  onSend: (
+    text: string,
+    attachments: ChatAttachment[],
+    /** Set only while the agent works: how the message reaches the running turn. */
+    mode?: ChatInputMode,
+  ) => void | Promise<boolean | void> | boolean;
   /** Cancel the in-flight turn for the conversation on screen. */
   onStop?: () => void;
   /**
@@ -50,6 +148,10 @@ export function Composer({
    * launcher. Off where the layout already clears it (the landing dock).
    */
   launcherClearance?: boolean;
+  /** Messages sent while the agent works that it has not read yet (chips). */
+  pending?: PendingChatInput[];
+  /** Take back a queued message before it starts. */
+  onRemovePending?: (itemId: string) => void;
 }) {
   const [text, setText] = useState(initialText);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
@@ -78,21 +180,71 @@ export function Composer({
     el.style.height = `${el.scrollHeight}px`;
   }, [text]);
 
-  const canSend = !sending && !uploading && (text.trim() !== "" || attachments.length > 0);
+  const [mode, setMode] = useState<ChatInputMode>("steer");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const splitRef = useRef<HTMLDivElement | null>(null);
+
+  // While the agent works a message goes to the running turn, which takes
+  // text only — attachments wait for the next normal turn.
+  const attachmentsWait = sending && attachments.length > 0;
+  const canSend =
+    !uploading &&
+    !attachmentsWait &&
+    (sending ? text.trim() !== "" : text.trim() !== "" || attachments.length > 0);
+
+  // Close the mode menu on Escape or a press outside it.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    const onDown = (e: MouseEvent) => {
+      if (splitRef.current && !splitRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onDown);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onDown);
+    };
+  }, [menuOpen]);
+
+  // A normal send hands the turn to the host and resolves when the whole
+  // turn ends — far too late to hold the send lock, since the box must take
+  // a steer while the agent works. Instead the hand-off holds it until the
+  // host reports `sending` (or the turn fails to start).
+  const handoffRef = useRef(false);
+  useEffect(() => {
+    if (sending) handoffRef.current = false;
+  }, [sending]);
 
   async function submit() {
-    if (!canSend) return;
+    if (!canSend || handoffRef.current) return;
     const sent = text.trim();
-    const sentAttachments = attachments;
+    const sentAttachments = sending ? [] : attachments;
     setText("");
-    setAttachments([]);
-    const ok = await onSend(sent, sentAttachments);
-    if (ok === false) {
-      // The turn never started — the error line names why; give the draft
-      // back so the user retries instead of retyping.
-      setText(sent);
-      setAttachments(sentAttachments);
+    setMenuOpen(false);
+    // The turn never started — the error line names why; give the draft
+    // back (unless the user already typed something new) so they retry
+    // instead of retyping.
+    const restore = (ok: boolean | void) => {
+      if (ok !== false) return;
+      setText((cur) => (cur === "" ? sent : cur));
+      if (sentAttachments.length > 0) setAttachments(sentAttachments);
+    };
+    if (sending) {
+      // Stop & send is a one-off; the next message steers again.
+      if (mode === "interrupt") setMode("steer");
+      restore(await onSend(sent, [], mode));
+      return;
     }
+    setAttachments([]);
+    handoffRef.current = true;
+    void Promise.resolve(onSend(sent, sentAttachments))
+      .then(restore, () => restore(false))
+      .finally(() => {
+        handoffRef.current = false;
+      });
   }
 
   // Enter and the Send button share one lock, so a double Enter (or Enter
@@ -163,6 +315,7 @@ export function Composer({
         marginLeft: launcherClearance ? "calc(2.75rem + 0.75rem)" : undefined,
       }}
     >
+      {sending ? <PendingInputs pending={pending} onRemove={onRemovePending} /> : null}
       {attachments.length > 0 ? (
         <div className="mb-2 flex flex-wrap gap-2">
           {attachments.map((a) => (
@@ -184,6 +337,11 @@ export function Composer({
             </span>
           ))}
         </div>
+      ) : null}
+      {attachmentsWait ? (
+        <p className="mb-2 text-xs text-[var(--color-muted)]">
+          Attachments go with your next prompt once the agent finishes.
+        </p>
       ) : null}
       {uploadError ? (
         <p className="mb-2 text-xs text-[var(--color-danger)]">{uploadError}</p>
@@ -256,22 +414,92 @@ export function Composer({
             }
           }}
           rows={1}
-          placeholder="Message your agent… (Shift+Enter for a new line)"
+          placeholder={
+            sending
+              ? "Steer the agent, or queue a follow-up…"
+              : "Message your agent… (Shift+Enter for a new line)"
+          }
           className="max-h-48 min-h-[46px] flex-1 resize-none overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3 text-sm"
         />
         {sending ? (
-          <ActionButton
-            key="stop"
-            onAction={() => onStop?.()}
-            busy={stopping}
-            busyLabel="Stopping…"
-            aria-label={stopping ? "Stopping the agent" : "Stop the agent"}
-            title={stopping ? "Stopping the agent" : "Stop the agent"}
-            className="flex items-center gap-1.5 rounded-xl bg-red-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
-          >
-            <span aria-hidden="true" className="h-3 w-3 rounded-[3px] bg-white" />
-            Stop
-          </ActionButton>
+          <>
+            <span className="hidden self-center whitespace-nowrap text-xs text-[var(--color-muted)] lg:inline">
+              Agent is working · {modeInfo(mode).enter}
+            </span>
+            <ActionButton
+              key="stop"
+              onAction={() => onStop?.()}
+              busy={stopping}
+              busyLabel="Stopping…"
+              aria-label={stopping ? "Stopping the agent" : "Stop the agent"}
+              title={stopping ? "Stopping the agent" : "Stop the agent"}
+              className="flex items-center gap-1.5 rounded-xl bg-red-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60 max-sm:px-3"
+            >
+              <span aria-hidden="true" className="h-3 w-3 rounded-[3px] bg-white" />
+              <span className="max-sm:sr-only">Stop</span>
+            </ActionButton>
+            <div ref={splitRef} data-component="SendSplit" className="relative flex">
+              <ActionButton
+                key="send-mode"
+                onAction={sendOnce}
+                disabled={!canSend}
+                busyLabel="Sending…"
+                title={modeInfo(mode).hint}
+                className="rounded-l-xl bg-[var(--color-accent)] px-4 py-3 text-sm font-semibold text-[var(--color-accent-fg)] disabled:opacity-60"
+              >
+                {modeInfo(mode).label}
+              </ActionButton>
+              <button
+                type="button"
+                aria-label="Choose how to send"
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                onClick={() => setMenuOpen((cur) => !cur)}
+                className="rounded-r-xl border-l border-[color-mix(in_srgb,var(--color-accent-fg)_30%,transparent)] bg-[var(--color-accent)] px-2 py-3 text-xs text-[var(--color-accent-fg)]"
+              >
+                ▾
+              </button>
+              {menuOpen ? (
+                <>
+                  <div
+                    aria-hidden="true"
+                    data-component="SendModeBackdrop"
+                    className="fixed inset-0 z-40 bg-black/40 sm:hidden"
+                    onClick={() => setMenuOpen(false)}
+                  />
+                  <div
+                    role="menu"
+                    aria-label="Send mode"
+                    data-component="SendModeMenu"
+                    className="z-50 flex flex-col gap-1 border border-[var(--color-border)] bg-[var(--color-surface)] p-1.5 shadow-lg max-sm:fixed max-sm:inset-x-0 max-sm:bottom-0 max-sm:rounded-t-2xl max-sm:pb-[calc(var(--safe-bottom)+0.75rem)] sm:absolute sm:bottom-full sm:right-0 sm:mb-2 sm:w-80 sm:rounded-xl"
+                  >
+                    {INPUT_MODES.map((m) => (
+                      <button
+                        key={m.mode}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={mode === m.mode}
+                        onClick={() => {
+                          setMode(m.mode);
+                          setMenuOpen(false);
+                          textRef.current?.focus();
+                        }}
+                        className={`flex flex-col items-start rounded-lg px-3 py-2 text-left max-sm:py-3 ${
+                          mode === m.mode ? "bg-[var(--color-surface-2)]" : ""
+                        }`}
+                      >
+                        <span className="flex items-center gap-1.5 text-sm font-semibold">
+                          <ModeIcon mode={m.mode} />
+                          {m.label}
+                        </span>
+                        <span className="text-xs text-[var(--color-muted)]">{m.hint}</span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : null}
+            </div>
+          </>
         ) : (
           <ActionButton
             key="send"

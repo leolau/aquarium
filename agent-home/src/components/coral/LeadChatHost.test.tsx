@@ -5,10 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ChatStreamHandlers } from "@/lib/chat/stream";
 
-vi.mock("@/lib/chat/stream", () => ({
+vi.mock("@/lib/chat/stream", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/chat/stream")>()),
   streamChatTurn: vi.fn(),
   attachChatStream: vi.fn(),
   cancelChatTurn: vi.fn(),
+  steerChatTurn: vi.fn(),
+  removeQueuedInput: vi.fn(),
 }));
 // Link's useLinkStatus only works inside the App Router's link context.
 vi.mock("next/link", async (importOriginal) => {
@@ -19,7 +22,12 @@ vi.mock("next/link", async (importOriginal) => {
   };
 });
 
-import { attachChatStream, cancelChatTurn, streamChatTurn } from "@/lib/chat/stream";
+import {
+  attachChatStream,
+  cancelChatTurn,
+  steerChatTurn,
+  streamChatTurn,
+} from "@/lib/chat/stream";
 import { LeadChatHost } from "@/components/coral/LeadChatHost";
 
 // jsdom has no PointerEvent constructor; RTL builds one for pointer* events.
@@ -64,6 +72,7 @@ beforeEach(() => {
   vi.mocked(attachChatStream).mockResolvedValue(undefined);
   vi.mocked(cancelChatTurn).mockReset();
   vi.mocked(cancelChatTurn).mockResolvedValue(undefined);
+  vi.mocked(steerChatTurn).mockReset();
 });
 
 afterEach(() => {
@@ -385,5 +394,88 @@ describe("LeadChatHost move & resize", () => {
     expect(panel.style.top).toBe("77px");
     expect(panel.style.width).toBe("300px");
     expect(panel.style.height).toBe("330px");
+  });
+});
+
+describe("LeadChatHost while the agent works", () => {
+  it("steers a second message into the running turn and follows run.chained", async () => {
+    leadFetch();
+    let handlers: ChatStreamHandlers | null = null;
+    let finish: () => void = () => {};
+    vi.mocked(streamChatTurn).mockImplementation(
+      (_params, h) =>
+        new Promise((resolve) => {
+          handlers = h;
+          finish = () => resolve({ sessionId: "lead-abc" });
+        }),
+    );
+    vi.mocked(steerChatTurn).mockResolvedValue({ itemId: "i1", mode: "steer", status: "pending" });
+    let chainedHandlers: ChatStreamHandlers | null = null;
+    vi.mocked(attachChatStream).mockImplementation(
+      (_params, h) =>
+        new Promise(() => {
+          chainedHandlers = h;
+        }),
+    );
+
+    render(<LeadChatHost />);
+    openLeadChat();
+    await waitFor(() => expect(screen.getByPlaceholderText(/message your agent/i)).toBeTruthy());
+    await sendMessage("Plan the week");
+    await waitFor(() => expect(handlers).not.toBeNull());
+    handlers!.onAccepted?.("run-1", "lead-abc");
+
+    const box = await screen.findByPlaceholderText(/steer the agent/i);
+    fireEvent.input(box, { target: { value: "include Friday" } });
+    fireEvent.click(screen.getByRole("button", { name: /^steer$/i }));
+    await waitFor(() =>
+      expect(vi.mocked(steerChatTurn)).toHaveBeenCalledWith({
+        sessionId: "lead-abc",
+        runId: "run-1",
+        text: "include Friday",
+        mode: "steer",
+      }),
+    );
+    expect(vi.mocked(streamChatTurn)).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(screen.getByRole("list", { name: /sent while working/i }).textContent).toContain(
+        "will be read after the current step",
+      ),
+    );
+
+    handlers!.onInputSteered?.("i1");
+    await waitFor(() =>
+      expect(document.querySelector('[data-sent-while-working="true"]') ?? screen.getByText("include Friday")).toBeTruthy(),
+    );
+    expect(screen.queryByRole("list", { name: /sent while working/i })).toBeNull();
+
+    handlers!.onRunChained?.({ nextRunId: "run-2", itemId: "q1", text: "then email it", source: "queue" });
+    finish();
+    await waitFor(() =>
+      expect(vi.mocked(attachChatStream).mock.calls[0]?.[0]).toMatchObject({
+        sessionId: "lead-abc",
+        runId: "run-2",
+      }),
+    );
+    expect(chainedHandlers).not.toBeNull();
+    expect(screen.getByRole("dialog").textContent).toContain("then email it");
+    // Still working: Stop is there and Send still steers.
+    expect(screen.getByRole("button", { name: /stop the agent/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^steer$/i })).toBeTruthy();
+  });
+
+  it("redraws chips from /api/chat/active on reopen", async () => {
+    leadFetch({
+      "/api/chat/active": {
+        runId: "run-7",
+        pending: [{ itemId: "q1", mode: "queue", text: "then email it", status: "queued" }],
+      },
+    });
+    vi.mocked(attachChatStream).mockImplementation(() => new Promise(() => {}));
+    render(<LeadChatHost />);
+    openLeadChat();
+    const chips = await screen.findByRole("list", { name: /sent while working/i });
+    expect(chips.textContent).toContain("then email it");
+    expect(screen.getByRole("button", { name: /remove queued message/i })).toBeTruthy();
   });
 });

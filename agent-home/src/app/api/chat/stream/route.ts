@@ -102,6 +102,30 @@ function jsonError(error: string, detail: string, status: number): Response {
   });
 }
 
+/**
+ * The live run's id from a 409 `turn_in_progress` (top level, or nested in a
+ * FastAPI `detail` object), so the client can steer it instead of failing.
+ */
+function turnInProgressRunId(raw: unknown): string | null {
+  let body = raw;
+  if (typeof raw === "string") {
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  if (!body || typeof body !== "object") return null;
+  const top = body as { detail?: unknown; run_id?: unknown };
+  const nested =
+    top.detail && typeof top.detail === "object"
+      ? (top.detail as { detail?: unknown; run_id?: unknown })
+      : null;
+  const detail = nested ? nested.detail : top.detail;
+  const runId = nested?.run_id ?? top.run_id;
+  return detail === "turn_in_progress" && typeof runId === "string" && runId ? runId : null;
+}
+
 export async function POST(request: Request): Promise<Response> {
   const principal = await getPrincipal();
   if (!principal) {
@@ -147,6 +171,13 @@ export async function POST(request: Request): Promise<Response> {
     });
   } catch (err) {
     if (err instanceof HermesApiError) {
+      const busyRunId = err.status === 409 ? turnInProgressRunId(err.body) : null;
+      if (busyRunId) {
+        return new Response(
+          JSON.stringify({ error: "turn_in_progress", detail: "turn_in_progress", runId: busyRunId }),
+          { status: 409, headers: { "content-type": "application/json" } },
+        );
+      }
       return jsonError("api_error", err.message, err.status);
     }
     return jsonError("api_unreachable", "The AI layer could not be reached.", 502);

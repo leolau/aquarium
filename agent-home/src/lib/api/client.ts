@@ -21,6 +21,7 @@ import type { SecurityBasicsResult } from "@/lib/api/security-basics";
 import type { SkillUsageEvent, SkillUsageList } from "@/lib/skills/usage";
 import type { PinResponse, PinSuggestionsResponse } from "@/types/landing";
 import type {
+  ChatInputMode,
   ActivityItem,
   GoogleClientCheck,
   GoogleClientSaveResult,
@@ -1210,8 +1211,8 @@ export class HermesApiClient {
    * The in-flight turn for a session, if any — a reloaded page asks this
    * first, then re-attaches to the stream to resume live rendering.
    */
-  async activeChatRun(sessionId: string): Promise<{ run_id: string | null }> {
-    return this.request<{ run_id: string | null }>(
+  async activeChatRun(sessionId: string): Promise<ActiveChatRun> {
+    return this.request<ActiveChatRun>(
       `/api/sessions/${encodeURIComponent(sessionId)}/active_run`,
     );
   }
@@ -1259,6 +1260,35 @@ export class HermesApiClient {
     return this.request(
       `/api/sessions/${encodeURIComponent(sessionId)}/chat/stream/cancel`,
       { method: "POST", json: { run_id: runId } },
+    );
+  }
+
+  /**
+   * Hand a message to an in-flight turn: `steer` injects it after the
+   * agent's current tool step, `queue` runs it as the next turn, `interrupt`
+   * stops the turn and runs it next. 409 `run_finished` once the run is done.
+   */
+  async steerChatRun(
+    sessionId: string,
+    runId: string,
+    text: string,
+    mode: ChatInputMode,
+  ): Promise<{ run_id: string; mode: ChatInputMode; item_id: string; status: "pending" | "queued" }> {
+    return this.request(
+      `/api/sessions/${encodeURIComponent(sessionId)}/chat/stream/steer`,
+      { method: "POST", json: { run_id: runId, text, mode } },
+    );
+  }
+
+  /** Drop a queued message that has not started yet. */
+  async removeQueuedChatInput(
+    sessionId: string,
+    runId: string,
+    itemId: string,
+  ): Promise<{ removed: boolean }> {
+    return this.request(
+      `/api/sessions/${encodeURIComponent(sessionId)}/chat/stream/queue/remove`,
+      { method: "POST", json: { run_id: runId, item_id: itemId } },
     );
   }
 
@@ -3713,6 +3743,17 @@ export class HermesApiClient {
  */
 function forwardedFor(clientIp: string): Record<string, string> {
   return clientIp ? { "X-Forwarded-For": clientIp } : {};
+}
+
+/** `GET /api/sessions/{id}/active_run`: the live turn and its undelivered inputs. */
+export interface ActiveChatRun {
+  run_id: string | null;
+  pending?: Array<{
+    item_id: string;
+    mode: ChatInputMode;
+    text: string;
+    created_at?: number | string | null;
+  }>;
 }
 
 function safeJson(text: string): unknown {
