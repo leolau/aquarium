@@ -187,6 +187,41 @@ describe("Composer at 390px", () => {
   });
 });
 
+describe("Composer layout while working", () => {
+  const box = () => document.querySelector('[data-component="Composer"]') as HTMLElement;
+
+  it("gives the input the full row on a phone and puts Stop and Send below it", () => {
+    working();
+    const input = screen.getByRole("textbox");
+    const row = input.parentElement as HTMLElement;
+    expect(row.className).toContain("max-sm:flex-wrap");
+    expect(input.className).toContain("max-sm:basis-full");
+    expect(input.className).toContain("max-sm:order-first");
+    // Stop and the split Send sit together at the right end of the action row.
+    const stop = screen.getByRole("button", { name: /stop the agent/i });
+    expect(stop.className).toContain("max-sm:ml-auto");
+    expect(row.contains(document.querySelector('[data-component="SendSplit"]'))).toBe(true);
+  });
+
+  it("keeps the idle composer on one row", () => {
+    render(<Composer sending={false} storageEnabled={false} sessionId="s1" onSend={() => true} />);
+    const input = screen.getByRole("textbox");
+    expect((input.parentElement as HTMLElement).className).not.toContain("flex-wrap");
+    expect(input.className).not.toContain("basis-full");
+  });
+
+  it("raises the open mode menu and its backdrop above the floating launchers (z-60)", () => {
+    working();
+    expect(box().className).not.toContain("z-[70]");
+    fireEvent.click(screen.getByRole("button", { name: /choose how to send/i }));
+    expect(box().className).toContain("z-[70]");
+    expect(box().contains(screen.getByRole("menu"))).toBe(true);
+    expect(box().contains(document.querySelector('[data-component="SendModeBackdrop"]'))).toBe(true);
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /queue/i }));
+    expect(box().className).not.toContain("z-[70]");
+  });
+});
+
 describe("Composer with a file waiting while the agent works", () => {
   const report = { path: "/uploads/report.pdf", name: "report.pdf", content_type: "application/pdf", size: 10 };
   const seedFile = () =>

@@ -322,7 +322,8 @@ export function Composer({
     <div
       ref={rootRef}
       data-component="Composer"
-      className="sticky bottom-0 mt-3 bg-[var(--color-bg)] pt-2"
+      // Lift the open mode menu (and its phone backdrop) above the floating launchers.
+      className={`sticky bottom-0 mt-3 bg-[var(--color-bg)] pt-2${menuOpen ? " z-[70]" : ""}`}
       style={{
         bottom: "var(--safe-bottom)",
         marginLeft: launcherClearance ? "calc(2.75rem + 0.75rem)" : undefined,
@@ -392,7 +393,8 @@ export function Composer({
           </div>
         </div>
       ) : null}
-      <div className="flex items-end gap-2">
+      {/* On a phone while working, the input takes the full width and the actions wrap below it. */}
+      <div className={`flex items-end gap-2${sending ? " max-sm:flex-wrap" : ""}`}>
         {storageEnabled ? (
           <>
             <input
@@ -433,7 +435,9 @@ export function Composer({
               ? "Steer the agent, or queue a follow-up…"
               : "Message your agent… (Shift+Enter for a new line)"
           }
-          className="max-h-48 min-h-[46px] flex-1 resize-none overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3 text-sm"
+          className={`max-h-48 min-h-[46px] flex-1 resize-none overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3 text-sm${
+            sending ? " max-sm:order-first max-sm:basis-full" : ""
+          }`}
         />
         {sending ? (
           <>
@@ -447,7 +451,7 @@ export function Composer({
               busyLabel="Stopping…"
               aria-label={stopping ? "Stopping the agent" : "Stop the agent"}
               title={stopping ? "Stopping the agent" : "Stop the agent"}
-              className="flex items-center gap-1.5 rounded-xl bg-red-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60 max-sm:px-3"
+              className="flex items-center gap-1.5 rounded-xl bg-red-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60 max-sm:ml-auto max-sm:px-3"
             >
               <span aria-hidden="true" className="h-3 w-3 rounded-[3px] bg-white" />
               <span className="max-sm:sr-only">Stop</span>
