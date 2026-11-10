@@ -1,6 +1,7 @@
 {
   "title": "Aquarium",
   "back": "Back",
+  "loading": "Filling the aquarium…",
   "offline": "Offline — showing the last update",
   "empty": "No one is swimming here yet.",
   "peopleList": "People in the aquarium",
