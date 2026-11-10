@@ -8,6 +8,7 @@
   "noMatchTitle": "Nothing matches that view",
   "noMatchBody": "Try a different search, or clear the filters to see every project.",
   "clearFilters": "Clear filters",
+  "openRef": "Open {ref}",
   "emptyTitle": "No projects yet",
   "emptyBody": "Anything the agent works on over time — a deliverable, a recurring job, a standing duty — lives here. Create one, let the agent draft its plan, and run it from this app.",
   "moveTo": "Move to…",

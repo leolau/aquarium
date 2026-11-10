@@ -399,6 +399,7 @@ from hermes_cli.software_upgrade_api import router as _software_upgrade_router  
 from hermes_cli.security_basics_api import router as _security_basics_router  # noqa: E402
 from hermes_cli.goals_api import router as _goals_router  # noqa: E402
 from hermes_cli.projects_api import router as _projects_router  # noqa: E402
+from hermes_cli.refs_api import router as _refs_router  # noqa: E402
 from hermes_cli.projects_categories_api import router as _projects_categories_router  # noqa: E402
 from hermes_cli.projects_ask_api import router as _projects_ask_router  # noqa: E402
 from hermes_cli.projects_clarify_api import router as _projects_clarify_router  # noqa: E402
@@ -434,6 +435,7 @@ app.include_router(_software_upgrade_router)
 app.include_router(_security_basics_router)
 app.include_router(_goals_router)
 app.include_router(_projects_router)
+app.include_router(_refs_router)
 app.include_router(_projects_categories_router)
 app.include_router(_projects_ask_router)
 app.include_router(_projects_clarify_router)
