@@ -218,3 +218,37 @@ def test_sudoers_rule_allows_only_the_upgrade_verbs():
     assert cmds == [f"/usr/local/sbin/aquarium upgrade {v}"
                     for v in ("status", "releases", "check", "start", "rollback")]
     assert not any(" run" in c or "*" in c for c in cmds)
+
+
+def test_git_checkout_check_lists_branch_commits_not_installed(box, monkeypatch, capsys):
+    git_box(box, monkeypatch)
+    repo = box.p("/opt/data/hermes-agent")
+    head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True,
+                          check=True).stdout.strip()
+    Handler.routes[f"/api/compare/{head}...develop"] = (200, {"ahead_by": 2, "behind_by": 0, "commits": [
+        {"sha": "a" * 40, "commit": {"message": "feat: one (#1)\n\nbody", "committer": {"date": "2026-11-09T00:00:00Z"}}},
+        {"sha": "b" * 40, "commit": {"message": "fix: two (#2)", "committer": {"date": "2026-11-10T00:00:00Z"}}},
+    ]})
+    code, answer = call(box, monkeypatch, capsys, "check")
+    assert code == 0 and answer["ok"]
+    co = answer["checkout"]
+    assert co["branch"] == "develop" and co["commit"] == head and co["behind"] == 2 and not co["error"]
+    assert co["tip"] == "b" * 9
+    assert [(c["sha"], c["title"]) for c in co["commits"]] == [("b" * 9, "fix: two (#2)"), ("a" * 9, "feat: one (#1)")]
+
+    # a deploy since the last check: `releases` asks GitHub again instead of showing a stale count
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@x"}
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "--allow-empty", "-m", "two"], check=True, env=env)
+    head2 = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True,
+                           check=True).stdout.strip()
+    Handler.routes[f"/api/compare/{head2}...develop"] = (200, {"ahead_by": 0, "commits": []})
+    _, again = call(box, monkeypatch, capsys, "releases")
+    assert again["checkout"]["commit"] == head2 and again["checkout"]["behind"] == 0
+
+
+def test_git_checkout_compare_failure_keeps_the_release_list(box, monkeypatch, capsys):
+    git_box(box, monkeypatch)
+    code, answer = call(box, monkeypatch, capsys, "check")  # no compare route: GitHub answers 404
+    assert code == 0 and answer["ok"] and [r["tag"] for r in answer["releases"]]
+    assert answer["checkout"]["behind"] is None and answer["checkout"]["error"]

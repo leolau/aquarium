@@ -3840,6 +3840,16 @@ export interface SoftwareUpgradeStatus {
     latest: string | null;
   };
   release_error?: string | null;
+  /** A branch checkout compared with its branch on GitHub at the last check. */
+  checkout?: {
+    branch: string | null;
+    commit: string | null;
+    /** Commits on the branch this checkout doesn't run yet; null when unknown. */
+    behind: number | null;
+    tip: string | null;
+    commits: { sha: string | null; title: string; date: string | null }[];
+    error: string | null;
+  } | null;
   /** Set by the BFF: owners can upgrade, admins only look. */
   can_upgrade?: boolean;
 }

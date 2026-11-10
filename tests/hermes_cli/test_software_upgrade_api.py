@@ -308,3 +308,23 @@ def test_scrub():
     assert su.scrub("cp /opt/data/hermes-agent/x.py to /tmp/y failed") == "cp … to … failed"
     assert su.scrub("password=hunter2 and SECRET=abc") == "password=… and SECRET=…"
     assert su.scrub("https://github.com/leolau/aquarium/releases ok") == "https://github.com/leolau/aquarium/releases ok"
+
+
+def test_checkout_shows_branch_commits_not_installed():
+    raw = {**STATUS, "installed": {**STATUS["installed"], "layout": "git", "version": None,
+                                   "commit": "7b09787fc", "branch": "develop", "label": "develop@7b09787fc"}}
+    rel = {"releases": [], "checkout": {
+        "commit": "7b09787fc" + "0" * 31, "branch": "develop", "behind": 4, "tip": "5188a9b00",
+        "commits": [{"sha": "5188a9b00", "title": "fix in /opt/data/hermes-agent/x.py token=abc", "date": "d"},
+                    {"sha": "not-a-sha", "title": "t"}, "junk"],
+        "error": ""}}
+    view = su.status_view(raw, rel)
+    co = view["checkout"]
+    assert co["branch"] == "develop" and co["behind"] == 4 and co["commit"] == "7b09787fc" and co["tip"] == "5188a9b00"
+    assert [c["sha"] for c in co["commits"]] == ["5188a9b00", None]
+    assert "/opt" not in co["commits"][0]["title"] and "abc" not in co["commits"][0]["title"]
+    assert co["error"] is None and view["releases"]["latest"] is None
+    # a release install never carries a branch comparison
+    assert su.status_view(STATUS, rel)["checkout"] is None
+    # bad counts are unknown, not zero
+    assert su.status_view(raw, {"checkout": {"behind": True}})["checkout"]["behind"] is None

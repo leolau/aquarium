@@ -113,4 +113,42 @@ describe("SoftwareUpgradeView", () => {
     expect(screen.getByTestId("upgrade-button")).toBeTruthy();
     expect(tookLabel(277)).toBe("4 m 37 s");
   });
+
+  it("on a branch checkout, lists the branch commits that aren't installed", () => {
+    const checkout: SoftwareUpgradeStatus = {
+      ...STATUS,
+      installed: { ...STATUS.installed!, version: null, label: "develop@7b09787fc", commit: "7b09787fc", kind: "checkout" },
+      releases: { newer: [], older: [], latest: null },
+      checkout: {
+        branch: "develop",
+        commit: "7b09787fc",
+        behind: 2,
+        tip: "5188a9b00",
+        commits: [
+          { sha: "5188a9b00", title: "test(smoke): page markers", date: null },
+          { sha: "549c6eb00", title: "feat(agent-home): steer", date: null },
+        ],
+        error: null,
+      },
+    };
+    render(<SoftwareUpgradeView initial={checkout} />);
+    expect(screen.getByTestId("upgrade-banner").textContent).toBe("No newer tagged release.");
+    const card = screen.getByTestId("upgrade-checkout").textContent ?? "";
+    expect(card).toContain("2 commits on develop aren't installed yet.");
+    expect(card).toContain("5188a9b");
+    expect(card).toContain("feat(agent-home): steer");
+  });
+
+  it("on an up-to-date checkout says so, and a release install shows no branch card", () => {
+    const base = { ...STATUS.installed!, version: null, label: "develop@x", commit: "abc1234", kind: "checkout" as const };
+    render(
+      <SoftwareUpgradeView
+        initial={{ ...STATUS, installed: base, checkout: { branch: "develop", commit: "abc1234", behind: 0, tip: null, commits: [], error: null } }}
+      />,
+    );
+    expect(screen.getByTestId("upgrade-checkout").textContent).toBe("Up to date with develop.");
+    cleanup();
+    render(<SoftwareUpgradeView initial={STATUS} />);
+    expect(screen.queryByTestId("upgrade-checkout")).toBeNull();
+  });
 });
