@@ -83,6 +83,14 @@ describe("HealthPill (mobile compact)", () => {
     expect(within(sheet as HTMLElement).getByText("48%")).toBeTruthy();
   });
 
+  it("keeps the verdict word off phone widths so the top bar never scrolls sideways", () => {
+    render(<HealthPill variant="compact" status={mockStatus({ summary: null, fetchedAt: null, stale: true })} />);
+    const word = screen.getByText("Offline");
+    expect(word.className).toContain("hidden");
+    expect(word.className).toContain("sm:inline");
+    expect(screen.getByRole("button").getAttribute("aria-label")).toMatch(/System health: Offline/);
+  });
+
   it("reads Offline when the server can't be reached at all", () => {
     render(<HealthPill variant="compact" status={mockStatus({ summary: null, fetchedAt: null, stale: true })} />);
     expect(screen.getByRole("button").textContent).toContain("Offline");
