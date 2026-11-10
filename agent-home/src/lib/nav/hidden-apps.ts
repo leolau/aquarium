@@ -2,8 +2,8 @@
  * Server half of per-role menu visibility: the caller's effective hidden app
  * ids, read from the Python API (`GET /api/agent-home/nav`) and cached briefly.
  *
- * The effective list depends only on the role (the owner sees everything), so
- * cache keys are the role, never a token. A save calls `revalidateTag` with
+ * The effective list depends only on the role (the owner has their own list),
+ * so cache keys are the role, never a token. A save calls `revalidateTag` with
  * `NAV_CACHE_TAG` and `clearLocalNavCache()`; another server process still
  * serves its middleware copy for up to `NAV_CACHE_SECONDS`.
  *
@@ -16,7 +16,7 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 
 import { HermesApiClient } from "@/lib/api/client";
-import { sanitizeHidden, seesEverything } from "@/lib/nav/menu-access";
+import { navRoleOf, sanitizeHidden } from "@/lib/nav/menu-access";
 import type { Principal } from "@/types";
 
 export const NAV_CACHE_TAG = "agent-home-nav";
@@ -61,13 +61,13 @@ function lastKnown(role: string, err: unknown): string[] {
 
 type Caller = { role: Principal["role"]; is_owner?: boolean };
 
-/** The caller's hidden app ids; `[]` for the owner or a signed-out caller. */
+/** The caller's hidden app ids; `[]` for a signed-out caller. */
 export async function getHiddenApps(
   principal: Caller,
   hermesToken: string | undefined,
 ): Promise<string[]> {
-  if (seesEverything(principal) || !hermesToken) return [];
-  const role = principal.role;
+  if (!hermesToken) return [];
+  const role = navRoleOf(principal);
   try {
     return await unstable_cache(() => fetchHidden(role, hermesToken), ["agent-home-nav-hidden", role], {
       revalidate: NAV_CACHE_SECONDS,
@@ -86,8 +86,8 @@ export async function getHiddenAppsForMiddleware(
   principal: Caller,
   hermesToken: string | undefined,
 ): Promise<string[]> {
-  if (seesEverything(principal) || !hermesToken) return [];
-  const role = principal.role;
+  if (!hermesToken) return [];
+  const role = navRoleOf(principal);
   const hit = state().get(role);
   if (hit?.fresh && Date.now() - hit.at < NAV_CACHE_SECONDS * 1000) return hit.hidden;
   try {
