@@ -12836,7 +12836,15 @@ def _start_chat_run(run_id, run_entry, loop, principal, profile, sid, user_messa
                     )
             _enqueue(
                 "error",
-                {"message": "Your follow-up could not be started; send it again.", "run_id": run_id},
+                {
+                    "message": "Your follow-up could not be started; send it again.",
+                    "item_ids": [
+                        owed_id
+                        for owed, _source in chain
+                        for owed_id in owed.get("item_ids") or [owed["item_id"]]
+                    ],
+                    "run_id": run_id,
+                },
             )
             return
         run_entry["next_run_id"] = next_run_id

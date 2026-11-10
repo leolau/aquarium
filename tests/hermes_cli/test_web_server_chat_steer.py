@@ -982,6 +982,8 @@ def test_a_chain_that_cannot_start_hands_every_input_back(base, chat, turns, mon
         (a["item_id"], "second", "chain_failed"), (b["item_id"], "third", "chain_failed")
     ]
     assert "error" in names and names.index("error") < names.index("done")
+    error = next(d for n, d in events if n == "error")
+    assert error["item_ids"] == [a["item_id"], b["item_id"]]
     _assert_run_ids(body)
     # The conversation is not left looking busy.
     assert turns.messages == ["first", "fourth"]
