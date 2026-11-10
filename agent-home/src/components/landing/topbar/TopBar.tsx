@@ -6,12 +6,13 @@ import type { ReactNode } from "react";
 import { AquariumMark } from "@/components/brand/AquariumMark";
 import { buildInfo, useStatusSummary, type StatusSummaryState } from "@/components/ui/useStatusSummary";
 import { useActivityRunning, type ActivityRunningState } from "@/components/ui/useActivityRunning";
+import type { ProfileRole } from "@/lib/api/my-profiles";
+import type { Role } from "@/types";
 import type { NeedsYouEntry } from "@/types/landing";
 
 import { AccountMenu } from "./AccountMenu";
 import { AttentionBanner } from "./AttentionBanner";
 import { HealthPill } from "./HealthPill";
-import { PanelLeftIcon } from "@/components/ui/icons";
 import { MobileActivityStrip } from "./MobileActivityStrip";
 import { NeedsYouBadge } from "./NeedsYouBadge";
 import { useNeedsYou } from "./useNeedsYou";
@@ -19,11 +20,12 @@ import { useNeedsYou } from "./useNeedsYou";
 export interface TopBarProps {
   /** Scroll to / open the Needs-you panel (desktop) or list (mobile). */
   onOpenNeedsYou?: () => void;
-  /** Shows the panel-left toggle (mobile Chats drawer / desktop sidebar). */
-  onToggleSidebar?: () => void;
   /** Account control; defaults to the avatar menu with sign-out. */
   account?: ReactNode;
   accountName?: string | null;
+  accountRole?: Role | null;
+  accountRoles?: ProfileRole[];
+  currentProfile?: string;
 }
 
 export interface TopBarData {
@@ -46,26 +48,17 @@ export function TopBarView({
   activity,
   needsYou,
   onOpenNeedsYou,
-  onToggleSidebar,
   account,
   accountName,
+  accountRole,
+  accountRoles,
+  currentProfile,
 }: TopBarProps & TopBarData) {
   const build = buildInfo(status.summary);
   return (
     <div data-component="TopBar" data-build-mismatch={build.buildMismatch || undefined}>
       <header className="flex h-14 items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg)] px-4 lg:gap-4">
         <div data-component="brand" className="flex shrink-0 items-center gap-2">
-          {onToggleSidebar ? (
-            <button
-              type="button"
-              aria-label="Toggle chats"
-              data-action="toggle-sidebar"
-              onClick={onToggleSidebar}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-fg)]"
-            >
-              <PanelLeftIcon size={18} />
-            </button>
-          ) : null}
           <Link href="/" aria-label="Aquarium home" data-action="home" className="flex items-center gap-2 rounded-[var(--radius-md)]">
             <AquariumMark size={24} title="" />
             <span className="text-sm font-semibold text-[var(--color-fg)]">Aquarium</span>
@@ -82,7 +75,9 @@ export function TopBarView({
         <div className="hidden lg:flex">
           <NeedsYouBadge count={needsYou.count} stale={needsYou.stale} onOpen={onOpenNeedsYou} />
         </div>
-        {account ?? <AccountMenu name={accountName} />}
+        {account ?? (
+          <AccountMenu name={accountName} role={accountRole} roles={accountRoles} currentProfile={currentProfile} />
+        )}
       </header>
       <MobileActivityStrip
         items={activity.items}

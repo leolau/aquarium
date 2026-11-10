@@ -1,4 +1,4 @@
-import type { MyProfilesResponse, ProfileSummary } from "@/types";
+import type { MyProfilesResponse, ProfileSummary, Role } from "@/types";
 
 /**
  * The profiles a signed-in account may chat in: its active enrolments (FG-28
@@ -8,6 +8,17 @@ export function activeEnrolments(res: MyProfilesResponse): ProfileSummary[] {
   return (res.profiles ?? [])
     .filter((p) => p.active)
     .map((p) => ({ name: p.name, is_default: Boolean(p.is_default), description: "" }));
+}
+
+/** One active enrolment's role, for the account menu (authority is profile-local). */
+export interface ProfileRole {
+  profile: string;
+  role: Role;
+}
+
+/** The account's role in each profile it is actively enrolled in. */
+export function enrolmentRoles(res: MyProfilesResponse): ProfileRole[] {
+  return (res.profiles ?? []).filter((p) => p.active).map((p) => ({ profile: p.name, role: p.role }));
 }
 
 /**

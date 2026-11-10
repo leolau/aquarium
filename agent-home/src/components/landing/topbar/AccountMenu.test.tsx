@@ -17,7 +17,7 @@ describe("AccountMenu", () => {
   it("shows the initial and opens a menu with account, settings and sign-out", () => {
     render(<AccountMenu name="yan" />);
     const btn = screen.getByRole("button", { name: "Account: yan" });
-    expect(btn.textContent).toBe("Y");
+    expect(btn.querySelector("span")!.textContent).toBe("Y");
     fireEvent.click(btn);
     expect(screen.getByRole("menuitem", { name: "Account" }).getAttribute("href")).toBe("/settings/account");
     expect(screen.getByRole("menuitem", { name: "Settings" }).getAttribute("href")).toBe("/settings");
@@ -39,5 +39,33 @@ describe("AccountMenu", () => {
     fireEvent.click(confirm);
     await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
     expect(replaceLocation).toHaveBeenCalledWith("/login");
+  });
+
+  it("shows the name and current role on the trigger and every enrolled role in the menu", () => {
+    render(
+      <AccountMenu
+        name="Yan"
+        role="admin"
+        currentProfile="default"
+        roles={[
+          { profile: "default", role: "admin" },
+          { profile: "sales", role: "viewer" },
+        ]}
+      />,
+    );
+    const btn = screen.getByRole("button", { name: "Account: Yan, Admin" });
+    expect(within(btn).getByTestId("account-identity").textContent).toBe("YanAdmin");
+    fireEvent.click(btn);
+    expect(screen.getByTestId("account-summary").textContent).toContain("Signed in as Yan");
+    expect(screen.getByTestId("account-summary").textContent).toContain("Admin");
+    const rows = within(screen.getByTestId("account-roles")).getAllByRole("listitem");
+    expect(rows.map((r) => r.textContent)).toEqual(["default · currentAdmin", "salesViewer"]);
+  });
+
+  it("shows only the current role when the account is in one profile", () => {
+    render(<AccountMenu name="Yan" role="member" currentProfile="default" roles={[{ profile: "default", role: "member" }]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Account: Yan, Member" }));
+    expect(screen.getByTestId("account-summary").textContent).toContain("Member");
+    expect(screen.queryByTestId("account-roles")).toBeNull();
   });
 });
