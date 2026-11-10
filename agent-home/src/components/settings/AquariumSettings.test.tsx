@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { AquariumIdleSetting, CreaturePicker, parseIdleInput } from "@/components/settings/AquariumSettings";
-import { CREATURES } from "@/lib/aquarium/creatures";
+import {
+  AquariumIdleSetting,
+  CreaturePicker,
+  normaliseNameInput,
+  parseIdleInput,
+} from "@/components/settings/AquariumSettings";
+import { AQUARIUM_NAME_MAX, CREATURES, creatureSprite } from "@/lib/aquarium/creatures";
 
 afterEach(() => {
   cleanup();
@@ -39,11 +44,24 @@ describe("parseIdleInput", () => {
   });
 });
 
+const idleForm = () => within(document.querySelector<HTMLFormElement>('[data-form="aquarium-idle"]')!);
+const nameForm = () => within(document.querySelector<HTMLFormElement>('[data-form="aquarium-name"]')!);
+
+describe("normaliseNameInput", () => {
+  it("trims, allows empty (the default) and caps the length in characters", () => {
+    expect(normaliseNameInput("  Reef  ")).toBe("Reef");
+    expect(normaliseNameInput("   ")).toBe("");
+    expect(normaliseNameInput("魚".repeat(AQUARIUM_NAME_MAX))).toBe("魚".repeat(AQUARIUM_NAME_MAX));
+    expect(normaliseNameInput("x".repeat(AQUARIUM_NAME_MAX + 1))).toBeNull();
+  });
+});
+
 describe("AquariumIdleSetting", () => {
   it("renders nothing and fetches nothing for members", () => {
     const calls = mockFetch(() => ({ idle_seconds: 30 }));
     const { container } = render(<AquariumIdleSetting canEdit={false} />);
     expect(container.innerHTML).toBe("");
+    expect(screen.queryByRole("textbox")).toBeNull();
     expect(calls).toHaveLength(0);
   });
 
@@ -53,7 +71,7 @@ describe("AquariumIdleSetting", () => {
     const input = screen.getByRole("spinbutton");
     await waitFor(() => expect((input as HTMLInputElement).value).toBe("45"));
     fireEvent.change(input, { target: { value: "120" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.click(idleForm().getByRole("button", { name: "Save" }));
     await screen.findByText("Saved.");
     expect(calls.at(-1)).toEqual({ url: "/api/aquarium/settings", method: "PUT", body: { idle_seconds: 120 } });
   });
@@ -66,10 +84,40 @@ describe("AquariumIdleSetting", () => {
     for (const bad of ["0", "4", "3601"]) {
       fireEvent.change(input, { target: { value: bad } });
       expect(screen.getByRole("alert").textContent).toContain("5 to 3600");
-      expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+      expect((idleForm().getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
     }
     fireEvent.submit(input.closest("form")!);
     expect(calls.filter((c) => c.method === "PUT")).toHaveLength(0);
+  });
+
+  it("loads the aquarium name and saves a new one with only {name}", async () => {
+    const calls = mockFetch((c) =>
+      c.method === "PUT"
+        ? { idle_seconds: 30, name: (c.body as { name: string }).name || "Aquarium" }
+        : { idle_seconds: 30, name: "Ocean Lab" },
+    );
+    render(<AquariumIdleSetting canEdit />);
+    const input = screen.getByRole("textbox", { name: "Name" }) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe("Ocean Lab"));
+    expect(input.placeholder).toBe("Aquarium");
+    expect(input.maxLength).toBe(AQUARIUM_NAME_MAX);
+    fireEvent.change(input, { target: { value: "  Reef Club  " } });
+    fireEvent.click(nameForm().getByRole("button", { name: "Save" }));
+    await screen.findByText("Saved.");
+    expect(calls.at(-1)).toEqual({ url: "/api/aquarium/settings", method: "PUT", body: { name: "Reef Club" } });
+    expect(input.value).toBe("Reef Club");
+  });
+
+  it("shows the default as a placeholder and an empty name resets it", async () => {
+    const calls = mockFetch((c) => (c.method === "PUT" ? { idle_seconds: 30, name: "Aquarium" } : { idle_seconds: 30, name: "Aquarium" }));
+    render(<AquariumIdleSetting canEdit />);
+    const input = screen.getByRole("textbox", { name: "Name" }) as HTMLInputElement;
+    await waitFor(() => expect(input.getAttribute("aria-busy")).toBe("false"));
+    expect(input.value).toBe("");
+    fireEvent.click(nameForm().getByRole("button", { name: "Save" }));
+    await screen.findByText("Saved.");
+    expect(calls.at(-1)?.body).toEqual({ name: "" });
+    expect(input.value).toBe("");
   });
 
   it("shows the server's refusal", async () => {
@@ -78,17 +126,22 @@ describe("AquariumIdleSetting", () => {
     );
     render(<AquariumIdleSetting canEdit />);
     await waitFor(() => expect((screen.getByRole("spinbutton") as HTMLInputElement).value).toBe("30"));
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.click(idleForm().getByRole("button", { name: "Save" }));
     expect((await screen.findByRole("alert")).textContent).toContain("forbidden");
   });
 });
 
 describe("CreaturePicker", () => {
-  it("shows all 20 creatures with the current one highlighted", async () => {
+  it("shows all 40 creatures as sprites with the current one highlighted", async () => {
     mockFetch(() => ({ creature: "octopus", chosen: false }));
     render(<CreaturePicker />);
     const buttons = screen.getAllByRole("button");
+    expect(CREATURES).toHaveLength(40);
     expect(buttons).toHaveLength(CREATURES.length);
+    for (const c of CREATURES) {
+      const button = screen.getByRole("button", { name: c.label });
+      expect(button.querySelector("img")?.getAttribute("src")).toBe(creatureSprite(c.id));
+    }
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Octopus" }).getAttribute("aria-pressed")).toBe("true"),
     );
