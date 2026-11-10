@@ -258,3 +258,83 @@ body {
     animation: none;
   }
 }
+
+/* FG-35 Aquarium play: the tank shake, the tap ripple and the tips card. */
+.aq-tank-shake {
+  animation: aq-tank-shake 2.5s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+@keyframes aq-tank-shake {
+  0%,
+  100% {
+    transform: translate(0, 0) rotate(0);
+  }
+  5%,
+  25%,
+  45% {
+    transform: translate(-14px, 4px) rotate(-1.4deg);
+  }
+  15%,
+  35%,
+  55% {
+    transform: translate(14px, -4px) rotate(1.4deg);
+  }
+  65% {
+    transform: translate(-8px, 2px) rotate(-0.8deg);
+  }
+  75% {
+    transform: translate(6px, -2px) rotate(0.6deg);
+  }
+  85% {
+    transform: translate(-3px, 1px) rotate(-0.3deg);
+  }
+}
+.aq-tap-ripple {
+  animation: aq-tap-ripple 0.9s ease-out forwards;
+}
+@keyframes aq-tap-ripple {
+  from {
+    opacity: 0.9;
+    transform: translate(-50%, -50%) scale(0.2);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.6);
+  }
+}
+.aq-hint-in {
+  animation: aq-hint-in 0.35s ease-out both;
+}
+@keyframes aq-hint-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+.aq-hint-pulse {
+  animation: aq-hint-pulse 1.8s ease-in-out infinite;
+}
+@keyframes aq-hint-pulse {
+  50% {
+    transform: scale(1.25);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .aq-tank-shake,
+  .aq-hint-in,
+  .aq-hint-pulse {
+    animation: none;
+  }
+  .aq-tap-ripple {
+    animation: aq-tap-ripple-still 0.9s ease-out forwards;
+  }
+  @keyframes aq-tap-ripple-still {
+    from {
+      opacity: 0.8;
+      transform: translate(-50%, -50%);
+    }
+    to {
+      opacity: 0;
+      transform: translate(-50%, -50%);
+    }
+  }
+}

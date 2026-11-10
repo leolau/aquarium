@@ -10,7 +10,12 @@ import {
   easeToward,
   hitTest,
   locate,
+  SHAKE_SPEED_MAX,
+  SHAKE_SPEED_MIN,
   sceneBounds,
+  selfLeader,
+  shakeScene,
+  steerSelfTo,
   stepScene,
   type Scene,
 } from "./scene";
@@ -204,5 +209,72 @@ describe("hitTest / locate", () => {
     expect(locate(scene, { userId: "a", profile: "default" })).toBe(f);
     expect(hitTest(scene, a.x, a.y + a.size + 200)).toBeNull();
     expect(locate(scene, { userId: "zz" })).toBeNull();
+  });
+});
+
+describe("steerSelfTo", () => {
+  it("sends only the signed-in person's creature to the tapped spot", () => {
+    const scene = createScene(seeded(3));
+    applySnapshot(scene, snap([user("me", { is_self: true }), user("other")]), bounds);
+    run(scene, 1);
+    const me = selfLeader(scene)!;
+    const other = scene.leaders.get("other")!;
+    const target = { x: me.x < 600 ? 1000 : 200, y: me.y < 350 ? 550 : 150 };
+    const goal = steerSelfTo(scene, target.x, target.y, bounds)!;
+    expect(goal).toMatchObject(target);
+    expect(other.goal).toBeNull();
+    const start = Math.hypot(me.x - target.x, me.y - target.y);
+    run(scene, 0.6);
+    expect(Math.hypot(me.x - target.x, me.y - target.y)).toBeLessThan(start - 30);
+    run(scene, 7);
+    expect(me.goal).toBeNull();
+    expect(Math.hypot(me.x - target.x, me.y - target.y)).toBeLessThan(120);
+  });
+
+  it("clamps the goal into the swim band and gives up when nobody is self", () => {
+    const scene = createScene(seeded(4));
+    applySnapshot(scene, snap([user("me", { is_self: true })]), bounds);
+    const goal = steerSelfTo(scene, -500, 5000, bounds)!;
+    expect(goal.x).toBeGreaterThan(0);
+    expect(goal.y).toBeLessThan(bounds.bottom);
+
+    const empty = createScene(seeded(4));
+    applySnapshot(empty, snap([user("other")]), bounds);
+    expect(steerSelfTo(empty, 100, 100, bounds)).toBeNull();
+  });
+});
+
+describe("shakeScene", () => {
+  it("gives every creature a new heading and speed, drops tap goals, and releases bubbles", () => {
+    const scene = createScene(seeded(5));
+    applySnapshot(scene, snap([user("me", { is_self: true }), user("a"), user("b")]), bounds);
+    run(scene, 1);
+    steerSelfTo(scene, 100, 100, bounds);
+    const before = [...scene.leaders.values()].map((l) => l.heading);
+    const bubbles = scene.bubbles.length;
+    shakeScene(scene, bounds);
+    const leaders = [...scene.leaders.values()];
+    leaders.forEach((l, i) => {
+      expect(l.heading).not.toBe(before[i]);
+      expect(l.speedFactor).toBeGreaterThanOrEqual(SHAKE_SPEED_MIN);
+      expect(l.speedFactor).toBeLessThanOrEqual(SHAKE_SPEED_MAX);
+      expect(l.goal).toBeNull();
+    });
+    expect(new Set(leaders.map((l) => l.speedFactor)).size).toBe(leaders.length);
+    expect(scene.bubbles.length).toBeGreaterThan(bubbles);
+    run(scene, 5);
+    for (const l of leaders) {
+      expect(l.x).toBeGreaterThanOrEqual(0);
+      expect(l.x).toBeLessThanOrEqual(bounds.width);
+      expect(l.y).toBeLessThanOrEqual(bounds.bottom);
+    }
+  });
+
+  it("adds no bubbles with reduced motion", () => {
+    const scene = createScene(seeded(6));
+    applySnapshot(scene, snap([user("a")]), bounds);
+    const n = scene.bubbles.length;
+    shakeScene(scene, bounds, { reducedMotion: true });
+    expect(scene.bubbles.length).toBe(n);
   });
 });

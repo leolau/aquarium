@@ -14,6 +14,13 @@ export const FADE_SECONDS = 0.8;
 export const MAX_DT = 0.1;
 export const REDUCED_MOTION_SPEED = 0.3;
 export const MAX_BUBBLES = 320;
+/** A tap target is dropped after this long, so an unreachable spot never pins a creature. */
+export const GOAL_TIMEOUT = 8;
+/** Speed floor (CSS px/s) while swimming to a tapped spot, so slow creatures still answer. */
+export const GOAL_MIN_SPEED = 170;
+/** After a shake each leader cruises at its speed × a factor in this range. */
+export const SHAKE_SPEED_MIN = 0.55;
+export const SHAKE_SPEED_MAX = 1.9;
 
 export interface Bounds {
   width: number;
@@ -47,10 +54,21 @@ export interface Follower extends Swimmer {
   profile: AquariumProfile;
 }
 
+export interface Goal {
+  x: number;
+  y: number;
+  /** Seconds left before the goal is dropped. */
+  ttl: number;
+}
+
 export interface Leader extends Swimmer {
   user: AquariumUser;
   speed: number;
   targetSpeed: number;
+  /** Multiplies the snapshot speed; set by a shake and kept across snapshots. */
+  speedFactor: number;
+  /** Where the leader is swimming after a tap, if anywhere. */
+  goal: Goal | null;
   heading: number;
   turnRate: number;
   bubbleClock: number;
@@ -141,6 +159,8 @@ export function applySnapshot(scene: Scene, snapshot: AquariumSnapshot, bounds: 
         targetSize: size,
         speed,
         targetSpeed: speed,
+        speedFactor: 1,
+        goal: null,
         heading,
         turnRate: 0,
         alpha: 0,
@@ -195,7 +215,33 @@ function stepLeader(scene: Scene, l: Leader, dt: number, b: Bounds, reduced: boo
   const { rng } = scene;
   l.size = easeToward(l.size, l.targetSize, dt);
   l.speed = easeToward(l.speed, l.targetSpeed, dt);
-  const cruise = l.speed * (reduced ? REDUCED_MOTION_SPEED : 1);
+  const base = l.speed * l.speedFactor * (reduced ? REDUCED_MOTION_SPEED : 1);
+  const [x0, x1] = xRange(b, l.size);
+  const [y0, y1] = yRange(b, l.size);
+
+  if (l.goal) {
+    l.goal.ttl -= dt;
+    const dx = l.goal.x - l.x;
+    const dy = l.goal.y - l.y;
+    const dist = Math.hypot(dx, dy);
+    if (l.goal.ttl <= 0 || dist < Math.max(10, l.size * 0.3)) {
+      l.goal = null;
+    } else {
+      const cruise = Math.max(base * 1.6, GOAL_MIN_SPEED * (reduced ? REDUCED_MOTION_SPEED : 1));
+      l.heading -= angleDiff(l.heading, Math.atan2(dy, dx)) * clamp(dt * 5, 0, 1);
+      l.turnRate = 0;
+      // Ease off near the spot so the creature arrives instead of overshooting.
+      const arrive = Math.min(1, dist / Math.max(40, l.size));
+      const steer = 1 - Math.exp(-dt * 3.5);
+      l.vx += (Math.cos(l.heading) * cruise * arrive - l.vx) * steer;
+      l.vy += (Math.sin(l.heading) * cruise * arrive - l.vy) * steer;
+      l.x = clamp(l.x + l.vx * dt, x0, x1);
+      l.y = clamp(l.y + l.vy * dt, y0, y1);
+      finishLeaderStep(scene, l, dt, cruise, reduced);
+      return;
+    }
+  }
+  const cruise = base;
 
   // Smooth wander: the turn rate is a damped random walk, the heading integrates it.
   l.turnRate += (rng() - 0.5) * 3.2 * dt;
@@ -204,8 +250,6 @@ function stepLeader(scene: Scene, l: Leader, dt: number, b: Bounds, reduced: boo
   l.heading += l.turnRate * dt;
 
   // Soft walls: inside the margin the heading bends toward the open water.
-  const [x0, x1] = xRange(b, l.size);
-  const [y0, y1] = yRange(b, l.size);
   const mx = Math.min(Math.max(70, l.size * 1.4), (x1 - x0) / 2 || 1);
   const my = Math.min(Math.max(50, l.size), (y1 - y0) / 2 || 1);
   let px = 0;
@@ -227,6 +271,11 @@ function stepLeader(scene: Scene, l: Leader, dt: number, b: Bounds, reduced: boo
   l.vy += (wantY - l.vy) * steer + py * cruise * 1.5 * dt;
   l.x = clamp(l.x + l.vx * dt, x0, x1);
   l.y = clamp(l.y + l.vy * dt, y0, y1);
+  finishLeaderStep(scene, l, dt, cruise, reduced);
+}
+
+function finishLeaderStep(scene: Scene, l: Leader, dt: number, cruise: number, reduced: boolean): void {
+  const { rng } = scene;
   turnFace(l, dt);
   l.phase += dt * (1.6 + cruise / 25);
   fade(l, dt);
@@ -303,6 +352,51 @@ function stepBubbles(scene: Scene, dt: number, b: Bounds, reduced: boolean): voi
     if (bub.y + bub.r > 0) scene.bubbles[keep++] = bub;
   }
   scene.bubbles.length = keep;
+}
+
+/** The signed-in person's creature, if it is in the tank. */
+export function selfLeader(scene: Scene): Leader | null {
+  for (const l of scene.leaders.values()) if (l.user.is_self && !l.leaving) return l;
+  return null;
+}
+
+/**
+ * Sends the person's creature toward (x, y), clamped into the swim band.
+ * Returns the clamped goal, or null when they have no creature in the tank.
+ */
+export function steerSelfTo(scene: Scene, x: number, y: number, b: Bounds): Goal | null {
+  const l = selfLeader(scene);
+  if (!l) return null;
+  const [x0, x1] = xRange(b, l.size);
+  const [y0, y1] = yRange(b, l.size);
+  l.goal = { x: clamp(x, x0, x1), y: clamp(y, y0, y1), ttl: GOAL_TIMEOUT };
+  return l.goal;
+}
+
+/**
+ * After the tank is shaken: every creature takes a new random heading and
+ * speed, followers scatter, and a burst of bubbles rises from the seabed.
+ */
+export function shakeScene(scene: Scene, b: Bounds, { reducedMotion = false }: StepOptions = {}): void {
+  const { rng } = scene;
+  for (const l of scene.leaders.values()) {
+    if (l.leaving) continue;
+    const heading = rng() * Math.PI * 2;
+    l.goal = null;
+    l.heading = heading;
+    l.turnRate = (rng() - 0.5) * 1.6;
+    l.speedFactor = SHAKE_SPEED_MIN + rng() * (SHAKE_SPEED_MAX - SHAKE_SPEED_MIN);
+    const kick = l.speed * l.speedFactor * 1.5;
+    l.vx = Math.cos(heading) * kick;
+    l.vy = Math.sin(heading) * kick * 0.45;
+    for (const f of l.followers.values()) {
+      f.vx += (rng() - 0.5) * 160;
+      f.vy += (rng() - 0.5) * 120;
+    }
+  }
+  if (reducedMotion) return;
+  const count = Math.round(clamp(b.width / 30, 12, 48));
+  for (let i = 0; i < count; i++) addBubble(scene, rng() * b.width, b.bottom - rng() * 40, 2 + rng() * 4);
 }
 
 export function stepScene(scene: Scene, dt: number, bounds: Bounds, { reducedMotion = false }: StepOptions = {}): void {
