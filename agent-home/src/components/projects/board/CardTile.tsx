@@ -12,6 +12,7 @@ import {
   taskAgeSeconds,
   type StatusTone,
 } from "@/components/projects/board/model";
+import { RefBadge } from "@/components/refs/RefBadge";
 import type { ProjectBoardTask } from "@/types";
 
 const PILL: Record<StatusTone, string> = {
@@ -92,6 +93,7 @@ export function CardTile({
           />
         ) : null}
         <StatusPill status={task.status} />
+        <RefBadge value={task.ref} />
         <span
           data-avatar={avatar.kind}
           aria-hidden

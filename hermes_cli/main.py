@@ -12303,7 +12303,7 @@ _BUILTIN_SUBCOMMANDS = frozenset(
         "journey", "memory-graph", "learning",
         "member", "model", "oss", "owner", "pairing", "pets", "plugins", "portal",
         "postinstall", "profile",
-        "project", "projects", "promote", "proxy",
+        "project", "projects", "promote", "proxy", "ref",
         "prompt-size",
         "send", "sessions", "setup", "setup-link", "todos", "vpn",
         "skills", "slack", "status", "tool", "tools", "uninstall", "update",
@@ -13204,6 +13204,12 @@ def main():
     from hermes_cli.projects_cli import register_projects_subparser
 
     register_projects_subparser(subparsers)
+
+    # ref command — resolve a short ref (P12, T345, P12-R3) through the same
+    # read gate as GET /api/refs/{ref} (rung 2: CLI + skill, no model tool).
+    from hermes_cli.ref_cli import register_ref_subparser
+
+    register_ref_subparser(subparsers)
 
     # =========================================================================
     # datastore command — the profile's resolved (database, schema) binding and

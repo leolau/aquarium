@@ -98,6 +98,7 @@ import type {
   Project,
   ProjectBoardView,
   ProjectCardDetail,
+  RefResolution,
   ProjectContact,
   ProjectDetail,
   ProjectDirectivesResponse,
@@ -2346,6 +2347,11 @@ export class HermesApiClient {
   }
 
   /** One card, re-checked under the caller's principal. */
+  /** What a short ref (`P12`, `T345`, `P12-R3`) names — 404 when hidden. */
+  async resolveRef(ref: string): Promise<RefResolution> {
+    return this.request(`/api/refs/${encodeURIComponent(ref)}`);
+  }
+
   async projectCard(
     slug: string,
     taskId: string,

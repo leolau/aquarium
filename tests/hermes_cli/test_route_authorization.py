@@ -251,6 +251,8 @@ SIGNED_IN = {
     "POST /api/registry/project-categories",
     "PATCH /api/registry/project-categories/{category_id}",
     "DELETE /api/registry/project-categories/{category_id}",
+    # refs_api: resolves through the projects read gate; invisible is 404
+    "GET /api/refs/{ref}",
     # projects_api: project membership and project role checked per project
     "GET /api/registry/projects",
     "POST /api/registry/projects",

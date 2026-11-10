@@ -1682,6 +1682,8 @@ export interface ProjectFolder {
 export interface Project {
   id: string;
   slug: string;
+  /** Short ref (`P12`, FG-36): a stable display handle; `slug`/`id` stay authoritative. */
+  ref?: string | null;
   name: string;
   description: string | null;
   icon: string | null;
@@ -1908,6 +1910,8 @@ export interface ProjectLink {
 /** The last N runs as one-line rows. */
 export interface ProjectRunBrief {
   run_no: number;
+  /** `P12-R3` — the project's ref plus `run_no`. */
+  ref?: string | null;
   status: ProjectRunStatus;
   trigger: ProjectRunTrigger;
   started_at: number;
@@ -1931,6 +1935,8 @@ export interface ProjectRunBrief {
 /** One card's live board state, joined onto a run row. */
 export interface ProjectRunCard {
   task_id: string;
+  /** The card's short ref (`T345`). */
+  ref?: string | null;
   step_key: string | null;
   status: string | null;
   title: string | null;
@@ -2000,6 +2006,9 @@ export interface ProjectRunCheckpointWait {
 /** The full run row (§6) as the detail/list reads return it. */
 export interface ProjectRun {
   id: string;
+  /** `P12-R3` — the project's ref plus `run_no`. */
+  ref?: string | null;
+  project_ref?: string | null;
   project_id: string;
   run_no: number;
   trigger: ProjectRunTrigger;
@@ -2314,6 +2323,8 @@ export interface ProjectCardApproval {
 /** A task row on the project board, as `kanban_view.task_dict` returns it. */
 export interface ProjectBoardTask {
   id: string;
+  /** Short ref (`T345`, FG-36); `id` (`t_xxxxxxxx`) stays authoritative. */
+  ref?: string | null;
   title: string;
   body: string | null;
   status: string;
@@ -3795,4 +3806,22 @@ export interface SoftwareUpgradeStatus {
   release_error?: string | null;
   /** Set by the BFF: owners can upgrade, admins only look. */
   can_upgrade?: boolean;
+}
+
+// ── Short refs (FG-36) ──
+/** `GET /api/refs/:ref` — what a short ref names, for a caller who may see it. */
+export interface RefResolution {
+  ref: string;
+  kind: "project" | "run" | "card";
+  /** The internal id (project id, run id, `t_xxxxxxxx`). */
+  id: string;
+  title: string;
+  status: string | null;
+  /** The agent-home path that opens it. */
+  url: string;
+  run_no?: number;
+  project_ref?: string | null;
+  project_id?: string;
+  project_slug?: string;
+  profile?: string | null;
 }
