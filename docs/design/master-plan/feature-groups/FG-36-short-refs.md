@@ -21,7 +21,7 @@ Approved format: **type letter + running number, unique on the box**.
 | `P12` | project | registry | box-wide | 1 |
 | `T345` | project card (kanban task linked to a project) | registry | box-wide (row records the board) | 1 |
 | `P12-R3` | run 3 of P12 | **derived**: project ref + existing `project_runs.run_no` | follows the project | 1 |
-| `C1024` | chat (conversation) | registry | per profile | 2 |
+| `C1024` | chat (conversation) | registry | per profile (row records it) | 2 — built |
 | `D88` | to-do | registry | per profile (row records it) | 3 — built |
 | `M512` | inbox message | registry | per profile (row records it) | 3 — built |
 
@@ -69,8 +69,8 @@ short_ref_backfills(kind PRIMARY KEY, done_at)
   projects by `created_at`, `T` → project-linked cards by `created_at`);
   `backfill()` runs once per kind, oldest first, then marks the kind done in
   `short_ref_backfills`. `D` → every profile's to-dos by `created_at`, `M` →
-  every profile's inbox messages by `registered_at` (PR 3); C adds its source
-  in its PR.
+  every profile's inbox messages by `registered_at` (PR 3), `C` → every
+  profile's chats (compression roots) by `started_at` (PR 2).
 
 ## Surfaces (PR 1)
 
@@ -82,7 +82,7 @@ short_ref_backfills(kind PRIMARY KEY, done_at)
   …}`. It reuses the projects read gate (`_load_ctx_sync` + `_can_read`) and
   the private-card rule (`_card_visible`). **Not found and not allowed are the
   same 404** ("ref not found"), so a ref never confirms that something hidden
-  exists. Reserved kinds (D, M) answer 404 until their PR.
+  exists.
 - **agent-home:** BFF `GET /api/refs/[ref]` (`signed-in`), `/go/[ref]`
   redirect page (in-app paths only), `RefBadge` (tap to copy) on project
   rows, the project header, board tiles, card detail and the run header; a ref
@@ -116,8 +116,8 @@ short_ref_backfills(kind PRIMARY KEY, done_at)
   there with the chat routes' own `_chat_principal` (FG-28: not enrolled /
   suspended → no principal), then the chat routes' visibility rule applies
   (`_chat_scope_for`: the owner sees every chat, anyone else only their own).
-  Not visible, other profile and missing are the same 404. D and M reuse this
-  hook. `hermes ref C<n>` acts as the CLI actor in every profile.
+  Not visible, other profile and missing are the same 404. D and M keep their
+  own re-resolution inside `profile_refs` (`CALLER_SUBJECT`). `hermes ref C<n>` acts as the CLI actor in every profile.
 - **URL:** `/chat?session=<tip>&profile=<profile>`; `/go/C1024` redirects
   there, and the chat page switches profile on arrival.
 - **agent-home:** the ref shows on session chips (`SessionTabs`), sidebar
@@ -142,7 +142,7 @@ short_ref_backfills(kind PRIMARY KEY, done_at)
   byte-identically (prompt caching); the system prompt and past turns are
   never touched and no synthetic message is added. Unresolvable or hidden
   refs are skipped silently, at most `MAX_EXPANDED` (5) distinct refs expand,
-  and kinds are generic (D/M expand once their resolvers exist). The
+  and kinds are generic (D and M expand through their own resolvers). The
   sender's bubble hides the block (`stripRefMentions`).
 - **Why the Python chat entry, not the BFF:** the BFF would need one extra
   round trip per ref and could not reuse the per-profile chat authority the
