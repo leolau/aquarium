@@ -1,0 +1,31 @@
+{
+  "title": "Aquarium",
+  "back": "Back",
+  "offline": "Offline — showing the last update",
+  "empty": "No one is swimming here yet.",
+  "peopleList": "People in the aquarium",
+  "person": "{name}, {creature}: {chats} chats, {profiles} profiles",
+  "legend": {
+    "title": "How to read the aquarium",
+    "sizeIcon": "◯",
+    "size": "Bigger = more chats, projects and tokens",
+    "speedIcon": "➶",
+    "speed": "Faster = more tokens in the last 24 h",
+    "followersIcon": "∘∘",
+    "followers": "Little followers = the profiles they use",
+    "activeIcon": "✦",
+    "active": "Glow and bubbles = working right now",
+    "selfIcon": "◌",
+    "self": "Gold ring = you"
+  },
+  "card": {
+    "you": "(you)",
+    "activeNow": "working now",
+    "chats": "Chats",
+    "projects": "Projects",
+    "tokens": "Tokens",
+    "profiles": "Profiles",
+    "noProfiles": "None yet",
+    "profileOf": "Profile of {name}"
+  }
+}

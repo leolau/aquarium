@@ -131,6 +131,7 @@ PAGES: Tuple[PageSpec, ...] = (
     PageSpec("/activity", ("TraceTimeline",)),
     PageSpec("/activity/zz-smoke-missing", ("TraceDetailError",)),
     PageSpec("/capacity", ("CapacityView",)),
+    PageSpec("/aquarium", ("AquariumView", "AquariumLegend"), shell=False),
     PageSpec("/models", ("ModelsView",), quick=True),
     PageSpec("/tools", ("ToolsRegistry",), quick=True),
     PageSpec("/tools/zz-smoke-missing", ("ToolsError",)),
