@@ -14,6 +14,7 @@ import {
   STEER_MARKER_CLOSE,
   STEER_MARKER_OPEN,
   stripInjectedContext,
+  stripRefMentions,
   stripUiContextLine,
   visibleTurns,
 } from "@/lib/chat/transcript";
@@ -67,6 +68,16 @@ describe("splitCompactionContent", () => {
     const split = splitCompactionContent("Can you check the project?");
     expect(split.hadCompaction).toBe(false);
     expect(split.display).toBe("Can you check the project?");
+  });
+});
+
+describe("stripRefMentions", () => {
+  it("hides the trailing referenced-items block only", () => {
+    const sent = "compare P12 with C3\n\n[Referenced items]\n- P12 · project · Digest · active · /projects/digest";
+    expect(stripRefMentions(sent)).toBe("compare P12 with C3");
+    const typed = "[Referenced items]\n- typed by hand\n\nand more";
+    expect(stripRefMentions(typed)).toBe(typed);
+    expect(stripRefMentions("plain")).toBe("plain");
   });
 });
 

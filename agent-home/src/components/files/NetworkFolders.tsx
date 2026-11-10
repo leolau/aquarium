@@ -19,6 +19,8 @@ import {
 } from "@/lib/folder-bridge/networkFolders";
 import type { NetworkFolderInput, NetworkFolderView, VpnState, VpnView } from "@/types";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { PanelLoading } from "@/components/ui/PanelLoading";
+import { useT } from "@/i18n/client";
 
 const POLL_MS = 30_000;
 
@@ -156,6 +158,7 @@ const EMPTY_VALUES: NetworkFolderFormValues = {
 };
 
 export function NetworkFolders() {
+  const tf = useT("filesBrowse");
   const [folders, setFolders] = useState<NetworkFolderView[]>([]);
   const [vpns, setVpns] = useState<VpnView[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -411,6 +414,8 @@ export function NetworkFolders() {
         </p>
 
         {loadError ? <p className="mt-2 text-xs text-[var(--color-danger)]">{loadError}</p> : null}
+
+        {!loaded ? <PanelLoading label={tf("loadingNetwork")} className="mt-2" /> : null}
 
         {noVpn ? (
           <p data-component="NetworkFoldersNoVpn" className="mt-2 text-sm text-[var(--color-muted)]">

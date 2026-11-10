@@ -17,6 +17,7 @@ export const SETTINGS_SECTIONS = [
   "upgrade",
   "entity-goal",
   "tags",
+  "aquarium",
 ] as const;
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number];
 
@@ -50,6 +51,7 @@ export function canOpenSettingsSection(id: SettingsSectionId, access: SettingsAc
     case "uploads":
     case "apps":
     case "upgrade":
+    case "aquarium":
       return access.canManageMembers;
     case "menu":
       return access.canManageTools;
@@ -96,6 +98,7 @@ export const ADMIN_ENTRIES: SettingsEntryId[] = [
   "uploads",
   "apps",
   "menu",
+  "aquarium",
   "upgrade",
 ];
 

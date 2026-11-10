@@ -23,6 +23,8 @@ describe("settings sections", () => {
     expect(canOpenSettingsSection("menu", member)).toBe(false);
     expect(canOpenSettingsSection("apps", member)).toBe(false);
     expect(canOpenSettingsSection("tags", member)).toBe(true);
+    expect(canOpenSettingsSection("aquarium", member)).toBe(false);
+    expect(canOpenSettingsSection("aquarium", { canManageMembers: true, canManageTools: false })).toBe(true);
     expect(visibleSettingsSections({ canManageMembers: true, canManageTools: true })).toContain("menu");
   });
 });

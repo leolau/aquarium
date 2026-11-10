@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { RefJump } from "@/components/refs/RefJump";
+import { useT } from "@/i18n";
 import { ActionButton } from "@/components/ui/ActionButton";
 
 import { IncomingRow } from "@/components/inbox/IncomingRow";
@@ -33,6 +35,7 @@ export function IncomingsList({
   initial: IncomingsResponse;
   facets: IncomingsFacets;
 }) {
+  const t = useT("inbox");
   const [items, setItems] = useState<IncomingItem[]>(initial.items);
   const [cursor, setCursor] = useState<string | null>(initial.next_cursor);
   // A shared URL is a shared filter, so the state starts from the address bar.
@@ -141,6 +144,7 @@ export function IncomingsList({
   return (
     <div data-component="IncomingsList" className="flex flex-col gap-3">
       <IncomingsFilters facets={facets} value={filters} onChange={setFilters} />
+      <RefJump query={filters.q} kind="M" label={(ref) => t("openRef", { ref })} />
 
       <BusyRegion busy={replacing} label="Filtering your inbox…">
         <div className="flex flex-col gap-3">

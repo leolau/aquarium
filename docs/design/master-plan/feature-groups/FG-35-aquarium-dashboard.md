@@ -96,3 +96,77 @@ BFF route pattern.
 - [ ] **W4 Cross-review** — integrate W1–W3, fix contract mismatches, run
   the full agent-home + relevant Python suites.
 - [ ] Live check on production with ≥ 2 people.
+
+## v2 — polish, 40 creatures, aquarium name (from Yan, after the first live check)
+
+Requirements:
+
+1. Use Canva to make the visuals and assets more professional and fun, with
+   more animation.
+2. 40 creatures instead of 20.
+3. An aquarium name, configurable in Settings.
+4. More realistic, dynamic seaweed, with different animations at different
+   timings.
+5. The legend goes away after a while.
+6. Fixes from the screenshot review: creatures and name labels must not
+   overlap; followers trail behind their leader (never ahead or far off);
+   follower profile names readable at a glance; followers vary per person +
+   profile (not one look per profile box-wide) and read clearly as sea
+   creatures; legend icons legible; a much wider size range so heavy users
+   are obviously bigger.
+
+Decisions:
+
+- **Assets:** Canva-generated, background-removed transparent WebP sprites,
+  committed under `agent-home/public/aquarium/creatures/<id>.webp` (≤ 256 px,
+  facing right; mirror to face left) and scenery under
+  `agent-home/public/aquarium/decor/` (`backdrop` opaque 1680×944; `kelp`,
+  `seagrass`, `coral-branch`, `coral-brain`, `anemone`, `rocks`
+  transparent). Paths come from `creatureSprite()` / `decorSprite()` in
+  `creatures.ts`. The canvas draws sprites, not the v1 SVG paths; the v1
+  `CreatureIcon` switches to the sprite too (picker, legend, card).
+- **40 creatures:** the 20 new ids are appended to `CREATURES` in both
+  contract files, never reordered. `fallback_creature()` keeps indexing the
+  original 20 so people without a saved pref keep their creature.
+  `random_creature()` picks from all 40.
+- **Aquarium name:** box-wide `aquarium.name` next to `aquarium.idle_seconds`,
+  1–60 chars after trimming, default `Aquarium`; empty/whitespace resets to
+  the default. Snapshot gains `name`. `GET /api/aquarium/settings` returns
+  `{idle_seconds, name}`; `PUT` takes any subset (owner/admin only) and
+  returns the full object. Shown as the dashboard title and editable in the
+  same owner/admin Settings panel as idle seconds.
+- **Legend:** visible on load, fades out after `LEGEND_HIDE_MS` (8 s); a small
+  info button brings it back (and it re-hides after the same delay). Keyboard
+  and screen-reader reachable; reduced motion just hides it without the fade.
+- **Seaweed:** kelp and sea grass are drawn as segmented strands bending with
+  layered sine sway — each strand has its own phase, period (≈3–9 s) and
+  amplitude, plus a slow "current" gust every 20–40 s that sweeps across the
+  tank, and a local push when a creature swims through. Corals, anemone
+  (tentacle pulse) and rocks are placed on the seabed in 2–3 depth layers.
+  Plus: caustic light on the sand, drifting light rays, particles/plankton,
+  rising bubbles, occasional bubble bursts from `active_now` creatures.
+- **Swimming:** body undulation (sprite squash/skew wiggle at a rate tied to
+  speed), smooth turning with a flip transition, gentle depth bob; creatures
+  repel each other and labels avoid each other (simple separation +
+  label-collision nudge); followers spring to a slot behind the leader's
+  heading; follower creature = deterministic hash of `user_id + profile`;
+  follower label is a small name chip always visible (hidden only when the
+  tank is crowded, then on hover). Size range widens to ~24–200 px on a
+  log scale relative to the busiest person on the box.
+
+Work items (v2):
+
+- [ ] **V1 Backend** — `aquarium.name` storage/validation, settings GET/PUT
+  shape, snapshot `name`, BFF settings route accepts the subset body, tests
+  for the 40-creature list and stable fallback.
+- [ ] **V2 Swimming** — sprite renderer, undulation/turning/bob, separation
+  and label de-overlap, follower slots + per-person follower creature +
+  name chips, wider size mapping, tests.
+- [ ] **V3 Scenery** — backdrop image, layered seaweed with varied timings and
+  gusts, corals/anemone/rocks, caustics, rays, particles, bubbles;
+  reduced-motion and hidden-tab behaviour preserved.
+- [ ] **V4 Chrome** — dashboard title from `name`, legend auto-hide + info
+  button + legible icons, Settings name field, `CreatureIcon` on sprites,
+  40-creature picker, i18n (en + zh-Hant).
+- [ ] **V5 Cross-review** — integrate V1–V4, fix mismatches, full suites,
+  browser check with mocked data.

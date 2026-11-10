@@ -2889,6 +2889,12 @@ def create_task(
                         "goal_mode": bool(goal_mode) or None,
                     },
                 )
+            if project_obj is not None and project_id:
+                from hermes_cli import short_refs
+
+                short_refs.assign_quietly(
+                    "T", task_id, created_at=now, board=project_obj.board_slug
+                )
             return task_id
         except sqlite3.IntegrityError:
             if attempt == 1:

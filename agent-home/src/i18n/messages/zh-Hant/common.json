@@ -7,5 +7,7 @@
   "signOutConfirmTitle": "要登出嗎？",
   "signOutConfirmBody": "你需要在這部裝置上重新登入。",
   "cancel": "取消",
-  "working": "處理中…"
+  "working": "處理中…",
+  "loading": "載入中…",
+  "stillWorking": "仍在處理中…伺服器繁忙時可能需要多幾秒。"
 }

@@ -1,0 +1,45 @@
+{
+  "title": "水族館",
+  "back": "返回",
+  "loading": "正在注水…",
+  "offline": "離線中——顯示最後一次更新",
+  "empty": "這裏暫時還沒有人。",
+  "peopleList": "水族館裏的人",
+  "person": "{name}，{creature}：{chats} 個對話，{profiles} 個設定檔",
+  "legend": {
+    "title": "如何看水族館",
+    "size": "越大 = 對話、項目和 token 越多（最忙的人最大）",
+    "speed": "越快 = 過去 24 小時用的 token 越多",
+    "followers": "跟着的小生物 = 他們使用的設定檔，名牌上有名稱",
+    "active": "發光和泡泡 = 正在工作",
+    "self": "金色圈 = 你",
+    "show": "顯示如何看水族館",
+    "hide": "隱藏如何看水族館"
+  },
+  "card": {
+    "you": "（你）",
+    "activeNow": "正在工作",
+    "chats": "對話",
+    "projects": "項目",
+    "tokens": "Token",
+    "profiles": "設定檔",
+    "noProfiles": "暫時沒有",
+    "profileOf": "{name} 的設定檔"
+  },
+  "play": {
+    "title": "試試看",
+    "tapMouse": "點擊任何地方：你的海洋生物會游過去",
+    "tapTouch": "輕按任何地方：你的海洋生物會游過去",
+    "shakeMouse": "按「搖晃」：所有生物都會改變方向和速度",
+    "shakeTouch": "搖動手機（或按「搖晃」）：所有生物都會改變方向和速度",
+    "shake": "搖晃",
+    "shaking": "搖晃中…",
+    "shakeLabel": "搖晃水族館",
+    "gotIt": "知道了",
+    "showTips": "提示",
+    "enableShake": "開啟搖動手機",
+    "motionDenied": "搖動手機已關閉，請用「搖晃」按鈕。",
+    "noSelf": "你在這裏還沒有海洋生物。",
+    "shaken": "大家都換了新的游法。"
+  }
+}

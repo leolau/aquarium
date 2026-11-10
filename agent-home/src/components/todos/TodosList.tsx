@@ -7,6 +7,7 @@ import { ActionButton } from "@/components/ui/ActionButton";
 import { InlineAlert } from "@/components/ui/InlineAlert";
 import { useUndoToast } from "@/components/ui/UndoToast";
 import { useT } from "@/i18n";
+import { RefJump } from "@/components/refs/RefJump";
 import { TodosFilters } from "@/components/todos/TodosFilters";
 import {
   EMPTY_FILTERS,
@@ -190,6 +191,7 @@ export function TodosList({
     <div data-component="TodosList" className="flex flex-col gap-3">
       {toast}
       <TodosFilters facets={facets} value={filters} onChange={setFilters} />
+      <RefJump query={filters.q} kind="D" label={(ref) => t("openRef", { ref })} />
 
       {error ? (
         <div data-component="TodosError">

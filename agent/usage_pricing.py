@@ -23,6 +23,7 @@ CostSource = Literal[
     "official_docs_snapshot",
     "user_override",
     "custom_contract",
+    "models_dev",
     "none",
 ]
 
@@ -677,6 +678,41 @@ def _lookup_official_docs_pricing(route: BillingRoute) -> Optional[PricingEntry]
     return None
 
 
+def _models_dev_pricing_entry(route: BillingRoute) -> Optional[PricingEntry]:
+    """Per-token prices models.dev publishes for this provider's model.
+
+    The catch-all for routes with no official snapshot and no pricing on
+    their own ``/models`` endpoint (OpenCode Go/Zen, Kimi, DeepSeek, …).
+    Only a model entry that carries a ``cost`` block counts — a missing
+    block means the price is unknown, not free.
+    """
+    if not route.provider or not route.model:
+        return None
+    try:
+        from agent.models_dev import _find_model_entry, _get_provider_models
+
+        models = _get_provider_models(route.provider)
+        raw = _find_model_entry(models, route.model) if models else None
+    except Exception:
+        return None
+    cost = raw.get("cost") if isinstance(raw, dict) else None
+    if not isinstance(cost, dict):
+        return None
+    prompt = _to_decimal(cost.get("input"))
+    completion = _to_decimal(cost.get("output"))
+    if prompt is None and completion is None:
+        return None
+    return PricingEntry(
+        input_cost_per_million=prompt,
+        output_cost_per_million=completion,
+        cache_read_cost_per_million=_to_decimal(cost.get("cache_read")),
+        cache_write_cost_per_million=_to_decimal(cost.get("cache_write")),
+        source="models_dev",
+        source_url="https://models.dev/api.json",
+        pricing_version="models-dev",
+    )
+
+
 def _openrouter_pricing_entry(route: BillingRoute) -> Optional[PricingEntry]:
     return _pricing_entry_from_metadata(
         fetch_model_metadata(),
@@ -757,7 +793,7 @@ def get_pricing_entry(
         )
         if entry:
             return entry
-    return _lookup_official_docs_pricing(route)
+    return _lookup_official_docs_pricing(route) or _models_dev_pricing_entry(route)
 
 
 def normalize_usage(

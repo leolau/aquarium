@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import { callDurationLabel } from "@/components/projects/format";
+import { InfoTip } from "@/components/ui/InfoTip";
 import { Pill } from "@/components/ui/Pill";
 import type {
   ModelPerfMonth,
@@ -154,6 +155,41 @@ function DailyBars({ entry }: { entry: ModelPerformanceEntry }) {
   );
 }
 
+/** "$0.42", or "unknown" with the reason when no price is published for
+ *  the model on this provider — never a misleading "$0". */
+function CostValue({ entry }: { entry: ModelPerformanceEntry }) {
+  const unpriced = entry.unpriced_calls ?? 0;
+  const where = entry.provider ? ` on ${entry.provider}` : "";
+  if (entry.cost_status === "unknown" || entry.cost_usd == null) {
+    return (
+      <span className="inline-flex items-center">
+        unknown
+        <InfoTip label={`Why is the cost of ${entry.model} unknown?`} align="end">
+          No price is published for {entry.model}
+          {where}, so Aquarium can&apos;t estimate what these calls cost. Token
+          counts are still exact.
+        </InfoTip>
+      </span>
+    );
+  }
+  if (entry.cost_status === "partial" && unpriced > 0) {
+    return (
+      <span className="inline-flex flex-wrap items-center">
+        {formatCost(entry.cost_usd)}
+        <span className="ml-1 text-[11px] text-[var(--color-muted)]">
+          + {unpriced.toLocaleString()} unpriced
+        </span>
+        <InfoTip label={`Why are some ${entry.model} calls unpriced?`} align="end">
+          {unpriced.toLocaleString()} {unpriced === 1 ? "call has" : "calls have"} no
+          published price{where}, so {unpriced === 1 ? "it isn't" : "they aren't"}{" "}
+          in this total.
+        </InfoTip>
+      </span>
+    );
+  }
+  return <>{formatCost(entry.cost_usd)}</>;
+}
+
 function ModelPerfCard({ entry }: { entry: ModelPerformanceEntry }) {
   const lat = entry.latency_ms;
   const failed = entry.failures > 0;
@@ -224,9 +260,23 @@ function ModelPerfCard({ entry }: { entry: ModelPerformanceEntry }) {
         </div>
         <div>
           <dt className="text-[11px] text-[var(--color-muted)]">Cost</dt>
-          <dd>{formatCost(entry.cost_usd)}</dd>
+          <dd data-component="PerfCost">
+            <CostValue entry={entry} />
+          </dd>
         </div>
       </dl>
+      {entry.unmeasured_calls ? (
+        <p
+          data-component="PerfUnmeasured"
+          className="mt-1.5 text-[11px] text-[var(--color-muted)]"
+        >
+          {entry.unmeasured_calls.toLocaleString()} earlier{" "}
+          {entry.unmeasured_calls === 1 ? "call was" : "calls were"} counted before
+          Aquarium measured this kind of call, so{" "}
+          {entry.unmeasured_calls === 1 ? "it has" : "they have"} no response time,
+          tokens or cost. New calls are measured in full.
+        </p>
+      ) : null}
       <div className="mt-2">
         <DailyBars entry={entry} />
       </div>

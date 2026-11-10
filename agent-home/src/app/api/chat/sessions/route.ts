@@ -10,6 +10,9 @@
  * session strip groups cron sessions into their own "Scheduled" row instead
  * of hiding them.
  *
+ * `source` keeps one class only (the landing sidebar asks for `agent_home`,
+ * the chats people typed in Aquarium).
+ *
  * `limit` is capped at one 200-row page; `limit=all` reads every page, which
  * is what the strip uses so no category silently loses its older entries.
  */
@@ -41,6 +44,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   const excludeSources =
     rawExcludeSources === null ? "cron" : rawExcludeSources || undefined;
   const filters = {
+    source: url.searchParams.get("source") || undefined,
     excludeSources,
     order: "recent" as const,
     archived,

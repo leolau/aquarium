@@ -2,7 +2,11 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 
+import { FolderBridgeSkeleton } from "@/components/files/FilesSkeletons";
 import { NetworkFolders } from "@/components/files/NetworkFolders";
+import { PageSkeleton } from "@/components/ui/PageSkeleton";
+import { PanelLoading } from "@/components/ui/PanelLoading";
+import { useT } from "@/i18n/client";
 import { searchFolder } from "@/lib/folder-bridge/fsOps";
 import {
   addFolder,
@@ -88,9 +92,15 @@ export function FolderBridgeView() {
   const [results, setResults] = useState<SearchMatch[] | null>(null);
   const [preview, setPreview] = useState<SearchMatch | null>(null);
 
+  // Until the saved folders are back, "No folders yet" would be a false empty state.
+  const [restoring, setRestoring] = useState(true);
+  const tf = useT("filesBrowse");
+
   useEffect(() => {
     if (!supported) return;
-    void restoreFolders().then(setFolders);
+    void restoreFolders()
+      .then(setFolders)
+      .finally(() => setRestoring(false));
   }, [supported]);
 
   const handleAddFolder = async () => {
@@ -153,7 +163,13 @@ export function FolderBridgeView() {
   // Enter and the Search button share one lock, so a double Enter can't stack searches.
   const search = useAction(handleSearch);
 
-  if (supported === null) return null;
+  // Browser support is only known after hydration; hold the layout meanwhile.
+  if (supported === null)
+    return (
+      <PageSkeleton label={tf("loadingFolders")}>
+        <FolderBridgeSkeleton />
+      </PageSkeleton>
+    );
 
   // Network folders live on the server, so they work in any browser and
   // whether or not the bridge below is connected.
@@ -253,7 +269,9 @@ export function FolderBridgeView() {
             Add folder
           </ActionButton>
         </div>
-        {folders.length === 0 ? (
+        {restoring ? (
+          <PanelLoading label={tf("loadingFolders")} className="mt-2" />
+        ) : folders.length === 0 ? (
           <p className="mt-2 text-sm text-[var(--color-muted)]">
             No folders yet — Add folder to approve one for the agent to use.
           </p>

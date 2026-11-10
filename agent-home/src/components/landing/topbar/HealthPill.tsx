@@ -249,7 +249,7 @@ export function HealthPill({
           className={`inline-flex h-6 shrink-0 items-center gap-1 rounded-full bg-[var(--color-surface)] px-2 text-xs font-medium text-[var(--color-muted)] ${className}`}
         >
           <span aria-hidden className={`h-2 w-2 rounded-full ${VERDICT_DOT[verdict]}`} />
-          {build.buildMismatch ? "Update" : VERDICT_LABEL[verdict]}
+          <span className="hidden sm:inline">{build.buildMismatch ? "Update" : VERDICT_LABEL[verdict]}</span>
         </button>
         {sheet ? (
           <Sheet title="System health" onClose={() => setSheet(false)} component="HealthSheet">

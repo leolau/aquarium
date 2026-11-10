@@ -9,6 +9,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { BrowseView, formatSize, previewKind, serverFileUrl } from "@/components/files/BrowseView";
+import { SLOW_WAIT_MS } from "@/components/ui/SlowHint";
 import { takePendingAttachments } from "@/lib/chat/pending-attachments";
 import type { BrowseEntry, BrowsePlace } from "@/types";
 
@@ -59,6 +60,13 @@ afterEach(() => {
   vi.restoreAllMocks();
   sessionStorage.clear();
 });
+
+/** The CSS-timed "Still working…" line under a loading state (components/ui/SlowHint). */
+function expectStillWorking() {
+  const hint = screen.getByText(/Still working… a busy server can take a few more seconds/);
+  expect(hint.getAttribute("data-component")).toBe("SlowHint");
+  expect(hint.style.animationDelay).toBe(`${SLOW_WAIT_MS}ms`);
+}
 
 async function openJensen() {
   render(<BrowseView />);
@@ -184,6 +192,7 @@ describe("sorting and pages", () => {
     expect(document.querySelector('[data-component="PlacesSkeleton"]')).not.toBeNull();
     expect(document.querySelector('[data-component="BrowseSkeleton"]')).not.toBeNull();
     expect(screen.getByRole("status").textContent).toBe("Opening…");
+    expectStillWorking();
     release();
     await screen.findAllByText("Jensen-New");
     expect(document.querySelector('[data-component="PlacesSkeleton"]')).toBeNull();
@@ -209,6 +218,7 @@ describe("sorting and pages", () => {
     expect(skeleton.querySelectorAll("[data-skeleton-row]").length).toBeGreaterThan(0);
     expect(document.querySelectorAll("tr[data-entry]")).toHaveLength(0);
     expect(screen.getByText(/network folders can take up to 15 s/)).toBeTruthy();
+    expectStillWorking();
     release();
     await screen.findAllByText("offer.pdf");
     expect(document.querySelector('[data-component="BrowseSkeleton"]')).toBeNull();
@@ -226,6 +236,7 @@ describe("sorting and pages", () => {
     fireEvent.click((await screen.findAllByRole("button", { name: /Jensen-New/ }))[0]);
     await waitFor(() => expect(document.querySelector('[data-component="BrowseSkeleton"]')).not.toBeNull());
     expect(screen.getByText(/network folders can take up to 15 s/)).toBeTruthy();
+    expectStillWorking();
     release();
     await screen.findAllByText("Offers");
     expect(document.querySelector('[data-component="BrowseSkeleton"]')).toBeNull();

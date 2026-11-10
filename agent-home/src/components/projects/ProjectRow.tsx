@@ -8,6 +8,7 @@ import {
 import { outputsLabel } from "@/components/projects/outputsLabel";
 import { projectNextStep } from "@/components/projects/projectNextStep";
 import { ProjectCategoryTag } from "@/components/projects/categories/ProjectCategoryTag";
+import { RefBadge } from "@/components/refs/RefBadge";
 import { Pill, type Tone } from "@/components/ui/Pill";
 import type {
   ProjectCadence,
@@ -107,6 +108,7 @@ export function ProjectCardBody({
         >
           {project.name}
         </Link>
+        <RefBadge value={project.ref} />
         {awaiting > 0 && !nextStep ? (
           <Pill tone="warning">{awaiting} to accept</Pill>
         ) : null}

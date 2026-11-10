@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  isUserStartedChat,
+  latestSession,
   displayTitle,
   matchesQuery,
   pinsSupported,
@@ -41,6 +43,15 @@ describe("chats model", () => {
     expect(matchesQuery(s, "  ")).toBe(true);
   });
 
+  it("matches a chat ref exactly, case-insensitively", () => {
+    const s = { ...sessions[0], ref: "C12" };
+    expect(matchesQuery(s, "c12")).toBe(true);
+    expect(matchesQuery(s, " C12 ")).toBe(true);
+    expect(matchesQuery(s, "C1")).toBe(false);
+    expect(matchesQuery(s, "C120")).toBe(false);
+    expect(matchesQuery(sessions[0], "C12")).toBe(false);
+  });
+
   it("formats relative times and meta", () => {
     expect(relativeTime(NOW / 1000 - 20, NOW)).toBe("just now");
     expect(relativeTime(NOW / 1000 - 14 * 60, NOW)).toBe("14 min ago");
@@ -53,5 +64,30 @@ describe("chats model", () => {
     expect(quoteList(["A"])).toBe("“A”");
     expect(quoteList(["A", "B"])).toBe("“A” and “B”");
     expect(quoteList(["A", "B", "C"])).toBe("“A”, “B” and “C”");
+  });
+});
+
+describe("isUserStartedChat", () => {
+  const base = { source: "agent_home", preview: "hi there", cwd: null };
+  it("keeps Aquarium chats with a user message", () => {
+    expect(isUserStartedChat(base)).toBe(true);
+  });
+  it.each([
+    ["cron", { source: "cron" }],
+    ["project run", { source: "projects:acme:run-2" }],
+    ["to-do", { source: "todo" }],
+    ["messaging channel", { source: "telegram" }],
+    ["API server", { source: "api_server" }],
+    ["kanban worker", { cwd: "/root/.hermes/kanban/workspaces/t_9" }],
+    ["delivery topic without a user message", { preview: "" }],
+  ])("drops a %s session", (_, over) => {
+    expect(isUserStartedChat({ ...base, ...over })).toBe(false);
+  });
+});
+
+describe("latestSession", () => {
+  it("picks the chat touched last, skipping archived ones", () => {
+    expect(latestSession(sessions)?.id).toBe("s-pricing");
+    expect(latestSession([])).toBeNull();
   });
 });

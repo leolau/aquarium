@@ -6,7 +6,11 @@ import { ChatFile } from "@/components/chat/ChatFile";
 import { ChatMedia } from "@/components/chat/ChatMedia";
 import { RichText } from "@/components/chat/RichText";
 import { mediaRefPath } from "@/lib/chat/media-ref";
-import { splitCompactionContent, stripInjectedContext } from "@/lib/chat/transcript";
+import {
+  splitCompactionContent,
+  stripInjectedContext,
+  stripRefMentions,
+} from "@/lib/chat/transcript";
 import type { ChatMessage } from "@/types";
 
 interface Segment {
@@ -179,7 +183,7 @@ export const MessageBubble = memo(function MessageBubble({
 }) {
   const isUser = message.role === "user";
   const split = splitCompactionContent(message.content ?? "");
-  const content = isUser ? stripInjectedContext(split.display) : split.display;
+  const content = isUser ? stripRefMentions(stripInjectedContext(split.display)) : split.display;
   const reasoning = isUser ? "" : (message.reasoning ?? "").trim();
 
   if (content === "" && reasoning === "") {

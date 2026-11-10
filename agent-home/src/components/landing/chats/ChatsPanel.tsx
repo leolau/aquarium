@@ -8,7 +8,7 @@ import type { ProfileSummary } from "@/types";
 
 import { chatHref, chatsApi } from "./chatsApi";
 import { ArrowRightIcon, MessageIcon, XIcon } from "@/components/ui/icons";
-import { isPinned, matchesQuery, type LandingSession } from "./model";
+import { USER_CHAT_SOURCE, isPinned, latestSession, matchesQuery, type LandingSession } from "./model";
 import { NewChatButton, profileLabel } from "./NewChatButton";
 import { PinSuggestionCard } from "./PinSuggestionCard";
 import { SessionRow } from "./SessionRow";
@@ -48,6 +48,10 @@ export interface ChatsPanelProps {
   onOpenChat?: (session: LandingSession) => void;
   /** A row was renamed (the new title, trimmed; empty when cleared). */
   onRenamed?: (session: LandingSession, title: string) => void;
+  /** List (and search) only the chats the user started by typing in Aquarium. */
+  userChatsOnly?: boolean;
+  /** With no chat open, mark the latest chat as the one to continue. */
+  highlightLatest?: boolean;
 }
 
 function SectionHeader({ label, count }: { label: string; count?: number }) {
@@ -113,12 +117,25 @@ export function ChatsPanel({
   onOpenMessageHit,
   onOpenChat,
   onRenamed,
+  userChatsOnly = false,
+  highlightLatest = false,
 }: ChatsPanelProps & {
   searchShortcut?: boolean | "hint";
   onNavigate?: () => void;
   searchId?: string;
 }) {
-  const chats = useLandingChats({ profile, initialSessions, fetchImpl });
+  const chats = useLandingChats({ profile, initialSessions, fetchImpl, userChatsOnly });
+  const { hiddenIds } = chats;
+  const searchMessages = useMemo<MessageSearchFn | undefined>(
+    () =>
+      messageSearch && userChatsOnly
+        ? async (q, signal) =>
+            (await messageSearch(q, signal)).filter(
+              (h) => (h.source ?? USER_CHAT_SOURCE) === USER_CHAT_SOURCE && !hiddenIds.has(h.session_id),
+            )
+        : messageSearch,
+    [messageSearch, userChatsOnly, hiddenIds],
+  );
   const [query, setQuery] = useState("");
   const [fetchedProfiles, setFetchedProfiles] = useState<ProfileSummary[]>([]);
   const profiles = givenProfiles ?? fetchedProfiles;
@@ -171,6 +188,10 @@ export function ChatsPanel({
   const pinned = chats.pinned.filter(inCategory);
   const recent = chats.recent.filter(inCategory).slice(0, RECENT_LIMIT);
   const empty = !chats.loading && chats.sessions.filter((s) => !s.archived).length === 0;
+  const resumeId =
+    highlightLatest && !activeSessionId && !searching && (!categoryFilter || category === "all")
+      ? latestSession([...pinned, ...recent])?.id ?? null
+      : null;
 
   const row = (s: LandingSession) => (
     <SessionRow
@@ -179,6 +200,7 @@ export function ChatsPanel({
       href={chatHref(s.id, s.profile ?? profile)}
       profileLabel={label}
       active={s.id === activeSessionId}
+      resume={s.id === resumeId}
       canPin={chats.canPin}
       busy={chats.busyIds.has(s.id)}
       onTogglePin={(s) => void onTogglePin(s)}
@@ -267,10 +289,10 @@ export function ChatsPanel({
             ) : (
               <p className="px-3 py-2 text-xs text-[var(--color-muted)]">No chats match “{query.trim()}”.</p>
             )}
-            {messageSearch && onOpenMessageHit ? (
+            {searchMessages && onOpenMessageHit ? (
               <MessageSearchSection
                 query={query}
-                search={messageSearch}
+                search={searchMessages}
                 onOpen={onOpenMessageHit}
                 onNavigate={onNavigate}
               />

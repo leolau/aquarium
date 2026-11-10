@@ -128,6 +128,11 @@ SIGNED_IN = {
     # user_prefs: the acting person's own language; no user id is taken from the request
     "GET /api/me/preferences",
     "PUT /api/me/preferences",
+    # FG-35 aquarium: the box-wide snapshot + idle setting, and the caller's own creature
+    "GET /api/aquarium/snapshot",
+    "GET /api/aquarium/settings",
+    "GET /api/me/creature",
+    "PUT /api/me/creature",
     # own login only (session subject, never a body id): password + two-factor
     "GET /api/account/security",
     "POST /api/account/password",
@@ -246,6 +251,8 @@ SIGNED_IN = {
     "POST /api/registry/project-categories",
     "PATCH /api/registry/project-categories/{category_id}",
     "DELETE /api/registry/project-categories/{category_id}",
+    # refs_api: resolves through the projects read gate; invisible is 404
+    "GET /api/refs/{ref}",
     # projects_api: project membership and project role checked per project
     "GET /api/registry/projects",
     "POST /api/registry/projects",

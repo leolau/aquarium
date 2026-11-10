@@ -1,0 +1,24 @@
+{
+  "role": {
+    "owner": "Owner",
+    "admin": "Admin",
+    "member": "Member",
+    "viewer": "Viewer"
+  },
+  "account": {
+    "open": "Account",
+    "openNamed": "Account: {name}",
+    "openNamedRole": "Account: {name}, {role}",
+    "signedInAs": "Signed in as {name}",
+    "yourRoles": "Your roles",
+    "current": "current"
+  },
+  "panels": {
+    "collapseChats": "Collapse chats panel",
+    "expandChats": "Expand chats panel",
+    "collapseTasks": "Collapse Needs you and tasks panel",
+    "expandTasks": "Expand Needs you and tasks panel",
+    "chats": "Chats",
+    "tasks": "Needs you"
+  }
+}

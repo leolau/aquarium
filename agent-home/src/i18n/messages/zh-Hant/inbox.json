@@ -33,5 +33,6 @@
     "seeRemembered": "查看已記住的內容",
     "rememberThis": "記住這項",
     "remembering": "正在記住…"
-  }
+  },
+  "openRef": "開啟 {ref}"
 }

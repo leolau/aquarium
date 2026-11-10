@@ -190,9 +190,181 @@ body {
     filter: drop-shadow(0 0 6px rgb(167 139 250 / 0.85));
   }
 }
+/* FG-35 Aquarium dashboard title (components/aquarium/AquariumTitle): a
+ * wave of light runs through the letters and bubbles rise off the name. */
+.aq-title {
+  animation: aq-title-in 0.9s ease-out both;
+}
+.aq-title-char {
+  display: inline-block;
+  text-shadow: 0 2px 10px rgb(0 20 50 / 0.6);
+  animation: aq-title-wave 4.8s ease-in-out infinite;
+}
+.aq-title-bubble {
+  position: absolute;
+  bottom: 0.15em;
+  border-radius: 9999px;
+  border: 1px solid rgb(255 255 255 / 0.75);
+  background: radial-gradient(circle at 30% 30%, rgb(255 255 255 / 0.85), rgb(255 255 255 / 0.08) 60%);
+  opacity: 0;
+  pointer-events: none;
+  animation: aq-title-bubble 5.2s ease-in infinite;
+}
+@keyframes aq-title-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes aq-title-wave {
+  0%,
+  36%,
+  100% {
+    transform: translateY(0);
+    color: #ffffff;
+  }
+  14% {
+    transform: translateY(-0.12em);
+    color: #c9fbff;
+    text-shadow:
+      0 0 14px rgb(140 255 236 / 0.9),
+      0 2px 10px rgb(0 20 50 / 0.6);
+  }
+}
+@keyframes aq-title-bubble {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.6);
+  }
+  15% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(6px, -2.4em) scale(1.1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .aq-title,
+  .aq-title-char {
+    animation: none;
+  }
+  .aq-title-bubble {
+    display: none;
+  }
+}
+
+/* "Still working…" (components/ui/SlowHint): hidden until its inline
+   animation-delay passes, then fades in. Pure CSS so it also runs in a
+   streamed route loader before hydration. */
+.aq-slow-hint {
+  visibility: hidden;
+  opacity: 0;
+  animation: aq-slow-hint-in 300ms ease-out forwards;
+}
+@keyframes aq-slow-hint-in {
+  from {
+    visibility: visible;
+    opacity: 0;
+  }
+  to {
+    visibility: visible;
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .aq-slow-hint {
+    animation-duration: 1ms;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .aq-bowl-float,
   .aq-bowl-star {
     animation: none;
+  }
+}
+
+/* FG-35 Aquarium play: the tank shake, the tap ripple and the tips card. */
+.aq-tank-shake {
+  animation: aq-tank-shake 2.5s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+@keyframes aq-tank-shake {
+  0%,
+  100% {
+    transform: translate(0, 0) rotate(0);
+  }
+  5%,
+  25%,
+  45% {
+    transform: translate(-14px, 4px) rotate(-1.4deg);
+  }
+  15%,
+  35%,
+  55% {
+    transform: translate(14px, -4px) rotate(1.4deg);
+  }
+  65% {
+    transform: translate(-8px, 2px) rotate(-0.8deg);
+  }
+  75% {
+    transform: translate(6px, -2px) rotate(0.6deg);
+  }
+  85% {
+    transform: translate(-3px, 1px) rotate(-0.3deg);
+  }
+}
+.aq-tap-ripple {
+  animation: aq-tap-ripple 0.9s ease-out forwards;
+}
+@keyframes aq-tap-ripple {
+  from {
+    opacity: 0.9;
+    transform: translate(-50%, -50%) scale(0.2);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.6);
+  }
+}
+.aq-hint-in {
+  animation: aq-hint-in 0.35s ease-out both;
+}
+@keyframes aq-hint-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+.aq-hint-pulse {
+  animation: aq-hint-pulse 1.8s ease-in-out infinite;
+}
+@keyframes aq-hint-pulse {
+  50% {
+    transform: scale(1.25);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .aq-tank-shake,
+  .aq-hint-in,
+  .aq-hint-pulse {
+    animation: none;
+  }
+  .aq-tap-ripple {
+    animation: aq-tap-ripple-still 0.9s ease-out forwards;
+  }
+  @keyframes aq-tap-ripple-still {
+    from {
+      opacity: 0.8;
+      transform: translate(-50%, -50%);
+    }
+    to {
+      opacity: 0;
+      transform: translate(-50%, -50%);
+    }
   }
 }

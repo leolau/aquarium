@@ -1,0 +1,24 @@
+{
+  "role": {
+    "owner": "擁有者",
+    "admin": "管理員",
+    "member": "成員",
+    "viewer": "檢視者"
+  },
+  "account": {
+    "open": "帳戶",
+    "openNamed": "帳戶：{name}",
+    "openNamedRole": "帳戶：{name}，{role}",
+    "signedInAs": "已登入為 {name}",
+    "yourRoles": "你的角色",
+    "current": "目前"
+  },
+  "panels": {
+    "collapseChats": "收合對話面板",
+    "expandChats": "展開對話面板",
+    "collapseTasks": "收合「需要你」及工作面板",
+    "expandTasks": "展開「需要你」及工作面板",
+    "chats": "對話",
+    "tasks": "需要你"
+  }
+}

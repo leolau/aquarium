@@ -12,6 +12,7 @@ import { surfaceGlyph } from "@/components/inbox/IncomingRow";
 import { surfaceLabel } from "@/components/inbox/IncomingsFilters";
 import { formatSize, formatWhen } from "@/components/files/FilesView";
 import { AddToProjectSheet } from "@/components/projects/AddToProjectSheet";
+import { RefBadge } from "@/components/refs/RefBadge";
 import type { IncomingDetail } from "@/types";
 
 /**
@@ -67,7 +68,8 @@ export function IncomingDetailView({ item }: { item: IncomingDetail }) {
       <div className="min-w-0 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
         <p className="flex items-start gap-2 text-sm font-semibold">
           <span aria-hidden>{surfaceGlyph(current.surface)}</span>
-          <span className="min-w-0 break-words">{title}</span>
+          <span className="min-w-0 flex-1 break-words">{title}</span>
+          <RefBadge value={current.ref} />
         </p>
 
         <dl className="mt-3 grid grid-cols-[112px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-xs [overflow-wrap:anywhere]">

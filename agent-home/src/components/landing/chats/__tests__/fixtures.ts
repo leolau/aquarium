@@ -30,6 +30,13 @@ export const sessions: LandingSession[] = [
   session("s-old", { title: "Archived thing", last_active: min(2), archived: true }),
 ];
 
+/** `sessions` as the landing page lists them: chats typed in Aquarium (`agent_home`). */
+export const userChatSessions: LandingSession[] = sessions.map((s) => ({
+  ...s,
+  source: "agent_home",
+  preview: s.preview || s.title,
+}));
+
 type Handler = (init: RequestInit | undefined, url: URL) => Response | Promise<Response>;
 
 /** A `fetch` stub routing by "METHOD /path"; unmatched routes are 404. */

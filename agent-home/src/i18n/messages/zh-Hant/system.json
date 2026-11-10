@@ -116,7 +116,8 @@
     "watchers": "（負責人 + 關注者）",
     "showTasks": "再顯示 {count} 個任務",
     "hideTasks": "顯示較少任務",
-    "loadError": "無法載入圖譜"
+    "loadError": "無法載入圖譜",
+    "loading": "正在載入圖譜…"
   },
   "webview": {
     "subtitle": "查看並批准代理在自己的網頁瀏覽器中所做的事。",

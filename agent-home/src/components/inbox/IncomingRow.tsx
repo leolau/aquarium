@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 
+import { RefBadge } from "@/components/refs/RefBadge";
 import type { IncomingItem } from "@/types";
 
 /** A glyph per channel: the fastest way to read a mixed list at a glance. */
@@ -87,7 +88,8 @@ export function IncomingRow({ item, from = "" }: { item: IncomingItem; from?: st
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex items-baseline justify-between gap-2">
-              <span className="truncate text-sm font-medium">{title}</span>
+              <span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
+              <RefBadge value={item.ref} />
               <span className="shrink-0 text-[10px] text-[var(--color-muted)]">
                 {relativeWhen(item.occurred_at)}
               </span>

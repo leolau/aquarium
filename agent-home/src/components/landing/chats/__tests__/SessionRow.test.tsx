@@ -34,6 +34,14 @@ describe("SessionRow", () => {
     expect(screen.getByRole("link").getAttribute("href")).toBe("/chat?session=x");
   });
 
+  it("shows the chat's short ref as a copyable badge", () => {
+    renderRow({ session: { ...untitledRow, ref: "C42" } });
+    const badge = document.querySelector("[data-component='RefBadge']")!;
+    expect(badge.getAttribute("data-ref")).toBe("C42");
+    renderRow({ session: untitledRow });
+    expect(document.querySelectorAll("[data-component='RefBadge']").length).toBe(1);
+  });
+
   it("marks live sessions with a dot and 'working now'", () => {
     renderRow({ session: liveRow });
     expect(screen.getByRole("img", { name: "Working now" })).toBeTruthy();
@@ -52,6 +60,22 @@ describe("SessionRow", () => {
       </ul>,
     );
     expect(document.querySelector("time[data-slot='session-updated']")!.textContent).toBe("Last updated 1 min ago");
+  });
+
+  it("marks the chat to continue with a badge, unless it is already open", () => {
+    const { rerender } = renderRow({ session: pinnedRow, resume: true });
+    const li = document.querySelector("li")!;
+    expect(li.getAttribute("data-state")).toBe("resume");
+    expect(li.className).toContain("ring-[var(--color-accent)]");
+    expect(screen.getByText("Continue").getAttribute("data-slot")).toBe("continue-badge");
+    expect(screen.getByRole("link").getAttribute("title")).toBe("Continue your last chat");
+    rerender(
+      <ul>
+        <SessionRow session={pinnedRow} href="/x" profileLabel="Default" now={NOW} resume active />
+      </ul>,
+    );
+    expect(document.querySelector("li")!.getAttribute("data-state")).toBe("active");
+    expect(screen.queryByText("Continue")).toBeNull();
   });
 
   it("archives the chat from its row and locks while busy", () => {

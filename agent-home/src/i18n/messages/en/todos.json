@@ -17,5 +17,6 @@
   "moreHint": "More: Work on it · Add to project · Promote · Snooze",
   "moreTitle": "More actions",
   "workOnThis": "Work on this",
-  "snoozeFor": "Snooze for"
+  "snoozeFor": "Snooze for",
+  "openRef": "Open {ref}"
 }

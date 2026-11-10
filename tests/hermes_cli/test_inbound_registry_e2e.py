@@ -1113,3 +1113,36 @@ async def test_backfill_uses_one_connection(
         _principal("leo", role="owner"), surfaces=["whatsapp"], limit=200
     )
     assert len(page.items) == 50
+
+
+@pytest.mark.asyncio
+async def test_short_ref_backfill_reads_every_private_arrival(
+    postgres_dsn: str, monkeypatch
+) -> None:
+    """FG-36: the M backfill numbers everybody's arrivals, private ones too.
+
+    The table's RLS is FORCEd, so an unbound reader would see nothing; the
+    backfill binds an owner-role reader, and every arrival keeps its ref
+    across a re-poll.
+    """
+    from hermes_cli import inbound_registry, profile_refs, short_refs
+
+    registry = await _registry(postgres_dsn)
+    monkeypatch.setattr(inbound_registry, "default_registry", lambda mode=None: registry)
+    first = await _arrive(registry, _principal("ada"), external_id="m-1")
+    second = await _arrive(registry, _principal("bob"), external_id="m-2")
+
+    rows = dict(await profile_refs._profile_rows(profile_refs.MESSAGE))  # noqa: SLF001
+    assert {first.id, second.id} <= set(rows)
+
+    again = await _arrive(registry, _principal("ada"), external_id="m-1")
+    assert again.id == first.id
+    refs = short_refs.ensure_refs(
+        "M",
+        [
+            short_refs.RefItem(first.id, profile=profile_refs.current_profile()),
+            short_refs.RefItem(second.id, profile=profile_refs.current_profile()),
+        ],
+    )
+    assert refs[first.id] != refs[second.id]
+    assert short_refs.lookup(refs[first.id]).internal_id == first.id

@@ -20,6 +20,7 @@ import type {
   VpnView,
 } from "@/types";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { PanelLoading } from "@/components/ui/PanelLoading";
 
 const PROVIDER = "fortinet";
 const KIND = "fortinet-vpn";
@@ -420,6 +421,8 @@ export function VpnConnections() {
       </p>
 
       {error && <p className="mb-2 text-xs text-[var(--color-danger)]">{error}</p>}
+
+      {!loaded && <PanelLoading className="mb-3" />}
 
       {loaded && vpns.length === 0 && !form && (
         <p className="mb-2 text-xs text-[var(--color-muted)]">

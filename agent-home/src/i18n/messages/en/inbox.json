@@ -33,5 +33,6 @@
     "seeRemembered": "See what it remembers",
     "rememberThis": "Remember this",
     "remembering": "Remembering…"
-  }
+  },
+  "openRef": "Open {ref}"
 }

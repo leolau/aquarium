@@ -41,15 +41,11 @@ vi.mock("@/lib/landing/needsYou", () => ({
   }),
 }));
 vi.mock("./topbar", () => ({
-  TopBarView: ({ onToggleSidebar }: { onToggleSidebar: () => void }) => (
-    <button type="button" onClick={onToggleSidebar}>
-      Toggle chats
-    </button>
-  ),
+  TopBarView: () => <div data-component="TopBar" />,
 }));
 vi.mock("./work", () => ({ LandingWorkPanel: () => <div data-component="LandingWorkPanel" /> }));
 
-import { fakeFetch, json, sessions } from "./chats/__tests__/fixtures";
+import { fakeFetch, json, userChatSessions as sessions } from "./chats/__tests__/fixtures";
 import { LandingClient } from "./LandingClient";
 
 const profiles = [{ name: "default", is_default: true }] as never;
