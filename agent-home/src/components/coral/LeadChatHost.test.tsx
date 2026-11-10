@@ -5,10 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ChatStreamHandlers } from "@/lib/chat/stream";
 
-vi.mock("@/lib/chat/stream", () => ({
+vi.mock("@/lib/chat/stream", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/chat/stream")>()),
   streamChatTurn: vi.fn(),
   attachChatStream: vi.fn(),
   cancelChatTurn: vi.fn(),
+  steerChatTurn: vi.fn(),
+  removeQueuedInput: vi.fn(),
 }));
 // Link's useLinkStatus only works inside the App Router's link context.
 vi.mock("next/link", async (importOriginal) => {
@@ -19,8 +22,15 @@ vi.mock("next/link", async (importOriginal) => {
   };
 });
 
-import { attachChatStream, cancelChatTurn, streamChatTurn } from "@/lib/chat/stream";
+import {
+  attachChatStream,
+  cancelChatTurn,
+  steerChatTurn,
+  streamChatTurn,
+  TurnInProgressError,
+} from "@/lib/chat/stream";
 import { STEER_MARKER_CLOSE, STEER_MARKER_OPEN } from "@/lib/chat/transcript";
+import { Composer } from "@/components/chat/Composer";
 import { LeadChatHost } from "@/components/coral/LeadChatHost";
 
 // jsdom has no PointerEvent constructor; RTL builds one for pointer* events.
@@ -67,6 +77,7 @@ beforeEach(() => {
   vi.mocked(attachChatStream).mockResolvedValue(undefined);
   vi.mocked(cancelChatTurn).mockReset();
   vi.mocked(cancelChatTurn).mockResolvedValue(undefined);
+  vi.mocked(steerChatTurn).mockReset();
 });
 
 afterEach(() => {
@@ -415,5 +426,242 @@ describe("LeadChatHost move & resize", () => {
     expect(panel.style.top).toBe("77px");
     expect(panel.style.width).toBe("300px");
     expect(panel.style.height).toBe("330px");
+  });
+});
+
+describe("LeadChatHost while the agent works", () => {
+  it("steers a second message into the running turn and follows run.chained", async () => {
+    leadFetch();
+    let handlers: ChatStreamHandlers | null = null;
+    let finish: () => void = () => {};
+    vi.mocked(streamChatTurn).mockImplementation(
+      (_params, h) =>
+        new Promise((resolve) => {
+          handlers = h;
+          finish = () => resolve({ sessionId: "lead-abc" });
+        }),
+    );
+    vi.mocked(steerChatTurn).mockResolvedValue({ itemId: "i1", mode: "steer", status: "pending" });
+    let chainedHandlers: ChatStreamHandlers | null = null;
+    vi.mocked(attachChatStream).mockImplementation(
+      (_params, h) =>
+        new Promise(() => {
+          chainedHandlers = h;
+        }),
+    );
+
+    render(<LeadChatHost />);
+    openLeadChat();
+    await waitFor(() => expect(screen.getByPlaceholderText(/message your agent/i)).toBeTruthy());
+    await sendMessage("Plan the week");
+    await waitFor(() => expect(handlers).not.toBeNull());
+    handlers!.onAccepted?.("run-1", "lead-abc");
+
+    const box = await screen.findByPlaceholderText(/steer the agent/i);
+    fireEvent.input(box, { target: { value: "include Friday" } });
+    fireEvent.click(screen.getByRole("button", { name: /^steer$/i }));
+    await waitFor(() =>
+      expect(vi.mocked(steerChatTurn)).toHaveBeenCalledWith({
+        sessionId: "lead-abc",
+        runId: "run-1",
+        text: "include Friday",
+        mode: "steer",
+      }),
+    );
+    expect(vi.mocked(streamChatTurn)).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(screen.getByRole("list", { name: /sent while working/i }).textContent).toContain(
+        "will be read after the current step",
+      ),
+    );
+
+    handlers!.onInputSteered?.("i1");
+    await waitFor(() =>
+      expect(document.querySelector('[data-sent-while-working="true"]') ?? screen.getByText("include Friday")).toBeTruthy(),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("list", { name: /sent while working/i }).textContent).toContain(
+        "Delivered",
+      ),
+    );
+    await waitFor(
+      () => expect(screen.queryByRole("list", { name: /sent while working/i })).toBeNull(),
+      { timeout: 3000 },
+    );
+
+    handlers!.onRunChained?.({ nextRunId: "run-2", itemId: "q1", itemIds: ["q1"], text: "then email it", source: "queue" });
+    finish();
+    await waitFor(() =>
+      expect(vi.mocked(attachChatStream).mock.calls[0]?.[0]).toMatchObject({
+        sessionId: "lead-abc",
+        runId: "run-2",
+      }),
+    );
+    expect(chainedHandlers).not.toBeNull();
+    expect(screen.getByRole("dialog").textContent).toContain("then email it");
+    // Still working: Stop is there and Send still steers.
+    expect(screen.getByRole("button", { name: /stop the agent/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^steer$/i })).toBeTruthy();
+  });
+
+  it("redraws chips from /api/chat/active on reopen", async () => {
+    leadFetch({
+      "/api/chat/active": {
+        runId: "run-7",
+        pending: [{ itemId: "q1", mode: "queue", text: "then email it", status: "queued" }],
+      },
+    });
+    vi.mocked(attachChatStream).mockImplementation(() => new Promise(() => {}));
+    render(<LeadChatHost />);
+    openLeadChat();
+    const chips = await screen.findByRole("list", { name: /sent while working/i });
+    expect(chips.textContent).toContain("then email it");
+    expect(screen.getByRole("button", { name: /remove queued message/i })).toBeTruthy();
+  });
+});
+
+describe("LeadChatHost: sends that do not get through", () => {
+  /** Start a lead turn whose stream stays open; returns its handlers. */
+  async function startTurn(): Promise<ChatStreamHandlers> {
+    let handlers: ChatStreamHandlers | null = null;
+    vi.mocked(streamChatTurn).mockImplementation(
+      (_params, h) =>
+        new Promise(() => {
+          handlers = h;
+        }),
+    );
+    render(<LeadChatHost />);
+    openLeadChat();
+    await waitFor(() => expect(screen.getByPlaceholderText(/message your agent/i)).toBeTruthy());
+    await sendMessage("Plan the week");
+    await waitFor(() => expect(handlers).not.toBeNull());
+    return handlers!;
+  }
+
+  const steerBox = () => screen.findByPlaceholderText(/steer the agent/i) as Promise<HTMLTextAreaElement>;
+
+  it("fits the panel while working: the actions wrap below a full-width input", async () => {
+    leadFetch();
+    await startTurn();
+    const box = await steerBox();
+    expect(box.classList.contains("basis-full")).toBe(true);
+    expect((box.parentElement as HTMLElement).classList.contains("flex-wrap")).toBe(true);
+  });
+
+  it("keeps the composer controls above the corner resize grip", async () => {
+    leadFetch();
+    await startTurn();
+    await steerBox();
+    const layer = document.querySelector('[data-component="LeadChatComposer"]') as HTMLElement;
+    expect(layer.classList.contains("relative")).toBe(true);
+    expect(layer.classList.contains("z-[1]")).toBe(true);
+    expect(layer.contains(screen.getByRole("button", { name: /choose how to send/i }))).toBe(true);
+    expect(layer.contains(document.querySelector(".leadchat-resize"))).toBe(false);
+  });
+
+  it("lifts the panel above the floating launchers while the mode sheet is open", async () => {
+    leadFetch();
+    await startTurn();
+    await steerBox();
+    const panel = screen.getByRole("dialog", { name: /lead chat/i });
+    expect(panel.style.zIndex).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: /choose how to send/i }));
+    await waitFor(() => expect(panel.style.zIndex).toBe("70"));
+    expect(panel.contains(document.querySelector('[data-component="SendModeBackdrop"]'))).toBe(true);
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /queue/i }));
+    await waitFor(() => expect(panel.style.zIndex).toBe(""));
+  });
+
+  it("gives the draft back while the run id is still pending", async () => {
+    leadFetch();
+    await startTurn();
+    const box = await steerBox();
+    fireEvent.input(box, { target: { value: "include Friday" } });
+    fireEvent.click(screen.getByRole("button", { name: /^steer$/i }));
+    await screen.findByText(/still starting/i);
+    await waitFor(() => expect(box.value).toBe("include Friday"));
+    expect(vi.mocked(steerChatTurn)).not.toHaveBeenCalled();
+  });
+
+  it("gives the draft back when the steer fails", async () => {
+    leadFetch();
+    const h = await startTurn();
+    h.onAccepted?.("run-1", "lead-abc");
+    vi.mocked(steerChatTurn).mockRejectedValue(new Error("Steer failed."));
+    const box = await steerBox();
+    fireEvent.input(box, { target: { value: "include Friday" } });
+    fireEvent.click(screen.getByRole("button", { name: /^steer$/i }));
+    await screen.findByText("Steer failed.");
+    await waitFor(() => expect(box.value).toBe("include Friday"));
+  });
+
+  it("keeps the files when a send joins a turn already running", async () => {
+    leadFetch();
+    sessionStorage.setItem(
+      "agent-home:pending-attachments",
+      JSON.stringify([
+        { path: "/uploads/report.pdf", name: "report.pdf", content_type: "application/pdf", size: 10 },
+      ]),
+    );
+    vi.mocked(streamChatTurn).mockRejectedValue(new TurnInProgressError("run-5"));
+    vi.mocked(attachChatStream).mockImplementation(() => new Promise(() => {}));
+    vi.mocked(steerChatTurn).mockResolvedValue({ itemId: "i1", mode: "steer", status: "pending" });
+    render(<LeadChatHost />);
+    openLeadChat();
+    await screen.findByText("report.pdf");
+    await sendMessage("look at this");
+    await waitFor(() =>
+      expect(vi.mocked(steerChatTurn)).toHaveBeenCalledWith({
+        sessionId: "lead-abc",
+        runId: "run-5",
+        text: "look at this",
+        mode: "steer",
+      }),
+    );
+    const box = await steerBox();
+    await waitFor(() => expect(screen.getByText("report.pdf")).toBeTruthy());
+    expect(box.value).toBe("");
+  });
+
+  it("says which message was not sent when the server removes it", async () => {
+    leadFetch();
+    const h = await startTurn();
+    h.onAccepted?.("run-1", "lead-abc");
+    h.onInputAccepted?.({ itemId: "q1", mode: "queue", text: "then email it" });
+    await screen.findByRole("list", { name: /sent while working/i });
+    h.onInputRemoved?.("q1");
+    await screen.findByText(/Not sent: \u201cthen email it\u201d/);
+    expect(screen.queryByRole("list", { name: /sent while working/i })).toBeNull();
+  });
+});
+
+describe("LeadChatHost launcher and the composer", () => {
+  it("floats above a composer docked under it, and returns once it goes", async () => {
+    leadFetch();
+    vi.stubGlobal("innerWidth", 1280);
+    vi.stubGlobal("innerHeight", 820);
+    const rect = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        return this.dataset.component === "Composer"
+          ? ({ top: 700, bottom: 820, left: 300, right: 1260, width: 960, height: 120 } as DOMRect)
+          : ({ top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0 } as DOMRect);
+      });
+    const { rerender } = render(
+      <>
+        <Composer sending={false} storageEnabled={false} sessionId="s1" onSend={() => true} />
+        <LeadChatHost />
+      </>,
+    );
+    const fab = screen.getByRole("button", { name: /open lead chat/i });
+    await waitFor(() => expect(fab.style.bottom).toBe("calc(120px + 0.5rem)"));
+    rerender(
+      <>
+        {null}
+        <LeadChatHost />
+      </>,
+    );
+    await waitFor(() => expect(fab.style.bottom).toBe("calc(var(--safe-bottom) + 1rem)"));
+    rect.mockRestore();
   });
 });

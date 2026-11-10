@@ -142,6 +142,8 @@ export function ChatConversationView({
         onSend={conv.send}
         onStop={() => void conv.stopTurn()}
         stopping={selTurn?.stopping ?? false}
+        pending={conv.selPending}
+        onRemovePending={(itemId) => void conv.removePending(itemId)}
         launcherClearance={composerLauncherClearance}
       />
     </>

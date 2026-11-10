@@ -160,6 +160,29 @@ describe("MessageBubble", () => {
     expect(html).toContain("Can you check?");
   });
 
+  it("hides the attachment note, inlined file text and cache path after a reload", () => {
+    const html = renderToStaticMarkup(
+      <MessageBubble
+        message={{
+          id: 9,
+          role: "user",
+          content:
+            "[The user sent a text document: 'notes.txt'. Its content has been included below. " +
+            "The file is also saved at: /home/hermes/.hermes/cache/documents/doc_1a2b_notes.txt]" +
+            "\n\n--- notes.txt ---\nsecret file body\n\n" +
+            "[app context: page /chat · last active: none]\nsummarise the file\n\n" +
+            "[notes.txt](/api/chat/media?path=u%2Fnotes.txt)",
+        }}
+      />,
+    );
+    expect(html).not.toContain("[app context:");
+    expect(html).not.toContain("The user sent");
+    expect(html).not.toContain("cache/documents");
+    expect(html).not.toContain("secret file body");
+    expect(html).toContain("summarise the file");
+    expect(html).toContain("notes.txt");
+  });
+
   it("renders a compaction summary as a muted divider, never as a bubble", () => {
     const html = renderToStaticMarkup(
       <MessageBubble

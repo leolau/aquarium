@@ -12,10 +12,27 @@ import {
   onLeadChatRequest,
   reportLeadChatOpen,
 } from "@/components/coral/coral-interlock";
+import { useComposerClearance } from "@/lib/chat/composer-dock";
+import { insertSteeredBubble } from "@/lib/chat/messages";
+import {
+  dropPending,
+  initialStatus,
+  DELIVERED_MS,
+  markDeferred,
+  markDelivered,
+  notSentNotice,
+  pendingFromActive,
+  upsertPending,
+} from "@/lib/chat/pending-inputs";
 import {
   attachChatStream,
   cancelChatTurn,
+  removeQueuedInput,
+  RunFinishedError,
+  steerChatTurn,
   streamChatTurn,
+  TurnInProgressError,
+  type ChatRunChain,
   type ChatStreamHandlers,
 } from "@/lib/chat/stream";
 import { visibleTurns } from "@/lib/chat/transcript";
@@ -28,7 +45,14 @@ import {
   type TurnActivity,
 } from "@/lib/chat/turn-activity";
 import { usePersistentState } from "@/lib/use-persistent-state";
-import type { ChatApprovalRequest, ChatAttachment, ChatMessage } from "@/types";
+import type {
+  ChatApprovalRequest,
+  ChatAttachment,
+  ChatInputMode,
+  ChatMessage,
+  ChatSendResult,
+  PendingChatInput,
+} from "@/types";
 import { useAction } from "@/lib/use-action";
 
 /** Where the floating panel sits and how big it is, once the user moves it. */
@@ -65,6 +89,8 @@ export function LeadChatHost({
   storageEnabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [composerMenuOpen, setComposerMenuOpen] = useState(false);
+  const composerClearance = useComposerClearance();
   const [leadSession, setLeadSession] = useState<string | null>(null);
   const [rect, setRect] = usePersistentState<LeadChatRect | null>(
     "agent-home:leadchat-rect",
@@ -94,6 +120,16 @@ export function LeadChatHost({
   const panelRef = useRef<HTMLDivElement>(null);
   /** Bumped on every turn started here, so a slow history load can tell it is stale. */
   const turnsRef = useRef(0);
+  // Messages sent while the agent works that it has not read yet (chips);
+  // the ref is read inside stream callbacks, the state renders them.
+  const [pending, setPending] = useState<PendingChatInput[]>([]);
+  const pendingRef = useRef<PendingChatInput[]>([]);
+  /** Synchronous mirror of `sending` for code that runs after an await. */
+  const busyRef = useRef(false);
+  /** `run.chained` seen on the current stream: the run to attach to next. */
+  const chainRef = useRef<ChatRunChain | null>(null);
+  /** Queued items the user is taking back (their `input.removed` is expected). */
+  const removingRef = useRef(new Set<string>());
 
   const effectiveRect = dragRect ?? rect;
 
@@ -143,23 +179,17 @@ export function LeadChatHost({
     let cancelled = false;
     fetch(`/api/chat/active?sessionId=${encodeURIComponent(leadSession)}`)
       .then((res) => (res.ok ? res.json() : { runId: null }))
-      .then((data: { runId?: string | null }) => {
+      .then((data: { runId?: string | null; pending?: unknown }) => {
         if (cancelled || !data.runId) return;
-        const runId = data.runId;
-        beginTurn(runId, leadSession);
-        const controller = new AbortController();
-        abortRef.current = controller;
-        attachChatStream(
-          { sessionId: leadSession, runId, signal: controller.signal },
-          makeHandlers(),
-        )
-          .catch(() => undefined)
-          .finally(endTurn);
+        void attachRun(leadSession, data.runId, pendingFromActive(data.pending));
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
+    // attachRun is re-created each render; the probe should only re-run when
+    // the panel opens, the session resolves, or a turn ends.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, leadSession, sending]);
 
   useEffect(() => {
@@ -268,6 +298,7 @@ export function LeadChatHost({
   }
 
   function beginTurn(runId: string | null, sessionId: string) {
+    busyRef.current = true;
     setSending(true);
     setTurn({ ...emptyActivity(runId), sessionId });
     setStreamText("");
@@ -276,10 +307,26 @@ export function LeadChatHost({
   }
 
   function endTurn() {
+    busyRef.current = false;
+    chainRef.current = null;
+    // Any chip still showing was neither read nor run.
+    const left = pendingRef.current;
+    updatePending(() => []);
+    flagNotSent(left);
     setSending(false);
     setTurn(null);
     setApproval(null);
     abortRef.current = null;
+  }
+
+  function flagNotSent(items: PendingChatInput[]) {
+    const notice = notSentNotice(items);
+    if (notice) setError(notice);
+  }
+
+  function updatePending(update: (cur: PendingChatInput[]) => PendingChatInput[]) {
+    pendingRef.current = update(pendingRef.current);
+    setPending(pendingRef.current);
   }
 
   function makeHandlers(): ChatStreamHandlers {
@@ -332,7 +379,121 @@ export function LeadChatHost({
         setApproval(null);
       },
       onError: (message) => setError(message),
+      onInputAccepted: (input) =>
+        updatePending((cur) => upsertPending(cur, { ...input, status: initialStatus(input.mode) })),
+      onInputSteered: (itemId) => {
+        const item = pendingRef.current.find((p) => p.itemId === itemId);
+        // The chip says "Delivered" for a moment; the bubble carries the label.
+        updatePending((cur) => markDelivered(cur, itemId));
+        window.setTimeout(() => updatePending((cur) => dropPending(cur, itemId)), DELIVERED_MS);
+        if (item) setMessages((prev) => insertSteeredBubble(prev, item.text));
+        touch(() => ({}));
+      },
+      onInputDeferred: (itemId) => updatePending((cur) => markDeferred(cur, itemId)),
+      onInputRemoved: (itemId) => {
+        const item = pendingRef.current.find((p) => p.itemId === itemId);
+        updatePending((cur) => dropPending(cur, itemId));
+        if (removingRef.current.delete(itemId) || !item) return;
+        flagNotSent([item]);
+      },
+      onRunChained: (chain) => {
+        chainRef.current = chain;
+      },
     };
+  }
+
+  /**
+   * The server starts the next turn itself after a queued message, a leftover
+   * steer or a Stop & send (`run.chained`): attach to each follow-up run in
+   * turn, staying busy throughout.
+   */
+  async function followChain(sessionId: string) {
+    for (let chain = chainRef.current; chain; chain = chainRef.current) {
+      chainRef.current = null;
+      const next = chain;
+      updatePending((cur) =>
+        cur.filter((p) => p.itemId !== next.itemId && !next.itemIds.includes(p.itemId)),
+      );
+      setMessages((prev) => [...prev, { role: "user", content: next.text }]);
+      setTurn({ ...emptyActivity(next.nextRunId), sessionId });
+      setStreamText("");
+      setApproval(null);
+      setNote(null);
+      const controller = new AbortController();
+      abortRef.current = controller;
+      try {
+        await attachChatStream(
+          { sessionId, runId: next.nextRunId, signal: controller.signal },
+          makeHandlers(),
+        );
+      } catch {
+        return;
+      }
+    }
+  }
+
+  /** Follow a run already going on the server (a reload, or another device's turn). */
+  async function attachRun(sessionId: string, runId: string, restored: PendingChatInput[] = []) {
+    if (busyRef.current) return;
+    beginTurn(runId, sessionId);
+    if (restored.length > 0) updatePending(() => restored);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    try {
+      await attachChatStream({ sessionId, runId, signal: controller.signal }, makeHandlers());
+      await followChain(sessionId);
+    } catch {
+      // The run ended before we could attach; the transcript has it.
+    } finally {
+      endTurn();
+    }
+  }
+
+  /** Steer / queue / Stop & send a message into the running turn. */
+  async function sendWhileWorking(text: string, mode: ChatInputMode): Promise<ChatSendResult> {
+    const runId = turn?.runId ?? null;
+    const sid = turn?.sessionId || leadSession;
+    if (!runId || !sid) {
+      setError("The agent is still starting — send that again in a moment.");
+      return false;
+    }
+    setError(null);
+    try {
+      const item = await steerChatTurn({ sessionId: sid, runId, text, mode });
+      if (item.itemId && busyRef.current) {
+        updatePending((cur) =>
+          upsertPending(cur, { itemId: item.itemId, mode: item.mode, text, status: item.status }),
+        );
+      }
+      return true;
+    } catch (err) {
+      if (err instanceof RunFinishedError) {
+        // The turn ended meanwhile: its stream is closing; send a normal turn after it.
+        for (let i = 0; i < 200 && busyRef.current; i += 1) {
+          await new Promise((r) => window.setTimeout(r, 50));
+        }
+        return (await send(text, [])) ?? true;
+      }
+      setError(err instanceof Error ? err.message : "The message could not be sent.");
+      return false;
+    }
+  }
+
+  async function removePending(itemId: string) {
+    const runId = turn?.runId ?? null;
+    const sid = turn?.sessionId || leadSession;
+    if (!runId || !sid) return;
+    removingRef.current.add(itemId);
+    try {
+      if (await removeQueuedInput({ sessionId: sid, runId, itemId })) {
+        updatePending((cur) => dropPending(cur, itemId));
+      } else {
+        removingRef.current.delete(itemId);
+      }
+    } catch (err) {
+      removingRef.current.delete(itemId);
+      setError(err instanceof Error ? err.message : "That message could not be removed.");
+    }
   }
 
   /** The server's answer to "which conversation am I", or null if it can't say. */
@@ -347,8 +508,12 @@ export function LeadChatHost({
     }
   }
 
-  async function send(text: string, attachments: ChatAttachment[]) {
-    if (sending) return;
+  async function send(
+    text: string,
+    attachments: ChatAttachment[],
+    mode?: ChatInputMode,
+  ): Promise<ChatSendResult | void> {
+    if (busyRef.current) return sendWhileWorking(text, mode ?? "steer");
     // Sending with no session id would start a *new* conversation, which is
     // the bug this panel used to have in a different shape: a lead chat that
     // is only this browser's. Better to say so than to fork it silently.
@@ -370,18 +535,43 @@ export function LeadChatHost({
     const controller = new AbortController();
     abortRef.current = controller;
     setMessages((prev) => [...prev, { role: "user", content: text }]);
+    let busyRunId: string | null = null;
     try {
       await streamChatTurn(
         { sessionId, message: text, attachments, signal: controller.signal },
         makeHandlers(),
       );
+      await followChain(sessionId);
     } catch (err) {
       const aborted = err instanceof DOMException && err.name === "AbortError";
-      if (!aborted) {
+      if (err instanceof TurnInProgressError) {
+        // A turn is already running here (another device): follow it and
+        // steer this message into it instead of failing.
+        busyRunId = err.runId;
+        setMessages((prev) => prev.slice(0, -1));
+      } else if (!aborted) {
         setError(err instanceof Error ? err.message : "The turn failed.");
       }
     } finally {
       endTurn();
+    }
+    if (busyRunId) {
+      const runId = busyRunId;
+      void attachRun(sessionId, runId);
+      setTurn((prev) => (prev ? { ...prev, runId, sessionId } : prev));
+      try {
+        const item = await steerChatTurn({ sessionId, runId, text, mode: "steer" });
+        if (item.itemId && busyRef.current) {
+          updatePending((cur) =>
+            upsertPending(cur, { itemId: item.itemId, mode: item.mode, text, status: item.status }),
+          );
+        }
+        // The running turn takes the text only; the files go back to the composer.
+        return attachments.length > 0 ? "attachments_kept" : true;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "The message could not be sent.");
+        return false;
+      }
     }
   }
 
@@ -446,8 +636,8 @@ export function LeadChatHost({
           className="leadchat-panel"
           role="dialog"
           aria-label="Lead chat"
-          style={
-            effectiveRect
+          style={{
+            ...(effectiveRect
               ? {
                   left: effectiveRect.x,
                   top: effectiveRect.y,
@@ -456,8 +646,11 @@ export function LeadChatHost({
                   width: effectiveRect.w,
                   height: effectiveRect.h,
                 }
-              : undefined
-          }
+              : {}),
+            // The composer's mode sheet and its backdrop must cover every
+            // floating launcher (z-60), and they can't rise above the panel.
+            ...(composerMenuOpen ? { zIndex: 70 } : {}),
+          }}
         >
           <div className="mb-2 flex items-start justify-between gap-2 px-1">
             <div
@@ -530,14 +723,21 @@ export function LeadChatHost({
               </p>
             ) : null}
           </div>
-          <Composer
-            sending={sending}
-            stopping={turn?.stopping ?? false}
-            storageEnabled={storageEnabled}
-            sessionId={leadSession}
-            onSend={(text, attachments) => void send(text, attachments)}
-            onStop={() => void stopTurn()}
-          />
+          {/* Above the corner resize grip, so the grip never takes the Send arrow's taps. */}
+          <div data-component="LeadChatComposer" className="relative z-[1]">
+            <Composer
+              narrow
+              onMenuOpenChange={setComposerMenuOpen}
+              sending={sending}
+              stopping={turn?.stopping ?? false}
+              storageEnabled={storageEnabled}
+              sessionId={leadSession}
+              onSend={(text, attachments, mode) => send(text, attachments, mode)}
+              onStop={() => void stopTurn()}
+              pending={pending}
+              onRemovePending={(itemId) => void removePending(itemId)}
+            />
+          </div>
           <div
             className="leadchat-resize-tl"
             onPointerDown={startPointer("resize-tl")}
@@ -562,7 +762,10 @@ export function LeadChatHost({
         className="coral-fab fixed z-[60] flex h-14 w-14 items-center justify-center rounded-full text-xl text-[var(--color-accent-fg)]"
         style={{
           right: "1rem",
-          bottom: "calc(var(--safe-bottom) + 1rem)",
+          // Float above a composer docked at the bottom (its Send controls).
+          bottom: composerClearance
+            ? `calc(${composerClearance}px + 0.5rem)`
+            : "calc(var(--safe-bottom) + 1rem)",
           background:
             "linear-gradient(135deg, var(--color-accent), color-mix(in srgb, var(--color-accent) 60%, #ff7e6b))",
         }}

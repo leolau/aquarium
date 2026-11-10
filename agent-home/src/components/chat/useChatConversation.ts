@@ -6,15 +6,31 @@ import type { ChatActivity } from "@/components/chat/StatusIndicator";
 import { useFollowLatest } from "@/components/chat/useFollowLatest";
 import { markSessionRead } from "@/lib/chat/last-read";
 import {
+  insertSteeredBubble,
   setLastAssistantContent,
   withLiveTurn,
   type LiveTurn,
 } from "@/lib/chat/messages";
+import {
+  dropPending,
+  initialStatus,
+  DELIVERED_MS,
+  markDeferred,
+  markDelivered,
+  notSentNotice,
+  pendingFromActive,
+  upsertPending,
+} from "@/lib/chat/pending-inputs";
 import { withProfileQuery } from "@/lib/chat/profile";
 import {
   attachChatStream,
   cancelChatTurn,
+  removeQueuedInput,
+  RunFinishedError,
+  steerChatTurn,
   streamChatTurn,
+  TurnInProgressError,
+  type ChatRunChain,
   type ChatStreamHandlers,
 } from "@/lib/chat/stream";
 import {
@@ -32,7 +48,10 @@ import { useAction } from "@/lib/use-action";
 import type {
   ChatApprovalRequest,
   ChatAttachment,
+  ChatInputMode,
   ChatMessage,
+  ChatSendResult,
+  PendingChatInput,
   SessionSummary,
 } from "@/types";
 
@@ -129,6 +148,18 @@ export function useChatConversation({
   // One AbortController per in-flight turn (keyed like the buffers) so the user
   // can stop the turn for the conversation currently on screen.
   const abortRef = useRef<Map<string, AbortController>>(new Map());
+  // Messages sent while a turn runs that the agent has not read yet (the
+  // composer's chips), per session. The ref is read inside stream callbacks;
+  // the state mirrors it for rendering.
+  const [pendingInputs, setPendingInputs] = useState<Record<string, PendingChatInput[]>>({});
+  const pendingRef = useRef<Map<string, PendingChatInput[]>>(new Map());
+  /** Queued items the user is taking back (their `input.removed` is expected). */
+  const removingRef = useRef(new Set<string>());
+  // Synchronous mirror of `sendingKeys` for code that runs after an await.
+  const busyRef = useRef<Set<string>>(new Set());
+  // `run.chained` seen on a turn's stream: the follow-up run to attach to
+  // once this one's stream ends.
+  const chainRef = useRef<Map<string, ChatRunChain>>(new Map());
 
   // ── Search highlight ──
   const [inSearchOpen, setInSearchOpen] = useState(initialHighlight !== undefined);
@@ -159,6 +190,7 @@ export function useChatConversation({
   const selDecision = decisions[selKey] ?? null;
   const selTurn = selBusy ? (liveActivity[selKey] ?? null) : null;
   const selRunningTool = runningTool(selTurn);
+  const selPending = selBusy ? (pendingInputs[selKey] ?? []) : [];
   const selActivity: ChatActivity = deriveActivity({
     busy: selBusy,
     turn: selTurn,
@@ -188,8 +220,39 @@ export function useChatConversation({
     };
   }, [messages, sendingKeys, selApproval, selDecision, loadingThread, liveActivity, followRef]);
 
-  const removeSending = (k: string) =>
+  const addSending = (k: string) => {
+    busyRef.current.add(k);
+    setSendingKeys((prev) => (prev.includes(k) ? prev : [...prev, k]));
+  };
+  const removeSending = (k: string) => {
+    busyRef.current.delete(k);
     setSendingKeys((prev) => prev.filter((x) => x !== k));
+  };
+
+  /** Say which messages sent while working never reached the agent. */
+  function flagNotSent(items: PendingChatInput[]) {
+    const notice = notSentNotice(items);
+    if (notice) setError(notice);
+  }
+
+  /** A turn is over: any chip still showing was neither read nor run. */
+  function clearPending(turnKey: string) {
+    const left = pendingRef.current.get(turnKey) ?? [];
+    updatePending(turnKey, () => []);
+    flagNotSent(left);
+  }
+
+  function updatePending(
+    turnKey: string,
+    update: (cur: PendingChatInput[]) => PendingChatInput[],
+  ) {
+    const next = update(pendingRef.current.get(turnKey) ?? []);
+    if (next.length > 0) pendingRef.current.set(turnKey, next);
+    else pendingRef.current.delete(turnKey);
+    setPendingInputs((prev) =>
+      next.length > 0 ? { ...prev, [turnKey]: next } : dropKey(prev, turnKey),
+    );
+  }
 
   async function openConversation(id: string) {
     // Switching is allowed at any time — a turn in another session keeps
@@ -329,7 +392,113 @@ export function useChatConversation({
         if (content) setLive(content);
       },
       onError: (message) => setError(message),
+      onInputAccepted: (input) =>
+        updatePending(turnKey, (cur) =>
+          upsertPending(cur, { ...input, status: initialStatus(input.mode) }),
+        ),
+      onInputSteered: (itemId) => {
+        const item = pendingRef.current.get(turnKey)?.find((p) => p.itemId === itemId);
+        // The chip says "Delivered" for a moment; the bubble carries the label.
+        updatePending(turnKey, (cur) => markDelivered(cur, itemId));
+        window.setTimeout(
+          () => updatePending(turnKey, (cur) => dropPending(cur, itemId)),
+          DELIVERED_MS,
+        );
+        if (!item) return;
+        const buf = liveRef.current.get(turnKey);
+        if (buf) buf.steered = [...(buf.steered ?? []), item.text];
+        if (keyOf(selectedRef.current) === turnKey) {
+          setMessages((prev) => insertSteeredBubble(prev, item.text));
+        }
+        touch(() => ({}));
+      },
+      onInputDeferred: (itemId) => updatePending(turnKey, (cur) => markDeferred(cur, itemId)),
+      onInputRemoved: (itemId) => {
+        const item = (pendingRef.current.get(turnKey) ?? []).find((p) => p.itemId === itemId);
+        updatePending(turnKey, (cur) => dropPending(cur, itemId));
+        // The user's own ✕ needs no notice; anything else never reached the agent.
+        if (removingRef.current.delete(itemId) || !item) return;
+        flagNotSent([item]);
+      },
+      onRunChained: (chain) => {
+        chainRef.current.set(turnKey, chain);
+      },
     };
+  }
+
+  /**
+   * The server starts the next turn itself when a run ends with a queued
+   * message, a leftover steer or a Stop & send (`run.chained`). Attach to it
+   * — and to whatever it chains to — so the composer stays busy and the
+   * follow-up streams in like any other turn. `fromKey` is the key the
+   * finished stream ran under; a first turn of a new chat moves to its
+   * landed session's key here.
+   */
+  async function followChain(fromKey: string, sid: string) {
+    const turnKey = keyOf(sid);
+    let chain = chainRef.current.get(fromKey);
+    if (!chain) {
+      clearPending(fromKey);
+      return;
+    }
+    chainRef.current.delete(fromKey);
+    if (turnKey !== fromKey) {
+      const carried = pendingRef.current.get(fromKey) ?? [];
+      updatePending(fromKey, () => []);
+      updatePending(turnKey, () => carried);
+      addSending(turnKey);
+    }
+    try {
+      while (chain) {
+        const next = chain;
+        updatePending(turnKey, (cur) =>
+          cur.filter((p) => p.itemId !== next.itemId && !next.itemIds.includes(p.itemId)),
+        );
+        setApprovals((prev) => dropKey(prev, turnKey));
+        setDecisions((prev) => dropKey(prev, turnKey));
+        liveRef.current.set(turnKey, { user: next.text, assistant: "" });
+        setLiveActivity((prev) => ({
+          ...prev,
+          [turnKey]: { ...emptyActivity(next.nextRunId), sessionId: sid },
+        }));
+        const onScreen = () => selectedRef.current === sid;
+        if (onScreen()) {
+          setMessages((prev) => [
+            ...dropTrailingEmptyAssistant(prev),
+            { role: "user", content: next.text },
+            { role: "assistant", content: "" },
+          ]);
+        }
+        const setLive = (content: string) => {
+          const buf = liveRef.current.get(turnKey);
+          if (buf) buf.assistant = content;
+          if (onScreen()) setMessages((prev) => setLastAssistantContent(prev, content));
+        };
+        try {
+          await attachChatStream(
+            { sessionId: sid, runId: next.nextRunId, profile },
+            makeTurnHandlers(turnKey, setLive),
+          );
+        } catch {
+          // Gone before we could attach — the transcript reload shows it.
+          break;
+        } finally {
+          if (onScreen()) setMessages(dropTrailingEmptyAssistant);
+        }
+        chain = chainRef.current.get(turnKey);
+        chainRef.current.delete(turnKey);
+      }
+      sessionsStale();
+    } finally {
+      chainRef.current.delete(turnKey);
+      clearPending(turnKey);
+      if (turnKey !== fromKey) {
+        removeSending(turnKey);
+        liveRef.current.delete(turnKey);
+        setApprovals((prev) => dropKey(prev, turnKey));
+        setLiveActivity((prev) => dropKey(prev, turnKey));
+      }
+    }
   }
 
   /**
@@ -339,11 +508,9 @@ export function useChatConversation({
    */
   async function resumeTurn(sid: string, runId: string) {
     const turnKey = keyOf(sid);
-    if (sendingKeys.includes(turnKey)) return; // already attached/attaching
+    if (busyRef.current.has(turnKey)) return; // already attached/attaching
     setError(null);
-    setSendingKeys((prev) =>
-      prev.includes(turnKey) ? prev : [...prev, turnKey],
-    );
+    addSending(turnKey);
     liveRef.current.set(turnKey, { user: "", assistant: "" });
     beginActivity(turnKey, runId);
     setMessages((prev) => {
@@ -364,6 +531,8 @@ export function useChatConversation({
         { sessionId: sid, runId },
         makeTurnHandlers(turnKey, setLive),
       );
+      if (selectedRef.current === sid) setMessages(dropTrailingEmptyAssistant);
+      await followChain(turnKey, sid);
       sessionsStale();
     } catch {
       // The grace window may have passed; the next transcript load shows the
@@ -371,9 +540,76 @@ export function useChatConversation({
     } finally {
       removeSending(turnKey);
       liveRef.current.delete(turnKey);
+      chainRef.current.delete(turnKey);
+      clearPending(turnKey);
       setApprovals((prev) => dropKey(prev, turnKey));
       setLiveActivity((prev) => dropKey(prev, turnKey));
     }
+  }
+
+  /**
+   * A message sent while a turn runs on this session: steer it into the
+   * running turn, queue it for the next one, or stop and send it (`mode`).
+   * The chip shows until the agent reads it. When the run finished in the
+   * meantime the message goes out as a normal turn instead.
+   */
+  async function sendWhileWorking(text: string, mode: ChatInputMode): Promise<ChatSendResult> {
+    const turnKey = selKey;
+    const turn = liveActivity[turnKey];
+    const runId = turn?.runId ?? null;
+    const sid = turn?.sessionId || sessionId;
+    if (!runId || !sid) {
+      setError("The agent is still starting — send that again in a moment.");
+      return false;
+    }
+    setError(null);
+    try {
+      const item = await steerChatTurn({ sessionId: sid, runId, text, mode, profile });
+      // The stream may already have reported (or even delivered) the item.
+      if (item.itemId && busyRef.current.has(turnKey)) {
+        updatePending(turnKey, (cur) =>
+          upsertPending(cur, { itemId: item.itemId, mode: item.mode, text, status: item.status }),
+        );
+      }
+      return true;
+    } catch (err) {
+      if (err instanceof RunFinishedError) return startTurn(text, [], { afterRunEnds: true });
+      setError(err instanceof Error ? err.message : "The message could not be sent.");
+      return false;
+    }
+  }
+
+  /** Take a queued message back before it starts. */
+  async function removePending(itemId: string) {
+    const turnKey = selKey;
+    const turn = liveActivity[turnKey];
+    const runId = turn?.runId ?? null;
+    const sid = turn?.sessionId || sessionId;
+    if (!runId || !sid) return;
+    removingRef.current.add(itemId);
+    try {
+      const removed = await removeQueuedInput({ sessionId: sid, runId, itemId, profile });
+      // Not removed means it already started; its own turn replaces the chip.
+      if (removed) updatePending(turnKey, (cur) => dropPending(cur, itemId));
+      else removingRef.current.delete(itemId);
+    } catch (err) {
+      removingRef.current.delete(itemId);
+      setError(err instanceof Error ? err.message : "That message could not be removed.");
+    }
+  }
+
+  /**
+   * Send from the composer. While this session's turn runs, the message is
+   * delivered to that turn by `mode` (Steer by default); otherwise it starts
+   * a turn.
+   */
+  async function send(
+    text: string,
+    attachments: ChatAttachment[],
+    mode?: ChatInputMode,
+  ): Promise<ChatSendResult> {
+    if (busyRef.current.has(selKey)) return sendWhileWorking(text, mode ?? "steer");
+    return startTurn(text, attachments);
   }
 
   /**
@@ -382,17 +618,27 @@ export function useChatConversation({
    * signal. A user-initiated stop resolves true: the streamed partial stays,
    * and restoring the draft would read as an error that wasn't.
    */
-  async function send(text: string, attachments: ChatAttachment[]): Promise<boolean> {
+  async function startTurn(
+    text: string,
+    attachments: ChatAttachment[],
+    { afterRunEnds = false }: { afterRunEnds?: boolean } = {},
+  ): Promise<ChatSendResult> {
     // The session this turn belongs to, captured up-front so late-arriving
     // events are attributed to their origin, not to whatever is selected later.
     const turnSessionId = sessionId;
     const turnKey = keyOf(turnSessionId);
-    if (sendingKeys.includes(turnKey)) return false; // one live turn per session
+    if (busyRef.current.has(turnKey)) {
+      // A steer that found its run finished: that run's stream is closing
+      // here too; wait for it to wind down before starting the next turn.
+      if (!afterRunEnds) return false;
+      await waitUntilIdle(turnKey);
+      if (busyRef.current.has(turnKey)) return false;
+    }
     setError(null);
     setApprovals((prev) => dropKey(prev, turnKey));
     setDecisions((prev) => dropKey(prev, turnKey));
     followRef.current = true;
-    setSendingKeys((prev) => [...prev, turnKey]);
+    addSending(turnKey);
     // Buffer this turn so it survives session switches; the buffer's assistant
     // text is the single source of truth for accumulated deltas.
     liveRef.current.set(turnKey, { user: text, assistant: "" });
@@ -417,6 +663,7 @@ export function useChatConversation({
       }
     };
 
+    let busyRunId: string | null = null;
     try {
       const { sessionId: landed } = await streamChatTurn(
         {
@@ -438,6 +685,8 @@ export function useChatConversation({
       // A turn stopped before its first token completes with no text; never
       // leave a blank reply bubble behind.
       if (onThisSession()) setMessages(dropTrailingEmptyAssistant);
+      const landedSid = landed || turnSessionId;
+      if (landedSid) await followChain(turnKey, landedSid);
       sessionsStale();
       // The backend auto-titles a new chat a few seconds after its first reply.
       const titledId = landed || turnSessionId;
@@ -449,7 +698,15 @@ export function useChatConversation({
       return true;
     } catch (err) {
       const aborted = err instanceof DOMException && err.name === "AbortError";
-      if (aborted) {
+      if (err instanceof TurnInProgressError && turnSessionId) {
+        // Another tab or device is already running a turn here: follow it
+        // and hand this message to it as a steer (below, once this turn's
+        // state is cleared) instead of failing.
+        if (onThisSession()) {
+          setMessages((prev) => prev.slice(0, Math.max(0, prev.length - 2)));
+        }
+        busyRunId = err.runId;
+      } else if (aborted) {
         // The user stopped the turn. Keep whatever streamed so far; only drop a
         // trailing empty assistant bubble so we never leave a blank reply.
         if (onThisSession()) setMessages(dropTrailingEmptyAssistant);
@@ -459,15 +716,56 @@ export function useChatConversation({
         }
         setError(err instanceof Error ? err.message : "The message could not be sent.");
       }
-      return !aborted ? false : true;
+      if (!busyRunId) return aborted;
     } finally {
       // Turn is done and now persisted server-side; drop the live buffer so a
       // later re-open shows the canonical transcript, not a duplicate overlay.
       removeSending(turnKey);
       liveRef.current.delete(turnKey);
       abortRef.current.delete(turnKey);
+      chainRef.current.delete(turnKey);
+      clearPending(turnKey);
       setApprovals((prev) => dropKey(prev, turnKey));
       setLiveActivity((prev) => dropKey(prev, turnKey));
+    }
+    const joinRunId: string | null = busyRunId;
+    if (!joinRunId || !turnSessionId) return false;
+    // The running turn takes the text only; the files go back to the composer.
+    const joined = await joinRunningTurn(turnSessionId, joinRunId, text);
+    return joined && attachments.length > 0 ? "attachments_kept" : joined;
+  }
+
+  /** Resolves once `turnKey` has no live turn (polls the busy mirror). */
+  function waitUntilIdle(turnKey: string, timeoutMs = 10_000): Promise<void> {
+    return new Promise((resolve) => {
+      const started = Date.now();
+      const tick = () => {
+        if (!busyRef.current.has(turnKey) || Date.now() - started > timeoutMs) resolve();
+        else window.setTimeout(tick, 50);
+      };
+      tick();
+    });
+  }
+
+  /** `turn_in_progress`: attach to the run already going and steer this message into it. */
+  async function joinRunningTurn(sid: string, runId: string, text: string): Promise<boolean> {
+    const turnKey = keyOf(sid);
+    void resumeTurn(sid, runId);
+    setLiveActivity((prev) => ({
+      ...prev,
+      [turnKey]: { ...(prev[turnKey] ?? emptyActivity(runId)), runId, sessionId: sid },
+    }));
+    try {
+      const item = await steerChatTurn({ sessionId: sid, runId, text, mode: "steer", profile });
+      if (item.itemId && busyRef.current.has(turnKey)) {
+        updatePending(turnKey, (cur) =>
+          upsertPending(cur, { itemId: item.itemId, mode: item.mode, text, status: item.status }),
+        );
+      }
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "The message could not be sent.");
+      return false;
     }
   }
 
@@ -501,9 +799,12 @@ export function useChatConversation({
           path(`/api/chat/active?sessionId=${encodeURIComponent(sessionId)}`),
           { cache: "no-store" },
         );
-        const data = (await res.json()) as { runId?: string | null };
+        const data = (await res.json()) as { runId?: string | null; pending?: unknown };
         if (cancelled || !res.ok || !data.runId) return;
         attaching = true;
+        // Redraw the chips for messages sent before the reload.
+        const restored = pendingFromActive(data.pending);
+        if (restored.length > 0) updatePending(keyOf(sessionId), () => restored);
         await resumeTurn(sessionId, data.runId);
         // Reconcile against the persisted transcript whether the attach
         // succeeded or the turn had already finished.
@@ -627,6 +928,8 @@ export function useChatConversation({
     startNewConversation,
     send,
     stopTurn,
+    selPending,
+    removePending,
     resolveApproval: resolveApprovalOnce,
   };
 }

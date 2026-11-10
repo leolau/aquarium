@@ -41,6 +41,21 @@ export function setLastAssistantContent(
 export interface LiveTurn {
   user: string;
   assistant: string;
+  /** Steers the agent has read during this turn ("Sent while working"). */
+  steered?: string[];
+}
+
+/**
+ * Show a steer the agent just read as the user's own bubble. It lands above
+ * the reply still streaming (the agent changes course from here on), or at
+ * the end when no reply bubble is open.
+ */
+export function insertSteeredBubble(messages: ChatMessage[], text: string): ChatMessage[] {
+  const bubble: ChatMessage = { role: "user", content: text, sentWhileWorking: true };
+  const last = messages[messages.length - 1];
+  return last && last.role === "assistant"
+    ? [...messages.slice(0, -1), bubble, last]
+    : [...messages, bubble];
 }
 
 /**
@@ -57,6 +72,9 @@ export function withLiveTurn(
   return [
     ...base,
     { role: "user", content: live.user },
+    ...(live.steered ?? []).map(
+      (content): ChatMessage => ({ role: "user", content, sentWhileWorking: true }),
+    ),
     { role: "assistant", content: live.assistant },
   ];
 }

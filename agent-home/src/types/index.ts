@@ -347,6 +347,34 @@ export type ChatRole = "user" | "assistant" | "system" | "tool";
  * Python `SessionDB` returns). Only the fields the mobile chat pane renders are
  * typed; `tool` rows are kept out of the visible thread.
  */
+/**
+ * How a message sent while a turn is running is delivered: `steer` is read
+ * after the agent's current tool step, `queue` runs as the next turn,
+ * `interrupt` stops the turn and runs next ("Stop & send").
+ */
+export type ChatInputMode = "steer" | "queue" | "interrupt";
+
+/**
+ * A message sent while the agent works that has not reached the model yet —
+ * drawn as a chip above the composer until it is steered in, chained into the
+ * next turn, or removed. `deferred`: a steer the turn finished before reading;
+ * it runs as the next turn.
+ */
+/**
+ * What a composer send resolved to: `false` — nothing reached the agent
+ * (give the draft back); `"attachments_kept"` — the text went to a running
+ * turn, which takes text only, so the files go back to the composer.
+ */
+export type ChatSendResult = boolean | "attachments_kept";
+
+export interface PendingChatInput {
+  itemId: string;
+  mode: ChatInputMode;
+  text: string;
+  /** `delivered`: the agent just read it (shown briefly, then dropped). */
+  status: "pending" | "queued" | "deferred" | "delivered";
+}
+
 export interface ChatMessage {
   id?: number;
   role: ChatRole;

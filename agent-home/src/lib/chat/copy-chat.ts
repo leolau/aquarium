@@ -3,7 +3,7 @@
  * every visible turn, each reply's saved reasoning, and the in-flight turn's
  * live activity (tool steps + reasoning) so nothing on screen is left out.
  */
-import { splitCompactionContent, stripUiContextLine } from "@/lib/chat/transcript";
+import { splitCompactionContent, stripInjectedContext } from "@/lib/chat/transcript";
 import type { ToolChip } from "@/components/chat/LiveActivity";
 import type { ChatMessage } from "@/types";
 
@@ -41,7 +41,7 @@ export function chatTranscriptText(
     if (m.role !== "user" && m.role !== "assistant") continue;
     const isUser = m.role === "user";
     const display = splitCompactionContent(m.content ?? "").display;
-    const content = (isUser ? stripUiContextLine(display) : display).trim();
+    const content = (isUser ? stripInjectedContext(display) : display).trim();
     const reasoning = isUser ? "" : (m.reasoning ?? "").trim();
     if (content === "" && reasoning === "") continue;
     const parts = [isUser ? "**You:**" : "**Agent:**"];

@@ -1,0 +1,315 @@
+// @vitest-environment jsdom
+/**
+ * The composer while the agent works: the box and Send stay usable, Send is a
+ * split button (Steer by default; Queue; Stop & send), Stop stays its own red
+ * button, and messages the agent has not read yet show as chips above it.
+ */
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { Composer } from "@/components/chat/Composer";
+import type { PendingChatInput } from "@/types";
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
+
+function working(props: Partial<Parameters<typeof Composer>[0]> = {}) {
+  const onSend = vi.fn<(t: string, a: unknown[], m?: string) => Promise<boolean>>(
+    async () => true,
+  );
+  const onStop = vi.fn();
+  const utils = render(
+    <Composer
+      sending
+      storageEnabled={false}
+      sessionId="s1"
+      onSend={onSend}
+      onStop={onStop}
+      {...props}
+    />,
+  );
+  return { ...utils, onSend, onStop };
+}
+
+const box = () => screen.getByRole("textbox") as HTMLTextAreaElement;
+const type = (text: string) => fireEvent.change(box(), { target: { value: text } });
+const chooseMode = (name: RegExp) => {
+  fireEvent.click(screen.getByRole("button", { name: /choose how to send/i }));
+  fireEvent.click(screen.getByRole("menuitemradio", { name: name }));
+};
+
+describe("Composer while the agent works", () => {
+  it("keeps the box and a Steer send enabled, with Stop beside it", async () => {
+    const { onSend, onStop } = working();
+    expect(box().disabled).toBe(false);
+    const send = screen.getByRole("button", { name: /^steer$/i }) as HTMLButtonElement;
+    expect(send.disabled).toBe(true); // nothing typed yet
+    type("also check the logs");
+    expect(send.disabled).toBe(false);
+    fireEvent.click(send);
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("also check the logs", [], "steer"));
+    expect(box().value).toBe("");
+
+    fireEvent.click(screen.getByRole("button", { name: /stop the agent/i }));
+    expect(onStop).toHaveBeenCalledTimes(1);
+    expect(onSend).toHaveBeenCalledTimes(1);
+  });
+
+  it("lists Steer / Queue / Stop & send and sends with the chosen mode", async () => {
+    const { onSend } = working();
+    fireEvent.click(screen.getByRole("button", { name: /choose how to send/i }));
+    const menu = screen.getByRole("menu", { name: /send mode/i });
+    expect(within(menu).getAllByRole("menuitemradio").map((b) => b.textContent)).toEqual([
+      expect.stringContaining("Steer"),
+      expect.stringContaining("Queue"),
+      expect.stringContaining("Stop & send"),
+    ]);
+    expect(within(menu).getByRole("menuitemradio", { name: /^.?steer/i }).getAttribute("aria-checked")).toBe(
+      "true",
+    );
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /queue/i }));
+    expect(screen.queryByRole("menu")).toBeNull();
+
+    type("then write the summary");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("then write the summary", [], "queue"));
+    // The mode sticks for the next message.
+    expect(screen.getByRole("button", { name: /^queue$/i })).toBeTruthy();
+  });
+
+  it("Stop & send is one-off: the next message steers again", async () => {
+    const { onSend } = working();
+    chooseMode(/stop & send/i);
+    expect(screen.getByRole("button", { name: /^stop & send$/i })).toBeTruthy();
+    type("forget that, do X");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("forget that, do X", [], "interrupt"));
+    await waitFor(() => expect(screen.getByRole("button", { name: /^steer$/i })).toBeTruthy());
+  });
+
+  it("closes the mode menu on Escape", () => {
+    working();
+    fireEvent.click(screen.getByRole("button", { name: /choose how to send/i }));
+    expect(screen.getByRole("menu")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("gives the draft back when a mid-turn send fails", async () => {
+    working({ onSend: async () => false });
+    type("lost");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(box().value).toBe("lost"));
+  });
+
+  it("shows plain Send (no mode) when idle", async () => {
+    const onSend = vi.fn(async () => true);
+    render(<Composer sending={false} storageEnabled={false} sessionId="s1" onSend={onSend} />);
+    expect(screen.queryByRole("button", { name: /choose how to send/i })).toBeNull();
+    type("hello");
+    fireEvent.click(screen.getByRole("button", { name: /^send$/i }));
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("hello", []));
+  });
+
+  it("can steer while the first turn's onSend is still pending", async () => {
+    let finish: (v: boolean) => void = () => {};
+    const onSend = vi.fn((_t: string, _a: unknown[], mode?: string) =>
+      mode ? Promise.resolve(true) : new Promise<boolean>((r) => (finish = r)),
+    );
+    const { rerender } = render(
+      <Composer sending={false} storageEnabled={false} sessionId="s1" onSend={onSend} />,
+    );
+    type("start");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await act(async () => {});
+    rerender(<Composer sending storageEnabled={false} sessionId="s1" onSend={onSend} />);
+    type("steer it");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(onSend).toHaveBeenLastCalledWith("steer it", [], "steer"));
+    finish(true);
+  });
+});
+
+describe("Composer pending chips", () => {
+  const pending: PendingChatInput[] = [
+    { itemId: "s1", mode: "steer", text: "look at B", status: "pending" },
+    { itemId: "s2", mode: "steer", text: "and D", status: "deferred" },
+    { itemId: "q1", mode: "queue", text: "then C", status: "queued" },
+  ];
+
+  it("says when each message will be read, and lets a queued one be removed", () => {
+    const onRemovePending = vi.fn();
+    working({ pending, onRemovePending });
+    const chips = within(screen.getByRole("list", { name: /sent while working/i })).getAllByRole(
+      "listitem",
+    );
+    expect(chips).toHaveLength(3);
+    expect(chips[0].textContent).toContain("look at B");
+    expect(chips[0].textContent).toContain("will be read after the current step");
+    expect(chips[1].textContent).toContain("will run next");
+    expect(chips[2].textContent).toContain("Queued next");
+    // Only queued messages can be taken back.
+    expect(within(chips[0]).queryByRole("button")).toBeNull();
+    fireEvent.click(within(chips[2]).getByRole("button", { name: /remove queued message: then c/i }));
+    expect(onRemovePending).toHaveBeenCalledWith("q1");
+  });
+
+  it("hides chips once the agent is idle", () => {
+    render(
+      <Composer sending={false} storageEnabled={false} sessionId="s1" onSend={() => true} pending={pending} />,
+    );
+    expect(screen.queryByRole("list", { name: /sent while working/i })).toBeNull();
+  });
+});
+
+describe("Composer at 390px", () => {
+  it("stacks chips and opens the mode menu as a bottom sheet over a backdrop", () => {
+    window.innerWidth = 390;
+    window.dispatchEvent(new Event("resize"));
+    working({ pending: [{ itemId: "q1", mode: "queue", text: "then C", status: "queued" }] });
+    const chips = screen.getByRole("list", { name: /sent while working/i });
+    // One chip per row; a long one truncates inside its own row.
+    expect(chips.className).toContain("flex-col");
+    expect(within(chips).getByText(/then C/).className).toContain("truncate");
+
+    fireEvent.click(screen.getByRole("button", { name: /choose how to send/i }));
+    const sheet = screen.getByRole("menu");
+    // Below the `sm` breakpoint the menu pins to the bottom edge, full width.
+    for (const cls of ["max-sm:fixed", "max-sm:inset-x-0", "max-sm:bottom-0", "max-sm:rounded-t-2xl"]) {
+      expect(sheet.className).toContain(cls);
+    }
+    const backdrop = document.querySelector('[data-component="SendModeBackdrop"]') as HTMLElement;
+    expect(backdrop.className).toContain("sm:hidden");
+    fireEvent.click(backdrop);
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+});
+
+describe("Composer layout while working", () => {
+  const box = () => document.querySelector('[data-component="Composer"]') as HTMLElement;
+
+  it("gives the input the full row on a phone and puts Stop and Send below it", () => {
+    working();
+    const input = screen.getByRole("textbox");
+    const row = input.parentElement as HTMLElement;
+    expect(row.className).toContain("max-sm:flex-wrap");
+    expect(input.className).toContain("max-sm:basis-full");
+    expect(input.className).toContain("max-sm:order-first");
+    // Stop and the split Send sit together at the right end of the action row.
+    const stop = screen.getByRole("button", { name: /stop the agent/i });
+    expect(stop.className).toContain("max-sm:ml-auto");
+    expect(row.contains(document.querySelector('[data-component="SendSplit"]'))).toBe(true);
+  });
+
+  it("keeps the idle composer on one row", () => {
+    render(<Composer sending={false} storageEnabled={false} sessionId="s1" onSend={() => true} />);
+    const input = screen.getByRole("textbox");
+    expect((input.parentElement as HTMLElement).className).not.toContain("flex-wrap");
+    expect(input.className).not.toContain("basis-full");
+  });
+
+  it("raises the open mode menu and its backdrop above the floating launchers (z-60)", () => {
+    working();
+    expect(box().className).not.toContain("z-[70]");
+    fireEvent.click(screen.getByRole("button", { name: /choose how to send/i }));
+    expect(box().className).toContain("z-[70]");
+    expect(box().contains(screen.getByRole("menu"))).toBe(true);
+    expect(box().contains(document.querySelector('[data-component="SendModeBackdrop"]'))).toBe(true);
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /queue/i }));
+    expect(box().className).not.toContain("z-[70]");
+  });
+
+  it("tells the host when the mode menu opens and closes", () => {
+    const onMenuOpenChange = vi.fn();
+    working({ onMenuOpenChange });
+    fireEvent.click(screen.getByRole("button", { name: /choose how to send/i }));
+    expect(onMenuOpenChange).toHaveBeenLastCalledWith(true);
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /queue/i }));
+    expect(onMenuOpenChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("in a narrow panel puts the actions below the input at every screen width", () => {
+    working({ narrow: true });
+    const input = screen.getByRole("textbox");
+    const row = input.parentElement as HTMLElement;
+    expect(row.classList.contains("flex-wrap")).toBe(true);
+    expect(input.classList.contains("basis-full")).toBe(true);
+    expect(input.classList.contains("order-first")).toBe(true);
+    const stop = screen.getByRole("button", { name: /stop the agent/i });
+    expect(stop.classList.contains("ml-auto")).toBe(true);
+    // No desktop-only status text squeezing the panel's action row.
+    expect(screen.getByText(/agent is working/i).className).not.toContain("lg:inline");
+  });
+
+  it("drops the left-launcher reserve from the input while working on a phone, keeping it on the action row", () => {
+    working({ storageEnabled: true });
+    const attach = screen.getByRole("button", { name: /attach file/i });
+    expect(box().classList.contains("ml-14")).toBe(true);
+    expect(box().classList.contains("max-sm:ml-0")).toBe(true);
+    expect(attach.classList.contains("max-sm:ml-14")).toBe(true);
+  });
+
+  it("keeps the reserve on the whole composer when idle, and none where the layout clears the launcher", () => {
+    const idle = render(
+      <Composer sending={false} storageEnabled sessionId="s1" onSend={() => true} />,
+    );
+    expect(box().classList.contains("ml-14")).toBe(true);
+    expect(box().className).not.toContain("max-sm:ml-0");
+    expect(screen.getByRole("button", { name: /attach file/i }).className).not.toContain("ml-14");
+    idle.unmount();
+    working({ storageEnabled: true, launcherClearance: false });
+    expect(box().className).not.toContain("ml-14");
+    expect(screen.getByRole("button", { name: /attach file/i }).className).not.toContain("ml-14");
+  });
+});
+
+describe("Composer with a file waiting while the agent works", () => {
+  const report = { path: "/uploads/report.pdf", name: "report.pdf", content_type: "application/pdf", size: 10 };
+  const seedFile = () =>
+    sessionStorage.setItem("agent-home:pending-attachments", JSON.stringify([report]));
+
+  it("still steers text, and keeps the file for the next normal prompt", async () => {
+    seedFile();
+    const { onSend } = working();
+    await screen.findByText("report.pdf");
+    type("only the text goes now");
+    const send = screen.getByRole("button", { name: /^steer$/i }) as HTMLButtonElement;
+    expect(send.disabled).toBe(false);
+    fireEvent.click(send);
+    await waitFor(() =>
+      expect(onSend).toHaveBeenCalledWith("only the text goes now", [], "steer"),
+    );
+    expect(box().value).toBe("");
+    expect(screen.getByText("report.pdf")).toBeTruthy();
+    expect(screen.getByText(/attachments go with your next prompt/i)).toBeTruthy();
+  });
+
+  it("puts the files back when the host could only deliver the text", async () => {
+    seedFile();
+    const onSend = vi.fn(async () => "attachments_kept" as const);
+    render(<Composer sending={false} storageEnabled={false} sessionId="s1" onSend={onSend} />);
+    await screen.findByText("report.pdf");
+    type("look at this");
+    fireEvent.click(screen.getByRole("button", { name: /^send$/i }));
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("look at this", [report]));
+    await waitFor(() => expect(screen.getByText("report.pdf")).toBeTruthy());
+    expect(box().value).toBe("");
+  });
+});
+
+describe("Composer delivered steer", () => {
+  it("shows a delivered steer as Delivered, without a remove control", () => {
+    working({
+      pending: [{ itemId: "i1", mode: "steer", text: "use staging", status: "delivered" }],
+      onRemovePending: () => {},
+    });
+    const chip = within(screen.getByRole("list", { name: /sent while working/i })).getByRole(
+      "listitem",
+    );
+    expect(chip.textContent).toContain("Delivered");
+    expect(chip.textContent).not.toContain("will be read");
+    expect(within(chip).queryByRole("button")).toBeNull();
+  });
+});
