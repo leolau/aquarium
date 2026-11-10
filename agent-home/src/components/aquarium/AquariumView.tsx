@@ -52,6 +52,7 @@ export function AquariumView({ load }: AquariumViewProps) {
   const [selected, setSelectedState] = useState<HitTarget | null>(null);
 
   const scene = useCallback((): Scene => (sceneRef.current ??= createScene()), []);
+  const swimmers = useCallback(() => sceneRef.current?.leaders.values(), []);
 
   const select = useCallback((next: HitTarget | null) => {
     if (sameTarget(selectedRef.current, next)) return;
@@ -177,7 +178,7 @@ export function AquariumView({ load }: AquariumViewProps) {
       data-component="AquariumView"
       className="fixed inset-0 z-0 overflow-hidden bg-[#053467] text-white select-none"
     >
-      <AquariumBackdrop />
+      <AquariumBackdrop pushers={swimmers} />
       <canvas
         ref={canvasRef}
         data-component="AquariumCanvas"
