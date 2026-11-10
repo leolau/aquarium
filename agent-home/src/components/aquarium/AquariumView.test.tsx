@@ -16,7 +16,7 @@ vi.mock("next/link", () => ({
 
 const SNAPSHOT: AquariumSnapshot = {
   generated_at: 1,
-  idle_seconds: 30,
+  idle_seconds: 30, name: "Aquarium",
   users: [
     {
       user_id: "u1",
@@ -94,7 +94,7 @@ describe("AquariumView", () => {
   });
 
   it("says so when nobody is in the tank", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => respond({ generated_at: 1, idle_seconds: 30, users: [] })));
+    vi.stubGlobal("fetch", vi.fn(async () => respond({ generated_at: 1, idle_seconds: 30, name: "Aquarium", users: [] })));
     const { container } = render(<AquariumView />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
