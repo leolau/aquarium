@@ -8,16 +8,13 @@
   "person": "{name}，{creature}：{chats} 個對話，{profiles} 個設定檔",
   "legend": {
     "title": "如何看水族館",
-    "sizeIcon": "◯",
-    "size": "越大 = 對話、項目和 token 越多",
-    "speedIcon": "➶",
+    "size": "越大 = 對話、項目和 token 越多（最忙的人最大）",
     "speed": "越快 = 過去 24 小時用的 token 越多",
-    "followersIcon": "∘∘",
-    "followers": "跟着的小生物 = 他們使用的設定檔",
-    "activeIcon": "✦",
+    "followers": "跟着的小生物 = 他們使用的設定檔，名牌上有名稱",
     "active": "發光和泡泡 = 正在工作",
-    "selfIcon": "◌",
-    "self": "金色圈 = 你"
+    "self": "金色圈 = 你",
+    "show": "顯示如何看水族館",
+    "hide": "隱藏如何看水族館"
   },
   "card": {
     "you": "（你）",

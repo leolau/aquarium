@@ -187,7 +187,8 @@ def _cmd_list(api: _Api, args) -> int:
         glyph = _GLYPHS.get(p.get("cadence") or "one_off", "▣")
         health = p.get("health") or ""
         status = p.get("status") or ""
-        line = f"{glyph} {p.get('slug', ''):<28} {p.get('name', '')}  [{status}"
+        ref = p.get("ref") or ""
+        line = f"{glyph} {ref:<6} {p.get('slug', ''):<28} {p.get('name', '')}  [{status}"
         if health:
             line += f", {health}"
         line += "]"
@@ -209,7 +210,8 @@ def _cmd_show(api: _Api, args) -> int:
         _print_json(d)
         return 0
     glyph = _GLYPHS.get(d.get("cadence") or "one_off", "▣")
-    print(f"{glyph} {d.get('name')}  ({d.get('slug')})")
+    ref = f"{d['ref']} " if d.get("ref") else ""
+    print(f"{glyph} {ref}{d.get('name')}  ({d.get('slug')})")
     print(
         f"  {d.get('cadence')} · {d.get('status')} · autonomy {d.get('autonomy')}"
         f" · health {d.get('health')}"
@@ -278,7 +280,8 @@ def _cmd_cards(api: _Api, args) -> int:
             if args.status and t.get("status") != args.status:
                 continue
             assignee = t.get("assignee") or "-"
-            print(f"[{t.get('status'):>8}] {t.get('title')}  ({assignee})  {t.get('id')}")
+            ref = f"{t['ref']} " if t.get("ref") else ""
+            print(f"[{t.get('status'):>8}] {ref}{t.get('title')}  ({assignee})  {t.get('id')}")
             shown += 1
     if not shown:
         print("No cards" + (f" in status '{args.status}'" if args.status else "") + ".")
@@ -315,7 +318,7 @@ def _cmd_runs(api: _Api, args) -> int:
         ):
             diverges = f" self={self_s}/5 ⚠ diverges"
         print(
-            f"run {r.get('run_no'):>3} [{r.get('status'):>8}] "
+            f"run {r.get('run_no'):>3} {r.get('ref') or ''} [{r.get('status'):>8}] "
             f"{r.get('trigger')}  {dur_s} {cost_s} "
             f"outcome={r.get('outcome') or '-'}{score}{diverges}{retro}"
         )

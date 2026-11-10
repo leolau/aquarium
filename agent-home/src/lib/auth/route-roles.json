@@ -120,6 +120,7 @@
   "DELETE /api/project-categories/[id]": "signed-in",
   "PATCH /api/project-categories/[id]": "signed-in",
   "GET /api/projects": "signed-in",
+  "GET /api/refs/[ref]": "signed-in",
   "POST /api/projects": "signed-in",
   "POST /api/projects/quick-task": "signed-in",
   "POST /api/projects/[slug]/quick-task/start": "signed-in",

@@ -4,6 +4,7 @@
  * again as soon as it is visible.
  */
 import {
+  AQUARIUM_NAME_DEFAULT,
   SNAPSHOT_POLL_MS,
   isCreatureId,
   type AquariumProfile,
@@ -68,7 +69,7 @@ export function parseSnapshot(raw: unknown): AquariumSnapshot {
   if (!raw || typeof raw !== "object" || !Array.isArray((raw as { users?: unknown }).users)) {
     throw new Error("Malformed aquarium snapshot");
   }
-  const body = raw as { generated_at?: unknown; idle_seconds?: unknown; users: unknown[] };
+  const body = raw as { generated_at?: unknown; idle_seconds?: unknown; name?: unknown; users: unknown[] };
   const seen = new Set<string>();
   const users: AquariumUser[] = [];
   for (const u of body.users) {
@@ -78,7 +79,12 @@ export function parseSnapshot(raw: unknown): AquariumSnapshot {
       users.push(parsed);
     }
   }
-  return { generated_at: num(body.generated_at), idle_seconds: num(body.idle_seconds), users };
+  return {
+    generated_at: num(body.generated_at),
+    idle_seconds: num(body.idle_seconds),
+    name: str(body.name) ?? AQUARIUM_NAME_DEFAULT,
+    users,
+  };
 }
 
 export async function fetchSnapshot(signal?: AbortSignal): Promise<AquariumSnapshot> {

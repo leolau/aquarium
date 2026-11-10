@@ -3,7 +3,7 @@
 The snapshot lists every active principal across the served profiles with
 usage read by aggregate SQL from each profile's ``state.db`` and the box-wide
 projects DB; it is cached for :data:`SNAPSHOT_TTL_SECONDS` so polling viewers
-share one build. ``aquarium.idle_seconds`` lives in the default profile's
+share one build. ``aquarium.idle_seconds`` and ``aquarium.name`` live in the default profile's
 config.yaml (like the upload limit). A creature is a per-person preference in
 :mod:`hermes_cli.user_prefs`; ``/api/me/creature`` only ever acts on the
 signed-in person.
@@ -15,6 +15,7 @@ import asyncio
 import logging
 import sqlite3
 import time
+import unicodedata
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
@@ -22,6 +23,8 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from hermes_cli.aquarium_creatures import (
+    AQUARIUM_NAME_DEFAULT,
+    AQUARIUM_NAME_MAX,
     IDLE_SECONDS_DEFAULT,
     IDLE_SECONDS_MAX,
     IDLE_SECONDS_MIN,
@@ -36,6 +39,7 @@ SNAPSHOT_TTL_SECONDS = 4.0
 _DAY_SECONDS = 24 * 60 * 60
 _ADMIN_ROLES = ("owner", "admin")
 _PARENT_WALK_LIMIT = 50
+_BIDI_CONTROLS = frozenset("\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
 
 _cache: Dict[str, Any] = {"at": 0.0, "snapshot": None, "loop": None, "lock": None}
 
@@ -58,6 +62,13 @@ def idle_seconds(config: Dict[str, Any]) -> int:
     return value if _valid_idle(value) else IDLE_SECONDS_DEFAULT
 
 
+def _writable_section(config: Dict[str, Any]) -> Dict[str, Any]:
+    aquarium = config.get("aquarium")
+    if not isinstance(aquarium, dict):
+        aquarium = config["aquarium"] = {}
+    return aquarium
+
+
 def set_idle_seconds(config: Dict[str, Any], value: Any) -> int:
     """Store *value* in *config*; ``ValueError`` when out of range."""
     if not _valid_idle(value):
@@ -65,21 +76,55 @@ def set_idle_seconds(config: Dict[str, Any], value: Any) -> int:
             f"idle_seconds must be a whole number between {IDLE_SECONDS_MIN} "
             f"and {IDLE_SECONDS_MAX}."
         )
-    aquarium = config.get("aquarium")
-    if not isinstance(aquarium, dict):
-        aquarium = config["aquarium"] = {}
-    aquarium["idle_seconds"] = value
+    _writable_section(config)["idle_seconds"] = value
     return value
 
 
-def read_idle_seconds() -> int:
+def normalize_name(value: Any) -> str:
+    """The trimmed name without control characters; ``""`` means the default.
+
+    ``ValueError`` for a non-string or one longer than :data:`AQUARIUM_NAME_MAX`.
+    """
+    if not isinstance(value, str):
+        raise ValueError("name must be a string.")
+    name = "".join(
+        c for c in value if unicodedata.category(c) != "Cc" and c not in _BIDI_CONTROLS
+    ).strip()
+    if len(name) > AQUARIUM_NAME_MAX:
+        raise ValueError(f"name must be at most {AQUARIUM_NAME_MAX} characters.")
+    return name
+
+
+def aquarium_name(config: Dict[str, Any]) -> str:
+    try:
+        return normalize_name(_section(config).get("name")) or AQUARIUM_NAME_DEFAULT
+    except ValueError:
+        return AQUARIUM_NAME_DEFAULT
+
+
+def set_aquarium_name(config: Dict[str, Any], value: Any) -> str:
+    """Store *value* in *config*; empty or whitespace resets to the default."""
+    name = normalize_name(value)
+    aquarium = _writable_section(config)
+    if name:
+        aquarium["name"] = name
+    else:
+        aquarium.pop("name", None)
+    return name or AQUARIUM_NAME_DEFAULT
+
+
+def settings(config: Dict[str, Any]) -> Dict[str, Any]:
+    return {"idle_seconds": idle_seconds(config), "name": aquarium_name(config)}
+
+
+def read_settings() -> Dict[str, Any]:
     from hermes_cli import web_server as ws
 
     try:
         with ws._profile_scope("default"):
-            return idle_seconds(ws.load_config())
+            return settings(ws.load_config())
     except Exception:
-        return IDLE_SECONDS_DEFAULT
+        return {"idle_seconds": IDLE_SECONDS_DEFAULT, "name": AQUARIUM_NAME_DEFAULT}
 
 
 def _served_entries() -> list:
@@ -268,11 +313,7 @@ async def build_snapshot() -> Dict[str, Any]:
             }
         )
     users.sort(key=lambda u: (u["name"].casefold(), u["user_id"]))
-    return {
-        "generated_at": time.time(),
-        "idle_seconds": read_idle_seconds(),
-        "users": users,
-    }
+    return {"generated_at": time.time(), **read_settings(), "users": users}
 
 
 def _lock() -> asyncio.Lock:
@@ -321,31 +362,44 @@ async def get_aquarium_snapshot(request: Request):
 
 class AquariumSettingsUpdate(BaseModel):
     idle_seconds: Any = None
+    name: Any = None
+
+
+_SETTERS = {"idle_seconds": set_idle_seconds, "name": set_aquarium_name}
 
 
 @router.get("/api/aquarium/settings")
 async def get_aquarium_settings(request: Request):
-    """Seconds before the dashboard goes idle. Any signed-in person may read it."""
+    """Idle seconds and display name. Any signed-in person may read them."""
     from hermes_cli import web_server as ws
 
     await ws._comms_resolve_principal(request)
-    return {"idle_seconds": read_idle_seconds()}
+    return read_settings()
 
 
 @router.put("/api/aquarium/settings", dependencies=ADMIN)
 async def put_aquarium_settings(body: AquariumSettingsUpdate, request: Request):
-    """Set ``aquarium.idle_seconds``. Owner and admin only; 400 out of range."""
+    """Set any of ``aquarium.idle_seconds`` / ``aquarium.name``; returns all.
+
+    Owner and admin only; 400 when nothing is given or any field is invalid
+    (then nothing is saved).
+    """
     from hermes_cli import web_server as ws
 
+    fields = [f for f in _SETTERS if f in body.model_fields_set]
+    if not fields:
+        raise HTTPException(status_code=400, detail="Give idle_seconds and/or name.")
     with ws._profile_scope("default"):
         config = ws.load_config()
         try:
-            value = set_idle_seconds(config, body.idle_seconds)
+            for field in fields:
+                _SETTERS[field](config, getattr(body, field))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         ws.save_config(config)
+        result = settings(config)
     invalidate_snapshot()
-    return {"idle_seconds": value}
+    return result
 
 
 class CreatureUpdate(BaseModel):

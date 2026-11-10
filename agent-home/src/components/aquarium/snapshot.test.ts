@@ -4,7 +4,7 @@ import { SNAPSHOT_POLL_MS, type AquariumSnapshot } from "@/lib/aquarium/creature
 
 import { parseSnapshot, startSnapshotPolling, type VisibilitySource } from "./snapshot";
 
-const EMPTY: AquariumSnapshot = { generated_at: 1, idle_seconds: 30, users: [] };
+const EMPTY: AquariumSnapshot = { generated_at: 1, idle_seconds: 30, name: "Aquarium", users: [] };
 
 function visibility(hidden = false) {
   const listeners = new Set<() => void>();
@@ -24,7 +24,7 @@ describe("parseSnapshot", () => {
   it("keeps valid people and repairs or drops the rest", () => {
     const out = parseSnapshot({
       generated_at: 5,
-      idle_seconds: 30,
+      idle_seconds: 30, name: "Aquarium",
       users: [
         {
           user_id: "u1",

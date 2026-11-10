@@ -30,7 +30,8 @@ function jellyTentacles(): CreaturePart[] {
   }));
 }
 
-export const CREATURE_ART: Record<CreatureId, CreatureArt> = {
+/** v1 vector art for the original 20 creatures; the Canva sprites cover all 40. */
+export const CREATURE_ART: Partial<Record<CreatureId, CreatureArt>> = {
   clownfish: {
     parts: [
       { d: "M24 50L6 34Q3 50 6 66Z", fill: "#ff7a1a", stroke: INK, width: 2 },

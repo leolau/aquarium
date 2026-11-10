@@ -17,6 +17,7 @@ vi.mock("next/link", () => ({
 const SNAPSHOT: AquariumSnapshot = {
   generated_at: 1,
   idle_seconds: 30,
+  name: "Reef Lab",
   users: [
     {
       user_id: "u1",
@@ -72,6 +73,21 @@ describe("AquariumView", () => {
     expect(container.querySelector('[data-component="AquariumOffline"]')).toBeNull();
   });
 
+  it("titles the dashboard and the browser tab with the aquarium name", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => respond(SNAPSHOT)));
+    document.title = "Before";
+    const { container, unmount } = render(<AquariumView />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const title = container.querySelector('[data-component="AquariumTitle"]')!;
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toContain("Reef Lab");
+    expect(title.querySelectorAll(".aq-title-char")).toHaveLength("ReefLab".length);
+    expect(document.title).toBe("Reef Lab");
+    unmount();
+    expect(document.title).toBe("Before");
+  });
+
   it("keeps the last state and shows the offline badge when a poll fails, then recovers", async () => {
     const fetchMock = vi
       .fn()
@@ -95,7 +111,7 @@ describe("AquariumView", () => {
   });
 
   it("says so when nobody is in the tank", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => respond({ generated_at: 1, idle_seconds: 30, users: [] })));
+    vi.stubGlobal("fetch", vi.fn(async () => respond({ generated_at: 1, idle_seconds: 30, name: "Aquarium", users: [] })));
     const { container } = render(<AquariumView />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
@@ -151,7 +167,7 @@ describe("AquariumView", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
-    fireEvent.pointerDown(container.querySelector("canvas")!, { clientX: 300, clientY: 200, button: 0, pointerType: "mouse" });
+    fireEvent.pointerDown(container.querySelector('[data-component="AquariumCanvas"]')!, { clientX: 300, clientY: 200, button: 0, pointerType: "mouse" });
     expect(container.querySelector('[data-component="AquariumTapRipple"]')).not.toBeNull();
     expect(container.querySelector('[data-hint="tap"]')!.getAttribute("data-done")).toBe("true");
   });

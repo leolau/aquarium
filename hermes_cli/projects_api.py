@@ -65,6 +65,7 @@ from hermes_cli import (
     projects_db,
     projects_schedule,
     run_activity,
+    short_refs,
 )
 from hermes_cli.profiles import normalize_profile_name, resolve_profile_env
 from hermes_state import (
@@ -221,6 +222,14 @@ def _load_ctx_sync(slug: str, user_id: str):
     """
     with projects_db.connect_closing() as conn:
         project = projects_db.get_project(conn, slug)
+        if project is None:
+            # A project's short ref (``P12``) stands in for its slug; a real
+            # slug that happens to read like a ref still wins.
+            parsed = short_refs.parse_ref(slug)
+            if parsed is not None and parsed.kind == "P" and parsed.run_no is None:
+                record = short_refs.lookup(parsed.base)
+                if record is not None:
+                    project = projects_db.get_project(conn, record.internal_id)
         if project is None:
             return None
         role = _member_role_sync(conn, project.id, user_id)
@@ -539,7 +548,9 @@ def _plan_awaits_approval(conn, project_id: str) -> bool:
     return bool(revs) and not any(r.get("active") for r in revs)
 
 
-def _runs_brief(conn, project_id: str, *, limit: int = 5) -> list[dict]:
+def _runs_brief(
+    conn, project_id: str, *, limit: int = 5, project_ref: Optional[str] = None
+) -> list[dict]:
     """The last N runs as one-line rows (§12 detail). Cost stays fail-open
     and lives on the run-detail read, not here.
 
@@ -559,6 +570,7 @@ def _runs_brief(conn, project_id: str, *, limit: int = 5) -> list[dict]:
             duration = int(r["ended_at"]) - int(r["started_at"])
         row = {
             "run_no": r["run_no"],
+            "ref": short_refs.run_ref(project_ref, r["run_no"]),
             "status": r["status"],
             "trigger": r["trigger"],
             "started_at": r.get("started_at"),
@@ -584,11 +596,30 @@ def _runs_brief(conn, project_id: str, *, limit: int = 5) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+def _project_refs(projects) -> dict[str, str]:
+    """``{project id: "P12"}`` for these projects, numbering any new ones."""
+    return short_refs.ensure_refs_quietly(
+        "P", [short_refs.RefItem(p.id, p.created_at) for p in projects]
+    )
+
+
+def _card_refs(project, tasks) -> dict[str, str]:
+    """``{task id: "T345"}`` for a project's cards (objects or dicts)."""
+    items = []
+    for t in tasks:
+        tid = t["id"] if isinstance(t, dict) else t.id
+        created = t.get("created_at") if isinstance(t, dict) else t.created_at
+        items.append(short_refs.RefItem(tid, created, board=project.board_slug))
+    return short_refs.ensure_refs_quietly("T", items)
+
+
 def _project_payload(project, *, extra: Optional[dict] = None) -> dict:
     d = project.to_dict()
     d.pop("folders", None)  # folder list rides with the detail read
     if extra:
         d.update(extra)
+    if "ref" not in d:
+        d["ref"] = _project_refs([project]).get(project.id)
     return d
 
 
@@ -854,6 +885,10 @@ def _list_sync(
 ) -> dict:
     with projects_db.connect_closing() as conn:
         rows = projects_db.list_projects(conn, include_archived=include_archived)
+    refs = _project_refs(rows)
+    # ``q=P12`` (or ``P12-R3``) finds that project by its short ref.
+    q_ref = short_refs.parse_ref(q) if q else None
+    q_ref_base = q_ref.base if q_ref is not None and q_ref.kind == "P" else None
     sorted_by = _sort_spec(sort, order)
     sort_values: dict[str, Any] = {}
     if sorted_by is None:
@@ -926,7 +961,10 @@ def _list_sync(
                 continue
             if category_set and p.category_id not in category_set:
                 continue
-            if q and q.lower() not in f"{p.name} {p.goal or ''}".lower():
+            if q and (
+                q.lower() not in f"{p.name} {p.goal or ''}".lower()
+                and (q_ref_base is None or refs.get(p.id) != q_ref_base)
+            ):
                 continue
             role = _member_role_sync(conn, p.id, principal.user_id)
             profiles = projects_db.get_project_profiles(conn, p.id)
@@ -956,6 +994,7 @@ def _list_sync(
                 _project_payload(
                     p,
                     extra={
+                        "ref": refs.get(p.id),
                         "progress": progress,
                         "output_rollup": _output_rollup(outputs),
                         "member_count": len(members),
@@ -1634,7 +1673,8 @@ def _detail_sync(project, principal, *, include_address: bool) -> dict:
 
     with projects_db.connect_closing() as conn:
         health = _full_health(conn, project, rollup, profiles)
-        runs_brief = _runs_brief(conn, project.id)
+        project_ref = _project_refs([project]).get(project.id)
+        runs_brief = _runs_brief(conn, project.id, project_ref=project_ref)
         score = _derived_score(conn, project.id)
         # ``next_run_at`` is a display cache (§3.2): refreshed on read,
         # the cron store stays authoritative.
@@ -1642,7 +1682,7 @@ def _detail_sync(project, principal, *, include_address: bool) -> dict:
         clarify = projects_db.clarify_summary(conn, project.id)
         all_runs = projects_db.list_project_runs(conn, project.id, limit=100_000)
 
-    detail = _project_payload(project)
+    detail = _project_payload(project, extra={"ref": project_ref})
     detail.update(
         {
             "outputs": outputs_out,
@@ -2640,6 +2680,10 @@ async def project_board(request: Request) -> dict[str, Any]:
             )
             for task in blocked:
                 task["pending_approvals"] = pending.get(task["id"], [])
+            cards = [task for column in view["columns"] for task in column["tasks"]]
+            refs = _card_refs(project, cards)
+            for task in cards:
+                task["ref"] = refs.get(task["id"])
             return view
 
     return await asyncio.to_thread(_board_sync)
@@ -2878,6 +2922,18 @@ async def create_card(request: Request) -> dict[str, Any]:
     return result
 
 
+def _card_visible(task, principal) -> bool:
+    """Another user's ``private:`` card is invisible unless the caller is an
+    instance admin; every other card follows its project's read gate."""
+    visibility = getattr(task, "visibility", None) or ""
+    owner = getattr(task, "owner_user_id", None)
+    return not (
+        visibility.startswith("private:")
+        and owner != principal.user_id
+        and not _instance_admin(principal)
+    )
+
+
 def _card_payload(bconn, project: projects_db.Project, task_id: str, *, principal) -> Optional[dict]:
     """One card, joined with the worker's live progress signal.
 
@@ -2891,13 +2947,7 @@ def _card_payload(bconn, project: projects_db.Project, task_id: str, *, principa
     task = kanban_db.get_task(bconn, task_id)
     if task is None or getattr(task, "project_id", None) != project.id:
         return None
-    visibility = getattr(task, "visibility", None) or ""
-    owner = getattr(task, "owner_user_id", None)
-    if (
-        visibility.startswith("private:")
-        and owner != principal.user_id
-        and not _instance_admin(principal)
-    ):
+    if not _card_visible(task, principal):
         return None
     # The board-list endpoint attaches each card's latest run summary
     # (kanban_db.latest_summaries, batched) so a blocked/handed-off
@@ -2907,6 +2957,7 @@ def _card_payload(bconn, project: projects_db.Project, task_id: str, *, principa
     # what to do — never reached the card detail page.
     summary = kanban_db.latest_summary(bconn, task_id)
     payload = kanban_view.task_dict(task, latest_summary=summary)
+    payload["ref"] = _card_refs(project, [task]).get(task.id)
     # A card's worker runs in its own process — there is no *in-memory*
     # reasoning/tool-call buffer to tail the way an inline Projects run's
     # session has (run_activity.py). But `_default_spawn` (kanban_db.py)
@@ -3179,7 +3230,9 @@ async def update_card(request: Request, task_id: str) -> dict[str, Any]:
                 if not ok:
                     raise ValueError(reason)
             updated = kanban_db.get_task(bconn, task_id)
-            return kanban_view.task_dict(updated)
+            payload = kanban_view.task_dict(updated)
+            payload["ref"] = _card_refs(project, [updated]).get(updated.id)
+            return payload
 
     try:
         return await asyncio.to_thread(_sync)
@@ -4365,7 +4418,16 @@ def _run_payload(
         }
         card.update(_card_attempts(bconn, rc["task_id"]))
         cards.append(card)
+    card_refs = _card_refs(
+        project,
+        [{"id": c["task_id"], "created_at": None} for c in cards],
+    )
+    for card in cards:
+        card["ref"] = card_refs.get(card["task_id"])
     payload = dict(run)
+    project_ref = _project_refs([project]).get(project.id)
+    payload["project_ref"] = project_ref
+    payload["ref"] = short_refs.run_ref(project_ref, run.get("run_no"))
     payload["cards"] = cards
     payload["completion_percent"] = _run_completion_percent(run, cards)
     blocked = _run_blocked_tasks(bconn, cards)
@@ -4410,7 +4472,9 @@ async def list_runs_route(request: Request) -> dict[str, Any]:
             if d.get("run_id"):
                 by_run.setdefault(d["run_id"], 0)
                 by_run[d["run_id"]] += 1
+        project_ref = _project_refs([project]).get(project.id)
         for r in runs:
+            r["ref"] = short_refs.run_ref(project_ref, r.get("run_no"))
             r["deliveries"] = by_run.get(r["id"], 0)
             if r.get("started_at"):
                 end = r.get("ended_at") or int(time.time())

@@ -948,6 +948,11 @@ def create_project(
                 "VALUES (?, ?, ?, ?, ?)",
                 (pid, path, None, 1 if path == primary else 0, now),
             )
+    from hermes_cli import short_refs
+
+    short_refs.assign_quietly(
+        "P", pid, created_at=now, projects_path=short_refs.projects_path_of(conn)
+    )
     return pid
 
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { RefBadge } from "@/components/refs/RefBadge";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
@@ -482,6 +483,7 @@ export function RunView({
               <h1 className="min-w-0 flex-1 truncate text-lg font-semibold">
                 Run #{run.run_no}
               </h1>
+              <RefBadge value={run.ref} />
               <RunStatusBadge style={style} live={live && !stalled} />
             </div>
             <RunProgress
