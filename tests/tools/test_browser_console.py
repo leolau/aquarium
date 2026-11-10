@@ -374,7 +374,8 @@ class TestBrowserVisionConfig:
         assert result["success"] is True
         assert result["analysis"] == "Annotated screenshot analysis"
         assert mock_llm.call_args.kwargs["temperature"] == 1.0
-        assert mock_llm.call_args.kwargs["timeout"] == 45.0
+        # call_llm resolves the timeout (auxiliary.vision.timeout, then provider/model).
+        assert "timeout" not in mock_llm.call_args.kwargs
 
     def test_browser_vision_defaults_temperature_when_config_omits_it(self, tmp_path):
         from tools.browser_tool import browser_vision
@@ -398,7 +399,8 @@ class TestBrowserVisionConfig:
         assert result["success"] is True
         assert result["analysis"] == "Default screenshot analysis"
         assert mock_llm.call_args.kwargs["temperature"] == 0.1
-        assert mock_llm.call_args.kwargs["timeout"] == 120.0
+        # call_llm resolves the timeout (auxiliary.vision.timeout, then provider/model).
+        assert "timeout" not in mock_llm.call_args.kwargs
 
     def test_browser_vision_native_fast_path_returns_multimodal(self, tmp_path):
         """supports_vision override → screenshot attached natively, no aux call."""
