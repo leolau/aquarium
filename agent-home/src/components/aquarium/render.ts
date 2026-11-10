@@ -17,7 +17,9 @@ import {
   type Scene,
   type Swimmer,
 } from "./scene";
+import { causticLight } from "./sceneryDraw";
 import { imageSize, loadImage } from "./sprites";
+import { drawCreatureRipples } from "./sunlight";
 
 const ART_PX = 256;
 const SHADOW_PAD = 14;
@@ -167,6 +169,8 @@ export interface DrawOptions {
   dpr: number;
   reducedMotion: boolean;
   selected: HitTarget | null;
+  /** Seconds, for the sunlight ripples over the creatures; omitted means no ripples. */
+  time?: number;
 }
 
 function smoothstep(t: number): number {
@@ -373,6 +377,9 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene, opts: Dra
     drawSwimmer(ctx, l, l.alpha, dpr, opts.reducedMotion);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     if (l.user.is_self) ring(ctx, l, SELF_COLOR, l.alpha * 0.95, true, opts.reducedMotion);
+  }
+  if (opts.time !== undefined && order.length > 0) {
+    drawCreatureRipples(ctx, opts.reducedMotion ? 0 : opts.time, opts, causticLight());
   }
 
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);

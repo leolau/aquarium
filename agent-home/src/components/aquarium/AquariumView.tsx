@@ -158,7 +158,7 @@ export function AquariumView({ load }: AquariumViewProps) {
       const s = scene();
       const b = boundsRef.current;
       stepScene(s, dt, b, { reducedMotion: reduced });
-      if (ctx) drawScene(ctx, s, { width: b.width, height: b.height, dpr, reducedMotion: reduced, selected: selectedRef.current });
+      if (ctx) drawScene(ctx, s, { width: b.width, height: b.height, dpr, reducedMotion: reduced, selected: selectedRef.current, time: now / 1000 });
       placeCard();
       raf = requestAnimationFrame(frame);
     };

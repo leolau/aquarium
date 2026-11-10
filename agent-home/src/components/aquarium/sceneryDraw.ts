@@ -17,6 +17,7 @@ import {
   type Strand,
   type StrandKind,
 } from "./scenery";
+import { drawSurface, rayAlpha, surfaceDepth, surfaceGlints, type Glint } from "./sunlight";
 
 type Kind = StrandKind | PropKind;
 const KINDS: readonly Kind[] = ["kelp", "seagrass", "coral-branch", "coral-brain", "anemone", "rocks"];
@@ -257,6 +258,18 @@ function sharedTextures() {
   });
 }
 
+let glintCache: { key: string; glints: Glint[] } | null = null;
+function glintsFor(width: number, height: number): Glint[] {
+  const key = `${width}x${height}`;
+  if (glintCache?.key !== key) glintCache = { key, glints: surfaceGlints(width, surfaceDepth(width, height)) };
+  return glintCache.glints;
+}
+
+/** The shared caustic tile, for the light ripples painted over the creatures. */
+export function causticLight(): CanvasImageSource | null {
+  return sharedTextures().caustic;
+}
+
 export interface SceneryDrawOptions {
   width: number;
   height: number;
@@ -349,10 +362,12 @@ function drawRays(ctx: CanvasRenderingContext2D, sc: Scenery, t: number, opts: S
   ctx.globalCompositeOperation = "lighter";
   for (const r of layout.rays) {
     const pulse = 0.5 + 0.5 * Math.sin((2 * Math.PI * t) / r.period + r.phase);
-    const drift = Math.sin((2 * Math.PI * t) / r.driftPeriod + r.phase) * opts.width * 0.025;
-    ctx.globalAlpha = 0.05 + 0.09 * pulse;
-    const x = r.u * opts.width + drift - r.width / 2;
-    ctx.setTransform((opts.dpr * r.width) / 64, 0, opts.dpr * r.skew, (opts.dpr * len) / 256, opts.dpr * x, 0);
+    const flicker = 0.5 + 0.5 * Math.sin(t * 2.3 + r.phase * 3) * Math.sin(t * 1.7 + r.phase);
+    const drift = Math.sin((2 * Math.PI * t) / r.driftPeriod + r.phase) * opts.width * 0.035;
+    ctx.globalAlpha = rayAlpha(pulse, flicker);
+    const w = r.width * (0.9 + 0.25 * pulse);
+    const x = r.u * opts.width + drift - w / 2;
+    ctx.setTransform((opts.dpr * w) / 64, 0, opts.dpr * r.skew, (opts.dpr * len) / 256, opts.dpr * x, 0);
     ctx.drawImage(ray, 0, 0);
   }
   ctx.globalCompositeOperation = "source-over";
@@ -416,6 +431,7 @@ export function drawScenery(ctx: CanvasRenderingContext2D, sc: Scenery, opts: Sc
   ctx.clearRect(0, 0, opts.width, opts.height);
 
   drawRays(ctx, sc, t, opts, tex.ray);
+  drawSurface(ctx, t, opts, tex.caustic, tex.dot, glintsFor(opts.width, opts.height));
   drawCaustics(ctx, sc, t, opts, tex.caustic);
 
   const { strands, props } = sc.layout;
