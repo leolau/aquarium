@@ -540,6 +540,7 @@ export function ChatPane({
         conv={conv}
         storageEnabled={storageEnabled}
         composerInitialText={autoSend ? undefined : initialDraft}
+        sessionRef={sessions.find((s) => s.id === sessionId)?.ref}
       />
 
 

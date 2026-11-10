@@ -57,6 +57,7 @@ const ROUTES: RouteNode[] = [
   { pattern: "/members", label: "Members", parent: "/settings" },
   { pattern: "/capacity", label: "Capacity", parent: "/settings" },
   { pattern: "/activity", label: "Activity", parent: "/" },
+  { pattern: "/aquarium", label: "Aquarium", parent: "/" },
   { pattern: "/activity/:traceId", label: "Trace", parent: "/activity" },
   { pattern: "/onboarding", label: "Getting started", parent: "/" },
   { pattern: "/not-available", label: "Not available", parent: "/" },

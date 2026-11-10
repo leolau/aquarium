@@ -1697,7 +1697,7 @@ class TestQuickSnapshotProjectsKanban:
         from hermes_cli.backup import _QUICK_STATE_FILES
         # All per-profile user-created stores that the upgrade can wipe.
         for name in (
-            "projects.db", "kanban.db", "kanban/boards",
+            "projects.db", "short_refs.db", "kanban.db", "kanban/boards",
             "response_store.db", "memory_store.db", "verification_evidence.db",
         ):
             assert name in _QUICK_STATE_FILES, name
@@ -1711,6 +1711,26 @@ class TestQuickSnapshotProjectsKanban:
         rows = conn.execute("SELECT * FROM projects").fetchall()
         conn.close()
         assert rows == [("p1", "demo")]
+
+    def test_short_refs_db_restored_with_projects_db(self, hermes_home):
+        """A rollback that restores projects.db without the ref registry would
+        renumber every saved ``P12`` / ``T345``."""
+        from hermes_cli.backup import create_quick_snapshot, restore_quick_snapshot
+        path = hermes_home / "short_refs.db"
+        conn = sqlite3.connect(str(path))
+        conn.execute("CREATE TABLE short_refs (kind TEXT, num INTEGER, internal_id TEXT)")
+        conn.execute("INSERT INTO short_refs VALUES ('P', 2, 'p1')")
+        conn.commit()
+        conn.close()
+        snap_id = create_quick_snapshot(hermes_home=hermes_home)
+        assert (hermes_home / "state-snapshots" / snap_id / "short_refs.db").exists()
+
+        path.unlink()
+        assert restore_quick_snapshot(snap_id, hermes_home=hermes_home) is True
+        conn = sqlite3.connect(str(path))
+        rows = conn.execute("SELECT * FROM short_refs").fetchall()
+        conn.close()
+        assert rows == [("P", 2, "p1")]
 
     def test_kanban_db_snapshotted(self, hermes_home):
         from hermes_cli.backup import create_quick_snapshot

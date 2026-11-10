@@ -14,6 +14,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import type { CredentialEntry, EmailPollerAccount } from "@/types";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { PanelLoading } from "@/components/ui/PanelLoading";
 
 type ConnectPhase = "idle" | "consent" | "busy";
 
@@ -362,6 +363,8 @@ export function ConnectedAccounts() {
 
       {error && <p className="mb-2 text-xs text-[var(--color-danger)]">{error}</p>}
       {result && <p className="mb-2 text-xs text-[var(--color-success)]">{result}</p>}
+
+      {!loaded && <PanelLoading className="mb-3" />}
 
       {loaded && entries.length === 0 && phase === "idle" && (
         <p className="mb-2 text-xs text-[var(--color-muted)]">

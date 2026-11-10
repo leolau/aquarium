@@ -814,7 +814,12 @@ CREATE TABLE IF NOT EXISTS api_call_log (
     -- The model name the provider's reply carried when it differs from the
     -- configured one (DeepSeek answers `deepseek-v4-flash` as
     -- `deepseek-flash`); `model` is always the configured name.
-    served_model TEXT
+    served_model TEXT,
+    -- Estimated spend of this one call, written for auxiliary calls (they
+    -- never reach the sessions table). NULL cost_usd with cost_status
+    -- 'unknown' = no published price for the model on this route.
+    cost_usd REAL,
+    cost_status TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_api_call_log_ts ON api_call_log(ts);
@@ -2355,6 +2360,8 @@ class SessionDB:
         kanban_task_id: Optional[str] = None,
         kanban_run_id: Optional[int] = None,
         served_model: Optional[str] = None,
+        cost_usd: Optional[float] = None,
+        cost_status: Optional[str] = None,
     ) -> None:
         """Append one provider-call attempt to ``api_call_log``.
 
@@ -2379,8 +2386,9 @@ class SessionDB:
                 " caller, model, provider, duration_ms, status, finish_reason,"
                 " error_type, status_code, retry_count, input_tokens,"
                 " output_tokens, cache_read_tokens, reasoning_tokens,"
-                " kanban_task_id, kanban_run_id, served_model"
-                ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " kanban_task_id, kanban_run_id, served_model, cost_usd,"
+                " cost_status"
+                ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     request_id,
                     ts if ts is not None else time.time(),
@@ -2404,6 +2412,8 @@ class SessionDB:
                     kanban_task_id or None,
                     kanban_run_id,
                     served_model if served_model and served_model != model else None,
+                    float(cost_usd) if cost_usd is not None else None,
+                    cost_status or None,
                 ),
             )
 

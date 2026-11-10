@@ -17,5 +17,6 @@
   "moreHint": "更多：開始處理 · 加入專案 · 升級 · 延後",
   "moreTitle": "更多操作",
   "workOnThis": "處理這項",
-  "snoozeFor": "延後"
+  "snoozeFor": "延後",
+  "openRef": "開啟 {ref}"
 }

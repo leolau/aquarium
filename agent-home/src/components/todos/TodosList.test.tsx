@@ -250,3 +250,19 @@ describe("TodoDetailView", () => {
     ).not.toContain("Snooze");
   });
 });
+
+describe("short refs (FG-36)", () => {
+  it("shows a to-do's ref on its row and detail page", () => {
+    const row = renderToStaticMarkup(<TodoRow todo={{ ...BASE, ref: "D88" }} />);
+    expect(row).toContain('data-component="RefBadge"');
+    expect(row).toContain('data-ref="D88"');
+    const detail = renderToStaticMarkup(
+      <TodoDetailView todo={{ ...DETAIL, ref: "D88" }} />,
+    );
+    expect(detail).toContain('data-ref="D88"');
+  });
+
+  it("renders no badge for a backend that sends no ref", () => {
+    expect(renderToStaticMarkup(<TodoRow todo={BASE} />)).not.toContain("RefBadge");
+  });
+});

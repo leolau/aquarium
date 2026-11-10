@@ -383,6 +383,8 @@ export interface TagSuggestion {
 
 export interface SessionSummary {
   id: string;
+  /** Short ref (`C1024`, FG-36) of the conversation — kept across compression; `id` stays authoritative. */
+  ref?: string | null;
   source: string;
   title: string | null;
   preview: string | null;
@@ -577,6 +579,8 @@ export interface ChatApprovalRequest {
 export interface SessionCreateResponse {
   session_id: string;
   source: string;
+  /** The new chat's short ref (`C1024`). */
+  ref?: string | null;
 }
 
 /**
@@ -1094,6 +1098,8 @@ export interface FileSurfacesResponse {
 /** One arrival in the unified inbox: a WhatsApp message, an email, a meeting. */
 export interface IncomingItem {
   id: string;
+  /** Short ref (`M512`, FG-36); `id` stays authoritative. */
+  ref?: string | null;
   owner_user_id: string;
   visibility: string;
   surface: string; // whatsapp | email | calendar | telegram | …
@@ -1167,6 +1173,8 @@ export type TodoPriority = "critical" | "high" | "normal" | "low";
  */
 export interface Todo {
   id: string;
+  /** Short ref (`D88`, FG-36); `id` stays authoritative. */
+  ref?: string | null;
   owner_user_id: string;
   visibility: string;
   title: string;
@@ -1682,6 +1690,8 @@ export interface ProjectFolder {
 export interface Project {
   id: string;
   slug: string;
+  /** Short ref (`P12`, FG-36): a stable display handle; `slug`/`id` stay authoritative. */
+  ref?: string | null;
   name: string;
   description: string | null;
   icon: string | null;
@@ -1908,6 +1918,8 @@ export interface ProjectLink {
 /** The last N runs as one-line rows. */
 export interface ProjectRunBrief {
   run_no: number;
+  /** `P12-R3` — the project's ref plus `run_no`. */
+  ref?: string | null;
   status: ProjectRunStatus;
   trigger: ProjectRunTrigger;
   started_at: number;
@@ -1931,6 +1943,8 @@ export interface ProjectRunBrief {
 /** One card's live board state, joined onto a run row. */
 export interface ProjectRunCard {
   task_id: string;
+  /** The card's short ref (`T345`). */
+  ref?: string | null;
   step_key: string | null;
   status: string | null;
   title: string | null;
@@ -2000,6 +2014,9 @@ export interface ProjectRunCheckpointWait {
 /** The full run row (§6) as the detail/list reads return it. */
 export interface ProjectRun {
   id: string;
+  /** `P12-R3` — the project's ref plus `run_no`. */
+  ref?: string | null;
+  project_ref?: string | null;
   project_id: string;
   run_no: number;
   trigger: ProjectRunTrigger;
@@ -2314,6 +2331,8 @@ export interface ProjectCardApproval {
 /** A task row on the project board, as `kanban_view.task_dict` returns it. */
 export interface ProjectBoardTask {
   id: string;
+  /** Short ref (`T345`, FG-36); `id` (`t_xxxxxxxx`) stays authoritative. */
+  ref?: string | null;
   title: string;
   body: string | null;
   status: string;
@@ -2719,8 +2738,16 @@ export interface ModelPerformanceEntry {
     cache_read: number;
     reasoning: number;
   };
-  /** Session-table cost over the same window, keyed by model. */
-  cost_usd: number;
+  /** Estimated spend over the same window: main-model sessions plus each
+   *  auxiliary call's own priced cost. `null` when no call could be priced. */
+  cost_usd: number | null;
+  /** `known` — every call is priced; `partial` — `unpriced_calls` have no
+   *  published price and aren't in `cost_usd`; `unknown` — none are. */
+  cost_status?: "known" | "partial" | "unknown";
+  unpriced_calls?: number;
+  /** Calls logged before this kind of call was measured (no latency,
+   *  tokens or cost were captured for them). */
+  unmeasured_calls?: number;
   daily: ModelPerfDaily[];
   /** Other names the provider's replies used for this model
    * (DeepSeek answers `deepseek-v4-flash` as `deepseek-flash`). */
@@ -3787,4 +3814,24 @@ export interface SoftwareUpgradeStatus {
   release_error?: string | null;
   /** Set by the BFF: owners can upgrade, admins only look. */
   can_upgrade?: boolean;
+}
+
+// ── Short refs (FG-36) ──
+/** `GET /api/refs/:ref` — what a short ref names, for a caller who may see it. */
+export interface RefResolution {
+  ref: string;
+  kind: "project" | "run" | "card" | "chat";
+  /** The internal id (project id, run id, `t_xxxxxxxx`). */
+  id: string;
+  title: string;
+  status: string | null;
+  /** The agent-home path that opens it. */
+  url: string;
+  run_no?: number;
+  project_ref?: string | null;
+  project_id?: string;
+  project_slug?: string;
+  profile?: string | null;
+  /** A chat's compression-root session id (`id` is the live tip). */
+  lineage_root?: string;
 }

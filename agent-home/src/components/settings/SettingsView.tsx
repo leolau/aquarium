@@ -5,6 +5,7 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { AccountSecurity } from "@/components/account/AccountSecurity";
 import { AppsSettings, UploadsSettings } from "@/components/settings/AppsSettings";
+import { AquariumIdleSetting, CreaturePicker } from "@/components/settings/AquariumSettings";
 import { EntityGoalSection } from "@/components/settings/EntityGoalSection";
 import { MenuSection } from "@/components/settings/MenuSection";
 import {
@@ -138,6 +139,7 @@ const ENTRY_ICON: Record<SettingsEntryId, (p: IconProps) => ReactNode> = {
   apps: FolderIcon,
   menu: SettingsIcon,
   upgrade: RefreshIcon,
+  aquarium: ClockIcon,
 };
 
 /** Figma `hub-card` on tablet/desktop, `list-row` on phones: the whole card is the link. */
@@ -264,7 +266,12 @@ function SettingsSection({
         </section>
       );
     case "account":
-      return <AccountSecurity isOwner={isOwner} />;
+      return (
+        <div className="flex flex-col gap-4">
+          <AccountSecurity isOwner={isOwner} />
+          <CreaturePicker />
+        </div>
+      );
     case "theme":
       return <ThemeSection />;
     case "notifications":
@@ -281,6 +288,8 @@ function SettingsSection({
       return <EntityGoalSection goal={entityGoal} readOnly={entityGoalReadOnly} />;
     case "tags":
       return <TagsSection />;
+    case "aquarium":
+      return <AquariumIdleSetting canEdit={canManageMembers} />;
     default:
       // tools, get-ready and upgrade have their own routes.
       return null;

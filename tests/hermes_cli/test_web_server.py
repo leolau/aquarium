@@ -4420,6 +4420,43 @@ class TestNewEndpoints:
         ]
         assert all(m["model"] != "deepseek-flash" for m in data["monthly"])
 
+    def test_models_performance_prices_aux_calls_and_flags_unmeasured_rows(self):
+        """Aux calls never reach the sessions table: the card's cost is their
+        ledger cost (stored per call, or estimated from tokens on rows from
+        before costs were stored). Unpriced calls make the cost unknown, not
+        $0, and 0ms/0-token rows from the old async shim are counted as
+        unmeasured, not as 0ms latency."""
+        import time as _time
+        from hermes_state import SessionDB
+
+        now = _time.time()
+        db = SessionDB()
+        try:
+            db.record_api_call(ts=now, model="gpt-5-mini", provider="openai",
+                               caller="aux:vision", duration_ms=1200,
+                               usage={"input_tokens": 1000, "output_tokens": 100},
+                               cost_usd=0.25, cost_status="estimated")
+            for _ in range(3):  # legacy async-shim rows: nothing captured
+                db.record_api_call(ts=now, model="gpt-5-mini", provider="openai",
+                                   caller="aux:vision", duration_ms=0)
+            db.record_api_call(ts=now, model="mystery", provider="opencode-go",
+                               caller="aux:vision", duration_ms=900,
+                               usage={"input_tokens": 10, "output_tokens": 5},
+                               cost_status="unknown")
+        finally:
+            db.close()
+        data = self.client.get("/api/analytics/models/performance").json()
+        models = {m["model"]: m for m in data["models"]}
+        mini = models["gpt-5-mini"]
+        assert mini["calls"] == 4
+        assert mini["unmeasured_calls"] == 3
+        assert mini["latency_ms"]["avg"] == 1200 and mini["latency_ms"]["min"] == 1200
+        assert mini["cost_usd"] == pytest.approx(0.25)
+        assert mini["cost_status"] == "known"
+        mystery = models["mystery"]
+        assert mystery["cost_usd"] is None
+        assert mystery["cost_status"] == "unknown" and mystery["unpriced_calls"] == 1
+
     def test_fallback_models_round_trip(self):
         """Backup models: the list reads back in order; saving replaces it
         and drops the legacy single fallback_model key."""

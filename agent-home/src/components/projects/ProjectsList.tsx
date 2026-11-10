@@ -14,6 +14,7 @@ import { InlineAlert } from "@/components/ui/InlineAlert";
 import { useT } from "@/i18n";
 import { ProjectsBulkBar } from "@/components/projects/ProjectsBulkBar";
 import { ProjectsFilters } from "@/components/projects/ProjectsFilters";
+import { parseRef, refHref } from "@/lib/refs";
 import {
   DEFAULT_PAGE_SIZE,
   ProjectsPagination,
@@ -308,6 +309,8 @@ export function ProjectsList({
   );
 
   const t = useT("projects");
+  // A short ref typed into search (`P12`, `T345`) opens straight to its item.
+  const searchedRef = parseRef(filters.q);
   return (
     <div data-component="ProjectsList" className="flex flex-col gap-3">
       {/* The create door (§13): the feature is unreachable if its only
@@ -341,6 +344,16 @@ export function ProjectsList({
       </div>
 
       <ProjectsFilters value={filters} onChange={changeFilters} />
+      {searchedRef ? (
+        <Link
+          href={refHref(searchedRef.ref)}
+          data-component="RefJump"
+          data-ref={searchedRef.ref}
+          className="self-start rounded-[var(--radius-md)] border border-[var(--color-border)] px-3 py-1.5 text-xs"
+        >
+          {t("openRef", { ref: searchedRef.ref })}
+        </Link>
+      ) : null}
 
       {board ? null : (
         <ProjectsCategoryFilter

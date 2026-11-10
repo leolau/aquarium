@@ -1,0 +1,17 @@
+import { MobileShell } from "@/components/MobileShell";
+import { PageSkeleton } from "@/components/ui/PageSkeleton";
+import { getT } from "@/i18n/server";
+
+/**
+ * Route-level loading UI for **Edit skill**: the page header paints on tap with a
+ * skeleton in the page's shape while the server waits on the backend, instead
+ * of the previous page sitting frozen.
+ */
+export default async function Loading() {
+  const t = await getT("system");
+  return (
+    <MobileShell title={t("cards.skills.name")} wide>
+      <PageSkeleton rows={3} />
+    </MobileShell>
+  );
+}

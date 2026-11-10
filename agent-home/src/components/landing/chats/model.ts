@@ -1,3 +1,5 @@
+import { isKanbanWorkspace } from "@/lib/chat/categorize";
+import { parseRef } from "@/lib/refs";
 import type { SessionSummary } from "@/types";
 
 /**
@@ -9,6 +11,40 @@ export type LandingSession = SessionSummary & {
   pinned_at?: number | null;
   profile?: string;
 };
+
+/**
+ * The `source` of a chat someone typed into Aquarium (`POST /api/sessions`
+ * and every agent-home turn stamp it). Cron runs (`cron`), project runs
+ * (`projects:<slug>:run-N`), to-dos (`todo`, `triage`, `explicit`), kanban
+ * workers (`cli` in a kanban workspace), messaging channels (`telegram`,
+ * `whatsapp`, `email`, ...), the OpenAI-compatible API (`api_server`) and
+ * other surfaces all carry a different source.
+ */
+export const USER_CHAT_SOURCE = "agent_home";
+
+/**
+ * A chat the user started by typing: an Aquarium chat with at least one
+ * user message. Drops the report topics a scheduled delivery creates under
+ * `agent_home` (assistant messages only, so no preview) and anything run in
+ * a kanban card's workspace.
+ */
+export function isUserStartedChat(s: Pick<LandingSession, "source" | "preview" | "cwd">): boolean {
+  return (
+    s.source === USER_CHAT_SOURCE &&
+    Boolean(s.preview?.trim()) &&
+    !isKanbanWorkspace(s.cwd)
+  );
+}
+
+/** The chat touched last, pinned or not: the one to offer to continue. */
+export function latestSession(sessions: LandingSession[]): LandingSession | null {
+  let best: LandingSession | null = null;
+  for (const s of sessions) {
+    if (s.archived) continue;
+    if (!best || lastActive(s) > lastActive(best)) best = s;
+  }
+  return best;
+}
 
 /** Pins are live once the list carries a `pinned_at` key (null or a time). */
 export function pinsSupported(sessions: LandingSession[]): boolean {
@@ -41,6 +77,9 @@ export function splitSessions(sessions: LandingSession[]): {
 export function matchesQuery(s: LandingSession, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
+  // A chat ref (`C12`) is an exact handle: `c1` must not match C10–C19.
+  const ref = parseRef(q);
+  if (ref?.kind === "C") return s.ref === ref.ref;
   return [s.title, s.preview, ...(s.tags ?? []).map((t) => t.name)]
     .filter((v): v is string => typeof v === "string")
     .some((v) => v.toLowerCase().includes(q));

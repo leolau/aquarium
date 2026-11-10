@@ -224,6 +224,11 @@ export function SessionTabs({
               }`}
             >
               <span className="max-w-[9rem] truncate">{titleOf(s)}</span>
+              {s.ref ? (
+                <span data-slot="session-ref" className="font-mono text-[11px] opacity-70">
+                  {s.ref}
+                </span>
+              ) : null}
               {busy ? (
                 <span className="h-2 w-2 animate-pulse rounded-full bg-[var(--color-accent)]" />
               ) : null}

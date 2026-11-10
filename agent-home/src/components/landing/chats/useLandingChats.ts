@@ -7,7 +7,14 @@ import type { PinSuggestion, PinSuggestionsResponse } from "@/types/landing";
 import { onSessionsChanged } from "@/lib/chat/sessions-changed";
 
 import { chatsApi } from "./chatsApi";
-import { isPinned, pinsSupported, splitSessions, type LandingSession } from "./model";
+import {
+  USER_CHAT_SOURCE,
+  isPinned,
+  isUserStartedChat,
+  pinsSupported,
+  splitSessions,
+  type LandingSession,
+} from "./model";
 
 /** Untitled chats get their agent title a few seconds after the first reply. */
 export const TITLE_POLL_MS = 10_000;
@@ -31,6 +38,8 @@ export interface LandingChats {
   /** Pin UI is shown only once the pins workstream is deployed. */
   canPin: boolean;
   suggestions: PinSuggestion[];
+  /** Aquarium chats the server listed but `userChatsOnly` hides (e.g. report topics). */
+  hiddenIds: ReadonlySet<string>;
   /** Session ids with a write in flight (pin, rename or archive). */
   busyIds: ReadonlySet<string>;
   error: string | null;
@@ -49,17 +58,30 @@ export interface LandingChats {
  * Sessions, pins, pin suggestions and inline rename for one profile's
  * conversation list. Every write is locked per session (a double-click never
  * sends twice) and reconciles with a forced re-read of the list.
+ *
+ * `userChatsOnly` lists just the chats the user started by typing: the server
+ * returns `agent_home` sessions only, and `isUserStartedChat` drops the rest.
+ * Hidden pins stay pinned; they are simply not listed.
  */
 export function useLandingChats({
   profile,
   initialSessions,
   fetchImpl = fetch,
+  userChatsOnly = false,
 }: {
   profile?: string;
   initialSessions?: LandingSession[];
   fetchImpl?: typeof fetch;
+  userChatsOnly?: boolean;
 }): LandingChats {
-  const [sessions, setSessions] = useState<LandingSession[] | null>(initialSessions ?? null);
+  const keep = useCallback(
+    (list: LandingSession[]) => (userChatsOnly ? list.filter(isUserStartedChat) : list),
+    [userChatsOnly],
+  );
+  const [sessions, setSessions] = useState<LandingSession[] | null>(
+    initialSessions ? keep(initialSessions) : null,
+  );
+  const [hiddenIds, setHiddenIds] = useState<ReadonlySet<string>>(new Set());
   const [failed, setFailed] = useState(false);
   const [pinsGone, setPinsGone] = useState(false);
   const [suggestions, setSuggestions] = useState<PinSuggestion[]>([]);
@@ -78,9 +100,14 @@ export function useLandingChats({
   /** Chats started on this page that the list may not include yet. */
   const pendingChats = useRef(new Map<string, { session: LandingSession; until: number }>());
 
-  const apply = useCallback((next: LandingSession[] | null) => {
+  const apply = useCallback((all: LandingSession[] | null) => {
     if (!alive.current) return;
-    if (next) {
+    if (all) {
+      const next = keep(all);
+      if (userChatsOnly) {
+        const shown = new Set(next.map((s) => s.id));
+        setHiddenIds(new Set(all.filter((s) => !shown.has(s.id)).map((s) => s.id)));
+      }
       const listed = new Set(next.map((s) => s.id));
       const extra: LandingSession[] = [];
       for (const [id, p] of pendingChats.current) {
@@ -95,16 +122,17 @@ export function useLandingChats({
         return prev;
       });
     }
-  }, []);
+  }, [keep, userChatsOnly]);
 
+  const source = userChatsOnly ? USER_CHAT_SOURCE : undefined;
   const refresh = useCallback(
-    (force = true) => chatsApi.sessions(profile, { force }).then(apply),
-    [profile, apply],
+    (force = true) => chatsApi.sessions(profile, { force, source }).then(apply),
+    [profile, source, apply],
   );
 
   useEffect(() => {
     let cancelled = false;
-    void chatsApi.sessions(profile).then((next) => {
+    void chatsApi.sessions(profile, { source }).then((next) => {
       if (!cancelled) apply(next);
     });
     let retry: number | undefined;
@@ -123,7 +151,7 @@ export function useLandingChats({
       cancelled = true;
       window.clearTimeout(retry);
     };
-  }, [profile, apply]);
+  }, [profile, source, apply]);
 
   useEffect(
     () =>
@@ -141,7 +169,7 @@ export function useLandingChats({
             }
             const session: LandingSession = {
               id: started.id,
-              source: "web",
+              source: USER_CHAT_SOURCE,
               title: null,
               preview: started.preview ?? null,
               message_count: 1,
@@ -326,6 +354,7 @@ export function useLandingChats({
     failed,
     canPin,
     suggestions: visibleSuggestions,
+    hiddenIds,
     busyIds: busy,
     error,
     clearError: () => setError(null),

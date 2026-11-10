@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState, type MouseEvent } from "react";
 
 import { ChatConversationView } from "@/components/chat/ChatConversationView";
+import { RefBadge } from "@/components/refs/RefBadge";
 import { useChatConversation } from "@/components/chat/useChatConversation";
 import { ArrowRightIcon, ChevronLeftIcon, XIcon } from "@/components/ui/icons";
 import { useT } from "@/i18n";
@@ -29,6 +30,7 @@ export function LandingChatView({
   renamedTitle,
   highlight,
   storageEnabled,
+  onBusyChange,
   onClose,
 }: {
   sessionId: string;
@@ -40,6 +42,8 @@ export function LandingChatView({
   /** Message-search words to highlight. */
   highlight?: string;
   storageEnabled: boolean;
+  /** A turn is streaming in this chat (`true`) or has finished (`false`). */
+  onBusyChange?: (busy: boolean) => void;
   onClose: () => void;
 }) {
   const t = useT("chatPage");
@@ -67,6 +71,11 @@ export function LandingChatView({
     findSession: (id) => sessions?.find((s) => s.id === id),
     onSessionsStale: () => void refresh(),
   });
+  const busy = conv.selBusy;
+  useEffect(() => {
+    onBusyChange?.(busy);
+  }, [busy, onBusyChange]);
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
   const listed = sessions?.find((s) => s.id === sessionId);
   const session =
     listed && renamedTitle !== undefined ? { ...listed, title: renamedTitle || null } : listed;
@@ -103,6 +112,7 @@ export function LandingChatView({
         >
           {heading}
         </h2>
+        <RefBadge value={session?.ref} className="lg:!min-h-0" />
         <Link
           href={chatHref(sessionId, profile)}
           data-action="open-full-page"

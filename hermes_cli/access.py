@@ -2159,6 +2159,9 @@ async def resolve_principal(
             role="member",
             connection=connection,
         )
+        from hermes_cli.user_prefs import assign_random_creature
+
+        assign_random_creature(principal.user_id)
         await store.link_channel(
             principal.user_id,
             platform,

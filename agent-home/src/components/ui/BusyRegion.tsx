@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 
+import { SlowHint } from "@/components/ui/SlowHint";
 import { Spinner } from "@/components/ui/Spinner";
 
 /**
@@ -73,14 +74,17 @@ export function BusyRegion({
             shown ? "bg-[var(--color-bg)]/60 opacity-100" : "opacity-0"
           }`}
         >
-          <p
-            role="status"
-            aria-live="polite"
-            className="sticky top-6 mt-6 inline-flex items-center gap-2 rounded-2xl border border-[var(--color-accent)] bg-[var(--color-surface-2)] px-3 py-2 text-sm font-medium text-[var(--color-accent)] shadow-lg"
-          >
-            <Spinner />
-            {label}
-          </p>
+          <div className="sticky top-6 mt-6 flex max-w-[calc(100%-2rem)] flex-col items-center gap-1.5">
+            <p
+              role="status"
+              aria-live="polite"
+              className="inline-flex items-center gap-2 rounded-2xl border border-[var(--color-accent)] bg-[var(--color-surface-2)] px-3 py-2 text-sm font-medium text-[var(--color-accent)] shadow-lg"
+            >
+              <Spinner />
+              {label}
+            </p>
+            <SlowHint className="rounded-xl bg-[var(--color-surface)] px-2 py-1 text-center shadow" />
+          </div>
         </div>
       ) : null}
     </div>

@@ -10,11 +10,11 @@ import { ShellFrame } from "@/components/ShellFrame";
 import { getPrincipal } from "@/lib/auth/principal";
 import { readSession } from "@/lib/auth/session";
 import { HermesApiClient } from "@/lib/api/client";
-import { activeEnrolments } from "@/lib/api/my-profiles";
+import { activeEnrolments, enrolmentRoles, type ProfileRole } from "@/lib/api/my-profiles";
 import { storageConfigured } from "@/lib/env";
 import { getHiddenApps } from "@/lib/nav/hidden-apps";
 import type { Crumb } from "@/lib/nav/route-trail";
-import type { ProfileSummary, TodosFacets } from "@/types";
+import type { MyProfilesResponse, ProfileSummary, Role, TodosFacets } from "@/types";
 
 // Cache the facets call for 30s so every page render doesn't hit the backend
 // for a badge count.  The hermesToken argument becomes part of the cache
@@ -39,10 +39,10 @@ const getCachedFacets = unstable_cache(
 // The header switcher's options (FG-28): the account's active enrolments.
 // Cached per token like the badge; a stale list only offers a choice the
 // switch endpoint re-checks against the target profile.
-const getCachedEnrolments = unstable_cache(
-  async (hermesToken: string) =>
-    activeEnrolments(await new HermesApiClient({ hermesToken }).myProfiles()),
-  ["my-profiles-switcher"],
+const getCachedMyProfiles = unstable_cache(
+  async (hermesToken: string): Promise<MyProfilesResponse> =>
+    new HermesApiClient({ hermesToken }).myProfiles(),
+  ["my-profiles-switcher-roles"],
   { revalidate: 60 },
 );
 
@@ -110,16 +110,21 @@ export async function MobileShell({
   let enrolments: ProfileSummary[] = [];
   let sessionProfile = "default";
   let accountName: string | null = null;
+  let accountRole: Role | null = null;
+  let accountRoles: ProfileRole[] = [];
   if (showCoral) {
     try {
       const principal = await getPrincipal();
       if (principal) {
         accountName = principal.display || null;
+        accountRole = principal.role ?? null;
         const session = await readSession();
         hiddenApps = await getHiddenApps(principal, session?.hermesToken);
         sessionProfile = session?.profile ?? sessionProfile;
         if (session?.hermesToken) {
-          enrolments = await getCachedEnrolments(session.hermesToken).catch(() => []);
+          const mine = await getCachedMyProfiles(session.hermesToken).catch(() => ({ profiles: [] }));
+          enrolments = activeEnrolments(mine);
+          accountRoles = enrolmentRoles(mine);
         }
         if (session?.hermesToken) {
           const facets: TodosFacets = await getCachedFacets(
@@ -165,7 +170,14 @@ export async function MobileShell({
       wide={wide}
       fill={fill}
       clearLauncher
-      topBar={<ShellTopBar accountName={accountName} />}
+      topBar={
+        <ShellTopBar
+          accountName={accountName}
+          accountRole={accountRole}
+          accountRoles={accountRoles}
+          currentProfile={sessionProfile}
+        />
+      }
       pageHeader={
         hideHeader ? null : (
         <PageHeader

@@ -399,6 +399,7 @@ from hermes_cli.software_upgrade_api import router as _software_upgrade_router  
 from hermes_cli.security_basics_api import router as _security_basics_router  # noqa: E402
 from hermes_cli.goals_api import router as _goals_router  # noqa: E402
 from hermes_cli.projects_api import router as _projects_router  # noqa: E402
+from hermes_cli.refs_api import router as _refs_router  # noqa: E402
 from hermes_cli.projects_categories_api import router as _projects_categories_router  # noqa: E402
 from hermes_cli.projects_ask_api import router as _projects_ask_router  # noqa: E402
 from hermes_cli.projects_clarify_api import router as _projects_clarify_router  # noqa: E402
@@ -409,6 +410,7 @@ from hermes_cli.projects_board_api import router as _projects_board_router  # no
 from hermes_cli.skills_improve_api import router as _skills_improve_router  # noqa: E402
 from hermes_cli.skills_versions_api import router as _skills_versions_router  # noqa: E402
 from hermes_cli.skills_usage_api import router as _skills_usage_router  # noqa: E402
+from hermes_cli.aquarium_api import router as _aquarium_router  # noqa: E402
 
 app.include_router(_memory_oauth_router)
 app.include_router(_memory_explorer_router)
@@ -433,6 +435,7 @@ app.include_router(_software_upgrade_router)
 app.include_router(_security_basics_router)
 app.include_router(_goals_router)
 app.include_router(_projects_router)
+app.include_router(_refs_router)
 app.include_router(_projects_categories_router)
 app.include_router(_projects_ask_router)
 app.include_router(_projects_clarify_router)
@@ -443,6 +446,7 @@ app.include_router(_projects_board_router)
 app.include_router(_skills_improve_router)
 app.include_router(_skills_versions_router)
 app.include_router(_skills_usage_router)
+app.include_router(_aquarium_router)
 try:  # FG-33 1.6 quota policy router; absent until that item lands
     from hermes_cli.quotas_api import router as _quotas_router  # noqa: E402
 except ImportError:
@@ -6566,6 +6570,9 @@ def get_sessions(
                 # Tens of KB per row and unused by list views; a whole list
                 # would otherwise weigh tens of MB.
                 s.pop("system_prompt", None)
+            from hermes_cli import chat_refs
+
+            chat_refs.attach_refs(sessions, profile_name or chat_refs.acting_profile_name())
             return {"sessions": sessions, "total": total, "limit": limit, "offset": offset}
         finally:
             db.close()
@@ -6679,6 +6686,9 @@ def get_profiles_sessions(
                 )
                 s["archived"] = bool(s.get("archived"))
                 merged.append(s)
+            from hermes_cli import chat_refs
+
+            chat_refs.attach_refs(rows, name)
         except Exception as exc:
             errors.append({"profile": name, "error": str(exc)})
         finally:
@@ -6830,6 +6840,29 @@ def search_sessions(
                 payload["title"] = lineage_title(tip, root)
                 seen[root] = payload
 
+            # A chat ref (``C1024``) names exactly one conversation: it leads.
+            from hermes_cli import chat_refs, short_refs
+
+            this_profile = (
+                _cron_profile_home(profile)[0] if profile else chat_refs.acting_profile_name()
+            )
+            parsed_ref = short_refs.parse_ref(q)
+            if parsed_ref is not None and parsed_ref.kind == "C":
+                record = short_refs.lookup(parsed_ref.base)
+                if record is not None and record.profile == this_profile:
+                    hit = db.get_session(record.internal_id)
+                    if hit:
+                        add_lineage_result(
+                            record.internal_id,
+                            {
+                                "snippet": f"{record.ref}: {hit.get('title') or record.internal_id}",
+                                "role": None,
+                                "source": hit.get("source"),
+                                "model": hit.get("model"),
+                                "session_started": hit.get("started_at"),
+                            },
+                        )
+
             # Direct ID matches first: users often paste a session id from CLI,
             # logs, or another Hermes surface. FTS can't find those unless the
             # id happens to appear in message text. search_sessions_by_id is
@@ -6880,7 +6913,12 @@ def search_sessions(
                         "session_started": m.get("session_started"),
                     },
                 )
-            return {"results": list(seen.values())}
+            results = list(seen.values())
+            for r in results:
+                ref = chat_refs.ref_for_session(db, r["session_id"], this_profile)
+                if ref:
+                    r["ref"] = ref
+            return {"results": results}
         finally:
             db.close()
     except HTTPException:
@@ -11839,8 +11877,14 @@ def get_session_detail(
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
         _require_chat_access(db, sid, scope)
-        if profile:
-            session["profile"] = _cron_profile_home(profile)[0]
+        from hermes_cli import chat_refs
+
+        profile_name = _cron_profile_home(profile)[0] if profile else None
+        if profile_name:
+            session["profile"] = profile_name
+        session["ref"] = chat_refs.ref_for_session(
+            db, sid, profile_name or chat_refs.acting_profile_name()
+        )
         return session
     finally:
         db.close()
@@ -12080,6 +12124,8 @@ async def session_chat(session_id: str, request: Request):
     if not user_message:
         raise HTTPException(status_code=400, detail="message is required")
 
+    typed_message = user_message
+
     # Attachments live in a private Supabase bucket the brain can't reach;
     # download them into the shared document cache and point the brain at the
     # local paths so uploaded PDFs/DOCX/XLSX are actually readable (FG-20).
@@ -12088,6 +12134,15 @@ async def session_chat(session_id: str, request: Request):
         user_message = await _materialize_agent_home_attachments(
             _attachments, user_message
         )
+
+    # Short refs the sender typed (``P12``, ``C1024``) get a one-line
+    # description appended to this same turn (FG-36); the system prompt and
+    # past turns are untouched.
+    from hermes_cli.ref_mentions import expand_ref_mentions
+
+    user_message = await expand_ref_mentions(
+        request, user_message, principal=principal, scan=typed_message
+    )
 
     db = _open_session_db_for_profile(profile)
     try:
@@ -12980,6 +13035,8 @@ async def session_chat_stream(session_id: str, request: Request):
     if live:
         return _turn_in_progress(live)
 
+    typed_message = user_message
+
     # Attachments live in a private Supabase bucket the brain can't reach;
     # download them into the shared document cache and point the brain at the
     # local paths so uploaded PDFs/DOCX/XLSX are actually readable (FG-20).
@@ -12988,6 +13045,15 @@ async def session_chat_stream(session_id: str, request: Request):
         user_message = await _materialize_agent_home_attachments(
             _attachments, user_message
         )
+
+    # Short refs the sender typed (``P12``, ``C1024``) get a one-line
+    # description appended to this same turn (FG-36); the system prompt and
+    # past turns are untouched.
+    from hermes_cli.ref_mentions import expand_ref_mentions
+
+    user_message = await expand_ref_mentions(
+        request, user_message, principal=principal, scan=typed_message
+    )
 
     db = _open_session_db_for_profile(profile)
     try:
@@ -13513,7 +13579,14 @@ async def create_session_endpoint(request: Request):
         db.ensure_session(session_id, source="agent_home", user_id=principal.user_id)
     finally:
         db.close()
-    return {"session_id": session_id, "source": "agent_home"}
+    from hermes_cli import chat_refs
+
+    ref = await asyncio.to_thread(
+        chat_refs.assign_new,
+        session_id,
+        _cron_profile_home(profile)[0] if profile else chat_refs.acting_profile_name(),
+    )
+    return {"session_id": session_id, "source": "agent_home", "ref": ref}
 
 
 @app.delete("/api/sessions/{session_id}")
@@ -18319,6 +18392,67 @@ def _perf_role(caller: Optional[str], platform: Optional[str]) -> str:
     return caller
 
 
+def _perf_tally_aux_cost(e: Dict[str, Any], r: Any, duration, tokens: int) -> None:
+    """Fold one ledger row into its card's aux-cost tallies. Aux calls never
+    reach the sessions table, so their spend comes from the ledger: the cost
+    stored at call time, or — for rows written before costs were stored —
+    an estimate from the row's own tokens (see ``_perf_card_cost``)."""
+    if not (r["caller"] or "").startswith("aux:") or r["status"] == "error":
+        return
+    if duration is None and not tokens:
+        e["unmeasured_calls"] += 1
+        return
+    status = r["cost_status"]
+    if status is None:
+        u = e["legacy_aux_usage"]
+        u["input_tokens"] = u.get("input_tokens", 0) + (r["input_tokens"] or 0)
+        u["output_tokens"] = u.get("output_tokens", 0) + (r["output_tokens"] or 0)
+        u["cache_read_tokens"] = (
+            u.get("cache_read_tokens", 0) + (r["cache_read_tokens"] or 0)
+        )
+        u["calls"] = u.get("calls", 0) + 1
+    elif r["cost_usd"] is not None:
+        e["aux_cost"] += float(r["cost_usd"])
+        e["aux_priced"] += 1
+    else:
+        e["unpriced_calls"] += 1
+
+
+def _perf_card_cost(e: Dict[str, Any], session_cost: float, unpriced: int):
+    """``(cost_usd, cost_status, unpriced_calls)`` for one Performance card.
+
+    ``cost_status`` is ``known`` (every priced call is in ``cost_usd``),
+    ``partial`` (some calls have no published price) or ``unknown`` (none
+    do — ``cost_usd`` is then ``None`` rather than a misleading ``$0``)."""
+    cost = session_cost + e["aux_cost"]
+    priced = bool(session_cost) or e["aux_priced"] > 0
+    legacy = e["legacy_aux_usage"]
+    if legacy.get("calls"):
+        try:
+            from agent.usage_pricing import CanonicalUsage, estimate_usage_cost
+
+            result = estimate_usage_cost(
+                e["model"],
+                CanonicalUsage(
+                    input_tokens=legacy["input_tokens"],
+                    output_tokens=legacy["output_tokens"],
+                    cache_read_tokens=legacy["cache_read_tokens"],
+                ),
+                provider=e["provider"] or None,
+            )
+            amount = result.amount_usd
+        except Exception:
+            amount = None
+        if amount is not None:
+            cost += float(amount)
+            priced = True
+        else:
+            unpriced += legacy["calls"]
+    if unpriced and not priced:
+        return None, "unknown", unpriced
+    return cost, ("partial" if unpriced else "known"), unpriced
+
+
 @app.get("/api/analytics/models/performance")
 def get_models_performance(
     days: int = 7, months: int = 6, profile: Optional[str] = None
@@ -18350,11 +18484,15 @@ def get_models_performance(
             try:
                 cols = {r[1] for r in conn.execute("PRAGMA table_info(api_call_log)")}
                 served_col = "served_model" if "served_model" in cols else "NULL"
+                cost_cols = (
+                    "cost_usd, cost_status" if "cost_status" in cols
+                    else "NULL AS cost_usd, NULL AS cost_status"
+                )
                 attempts.extend(conn.execute(
                     f"""
                     SELECT ts, model, provider, duration_ms, status, caller,
                            platform, error_type, status_code,
-                           {served_col} AS served_model,
+                           {served_col} AS served_model, {cost_cols},
                            date(ts, 'unixepoch') AS day,
                            strftime('%Y-%m', ts, 'unixepoch') AS month,
                            input_tokens, output_tokens,
@@ -18390,7 +18528,10 @@ def get_models_performance(
                     """
                     SELECT model,
                            SUM(COALESCE(actual_cost_usd, estimated_cost_usd))
-                               AS cost_usd
+                               AS cost_usd,
+                           SUM(CASE WHEN cost_status = 'unknown'
+                                     AND input_tokens + output_tokens > 0
+                                    THEN 1 ELSE 0 END) AS unpriced_sessions
                     FROM sessions
                     WHERE started_at >= ? AND model IS NOT NULL AND model != ''
                     GROUP BY model
@@ -18422,6 +18563,12 @@ def get_models_performance(
             key = f"{model_name}\t{r['provider'] or ''}"
             tokens = (r["input_tokens"] or 0) + (r["output_tokens"] or 0) + (
                 r["cache_read_tokens"] or 0) + (r["reasoning_tokens"] or 0)
+            # No provider round trip takes 0ms: such rows came from the old
+            # async aux shim that logged before the request ran (no latency,
+            # tokens or cost were ever captured), so they don't skew latency.
+            duration = r["duration_ms"]
+            if duration is not None and duration <= 0:
+                duration = None
 
             m = monthly_ledger.setdefault(
                 (r["month"], model_name),
@@ -18430,8 +18577,8 @@ def get_models_performance(
             m["calls"] += 1
             m["failures"] += 1 if r["status"] == "error" else 0
             m["tokens"] += tokens
-            if r["duration_ms"] is not None:
-                m["durations"].append(r["duration_ms"])
+            if duration is not None:
+                m["durations"].append(duration)
 
             if r["ts"] < day_cutoff:
                 continue
@@ -18441,6 +18588,8 @@ def get_models_performance(
                 "input": 0, "output": 0, "cache": 0, "reasoning": 0,
                 "roles": set(), "daily": {}, "served_as": set(),
                 "failure_reasons": {},
+                "aux_cost": 0.0, "aux_priced": 0, "unpriced_calls": 0,
+                "unmeasured_calls": 0, "legacy_aux_usage": {},
             })
             if served and served != model_name:
                 e["served_as"].add(served)
@@ -18449,8 +18598,9 @@ def get_models_performance(
                 e["failure_reasons"][reason] = e["failure_reasons"].get(reason, 0) + 1
             e["calls"] += 1
             e["failures"] += 1 if r["status"] == "error" else 0
-            if r["duration_ms"] is not None:
-                e["durations"].append(r["duration_ms"])
+            if duration is not None:
+                e["durations"].append(duration)
+            _perf_tally_aux_cost(e, r, duration, tokens)
             e["input"] += r["input_tokens"] or 0
             e["output"] += r["output_tokens"] or 0
             e["cache"] += r["cache_read_tokens"] or 0
@@ -18465,13 +18615,18 @@ def get_models_performance(
             d["calls"] += 1
             d["failures"] += 1 if r["status"] == "error" else 0
             d["tokens"] += tokens
-            if r["duration_ms"] is not None:
-                d["durations"].append(r["duration_ms"])
+            if duration is not None:
+                d["durations"].append(duration)
 
         cost_by_model: Dict[str, float] = {}
+        unpriced_sessions: Dict[str, int] = {}
         for r in sess_cost_rows:
             cost_by_model[r["model"]] = (
                 cost_by_model.get(r["model"], 0) + (r["cost_usd"] or 0)
+            )
+            unpriced_sessions[r["model"]] = (
+                unpriced_sessions.get(r["model"], 0)
+                + (r["unpriced_sessions"] or 0)
             )
         _cost_claimed: set = set()
 
@@ -18489,9 +18644,14 @@ def get_models_performance(
             # A model split across provider rows reports its session cost
             # once, on the first row — splitting would invent a breakdown.
             cost = 0.0
+            unpriced = e["unpriced_calls"]
             if e["model"] not in _cost_claimed:
                 cost = float(cost_by_model.get(e["model"]) or 0)
+                unpriced += unpriced_sessions.get(e["model"], 0)
                 _cost_claimed.add(e["model"])
+            cost_usd, cost_status, unpriced = _perf_card_cost(
+                e, cost, unpriced
+            )
             models.append({
                 "model": e["model"],
                 "provider": e["provider"],
@@ -18518,7 +18678,10 @@ def get_models_performance(
                     "cache_read": e["cache"],
                     "reasoning": e["reasoning"],
                 },
-                "cost_usd": cost,
+                "cost_usd": cost_usd,
+                "cost_status": cost_status,
+                "unpriced_calls": unpriced,
+                "unmeasured_calls": e["unmeasured_calls"],
                 "daily": daily_rows,
             })
 

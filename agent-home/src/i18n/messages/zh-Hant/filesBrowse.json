@@ -59,5 +59,9 @@
   "pager.prev": "上一頁",
   "pager.next": "下一頁",
   "pager.page": "第 {page} 頁，共 {pages} 頁",
-  "pager.range": "第 {from}–{to} 項，共 {total} 項"
+  "pager.range": "第 {from}–{to} 項，共 {total} 項",
+  "loadingFiles": "正在載入你的檔案…",
+  "loadingPlaces": "正在載入你的位置…",
+  "loadingFolders": "正在載入你的資料夾…",
+  "loadingNetwork": "正在載入網絡資料夾…"
 }

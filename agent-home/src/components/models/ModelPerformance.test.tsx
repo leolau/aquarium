@@ -54,6 +54,47 @@ describe("ModelPerformance", () => {
     expect(html).toContain('data-component="PerfDailyBars"');
   });
 
+  it("says the cost is unknown (not $0) when no price is published", () => {
+    const html = renderToStaticMarkup(
+      <ModelPerformance
+        perf={{
+          ...PERF,
+          models: [
+            {
+              ...ENTRY,
+              model: "qwen3.8-max",
+              provider: "opencode-go",
+              caller_roles: ["vision"],
+              cost_usd: null,
+              cost_status: "unknown",
+              unpriced_calls: 33,
+            },
+          ],
+        }}
+      />,
+    );
+    const cost = html.slice(html.indexOf('data-component="PerfCost"'));
+    expect(cost).toMatch(/^data-component="PerfCost"><span[^>]*>unknown/);
+    expect(cost).toContain("Why is the cost of qwen3.8-max unknown?");
+    expect(cost.slice(0, 200)).not.toContain("$0");
+  });
+
+  it("flags unpriced calls next to a partial total and legacy unmeasured calls", () => {
+    const html = renderToStaticMarkup(
+      <ModelPerformance
+        perf={{
+          ...PERF,
+          models: [
+            { ...ENTRY, cost_usd: 1.5, cost_status: "partial", unpriced_calls: 4, unmeasured_calls: 33 },
+          ],
+        }}
+      />,
+    );
+    expect(html).toContain("$1.50");
+    expect(html).toContain("+ 4 unpriced");
+    expect(html).toContain("33 earlier calls were counted before");
+  });
+
   it("names the provider's own label, tags backup calls and says why calls failed", () => {
     const html = renderToStaticMarkup(
       <ModelPerformance

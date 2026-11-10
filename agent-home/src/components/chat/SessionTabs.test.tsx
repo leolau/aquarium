@@ -69,6 +69,15 @@ describe("SessionTabs", () => {
     expect(html).toContain('data-component="SessionTabs"');
   });
 
+  it("shows each chip's short ref", () => {
+    const withRef = sessions.map((s, i) => (i === 0 ? { ...s, ref: "C1024" } : s));
+    const html = renderToStaticMarkup(
+      <SessionTabs {...baseProps} sessions={withRef} activeId="s1" />,
+    );
+    expect(html).toContain('data-slot="session-ref"');
+    expect(html).toContain("C1024");
+  });
+
   it("renders a Category dropdown with one option per non-empty category", () => {
     const html = renderToStaticMarkup(<SessionTabs {...baseProps} />);
     expect(html).toContain('id="chat-category"');

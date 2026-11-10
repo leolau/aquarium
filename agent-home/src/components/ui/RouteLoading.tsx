@@ -1,12 +1,14 @@
 "use client";
 
 import { AquariumLoader } from "@/components/brand/AquariumLoader";
+import { SlowHint } from "@/components/ui/SlowHint";
 import { useT } from "@/i18n/client";
 
 /**
  * The route-level loading screen (Figma "Loading"): the animated Aquarium
  * loader centred with one line of copy. No page header and no launcher of its
- * own — the surrounding shell decides those.
+ * own — the surrounding shell decides those. A "still working…" line follows
+ * if the wait runs past a few seconds.
  */
 export function RouteLoading({ label }: { label?: string }) {
   const t = useT("auth");
@@ -19,6 +21,7 @@ export function RouteLoading({ label }: { label?: string }) {
     >
       <AquariumLoader size={64} label={text} />
       <p className="text-sm text-[var(--color-muted)]">{text}</p>
+      <SlowHint />
     </div>
   );
 }

@@ -7,13 +7,25 @@ import { useActivityRunning } from "@/components/ui/useActivityRunning";
 import { useStatusSummary } from "@/components/ui/useStatusSummary";
 import { useNeedsYou } from "@/lib/landing/needsYou";
 import { useMemo, useState } from "react";
+import type { ProfileRole } from "@/lib/api/my-profiles";
+import type { Role } from "@/types";
 
 /**
  * The landing top bar on every inner page: same health pill, Needs-you badge
  * (with the tab-title count) and account menu. The badge opens the Needs-you
  * list as a sheet, since inner pages have no right-hand panel.
  */
-export function ShellTopBar({ accountName }: { accountName?: string | null }) {
+export function ShellTopBar({
+  accountName,
+  accountRole,
+  accountRoles,
+  currentProfile,
+}: {
+  accountName?: string | null;
+  accountRole?: Role | null;
+  accountRoles?: ProfileRole[];
+  currentProfile?: string;
+}) {
   const status = useStatusSummary();
   const activity = useActivityRunning();
   const needsYou = useNeedsYou();
@@ -47,6 +59,9 @@ export function ShellTopBar({ accountName }: { accountName?: string | null }) {
           setOpen(true);
         }}
         accountName={accountName}
+        accountRole={accountRole}
+        accountRoles={accountRoles}
+        currentProfile={currentProfile}
       />
       {open ? (
         <Sheet title="Needs you" component="NeedsYouSheet" onClose={() => setOpen(false)}>

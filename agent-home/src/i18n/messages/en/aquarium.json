@@ -1,0 +1,45 @@
+{
+  "title": "Aquarium",
+  "back": "Back",
+  "loading": "Filling the aquarium…",
+  "offline": "Offline — showing the last update",
+  "empty": "No one is swimming here yet.",
+  "peopleList": "People in the aquarium",
+  "person": "{name}, {creature}: {chats} chats, {profiles} profiles",
+  "legend": {
+    "title": "How to read the aquarium",
+    "size": "Bigger = more chats, projects and tokens (the busiest person is the biggest)",
+    "speed": "Faster = more tokens in the last 24 h",
+    "followers": "Little followers = the profiles they use, named on their chip",
+    "active": "Glow and bubbles = working right now",
+    "self": "Gold ring = you",
+    "show": "Show how to read the aquarium",
+    "hide": "Hide how to read the aquarium"
+  },
+  "card": {
+    "you": "(you)",
+    "activeNow": "working now",
+    "chats": "Chats",
+    "projects": "Projects",
+    "tokens": "Tokens",
+    "profiles": "Profiles",
+    "noProfiles": "None yet",
+    "profileOf": "Profile of {name}"
+  },
+  "play": {
+    "title": "Try this",
+    "tapMouse": "Click anywhere: your creature swims there",
+    "tapTouch": "Tap anywhere: your creature swims there",
+    "shakeMouse": "Press Shake: everyone changes direction and speed",
+    "shakeTouch": "Shake your phone (or press Shake): everyone changes direction and speed",
+    "shake": "Shake",
+    "shaking": "Shaking…",
+    "shakeLabel": "Shake the aquarium",
+    "gotIt": "Got it",
+    "showTips": "Tips",
+    "enableShake": "Turn on phone shake",
+    "motionDenied": "Shaking the phone is off. Use the Shake button.",
+    "noSelf": "You don't have a creature here yet.",
+    "shaken": "Everyone is swimming a new way."
+  }
+}

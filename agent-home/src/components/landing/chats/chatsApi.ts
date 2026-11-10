@@ -45,9 +45,10 @@ function profileBody(profile: string | undefined): { profile?: string } {
 export const chatsApi = {
   async sessions(
     profile: string | undefined,
-    opts: { force?: boolean } = {},
+    opts: { force?: boolean; source?: string } = {},
   ): Promise<LandingSession[] | null> {
-    const url = withProfileQuery(`/api/chat/sessions?limit=${SIDEBAR_SESSION_LIMIT}`, profile);
+    const source = opts.source ? `&source=${encodeURIComponent(opts.source)}` : "";
+    const url = withProfileQuery(`/api/chat/sessions?limit=${SIDEBAR_SESSION_LIMIT}${source}`, profile);
     const body = await fetchSessionList(url, opts);
     return body?.sessions ? (body.sessions as LandingSession[]) : null;
   },
