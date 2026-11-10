@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { RefBadge } from "@/components/refs/RefBadge";
 import { ActionButton } from "@/components/ui/ActionButton";
 
 import { Spinner } from "@/components/ui/Spinner";
@@ -234,7 +235,10 @@ export function SessionModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold">Conversation</h2>
+          <h2 className="flex items-center gap-2 text-sm font-semibold">
+            Conversation
+            <RefBadge value={session.ref} />
+          </h2>
           <button
             type="button"
             onClick={onClose}

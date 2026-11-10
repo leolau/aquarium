@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState, type MouseEvent } from "react";
 
 import { ChatConversationView } from "@/components/chat/ChatConversationView";
+import { RefBadge } from "@/components/refs/RefBadge";
 import { useChatConversation } from "@/components/chat/useChatConversation";
 import { ArrowRightIcon, ChevronLeftIcon, XIcon } from "@/components/ui/icons";
 import { useT } from "@/i18n";
@@ -111,6 +112,7 @@ export function LandingChatView({
         >
           {heading}
         </h2>
+        <RefBadge value={session?.ref} className="lg:!min-h-0" />
         <Link
           href={chatHref(sessionId, profile)}
           data-action="open-full-page"

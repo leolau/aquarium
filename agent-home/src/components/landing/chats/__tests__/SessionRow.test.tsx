@@ -34,6 +34,14 @@ describe("SessionRow", () => {
     expect(screen.getByRole("link").getAttribute("href")).toBe("/chat?session=x");
   });
 
+  it("shows the chat's short ref as a copyable badge", () => {
+    renderRow({ session: { ...untitledRow, ref: "C42" } });
+    const badge = document.querySelector("[data-component='RefBadge']")!;
+    expect(badge.getAttribute("data-ref")).toBe("C42");
+    renderRow({ session: untitledRow });
+    expect(document.querySelectorAll("[data-component='RefBadge']").length).toBe(1);
+  });
+
   it("marks live sessions with a dot and 'working now'", () => {
     renderRow({ session: liveRow });
     expect(screen.getByRole("img", { name: "Working now" })).toBeTruthy();

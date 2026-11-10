@@ -1,5 +1,5 @@
-"""``hermes ref <ref>`` — what a short ref (``P12``, ``T345``, ``P12-R3``, ``D88``)
-names, as ``GET /api/refs/{ref}`` answers it.
+"""``hermes ref <ref>`` — what a short ref (``P12``, ``T345``, ``P12-R3``,
+``C1024``, ``D88``) names, as ``GET /api/refs/{ref}`` answers it.
 
 Footprint-ladder rung 2: a CLI command the agent runs, no model tool. The
 lookup goes through the ``refs_api`` router in process, so the read gate is
@@ -27,8 +27,14 @@ def _resolve(ref: str, actor) -> tuple[int, dict]:
     async def _as(request):
         return principal
 
+    async def _in_profile(request, profile):
+        # The operator's terminal acts as the resolved actor in every profile.
+        return principal
+
     saved = projects_api._principal_read  # noqa: SLF001 - same package
+    saved_profile = refs_api._profile_principal  # noqa: SLF001
     projects_api._principal_read = _as  # noqa: SLF001
+    refs_api._profile_principal = _in_profile  # noqa: SLF001
     try:
         app = FastAPI()
         app.include_router(refs_api.router)
@@ -36,6 +42,7 @@ def _resolve(ref: str, actor) -> tuple[int, dict]:
         resp = client.get(f"/api/refs/{ref}")
     finally:
         projects_api._principal_read = saved  # noqa: SLF001
+        refs_api._profile_principal = saved_profile  # noqa: SLF001
     try:
         body = resp.json()
     except Exception:
@@ -80,16 +87,16 @@ def ref_command(args: argparse.Namespace) -> int:
 def register_ref_subparser(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser(
         "ref",
-        help="Resolve a short ref (P12, T345, P12-R3, D88, M512) to the item it names",
+        help="Resolve a short ref (P12, T345, P12-R3, C1024, D88, M512) to the item it names",
         description=(
             "Look up a short ref — P<n> project, T<n> project card, "
-            "P<n>-R<n> run, D<n> to-do, M<n> inbox message — and print its "
+            "P<n>-R<n> run, C<n> chat, D<n> to-do, M<n> inbox message — and print its "
             "kind, internal id, title, status "
             "and agent-home URL. Case-insensitive. Only items the actor may "
             "see resolve; anything else is 'ref not found'."
         ),
     )
-    parser.add_argument("ref", help="e.g. P12, t345, P12-R3, D88, m512")
+    parser.add_argument("ref", help="e.g. P12, t345, P12-R3, C1024, D88, m512")
     parser.add_argument(
         "--actor", default=None, help="Principal to act as (default: the enrolled owner)"
     )

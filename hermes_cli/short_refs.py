@@ -312,6 +312,13 @@ def _card_items(projects_path: Optional[Path]) -> list[RefItem]:
     return items
 
 
+def _chat_items(projects_path: Optional[Path]) -> list[RefItem]:
+    """Every profile's chats (compression roots), by ``started_at``."""
+    from hermes_cli.chat_refs import backfill_items
+
+    return backfill_items(projects_path)
+
+
 def _todo_items(projects_path: Optional[Path]) -> list[RefItem]:
     """Every profile's to-dos (Postgres ``tasks``), via ``profile_refs``."""
     from hermes_cli.profile_refs import todo_items
@@ -326,10 +333,11 @@ def _message_items(projects_path: Optional[Path]) -> list[RefItem]:
     return message_items(projects_path)
 
 
-#: Existing-item sources per kind. Chats (C) add theirs when they are wired.
+#: Existing-item sources per kind.
 BACKFILL_SOURCES: dict[str, Callable[[Optional[Path]], list[RefItem]]] = {
     "P": _project_items,
     "T": _card_items,
+    "C": _chat_items,
     "D": _todo_items,
     "M": _message_items,
 }

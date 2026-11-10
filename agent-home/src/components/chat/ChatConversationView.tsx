@@ -7,6 +7,7 @@ import { Composer } from "@/components/chat/Composer";
 import { LiveActivity } from "@/components/chat/LiveActivity";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { StatusIndicator } from "@/components/chat/StatusIndicator";
+import { RefBadge } from "@/components/refs/RefBadge";
 import { chatTranscriptText, copyText } from "@/lib/chat/copy-chat";
 import {
   assistantIsEmpty,
@@ -23,11 +24,14 @@ export function ChatConversationView({
   storageEnabled,
   composerInitialText,
   composerLauncherClearance = true,
+  sessionRef,
 }: {
   conv: ChatConversation;
   storageEnabled: boolean;
   composerInitialText?: string;
   composerLauncherClearance?: boolean;
+  /** The open chat's short ref (`C1024`), shown above the transcript. */
+  sessionRef?: string | null;
 }) {
   const {
     sessionId,
@@ -53,16 +57,19 @@ export function ChatConversationView({
 
   return (
     <>
-      {canCopy ? (
-        <div className="mb-1 flex justify-end">
-          <CopyChatButton
-            getText={() =>
-              chatTranscriptText(
-                messages,
-                live ? { tools: live.tools, reasoning: live.reasoning } : null,
-              )
-            }
-          />
+      {canCopy || sessionRef ? (
+        <div className="mb-1 flex items-center justify-end gap-2">
+          <RefBadge value={sessionRef} className="lg:!min-h-0" />
+          {canCopy ? (
+            <CopyChatButton
+              getText={() =>
+                chatTranscriptText(
+                  messages,
+                  live ? { tools: live.tools, reasoning: live.reasoning } : null,
+                )
+              }
+            />
+          ) : null}
         </div>
       ) : null}
       <div
