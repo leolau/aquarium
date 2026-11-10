@@ -99,6 +99,14 @@ def test_search_by_ref_finds_exactly_that_project(env):
         assert [i["id"] for i in items] == [beta["id"]], q
 
 
+def test_a_ref_shaped_search_still_matches_names(env):
+    client, _ = env
+    alpha = _create(client, "Alpha")
+    router = _create(client, "Upgrade the P1 router")
+    items = client.get("/api/registry/projects", params={"q": "P1"}).json()["items"]
+    assert {i["id"] for i in items} == {alpha["id"], router["id"]}
+
+
 def test_a_project_ref_stands_in_for_its_slug(env):
     client, _ = env
     p = _create(client)
