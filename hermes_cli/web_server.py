@@ -17893,6 +17893,67 @@ def _perf_role(caller: Optional[str], platform: Optional[str]) -> str:
     return caller
 
 
+def _perf_tally_aux_cost(e: Dict[str, Any], r: Any, duration, tokens: int) -> None:
+    """Fold one ledger row into its card's aux-cost tallies. Aux calls never
+    reach the sessions table, so their spend comes from the ledger: the cost
+    stored at call time, or — for rows written before costs were stored —
+    an estimate from the row's own tokens (see ``_perf_card_cost``)."""
+    if not (r["caller"] or "").startswith("aux:") or r["status"] == "error":
+        return
+    if duration is None and not tokens:
+        e["unmeasured_calls"] += 1
+        return
+    status = r["cost_status"]
+    if status is None:
+        u = e["legacy_aux_usage"]
+        u["input_tokens"] = u.get("input_tokens", 0) + (r["input_tokens"] or 0)
+        u["output_tokens"] = u.get("output_tokens", 0) + (r["output_tokens"] or 0)
+        u["cache_read_tokens"] = (
+            u.get("cache_read_tokens", 0) + (r["cache_read_tokens"] or 0)
+        )
+        u["calls"] = u.get("calls", 0) + 1
+    elif r["cost_usd"] is not None:
+        e["aux_cost"] += float(r["cost_usd"])
+        e["aux_priced"] += 1
+    else:
+        e["unpriced_calls"] += 1
+
+
+def _perf_card_cost(e: Dict[str, Any], session_cost: float, unpriced: int):
+    """``(cost_usd, cost_status, unpriced_calls)`` for one Performance card.
+
+    ``cost_status`` is ``known`` (every priced call is in ``cost_usd``),
+    ``partial`` (some calls have no published price) or ``unknown`` (none
+    do — ``cost_usd`` is then ``None`` rather than a misleading ``$0``)."""
+    cost = session_cost + e["aux_cost"]
+    priced = bool(session_cost) or e["aux_priced"] > 0
+    legacy = e["legacy_aux_usage"]
+    if legacy.get("calls"):
+        try:
+            from agent.usage_pricing import CanonicalUsage, estimate_usage_cost
+
+            result = estimate_usage_cost(
+                e["model"],
+                CanonicalUsage(
+                    input_tokens=legacy["input_tokens"],
+                    output_tokens=legacy["output_tokens"],
+                    cache_read_tokens=legacy["cache_read_tokens"],
+                ),
+                provider=e["provider"] or None,
+            )
+            amount = result.amount_usd
+        except Exception:
+            amount = None
+        if amount is not None:
+            cost += float(amount)
+            priced = True
+        else:
+            unpriced += legacy["calls"]
+    if unpriced and not priced:
+        return None, "unknown", unpriced
+    return cost, ("partial" if unpriced else "known"), unpriced
+
+
 @app.get("/api/analytics/models/performance")
 def get_models_performance(
     days: int = 7, months: int = 6, profile: Optional[str] = None
@@ -17924,11 +17985,15 @@ def get_models_performance(
             try:
                 cols = {r[1] for r in conn.execute("PRAGMA table_info(api_call_log)")}
                 served_col = "served_model" if "served_model" in cols else "NULL"
+                cost_cols = (
+                    "cost_usd, cost_status" if "cost_status" in cols
+                    else "NULL AS cost_usd, NULL AS cost_status"
+                )
                 attempts.extend(conn.execute(
                     f"""
                     SELECT ts, model, provider, duration_ms, status, caller,
                            platform, error_type, status_code,
-                           {served_col} AS served_model,
+                           {served_col} AS served_model, {cost_cols},
                            date(ts, 'unixepoch') AS day,
                            strftime('%Y-%m', ts, 'unixepoch') AS month,
                            input_tokens, output_tokens,
@@ -17964,7 +18029,10 @@ def get_models_performance(
                     """
                     SELECT model,
                            SUM(COALESCE(actual_cost_usd, estimated_cost_usd))
-                               AS cost_usd
+                               AS cost_usd,
+                           SUM(CASE WHEN cost_status = 'unknown'
+                                     AND input_tokens + output_tokens > 0
+                                    THEN 1 ELSE 0 END) AS unpriced_sessions
                     FROM sessions
                     WHERE started_at >= ? AND model IS NOT NULL AND model != ''
                     GROUP BY model
@@ -17996,6 +18064,12 @@ def get_models_performance(
             key = f"{model_name}\t{r['provider'] or ''}"
             tokens = (r["input_tokens"] or 0) + (r["output_tokens"] or 0) + (
                 r["cache_read_tokens"] or 0) + (r["reasoning_tokens"] or 0)
+            # No provider round trip takes 0ms: such rows came from the old
+            # async aux shim that logged before the request ran (no latency,
+            # tokens or cost were ever captured), so they don't skew latency.
+            duration = r["duration_ms"]
+            if duration is not None and duration <= 0:
+                duration = None
 
             m = monthly_ledger.setdefault(
                 (r["month"], model_name),
@@ -18004,8 +18078,8 @@ def get_models_performance(
             m["calls"] += 1
             m["failures"] += 1 if r["status"] == "error" else 0
             m["tokens"] += tokens
-            if r["duration_ms"] is not None:
-                m["durations"].append(r["duration_ms"])
+            if duration is not None:
+                m["durations"].append(duration)
 
             if r["ts"] < day_cutoff:
                 continue
@@ -18015,6 +18089,8 @@ def get_models_performance(
                 "input": 0, "output": 0, "cache": 0, "reasoning": 0,
                 "roles": set(), "daily": {}, "served_as": set(),
                 "failure_reasons": {},
+                "aux_cost": 0.0, "aux_priced": 0, "unpriced_calls": 0,
+                "unmeasured_calls": 0, "legacy_aux_usage": {},
             })
             if served and served != model_name:
                 e["served_as"].add(served)
@@ -18023,8 +18099,9 @@ def get_models_performance(
                 e["failure_reasons"][reason] = e["failure_reasons"].get(reason, 0) + 1
             e["calls"] += 1
             e["failures"] += 1 if r["status"] == "error" else 0
-            if r["duration_ms"] is not None:
-                e["durations"].append(r["duration_ms"])
+            if duration is not None:
+                e["durations"].append(duration)
+            _perf_tally_aux_cost(e, r, duration, tokens)
             e["input"] += r["input_tokens"] or 0
             e["output"] += r["output_tokens"] or 0
             e["cache"] += r["cache_read_tokens"] or 0
@@ -18039,13 +18116,18 @@ def get_models_performance(
             d["calls"] += 1
             d["failures"] += 1 if r["status"] == "error" else 0
             d["tokens"] += tokens
-            if r["duration_ms"] is not None:
-                d["durations"].append(r["duration_ms"])
+            if duration is not None:
+                d["durations"].append(duration)
 
         cost_by_model: Dict[str, float] = {}
+        unpriced_sessions: Dict[str, int] = {}
         for r in sess_cost_rows:
             cost_by_model[r["model"]] = (
                 cost_by_model.get(r["model"], 0) + (r["cost_usd"] or 0)
+            )
+            unpriced_sessions[r["model"]] = (
+                unpriced_sessions.get(r["model"], 0)
+                + (r["unpriced_sessions"] or 0)
             )
         _cost_claimed: set = set()
 
@@ -18063,9 +18145,14 @@ def get_models_performance(
             # A model split across provider rows reports its session cost
             # once, on the first row — splitting would invent a breakdown.
             cost = 0.0
+            unpriced = e["unpriced_calls"]
             if e["model"] not in _cost_claimed:
                 cost = float(cost_by_model.get(e["model"]) or 0)
+                unpriced += unpriced_sessions.get(e["model"], 0)
                 _cost_claimed.add(e["model"])
+            cost_usd, cost_status, unpriced = _perf_card_cost(
+                e, cost, unpriced
+            )
             models.append({
                 "model": e["model"],
                 "provider": e["provider"],
@@ -18092,7 +18179,10 @@ def get_models_performance(
                     "cache_read": e["cache"],
                     "reasoning": e["reasoning"],
                 },
-                "cost_usd": cost,
+                "cost_usd": cost_usd,
+                "cost_status": cost_status,
+                "unpriced_calls": unpriced,
+                "unmeasured_calls": e["unmeasured_calls"],
                 "daily": daily_rows,
             })
 

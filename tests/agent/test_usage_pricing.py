@@ -322,3 +322,28 @@ def test_bedrock_claude_cached_session_estimates_cost_not_unknown():
     )
     assert result.status == "estimated"
     assert result.amount_usd is not None
+
+
+def test_models_dev_prices_routes_without_official_or_endpoint_pricing(monkeypatch):
+    """OpenCode Go has no official snapshot and no prices on its /models
+    endpoint — models.dev's per-model cost block prices it; a model with no
+    cost block stays unknown (not free)."""
+    import agent.models_dev as md
+    import agent.usage_pricing as up
+
+    monkeypatch.setattr(up, "fetch_endpoint_model_metadata", lambda *a, **k: {})
+    monkeypatch.setattr(md, "fetch_models_dev", lambda force_refresh=False: {
+        "opencode-go": {"models": {
+            "qwen3.8-max": {"cost": {"input": 2, "output": 6, "cache_read": 0.25}},
+            "mystery": {"id": "mystery"},
+        }},
+    })
+    usage = CanonicalUsage(input_tokens=1_000_000, output_tokens=100_000)
+
+    priced = estimate_usage_cost("qwen3.8-max", usage, provider="opencode-go",
+                                 base_url="https://opencode.ai/zen/go/v1")
+    assert priced.status == "estimated" and priced.source == "models_dev"
+    assert float(priced.amount_usd) == 2.6
+
+    unknown = estimate_usage_cost("mystery", usage, provider="opencode-go")
+    assert unknown.status == "unknown" and unknown.amount_usd is None

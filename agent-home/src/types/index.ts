@@ -2717,8 +2717,16 @@ export interface ModelPerformanceEntry {
     cache_read: number;
     reasoning: number;
   };
-  /** Session-table cost over the same window, keyed by model. */
-  cost_usd: number;
+  /** Estimated spend over the same window: main-model sessions plus each
+   *  auxiliary call's own priced cost. `null` when no call could be priced. */
+  cost_usd: number | null;
+  /** `known` — every call is priced; `partial` — `unpriced_calls` have no
+   *  published price and aren't in `cost_usd`; `unknown` — none are. */
+  cost_status?: "known" | "partial" | "unknown";
+  unpriced_calls?: number;
+  /** Calls logged before this kind of call was measured (no latency,
+   *  tokens or cost were captured for them). */
+  unmeasured_calls?: number;
   daily: ModelPerfDaily[];
   /** Other names the provider's replies used for this model
    * (DeepSeek answers `deepseek-v4-flash` as `deepseek-flash`). */
