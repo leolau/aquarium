@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 
+import { RefBadge } from "@/components/refs/RefBadge";
 import { ActionButton } from "@/components/ui/ActionButton";
 
 import type { Todo, TodoStage } from "@/types";
@@ -102,7 +103,8 @@ export function TodoRow({
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex items-baseline justify-between gap-2">
-              <span className="truncate text-sm font-medium">{todo.title}</span>
+              <span className="min-w-0 flex-1 truncate text-sm font-medium">{todo.title}</span>
+              <RefBadge value={todo.ref} />
               {due ? (
                 <span
                   className="shrink-0 text-[10px]"

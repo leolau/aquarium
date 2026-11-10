@@ -1,6 +1,6 @@
 /**
  * Short refs (FG-36): `P12` project, `T345` project card, `P12-R3` run 3 of
- * P12 — and, with later PRs, `C` chats, `D` to-dos, `M` inbox messages. The
+ * P12, `D88` to-do, `M512` inbox message — and, with its PR, `C` chats. The
  * mirror of `hermes_cli/short_refs.py#parse_ref`: case-insensitive, no
  * leading zeros, a run suffix only after a project.
  */

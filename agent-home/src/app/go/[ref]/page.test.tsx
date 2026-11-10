@@ -34,6 +34,15 @@ describe("/go/[ref]", () => {
     expect(resolveRef).toHaveBeenCalledWith("P12-R3");
   });
 
+  it("opens a to-do and an inbox message", async () => {
+    resolveRef.mockResolvedValueOnce({ url: "/todos/0f0e" });
+    await expect(go("d88")).rejects.toThrow("NEXT_REDIRECT /todos/0f0e");
+    expect(resolveRef).toHaveBeenLastCalledWith("D88");
+    resolveRef.mockResolvedValueOnce({ url: "/inbox/1a2b" });
+    await expect(go("M512")).rejects.toThrow("NEXT_REDIRECT /inbox/1a2b");
+    expect(resolveRef).toHaveBeenLastCalledWith("M512");
+  });
+
   it("is not-found when the ref is hidden or unknown", async () => {
     resolveRef.mockRejectedValue(new HermesApiError(404, "GET /api/refs/T9", { detail: "ref not found" }));
     await expect(go("T9")).rejects.toThrow("NEXT_NOT_FOUND");

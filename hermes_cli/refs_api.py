@@ -1,9 +1,11 @@
 """``GET /api/refs/{ref}`` — resolve a short ref (``P12``, ``T345``,
-``P12-R3``) to the item it names, for callers who may see it.
+``P12-R3``, ``D88``, ``M512``) to the item it names, for callers who may see it.
 
 The resolver carries no access rules of its own: a project goes through
 ``projects_api._can_read`` and a card additionally through
-``projects_api._card_visible`` — the same gates the project pages use. A
+``projects_api._card_visible`` — the same gates the project pages use; a
+to-do or inbox message goes through its store's own C2-scoped ``get`` in the
+profile the ref was issued in (``profile_refs``). A
 ref that names nothing and a ref the caller may not see are the same 404.
 
 Design note: docs/design/master-plan/feature-groups/FG-36-short-refs.md.
@@ -98,11 +100,21 @@ def _resolve_card(parsed, record, principal, enrolled) -> Optional[dict]:
     }
 
 
-#: Per-kind resolvers. Chats (C), to-dos (D) and inbox messages (M) add
-#: theirs with their PRs; each must check authority in ``record.profile``.
+def _resolve_profile_item(parsed, record, principal, enrolled) -> Optional[dict]:
+    """To-dos (D) and inbox messages (M): the store's own ``get`` in
+    ``record.profile`` (``profile_refs.resolve``)."""
+    from hermes_cli import profile_refs
+
+    return profile_refs.resolve_sync(parsed, record, principal, enrolled)
+
+
+#: Per-kind resolvers. Chats (C) add theirs with their PR; each must check
+#: authority in ``record.profile``.
 RESOLVERS: dict[str, Callable[..., Optional[dict]]] = {
     "P": _resolve_project,
     "T": _resolve_card,
+    "D": _resolve_profile_item,
+    "M": _resolve_profile_item,
 }
 
 
@@ -125,6 +137,10 @@ async def resolve_ref(request: Request, ref: str) -> dict[str, Any]:
     """Kind, internal id, title, status and the agent-home URL — or 404."""
     principal = await projects_api._principal_read(request)  # noqa: SLF001
     enrolled = await projects_api._enrolled_profiles(principal.user_id)  # noqa: SLF001
+    from hermes_cli.profile_refs import CALLER_SUBJECT
+
+    # Profile-scoped kinds re-resolve the caller in the ref's own profile.
+    CALLER_SUBJECT.set(await projects_api._interactive_subject(request))  # noqa: SLF001
     result = await asyncio.to_thread(resolve_sync, ref, principal, set(enrolled))
     if result is None:
         raise HTTPException(status_code=404, detail=NOT_FOUND)

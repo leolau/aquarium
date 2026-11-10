@@ -1,4 +1,4 @@
-"""``hermes ref <ref>`` — what a short ref (``P12``, ``T345``, ``P12-R3``)
+"""``hermes ref <ref>`` — what a short ref (``P12``, ``T345``, ``P12-R3``, ``D88``)
 names, as ``GET /api/refs/{ref}`` answers it.
 
 Footprint-ladder rung 2: a CLI command the agent runs, no model tool. The
@@ -56,6 +56,8 @@ def format_resolution(item: dict) -> str:
         extra.append(f"project: {item['project_ref']} ({item.get('project_slug')})")
     elif item.get("project_slug"):
         extra.append(f"slug: {item['project_slug']}")
+    if item.get("profile"):
+        extra.append(f"profile: {item['profile']}")
     return line + "\n  " + "\n  ".join(extra)
 
 
@@ -78,15 +80,16 @@ def ref_command(args: argparse.Namespace) -> int:
 def register_ref_subparser(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser(
         "ref",
-        help="Resolve a short ref (P12, T345, P12-R3) to the item it names",
+        help="Resolve a short ref (P12, T345, P12-R3, D88, M512) to the item it names",
         description=(
             "Look up a short ref — P<n> project, T<n> project card, "
-            "P<n>-R<n> run — and print its kind, internal id, title, status "
+            "P<n>-R<n> run, D<n> to-do, M<n> inbox message — and print its "
+            "kind, internal id, title, status "
             "and agent-home URL. Case-insensitive. Only items the actor may "
             "see resolve; anything else is 'ref not found'."
         ),
     )
-    parser.add_argument("ref", help="e.g. P12, t345, P12-R3")
+    parser.add_argument("ref", help="e.g. P12, t345, P12-R3, D88, m512")
     parser.add_argument(
         "--actor", default=None, help="Principal to act as (default: the enrolled owner)"
     )

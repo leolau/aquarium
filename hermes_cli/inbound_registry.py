@@ -576,7 +576,12 @@ class InboundRegistry:
         finally:
             if own:
                 await conn.close()
-        return _row_to_item(row)
+        item = _row_to_item(row)
+        # FG-36: the message's short ref (M512); a re-seen arrival keeps its own.
+        from hermes_cli.profile_refs import MESSAGE, assign as assign_ref
+
+        await assign_ref(MESSAGE, item.id, item.registered_at)
+        return item
 
     async def get(
         self,

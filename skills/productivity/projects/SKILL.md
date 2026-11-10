@@ -51,7 +51,8 @@ hermes projects doctor    [--slug s] [--json]
 ## Short refs
 
 Every project, card and run has a short ref that users type in prompts:
-`P12` (project), `T345` (project card), `P12-R3` (run 3 of P12). Refs are
+`P12` (project), `T345` (project card), `P12-R3` (run 3 of P12) — and
+`D88` (to-do), `M512` (inbox message). Refs are
 case-insensitive, never change on rename, and sit beside the internal ids
 (slug, `t_xxxxxxxx`), which keep working everywhere. When a user mentions a
 ref, resolve it rather than guessing:

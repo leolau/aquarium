@@ -22,6 +22,8 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
+from hermes_cli import profile_refs
+
 logger = logging.getLogger(__name__)
 
 #: Same reasoning as the file registry's prefix: ``/api/inbox`` in agent-home
@@ -99,7 +101,7 @@ def _when(value: Optional[str], *, field: str) -> Optional[datetime]:
 
 
 async def _decorate(tag_registry, principal, items: list) -> list[dict[str, Any]]:
-    """Item dicts with their tags attached, in one pass per page."""
+    """Item dicts with their tags and short refs (``M512``) attached."""
     out: list[dict[str, Any]] = []
     for item in items:
         payload = item.as_dict()
@@ -108,7 +110,14 @@ async def _decorate(tag_registry, principal, items: list) -> list[dict[str, Any]
             for tag in await tag_registry.for_entity(principal, ENTITY_KIND, item.id)
         ]
         out.append(payload)
-    return out
+    return await _with_refs(out)
+
+
+async def _with_refs(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Each arrival payload with its short ref (``M512``, FG-36)."""
+    return await profile_refs.attach(
+        profile_refs.MESSAGE, payloads, created_key="registered_at"
+    )
 
 
 @router.get("")
@@ -139,6 +148,15 @@ async def list_incomings(
     registry = _registry()
     if not await _table_exists(registry):
         return {"items": [], "next_cursor": None}
+
+    # A short ref (``M512``) typed into search opens exactly that arrival.
+    is_ref, target = await profile_refs.search_target(profile_refs.MESSAGE, q)
+    if is_ref:
+        item = await registry.get(principal, target) if target else None
+        return {
+            "items": await _decorate(_tags(), principal, [item] if item else []),
+            "next_cursor": None,
+        }
 
     page = await registry.list(
         principal,
@@ -203,7 +221,7 @@ async def get_incoming(request: Request, item_id: str) -> dict[str, Any]:
     if item is None:
         raise HTTPException(status_code=404, detail="No such item")
 
-    payload = item.as_dict()
+    payload = (await _with_refs([item.as_dict()]))[0]
     payload["attachments"] = await registry.attachments(principal, item_id)
     payload["tags"] = [
         tag.as_dict()

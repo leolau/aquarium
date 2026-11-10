@@ -168,3 +168,12 @@ describe("excerpt", () => {
     expect(excerpt({ ...BASE, body: "x".repeat(200) })).toHaveLength(140);
   });
 });
+
+describe("short refs (FG-36)", () => {
+  it("shows an arrival's ref on its row", () => {
+    const row = renderToStaticMarkup(<IncomingRow item={{ ...BASE, ref: "M512" }} />);
+    expect(row).toContain('data-component="RefBadge"');
+    expect(row).toContain('data-ref="M512"');
+    expect(renderToStaticMarkup(<IncomingRow item={BASE} />)).not.toContain("RefBadge");
+  });
+});

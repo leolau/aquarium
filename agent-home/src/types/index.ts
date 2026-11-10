@@ -1094,6 +1094,8 @@ export interface FileSurfacesResponse {
 /** One arrival in the unified inbox: a WhatsApp message, an email, a meeting. */
 export interface IncomingItem {
   id: string;
+  /** Short ref (`M512`, FG-36); `id` stays authoritative. */
+  ref?: string | null;
   owner_user_id: string;
   visibility: string;
   surface: string; // whatsapp | email | calendar | telegram | …
@@ -1167,6 +1169,8 @@ export type TodoPriority = "critical" | "high" | "normal" | "low";
  */
 export interface Todo {
   id: string;
+  /** Short ref (`D88`, FG-36); `id` stays authoritative. */
+  ref?: string | null;
   owner_user_id: string;
   visibility: string;
   title: string;

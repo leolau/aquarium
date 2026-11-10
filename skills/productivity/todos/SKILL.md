@@ -38,6 +38,11 @@ hermes todos backfill --since <date> [--dry-run] [--json]
 Every read verb accepts `--json` for machine-readable output. The agent
 parses JSON; the human reads the table. One flag, both audiences.
 
+Every to-do has a short ref users type in prompts (`D88`, FG-36). Resolve one
+with `hermes ref D88 [--json]` — it prints the to-do's id (for the verbs
+above), title, stage and profile, or "ref not found" for a to-do the actor may
+not see. Quote the ref back to the user instead of the UUID.
+
 ## Rules
 
 These four rules keep the page from becoming noise. A model that can write

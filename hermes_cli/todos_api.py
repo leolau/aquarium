@@ -28,6 +28,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
+from hermes_cli import profile_refs
 from hermes_cli.todo_store import TodoError
 
 logger = logging.getLogger(__name__)
@@ -98,6 +99,11 @@ def _when(value: Optional[str], *, field: str) -> Optional[datetime]:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+async def _with_refs(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Each to-do payload with its short ref (``D88``, FG-36)."""
+    return await profile_refs.attach(profile_refs.TODO, payloads, created_key="created_at")
+
+
 @router.get("")
 async def list_todos(
     request: Request,
@@ -121,6 +127,15 @@ async def list_todos(
     if not await _table_ready(store):
         return {"items": [], "next_cursor": None}
 
+    # A short ref (``D88``) typed into search opens exactly that to-do.
+    is_ref, target = await profile_refs.search_target(profile_refs.TODO, q)
+    if is_ref:
+        todo = await store.get(principal, target) if target else None
+        return {
+            "items": await _with_refs([todo.as_dict()] if todo else []),
+            "next_cursor": None,
+        }
+
     items, next_cursor = await store.list(
         principal,
         query=q or None,
@@ -134,7 +149,7 @@ async def list_todos(
         cursor=cursor or None,
     )
     return {
-        "items": [item.as_dict() for item in items],
+        "items": await _with_refs([item.as_dict() for item in items]),
         "next_cursor": next_cursor,
     }
 
@@ -179,7 +194,7 @@ async def create_todo(request: Request) -> dict[str, Any]:
         )
     except TodoError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return todo.as_dict()
+    return (await _with_refs([todo.as_dict()]))[0]
 
 
 @router.get("/{todo_id}")
@@ -197,7 +212,7 @@ async def get_todo(request: Request, todo_id: str) -> dict[str, Any]:
     if todo is None:
         raise HTTPException(status_code=404, detail="No such to-do")
 
-    payload = todo.as_dict()
+    payload = (await _with_refs([todo.as_dict()]))[0]
     payload["history"] = await store.history(principal, todo_id)
     source = await _source_item(principal, todo)
     payload["source"] = source
