@@ -961,10 +961,10 @@ def _list_sync(
                 continue
             if category_set and p.category_id not in category_set:
                 continue
-            if q_ref_base is not None:
-                if refs.get(p.id) != q_ref_base:
-                    continue
-            elif q and q.lower() not in f"{p.name} {p.goal or ''}".lower():
+            if q and (
+                q.lower() not in f"{p.name} {p.goal or ''}".lower()
+                and (q_ref_base is None or refs.get(p.id) != q_ref_base)
+            ):
                 continue
             role = _member_role_sync(conn, p.id, principal.user_id)
             profiles = projects_db.get_project_profiles(conn, p.id)
