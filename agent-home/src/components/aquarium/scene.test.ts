@@ -2,16 +2,23 @@ import { describe, expect, it } from "vitest";
 
 import type { AquariumSnapshot, AquariumUser } from "@/lib/aquarium/creatures";
 
-import { creatureSize, creatureSpeed, followerSize } from "./mapping";
+import { busiestScore, creatureSize, creatureSpeed, followerSize } from "./mapping";
 import {
   FADE_SECONDS,
+  FLIP_SECONDS,
+  FOLLOWER_CHIP_LIMIT,
   applySnapshot,
   createScene,
   easeToward,
+  followerSlot,
   hitTest,
+  layoutLabels,
   locate,
+  maxTrail,
+  minBehind,
   sceneBounds,
   stepScene,
+  type LabelBox,
   type Scene,
 } from "./scene";
 
@@ -80,9 +87,9 @@ describe("applySnapshot", () => {
     applySnapshot(scene, snap([busy]), bounds);
     const a = scene.leaders.get("a")!;
     const from = a.size;
-    const target = creatureSize(busy.metrics);
+    const target = creatureSize(busy.metrics, busiestScore([busy.metrics]));
     expect(a.targetSize).toBe(target);
-    expect(a.targetSpeed).toBe(creatureSpeed(busy.metrics));
+    expect(a.targetSpeed).toBe(creatureSpeed(busy.metrics, target));
     run(scene, 0.2);
     expect(a.size).toBeGreaterThan(from);
     expect(a.size).toBeLessThan(target);
@@ -143,8 +150,8 @@ describe("stepScene", () => {
       expect(Number.isFinite(l.vx) && Number.isFinite(l.vy)).toBe(true);
       expect(l.x).not.toBe(start.get(id));
       for (const f of l.followers.values()) {
-        expect(f.size).toBeCloseTo(followerSize(l.size), 0);
-        expect(Math.hypot(f.x - l.x, f.y - l.y)).toBeLessThan(l.size + f.size * 4 + 60);
+        expect(f.size).toBeCloseTo(followerSize(l.size, f.seed), 0);
+        expect(Math.hypot(f.x - l.x, f.y - l.y)).toBeLessThanOrEqual(maxTrail(l.size, f.size) + 1e-6);
       }
     }
     expect(scene.bubbles.length).toBeGreaterThan(0);
@@ -187,6 +194,138 @@ describe("stepScene", () => {
     run(scene, 2);
     const perFrame = (performance.now() - t0) / 120;
     expect(perFrame).toBeLessThan(8);
+  });
+});
+
+describe("followers", () => {
+  const profiles = (n: number) => Array.from({ length: n }, (_, j) => ({ name: `p${j}`, display_name: `Profile ${j}` }));
+
+  it("never get level with or ahead of their leader and stay within ~2 leader lengths", () => {
+    const scene = createScene(seeded(5));
+    const users = Array.from({ length: 6 }, (_, i) =>
+      user(`u${i}`, {
+        profiles: profiles(1 + i),
+        metrics: { chats: i * 30, projects: i, tokens_in: 10 ** (i + 1), tokens_out: 0, tokens_24h: 10 ** (i + 1), active_now: false },
+      }),
+    );
+    applySnapshot(scene, snap(users), bounds);
+    for (let frame = 0; frame < 60 * 30; frame++) {
+      stepScene(scene, 1 / 60, bounds);
+      for (const l of scene.leaders.values()) {
+        const ax = Math.cos(l.trailAngle);
+        const ay = Math.sin(l.trailAngle);
+        for (const f of l.followers.values()) {
+          const along = (f.x - l.x) * ax + (f.y - l.y) * ay;
+          expect(along).toBeLessThanOrEqual(-minBehind(l.size) + 1e-6);
+          expect(Math.hypot(f.x - l.x, f.y - l.y)).toBeLessThanOrEqual(maxTrail(l.size, f.size) + 1e-6);
+        }
+      }
+    }
+  });
+
+  it("lays out slots in an arc behind the leader, inside the trail limit", () => {
+    for (const n of [1, 2, 3, 5, 8, 12]) {
+      const seen = new Set<string>();
+      for (let i = 0; i < n; i++) {
+        const { back, lateral } = followerSlot(i, n, 100, 40);
+        expect(back).toBeGreaterThan(minBehind(100));
+        expect(back).toBeLessThanOrEqual(maxTrail(100, 40));
+        seen.add(`${back.toFixed(1)}/${lateral.toFixed(1)}`);
+      }
+      expect(seen.size).toBe(n);
+    }
+  });
+
+  it("swim as a per-person creature that is not the leader's", () => {
+    const scene = createScene(seeded());
+    const p = [{ name: "default", display_name: "Default" }];
+    applySnapshot(scene, snap(Array.from({ length: 30 }, (_, i) => user(`u${i}`, { profiles: p }))), bounds);
+    const looks = new Set([...scene.leaders.values()].map((l) => l.followers.get("default")!.creature));
+    expect(looks.size).toBeGreaterThan(5);
+    for (const l of scene.leaders.values()) expect(l.followers.get("default")!.creature).not.toBe(l.creature);
+  });
+
+  it("show name chips unless the tank is crowded, then only for the focused person", () => {
+    const quiet = createScene(seeded());
+    applySnapshot(quiet, snap([user("a", { profiles: profiles(2) })]), bounds);
+    run(quiet, 1.5);
+    for (const f of quiet.leaders.get("a")!.followers.values()) expect(f.labelAlpha).toBeGreaterThan(0.9);
+
+    const busy = createScene(seeded());
+    const people = Math.ceil(FOLLOWER_CHIP_LIMIT / 3) + 2;
+    applySnapshot(busy, snap(Array.from({ length: people }, (_, i) => user(`u${i}`, { profiles: profiles(2) }))), bounds);
+    busy.focus = "u1";
+    run(busy, 1.5);
+    for (const f of busy.leaders.get("u0")!.followers.values()) expect(f.labelAlpha).toBeLessThan(0.1);
+    for (const f of busy.leaders.get("u1")!.followers.values()) expect(f.labelAlpha).toBeGreaterThan(0.9);
+    for (const l of busy.leaders.values()) expect(l.labelAlpha).toBeGreaterThan(0.9);
+  });
+});
+
+describe("swimming", () => {
+  it("pushes different people apart", () => {
+    const scene = createScene(seeded(2));
+    applySnapshot(scene, snap([user("a"), user("b")]), bounds);
+    const a = scene.leaders.get("a")!;
+    const b = scene.leaders.get("b")!;
+    b.x = a.x + 1;
+    b.y = a.y;
+    run(scene, 2);
+    expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThan((a.size + b.size) * 0.4);
+  });
+
+  it("turns with a flip through edge-on instead of mirroring instantly", () => {
+    const scene = createScene(seeded());
+    applySnapshot(scene, snap([user("a", { metrics: { chats: 0, projects: 0, tokens_in: 0, tokens_out: 0, tokens_24h: 1e6, active_now: false } })]), bounds);
+    const a = scene.leaders.get("a")!;
+    Object.assign(a, { x: bounds.width / 2, face: 1, faceTarget: 1, heading: Math.PI, turnRate: 0, vx: -80, vy: 0 });
+    stepScene(scene, 1 / 60, bounds);
+    expect(a.face).toBeLessThan(1);
+    expect(a.face).toBeGreaterThan(-1);
+    run(scene, FLIP_SECONDS + 0.05);
+    expect(a.face).toBe(-1);
+
+    const reduced = createScene(seeded());
+    applySnapshot(reduced, snap([user("a")]), bounds);
+    const r = reduced.leaders.get("a")!;
+    Object.assign(r, { x: bounds.width / 2, face: 1, faceTarget: 1, heading: Math.PI, turnRate: 0, vx: -80, vy: 0 });
+    stepScene(reduced, 1 / 60, bounds, { reducedMotion: true });
+    expect(r.face).toBe(-1);
+  });
+});
+
+describe("layoutLabels", () => {
+  function overlaps(a: { x: number; y: number }, b: { x: number; y: number }, w: [number, number], h: [number, number]): boolean {
+    return Math.abs(a.x - b.x) < (w[0] + w[1]) / 2 && a.y < b.y + h[1] && a.y + h[0] > b.y;
+  }
+
+  it("keeps a lone label where it wants to be", () => {
+    expect(layoutLabels([{ x: 300, y: 200, w: 60, h: 18 }], 1200, 800)).toEqual([{ x: 300, y: 200 }]);
+  });
+
+  it("separates colliding labels and keeps them inside the tank", () => {
+    const rng = seeded(9);
+    const boxes: LabelBox[] = Array.from({ length: 80 }, (_, i) => ({
+      x: 100 + rng() * 400,
+      y: 100 + rng() * 300,
+      w: 40 + rng() * 80,
+      h: i % 3 === 0 ? 15 : 18,
+      rank: i % 3 === 0 ? 1 : 0,
+    }));
+    const out = layoutLabels(boxes, 1200, 800);
+    out.forEach((p, i) => {
+      expect(p.x - boxes[i].w / 2).toBeGreaterThanOrEqual(0);
+      expect(p.x + boxes[i].w / 2).toBeLessThanOrEqual(1200);
+      expect(p.y).toBeGreaterThanOrEqual(0);
+      expect(p.y + boxes[i].h).toBeLessThanOrEqual(800);
+      for (let j = 0; j < i; j++) expect(overlaps(p, out[j], [boxes[i].w, boxes[j].w], [boxes[i].h, boxes[j].h])).toBe(false);
+    });
+  });
+
+  it("clamps labels at the edges", () => {
+    const [p] = layoutLabels([{ x: -50, y: 900, w: 80, h: 18 }], 400, 300);
+    expect(p.x).toBeGreaterThanOrEqual(40);
+    expect(p.y + 18).toBeLessThanOrEqual(300);
   });
 });
 

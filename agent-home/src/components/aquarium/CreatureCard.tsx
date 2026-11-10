@@ -6,7 +6,7 @@ import { useT } from "@/i18n/client";
 import { CREATURES, type AquariumUser } from "@/lib/aquarium/creatures";
 
 import { CreatureIcon } from "./CreatureIcon";
-import { formatCount, profileCreature } from "./mapping";
+import { followerCreature, formatCount } from "./mapping";
 
 export interface CreatureCardProps {
   user: AquariumUser;
@@ -31,7 +31,7 @@ export function CreatureCard({ user, profile, ref }: CreatureCardProps) {
     >
       {follower && (
         <div className="mb-2 flex items-center gap-2 border-b border-white/15 pb-2">
-          <CreatureIcon id={profileCreature(follower.name)} size={28} />
+          <CreatureIcon id={followerCreature(user.user_id, follower.name, user.creature)} size={28} />
           <div className="min-w-0">
             <div className="truncate font-semibold">{follower.display_name}</div>
             <div className="text-white/70">{t("card.profileOf", { name: user.name })}</div>
