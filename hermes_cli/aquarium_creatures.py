@@ -1,4 +1,4 @@
-"""The 20 sea creatures a person can be in the Aquarium dashboard (FG-35).
+"""The 40 sea creatures a person can be in the Aquarium dashboard (FG-35).
 
 Mirrors ``agent-home/src/lib/aquarium/creatures.ts``; ids are stored in the
 person's user prefs under ``creature``.
@@ -14,11 +14,23 @@ CREATURES: tuple[str, ...] = (
     "octopus", "squid", "jellyfish", "sea-turtle", "dolphin",
     "orca", "whale", "shark", "manta-ray", "stingray",
     "starfish", "crab", "lobster", "shrimp", "narwhal",
+    # FG-35 v2 additions. Append only: never reorder.
+    "hammerhead", "beluga", "manatee", "seal", "sea-otter",
+    "penguin", "sea-urchin", "nautilus", "cuttlefish", "swordfish",
+    "lionfish", "moray-eel", "sunfish", "anglerfish", "butterflyfish",
+    "parrotfish", "hermit-crab", "nudibranch", "walrus", "sea-dragon",
 )
+
+# The original 20: ``fallback_creature`` keeps indexing these so people without a
+# saved pref keep the creature they already had.
+_FALLBACK_CREATURES: tuple[str, ...] = CREATURES[:20]
 
 IDLE_SECONDS_DEFAULT = 30
 IDLE_SECONDS_MIN = 5
 IDLE_SECONDS_MAX = 3600
+
+AQUARIUM_NAME_DEFAULT = "Aquarium"
+AQUARIUM_NAME_MAX = 60
 
 
 def is_creature(value: object) -> bool:
@@ -33,4 +45,4 @@ def random_creature() -> str:
 def fallback_creature(user_id: str) -> str:
     """Stable creature for a person created before FG-35 (no pref saved)."""
     digest = hashlib.sha256(user_id.encode("utf-8")).digest()
-    return CREATURES[digest[0] % len(CREATURES)]
+    return _FALLBACK_CREATURES[digest[0] % len(_FALLBACK_CREATURES)]

@@ -50,7 +50,7 @@ beforeEach(() => {
 
 const SNAPSHOT: AquariumSnapshot = {
   generated_at: 1_700_000_000,
-  idle_seconds: 30,
+  idle_seconds: 30, name: "Aquarium",
   users: [
     {
       user_id: "u1",
