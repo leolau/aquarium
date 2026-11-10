@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SNAPSHOT_POLL_MS, type AquariumSnapshot } from "@/lib/aquarium/creatures";
 
-import { AquariumView } from "./AquariumView";
+import { AquariumView, SHAKE_MS } from "./AquariumView";
 
 vi.mock("next/link", () => ({
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => (
@@ -49,6 +49,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  window.localStorage.clear();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -116,5 +117,58 @@ describe("AquariumView", () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(container.querySelector('[data-component="AquariumEmpty"]')).not.toBeNull();
+  });
+
+  it("shows the two play tips and remembers when they are dismissed", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => respond(SNAPSHOT)));
+    const { unmount } = render(<AquariumView />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByText("Try this")).toBeTruthy();
+    expect(screen.getByText("Click anywhere: your creature swims there")).toBeTruthy();
+    expect(screen.getByText("Press Shake: everyone changes direction and speed")).toBeTruthy();
+    fireEvent.click(screen.getByText("Got it"));
+    expect(screen.queryByText("Try this")).toBeNull();
+    unmount();
+    render(<AquariumView />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.queryByText("Try this")).toBeNull();
+    fireEvent.click(screen.getByText("Tips"));
+    expect(screen.getByText("Try this")).toBeTruthy();
+  });
+
+  it("shakes the tank once per press, then reports that everyone changed course", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => respond(SNAPSHOT)));
+    const { container } = render(<AquariumView />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const button = container.querySelector<HTMLButtonElement>('[data-action="aquarium-shake"]')!;
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(button.disabled).toBe(true);
+    expect(button.textContent).toContain("Shaking…");
+    expect(container.querySelector('[data-component="AquariumTank"]')!.className).toContain("aq-tank-shake");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SHAKE_MS);
+    });
+    expect(button.disabled).toBe(false);
+    expect(container.querySelector('[data-component="AquariumTank"]')!.className).not.toContain("aq-tank-shake");
+    expect(screen.getByText("Everyone is swimming a new way.")).toBeTruthy();
+    expect(container.querySelector('[data-hint="shake"]')!.getAttribute("data-done")).toBe("true");
+  });
+
+  it("marks a tap with a ripple and ticks off the tap tip", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => respond(SNAPSHOT)));
+    const { container } = render(<AquariumView />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    fireEvent.pointerDown(container.querySelector('[data-component="AquariumCanvas"]')!, { clientX: 300, clientY: 200, button: 0, pointerType: "mouse" });
+    expect(container.querySelector('[data-component="AquariumTapRipple"]')).not.toBeNull();
+    expect(container.querySelector('[data-hint="tap"]')!.getAttribute("data-done")).toBe("true");
   });
 });

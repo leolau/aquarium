@@ -1,14 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent } from "react";
 
 import { ChevronLeftIcon } from "@/components/ui/icons";
 import { useT } from "@/i18n/client";
 import { CREATURES, type AquariumSnapshot, type AquariumUser } from "@/lib/aquarium/creatures";
+import { usePersistentState } from "@/lib/use-persistent-state";
 
 import { AquariumBackdrop } from "./AquariumBackdrop";
 import { AquariumLegend } from "./AquariumLegend";
+import { AquariumPlayHints } from "./AquariumPlayHints";
 import { AquariumTitle } from "./AquariumTitle";
 import { CreatureCard } from "./CreatureCard";
 import { drawScene } from "./render";
@@ -19,15 +21,28 @@ import {
   locate,
   sameTarget,
   sceneBounds,
+  shakeScene,
+  steerSelfTo,
   stepScene,
   type Bounds,
   type HitTarget,
   type Scene,
 } from "./scene";
+import { createShakeDetector, motionSupport, requestMotion, type MotionSupport } from "./shake";
 import { startSnapshotPolling, type SnapshotPollerOptions } from "./snapshot";
 
 const REDUCED_MOTION = "(prefers-reduced-motion: reduce)";
 const CARD_W = 224;
+/** How long the tank visibly shakes before everyone changes course. */
+export const SHAKE_MS = 2500;
+const SHAKE_MS_REDUCED = 400;
+const NOTICE_MS = 2600;
+const TIPS_KEY = "aq-aquarium-tips";
+const parseTipsHidden = (raw: string) => raw === "hidden";
+const serializeTipsHidden = (hidden: boolean) => (hidden ? "hidden" : "open");
+const noSubscribe = () => () => {};
+const isCoarsePointer = () => typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
+const noMotion = (): MotionSupport => "none";
 
 export interface AquariumViewProps {
   /** Test seam: replaces the `GET /api/aquarium` fetch. */
@@ -52,6 +67,22 @@ export function AquariumView({ load }: AquariumViewProps) {
   const [offline, setOffline] = useState(false);
   const [name, setName] = useState<string | null>(null);
   const [selected, setSelectedState] = useState<HitTarget | null>(null);
+  const reducedRef = useRef(false);
+  const shakingRef = useRef(false);
+  const shakeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [shaking, setShaking] = useState(false);
+  const [ripple, setRipple] = useState<{ x: number; y: number; key: number } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const touch = useSyncExternalStore(noSubscribe, isCoarsePointer, () => false);
+  const support = useSyncExternalStore(noSubscribe, motionSupport, noMotion);
+  const [motionAnswer, setMotionAnswer] = useState<boolean | null>(null);
+  const [enablingMotion, setEnablingMotion] = useState(false);
+  const [tipsHidden, setTipsHidden] = usePersistentState(TIPS_KEY, false, parseTipsHidden, serializeTipsHidden);
+  const motionOn = touch && (support === "ready" || motionAnswer === true);
+  const needsMotion = touch && support === "needs-permission" && motionAnswer === null;
+  const [triedTap, setTriedTap] = useState(false);
+  const [triedShake, setTriedShake] = useState(false);
 
   const scene = useCallback((): Scene => (sceneRef.current ??= createScene()), []);
   const swimmers = useCallback(() => sceneRef.current?.leaders.values(), []);
@@ -89,6 +120,7 @@ export function AquariumView({ load }: AquariumViewProps) {
     const ctx = canvas.getContext("2d");
     const media = typeof window.matchMedia === "function" ? window.matchMedia(REDUCED_MOTION) : null;
     let reduced = media?.matches ?? false;
+    reducedRef.current = reduced;
     let dpr = 1;
     let raf = 0;
     let last = 0;
@@ -143,6 +175,7 @@ export function AquariumView({ load }: AquariumViewProps) {
     const onVisibility = () => (document.hidden ? stop() : start());
     const onMotion = (e: MediaQueryListEvent) => {
       reduced = e.matches;
+      reducedRef.current = reduced;
     };
 
     resize();
@@ -161,6 +194,71 @@ export function AquariumView({ load }: AquariumViewProps) {
     };
   }, [scene]);
 
+  const showNotice = useCallback((text: string) => {
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    setNotice(text);
+    noticeTimer.current = setTimeout(() => setNotice(null), NOTICE_MS);
+  }, []);
+
+  const shake = useCallback(() => {
+    if (shakingRef.current) return;
+    shakingRef.current = true;
+    setShaking(true);
+    setTriedShake(true);
+    shakeTimer.current = setTimeout(
+      () => {
+        shakeScene(scene(), boundsRef.current, { reducedMotion: reducedRef.current });
+        shakingRef.current = false;
+        setShaking(false);
+        showNotice(t("play.shaken"));
+      },
+      reducedRef.current ? SHAKE_MS_REDUCED : SHAKE_MS,
+    );
+  }, [scene, showNotice, t]);
+  const shakeRef = useRef(shake);
+  useEffect(() => {
+    shakeRef.current = shake;
+  }, [shake]);
+
+  useEffect(
+    () => () => {
+      if (shakeTimer.current) clearTimeout(shakeTimer.current);
+      if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!motionOn) return;
+    const feed = createShakeDetector();
+    const onMotion = (e: DeviceMotionEvent) => {
+      const a = e.accelerationIncludingGravity;
+      if (!a || a.x === null || a.y === null || a.z === null) return;
+      if (feed({ x: a.x, y: a.y, z: a.z, t: e.timeStamp || performance.now() })) shakeRef.current();
+    };
+    window.addEventListener("devicemotion", onMotion);
+    return () => window.removeEventListener("devicemotion", onMotion);
+  }, [motionOn]);
+
+  const enableMotion = async () => {
+    if (enablingMotion) return;
+    setEnablingMotion(true);
+    const ok = await requestMotion();
+    setEnablingMotion(false);
+    setMotionAnswer(ok);
+    if (!ok) showNotice(t("play.motionDenied"));
+  };
+
+  const steer = (e: PointerEvent<HTMLCanvasElement>) => {
+    if (e.button !== 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    setRipple((r) => ({ x, y, key: (r?.key ?? 0) + 1 }));
+    setTriedTap(true);
+    if (!steerSelfTo(scene(), x, y, boundsRef.current)) showNotice(t("play.noSelf"));
+  };
+
   const pointAt = (e: PointerEvent<HTMLCanvasElement>): HitTarget | null => {
     const rect = e.currentTarget.getBoundingClientRect();
     return hitTest(scene(), e.clientX - rect.left, e.clientY - rect.top, e.pointerType === "mouse" ? 4 : 14);
@@ -174,6 +272,7 @@ export function AquariumView({ load }: AquariumViewProps) {
     const hit = pointAt(e);
     pinnedRef.current = hit !== null && (e.pointerType !== "mouse" || !sameTarget(hit, selectedRef.current) || !pinnedRef.current);
     select(hit);
+    steer(e);
   };
   const onPointerLeave = () => {
     if (!pinnedRef.current) select(null);
@@ -190,17 +289,33 @@ export function AquariumView({ load }: AquariumViewProps) {
       data-component="AquariumView"
       className="fixed inset-0 z-0 overflow-hidden bg-[#053467] text-white select-none"
     >
-      <AquariumBackdrop pushers={swimmers} />
-      <canvas
-        ref={canvasRef}
-        data-component="AquariumCanvas"
-        aria-hidden
-        className="absolute inset-0 h-full w-full touch-manipulation"
-        onPointerMove={onPointerMove}
-        onPointerDown={onPointerDown}
-        onPointerLeave={onPointerLeave}
-      />
-      {selectedUser && <CreatureCard ref={cardRef} user={selectedUser} profile={selected?.profile} />}
+      <div
+        data-component="AquariumTank"
+        data-shaking={shaking || undefined}
+        className={`absolute inset-0 ${shaking ? "aq-tank-shake" : ""}`}
+      >
+        <AquariumBackdrop pushers={swimmers} />
+        <canvas
+          ref={canvasRef}
+          data-component="AquariumCanvas"
+          aria-hidden
+          className="absolute inset-0 h-full w-full touch-manipulation"
+          onPointerMove={onPointerMove}
+          onPointerDown={onPointerDown}
+          onPointerLeave={onPointerLeave}
+        />
+        {ripple && (
+          <span
+            key={ripple.key}
+            data-component="AquariumTapRipple"
+            aria-hidden
+            onAnimationEnd={() => setRipple(null)}
+            className="aq-tap-ripple pointer-events-none absolute h-16 w-16 rounded-full border-2 border-white/80 shadow-[0_0_18px_rgb(255_255_255/0.45)]"
+            style={{ left: ripple.x, top: ripple.y }}
+          />
+        )}
+        {selectedUser && <CreatureCard ref={cardRef} user={selectedUser} profile={selected?.profile} />}
+      </div>
 
       <div className="pointer-events-none absolute inset-x-0 top-0 z-10 grid grid-cols-[1fr_auto_1fr] items-start gap-3 p-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
         <Link
@@ -214,15 +329,57 @@ export function AquariumView({ load }: AquariumViewProps) {
         <div className="min-w-0 max-w-[min(64vw,44rem)] justify-self-center pt-0.5 text-center">
           {name ? <AquariumTitle name={name} /> : <h1 className="sr-only">{t("title")}</h1>}
         </div>
-        {offline && (
-          <span
-            data-component="AquariumOffline"
-            role="status"
-            className="pointer-events-auto justify-self-end rounded-full bg-[rgb(120_20_30/0.75)] px-3 py-1 text-xs font-semibold text-white shadow-lg"
+        <div className="flex flex-wrap items-center justify-end gap-2 justify-self-end">
+          {offline && (
+            <span
+              data-component="AquariumOffline"
+              role="status"
+              className="pointer-events-auto rounded-full bg-[rgb(120_20_30/0.75)] px-3 py-1 text-xs font-semibold text-white shadow-lg"
+            >
+              {t("offline")}
+            </span>
+          )}
+          <button
+            type="button"
+            data-action="aquarium-shake"
+            onClick={shake}
+            disabled={shaking}
+            aria-busy={shaking || undefined}
+            aria-label={shaking ? t("play.shaking") : t("play.shakeLabel")}
+            title={t("play.shakeLabel")}
+            className="pointer-events-auto inline-flex min-h-10 items-center gap-1.5 rounded-full bg-[rgb(3_24_52/0.62)] px-3 text-sm font-semibold text-white shadow-lg backdrop-blur-sm hover:bg-[rgb(3_24_52/0.8)] disabled:cursor-wait disabled:opacity-70"
           >
-            {t("offline")}
+            <span aria-hidden className={shaking ? "" : "aq-hint-pulse inline-block"}>
+              〰
+            </span>
+            {shaking ? t("play.shaking") : t("play.shake")}
+          </button>
+        </div>
+      </div>
+
+      <p
+        role="status"
+        data-component="AquariumNotice"
+        className={`pointer-events-none absolute inset-x-0 top-[calc(max(0.75rem,env(safe-area-inset-top))+3.5rem)] z-20 flex justify-center px-3 ${notice ? "" : "sr-only"}`}
+      >
+        {notice && (
+          <span className="aq-hint-in rounded-full bg-[rgb(3_24_52/0.8)] px-3 py-1.5 text-center text-xs font-semibold text-white shadow-lg backdrop-blur-sm">
+            {notice}
           </span>
         )}
+      </p>
+
+      <div className="pointer-events-none absolute right-0 bottom-0 z-10 flex justify-end p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] max-sm:top-[calc(max(0.75rem,env(safe-area-inset-top))+3.25rem)] max-sm:bottom-auto max-sm:left-0">
+        <AquariumPlayHints
+          touch={touch}
+          needsMotionPermission={needsMotion}
+          triedTap={triedTap}
+          triedShake={triedShake}
+          open={!tipsHidden}
+          onOpenChange={(open) => setTipsHidden(!open)}
+          onEnableMotion={enableMotion}
+          enablingMotion={enablingMotion}
+        />
       </div>
 
       <div className="absolute bottom-0 left-0 z-10 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">

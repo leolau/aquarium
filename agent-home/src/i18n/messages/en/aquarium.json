@@ -25,5 +25,21 @@
     "profiles": "Profiles",
     "noProfiles": "None yet",
     "profileOf": "Profile of {name}"
+  },
+  "play": {
+    "title": "Try this",
+    "tapMouse": "Click anywhere: your creature swims there",
+    "tapTouch": "Tap anywhere: your creature swims there",
+    "shakeMouse": "Press Shake: everyone changes direction and speed",
+    "shakeTouch": "Shake your phone (or press Shake): everyone changes direction and speed",
+    "shake": "Shake",
+    "shaking": "Shaking…",
+    "shakeLabel": "Shake the aquarium",
+    "gotIt": "Got it",
+    "showTips": "Tips",
+    "enableShake": "Turn on phone shake",
+    "motionDenied": "Shaking the phone is off. Use the Shake button.",
+    "noSelf": "You don't have a creature here yet.",
+    "shaken": "Everyone is swimming a new way."
   }
 }

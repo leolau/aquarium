@@ -25,5 +25,21 @@
     "profiles": "設定檔",
     "noProfiles": "暫時沒有",
     "profileOf": "{name} 的設定檔"
+  },
+  "play": {
+    "title": "試試看",
+    "tapMouse": "點擊任何地方：你的海洋生物會游過去",
+    "tapTouch": "輕按任何地方：你的海洋生物會游過去",
+    "shakeMouse": "按「搖晃」：所有生物都會改變方向和速度",
+    "shakeTouch": "搖動手機（或按「搖晃」）：所有生物都會改變方向和速度",
+    "shake": "搖晃",
+    "shaking": "搖晃中…",
+    "shakeLabel": "搖晃水族館",
+    "gotIt": "知道了",
+    "showTips": "提示",
+    "enableShake": "開啟搖動手機",
+    "motionDenied": "搖動手機已關閉，請用「搖晃」按鈕。",
+    "noSelf": "你在這裏還沒有海洋生物。",
+    "shaken": "大家都換了新的游法。"
   }
 }
