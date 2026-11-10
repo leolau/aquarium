@@ -82,7 +82,7 @@ short_ref_backfills(kind PRIMARY KEY, done_at)
   …}`. It reuses the projects read gate (`_load_ctx_sync` + `_can_read`) and
   the private-card rule (`_card_visible`). **Not found and not allowed are the
   same 404** ("ref not found"), so a ref never confirms that something hidden
-  exists. Reserved kinds (C, D, M) answer 404 until their PR.
+  exists. Reserved kinds (D, M) answer 404 until their PR.
 - **agent-home:** BFF `GET /api/refs/[ref]` (`signed-in`), `/go/[ref]`
   redirect page (in-app paths only), `RefBadge` (tap to copy) on project
   rows, the project header, board tiles, card detail and the run header; a ref
@@ -91,23 +91,67 @@ short_ref_backfills(kind PRIMARY KEY, done_at)
   resolution as the API (Footprint Ladder rung 2 — no new model tool);
   documented in `skills/productivity/projects/SKILL.md`.
 
-## PR 2 — chats (`C`), not built here
+## PR 2 — chats (`C`) and ref mentions (built)
 
-- Sessions live in each profile's `state.db` (`hermes_state.py`), so a `C`
-  row records the profile. **Compression** ends a session and starts a new
-  session id with `parent_session_id`; the ref belongs to the
-  **conversation**, so the registry row keys on the conversation's root
-  session id and the resolver walks `parent_session_id` to the newest
-  descendant (or the new session inherits the ref at compression time). A
-  chat never gets a second `C` number because it was compressed.
-- Resolver authority: the caller must be allowed to see that session in that
-  profile (the existing sessions/chat visibility rules), else 404.
-- **Mentions:** when a user's message contains visible refs (`P12`, `C1024`,
-  …, word-bounded — `short_refs.REF_IN_TEXT_RE`), agent-home attaches a one-line
-  description of each visible item **to that user turn only**. It never
-  edits the system prompt or past turns (prompt caching), never inserts a
-  synthetic message (role alternation), and silently skips refs the sender
-  may not see.
+- **One ref per conversation.** Compression ends a session row and continues
+  under a new id (`parent_session_id`), so a `C` row keys on the
+  conversation's **compression root** (`SessionDB.get_compression_root`) and
+  records its profile (sessions live in each profile's `state.db`). The
+  resolver walks forward to the live tip (`get_compression_tip`), the session
+  the chat list shows. A branch is its own conversation (own ref); delegate
+  subagent runs and `tool` children are never numbered. Code:
+  `hermes_cli/chat_refs.py`.
+- **Assignment:** `POST /api/sessions` (agent-home's new chat) assigns at
+  create and returns `ref`. Gateway, CLI, cron, project-run and to-do
+  sessions are created on many paths, so they are numbered lazily by the
+  reads (`ensure_refs`): `GET /api/sessions`, `/api/profiles/sessions`,
+  `/api/sessions/{id}` and `/api/sessions/search` all carry `ref`.
+  Backfill (`BACKFILL_SOURCES["C"]`) numbers every profile's existing chats
+  box-wide in `started_at` order.
+- **Search:** a `C` ref typed into `/api/sessions/search` leads with that
+  chat when it lives in the searched profile; the agent-home sidebar filter
+  matches a chat ref exactly (`c1` never matches `C10`).
+- **Resolver authority:** `refs_api.resolve_for_request` authorises a
+  profile-scoped kind **in the item's profile**: the caller is re-resolved
+  there with the chat routes' own `_chat_principal` (FG-28: not enrolled /
+  suspended → no principal), then the chat routes' visibility rule applies
+  (`_chat_scope_for`: the owner sees every chat, anyone else only their own).
+  Not visible, other profile and missing are the same 404. D and M reuse this
+  hook. `hermes ref C<n>` acts as the CLI actor in every profile.
+- **URL:** `/chat?session=<tip>&profile=<profile>`; `/go/C1024` redirects
+  there, and the chat page switches profile on arrival.
+- **agent-home:** the ref shows on session chips (`SessionTabs`), sidebar
+  rows (`SessionRow`, copyable `RefBadge`), the inline chat header
+  (`LandingChatView`), above the transcript (`ChatConversationView`) and in
+  the conversation details (`SessionModal`).
+- **Mentions** (`hermes_cli/ref_mentions.py`): when the sender's typed text
+  names refs (`REF_IN_TEXT_RE`), the agent-home chat turn endpoints
+  (`/api/sessions/{id}/chat` and `/chat/stream`) resolve each through
+  `resolve_for_request` under the turn's principal and append one line per
+  visible ref to **that same user turn**:
+
+  ```
+  compare P12 with C1024
+
+  [Referenced items]
+  - P12 · project · Monday digest · active · /projects/monday-digest
+  - C1024 · chat · Q3 budget · open · /chat?session=…&profile=default
+  ```
+
+  The block is persisted with the turn, so later turns replay it
+  byte-identically (prompt caching); the system prompt and past turns are
+  never touched and no synthetic message is added. Unresolvable or hidden
+  refs are skipped silently, at most `MAX_EXPANDED` (5) distinct refs expand,
+  and kinds are generic (D/M expand once their resolvers exist). The
+  sender's bubble hides the block (`stripRefMentions`).
+- **Why the Python chat entry, not the BFF:** the BFF would need one extra
+  round trip per ref and could not reuse the per-profile chat authority the
+  Python routes already hold. The gateway and CLI are *not* wired: a gateway
+  sender only becomes a principal inside the channel-binding seam (often with
+  no principal store at all), and the CLI is the operator's own terminal;
+  there `hermes ref` (documented in the projects skill) covers lookups. Wiring
+  them is additive: call `ref_mentions.expand_with` with a resolver bound to
+  that surface's principal.
 
 ## PR 3 — to-dos (`D`) and inbox messages (`M`)
 

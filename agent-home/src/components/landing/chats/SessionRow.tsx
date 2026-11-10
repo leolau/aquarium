@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
+import { RefBadge } from "@/components/refs/RefBadge";
 import { ArchiveIcon, ClockIcon, PencilIcon, PinIcon } from "@/components/ui/icons";
 import { displayTitle, isPinned, lastUpdated, sessionOwner, type LandingSession } from "./model";
 
@@ -155,6 +156,7 @@ export function SessionRow({
           <span data-slot="session-meta" className="min-w-0 truncate">
             {sessionOwner(session, profileLabel)}
           </span>
+          <RefBadge value={session.ref} className="relative z-10 lg:!min-h-0" />
           {updated ? (
             <time
               data-slot="session-updated"

@@ -6570,6 +6570,9 @@ def get_sessions(
                 # Tens of KB per row and unused by list views; a whole list
                 # would otherwise weigh tens of MB.
                 s.pop("system_prompt", None)
+            from hermes_cli import chat_refs
+
+            chat_refs.attach_refs(sessions, profile_name or chat_refs.acting_profile_name())
             return {"sessions": sessions, "total": total, "limit": limit, "offset": offset}
         finally:
             db.close()
@@ -6683,6 +6686,9 @@ def get_profiles_sessions(
                 )
                 s["archived"] = bool(s.get("archived"))
                 merged.append(s)
+            from hermes_cli import chat_refs
+
+            chat_refs.attach_refs(rows, name)
         except Exception as exc:
             errors.append({"profile": name, "error": str(exc)})
         finally:
@@ -6834,6 +6840,29 @@ def search_sessions(
                 payload["title"] = lineage_title(tip, root)
                 seen[root] = payload
 
+            # A chat ref (``C1024``) names exactly one conversation: it leads.
+            from hermes_cli import chat_refs, short_refs
+
+            this_profile = (
+                _cron_profile_home(profile)[0] if profile else chat_refs.acting_profile_name()
+            )
+            parsed_ref = short_refs.parse_ref(q)
+            if parsed_ref is not None and parsed_ref.kind == "C":
+                record = short_refs.lookup(parsed_ref.base)
+                if record is not None and record.profile == this_profile:
+                    hit = db.get_session(record.internal_id)
+                    if hit:
+                        add_lineage_result(
+                            record.internal_id,
+                            {
+                                "snippet": f"{record.ref}: {hit.get('title') or record.internal_id}",
+                                "role": None,
+                                "source": hit.get("source"),
+                                "model": hit.get("model"),
+                                "session_started": hit.get("started_at"),
+                            },
+                        )
+
             # Direct ID matches first: users often paste a session id from CLI,
             # logs, or another Hermes surface. FTS can't find those unless the
             # id happens to appear in message text. search_sessions_by_id is
@@ -6884,7 +6913,12 @@ def search_sessions(
                         "session_started": m.get("session_started"),
                     },
                 )
-            return {"results": list(seen.values())}
+            results = list(seen.values())
+            for r in results:
+                ref = chat_refs.ref_for_session(db, r["session_id"], this_profile)
+                if ref:
+                    r["ref"] = ref
+            return {"results": results}
         finally:
             db.close()
     except HTTPException:
@@ -11843,8 +11877,14 @@ def get_session_detail(
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
         _require_chat_access(db, sid, scope)
-        if profile:
-            session["profile"] = _cron_profile_home(profile)[0]
+        from hermes_cli import chat_refs
+
+        profile_name = _cron_profile_home(profile)[0] if profile else None
+        if profile_name:
+            session["profile"] = profile_name
+        session["ref"] = chat_refs.ref_for_session(
+            db, sid, profile_name or chat_refs.acting_profile_name()
+        )
         return session
     finally:
         db.close()
@@ -12084,6 +12124,8 @@ async def session_chat(session_id: str, request: Request):
     if not user_message:
         raise HTTPException(status_code=400, detail="message is required")
 
+    typed_message = user_message
+
     # Attachments live in a private Supabase bucket the brain can't reach;
     # download them into the shared document cache and point the brain at the
     # local paths so uploaded PDFs/DOCX/XLSX are actually readable (FG-20).
@@ -12092,6 +12134,15 @@ async def session_chat(session_id: str, request: Request):
         user_message = await _materialize_agent_home_attachments(
             _attachments, user_message
         )
+
+    # Short refs the sender typed (``P12``, ``C1024``) get a one-line
+    # description appended to this same turn (FG-36); the system prompt and
+    # past turns are untouched.
+    from hermes_cli.ref_mentions import expand_ref_mentions
+
+    user_message = await expand_ref_mentions(
+        request, user_message, principal=principal, scan=typed_message
+    )
 
     db = _open_session_db_for_profile(profile)
     try:
@@ -12492,6 +12543,8 @@ async def session_chat_stream(session_id: str, request: Request):
     if not user_message:
         raise HTTPException(status_code=400, detail="message is required")
 
+    typed_message = user_message
+
     # Attachments live in a private Supabase bucket the brain can't reach;
     # download them into the shared document cache and point the brain at the
     # local paths so uploaded PDFs/DOCX/XLSX are actually readable (FG-20).
@@ -12500,6 +12553,15 @@ async def session_chat_stream(session_id: str, request: Request):
         user_message = await _materialize_agent_home_attachments(
             _attachments, user_message
         )
+
+    # Short refs the sender typed (``P12``, ``C1024``) get a one-line
+    # description appended to this same turn (FG-36); the system prompt and
+    # past turns are untouched.
+    from hermes_cli.ref_mentions import expand_ref_mentions
+
+    user_message = await expand_ref_mentions(
+        request, user_message, principal=principal, scan=typed_message
+    )
 
     db = _open_session_db_for_profile(profile)
     try:
@@ -13091,7 +13153,14 @@ async def create_session_endpoint(request: Request):
         db.ensure_session(session_id, source="agent_home", user_id=principal.user_id)
     finally:
         db.close()
-    return {"session_id": session_id, "source": "agent_home"}
+    from hermes_cli import chat_refs
+
+    ref = await asyncio.to_thread(
+        chat_refs.assign_new,
+        session_id,
+        _cron_profile_home(profile)[0] if profile else chat_refs.acting_profile_name(),
+    )
+    return {"session_id": session_id, "source": "agent_home", "ref": ref}
 
 
 @app.delete("/api/sessions/{session_id}")

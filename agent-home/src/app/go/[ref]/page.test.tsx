@@ -34,6 +34,12 @@ describe("/go/[ref]", () => {
     expect(resolveRef).toHaveBeenCalledWith("P12-R3");
   });
 
+  it("opens a chat ref's conversation in its profile", async () => {
+    resolveRef.mockResolvedValue({ url: "/chat?session=s_tip&profile=hr" });
+    await expect(go("c1024")).rejects.toThrow("NEXT_REDIRECT /chat?session=s_tip&profile=hr");
+    expect(resolveRef).toHaveBeenCalledWith("C1024");
+  });
+
   it("opens a to-do and an inbox message", async () => {
     resolveRef.mockResolvedValueOnce({ url: "/todos/0f0e" });
     await expect(go("d88")).rejects.toThrow("NEXT_REDIRECT /todos/0f0e");

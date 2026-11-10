@@ -383,6 +383,8 @@ export interface TagSuggestion {
 
 export interface SessionSummary {
   id: string;
+  /** Short ref (`C1024`, FG-36) of the conversation — kept across compression; `id` stays authoritative. */
+  ref?: string | null;
   source: string;
   title: string | null;
   preview: string | null;
@@ -577,6 +579,8 @@ export interface ChatApprovalRequest {
 export interface SessionCreateResponse {
   session_id: string;
   source: string;
+  /** The new chat's short ref (`C1024`). */
+  ref?: string | null;
 }
 
 /**
@@ -3816,7 +3820,7 @@ export interface SoftwareUpgradeStatus {
 /** `GET /api/refs/:ref` — what a short ref names, for a caller who may see it. */
 export interface RefResolution {
   ref: string;
-  kind: "project" | "run" | "card";
+  kind: "project" | "run" | "card" | "chat";
   /** The internal id (project id, run id, `t_xxxxxxxx`). */
   id: string;
   title: string;
@@ -3828,4 +3832,6 @@ export interface RefResolution {
   project_id?: string;
   project_slug?: string;
   profile?: string | null;
+  /** A chat's compression-root session id (`id` is the live tip). */
+  lineage_root?: string;
 }

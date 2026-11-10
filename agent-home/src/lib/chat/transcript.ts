@@ -81,6 +81,15 @@ export function stripUiContextLine(content: string): string {
 }
 
 /**
+ * The `[Referenced items]` block the brain appends to a turn that names short
+ * refs (FG-36, `hermes_cli/ref_mentions.py`): context for the agent, not what
+ * the sender typed, so their bubble hides it. Only a trailing block counts.
+ */
+export function stripRefMentions(content: string): string {
+  return content.replace(/\n\n\[Referenced items\]\n(?:- [^\n]*(?:\n|$))+$/, "");
+}
+
+/**
  * A mid-turn steer is delivered by appending
  * `\n\n<OPEN>\n<text>\n<CLOSE>` to the last tool result of a step (see
  * `format_steer_marker`), so after a reload it only exists inside a tool row.

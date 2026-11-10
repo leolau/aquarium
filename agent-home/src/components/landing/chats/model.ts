@@ -1,4 +1,5 @@
 import { isKanbanWorkspace } from "@/lib/chat/categorize";
+import { parseRef } from "@/lib/refs";
 import type { SessionSummary } from "@/types";
 
 /**
@@ -76,6 +77,9 @@ export function splitSessions(sessions: LandingSession[]): {
 export function matchesQuery(s: LandingSession, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
+  // A chat ref (`C12`) is an exact handle: `c1` must not match C10–C19.
+  const ref = parseRef(q);
+  if (ref?.kind === "C") return s.ref === ref.ref;
   return [s.title, s.preview, ...(s.tags ?? []).map((t) => t.name)]
     .filter((v): v is string => typeof v === "string")
     .some((v) => v.toLowerCase().includes(q));

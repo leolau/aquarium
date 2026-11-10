@@ -43,6 +43,15 @@ describe("chats model", () => {
     expect(matchesQuery(s, "  ")).toBe(true);
   });
 
+  it("matches a chat ref exactly, case-insensitively", () => {
+    const s = { ...sessions[0], ref: "C12" };
+    expect(matchesQuery(s, "c12")).toBe(true);
+    expect(matchesQuery(s, " C12 ")).toBe(true);
+    expect(matchesQuery(s, "C1")).toBe(false);
+    expect(matchesQuery(s, "C120")).toBe(false);
+    expect(matchesQuery(sessions[0], "C12")).toBe(false);
+  });
+
   it("formats relative times and meta", () => {
     expect(relativeTime(NOW / 1000 - 20, NOW)).toBe("just now");
     expect(relativeTime(NOW / 1000 - 14 * 60, NOW)).toBe("14 min ago");

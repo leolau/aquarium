@@ -50,8 +50,9 @@ hermes projects doctor    [--slug s] [--json]
 
 ## Short refs
 
-Every project, card and run has a short ref that users type in prompts:
-`P12` (project), `T345` (project card), `P12-R3` (run 3 of P12) — and
+Every project, card, run and chat has a short ref that users type in prompts:
+`P12` (project), `T345` (project card), `P12-R3` (run 3 of P12), `C1024`
+(chat — one ref per conversation, kept when it is compressed) — and
 `D88` (to-do), `M512` (inbox message). Refs are
 case-insensitive, never change on rename, and sit beside the internal ids
 (slug, `t_xxxxxxxx`), which keep working everywhere. When a user mentions a
@@ -59,7 +60,13 @@ ref, resolve it rather than guessing:
 
 ```
 hermes ref P12 [--actor <user>] [--json]   # kind, id, title, status, agent-home URL
+hermes ref C1024                            # a chat: its live session id and profile
 ```
+
+In an Aquarium chat, refs the user typed arrive already described: their
+turn ends with a `[Referenced items]` block, one line per ref they may see
+(ref · kind · title · status · link). Use it; run `hermes ref` only for refs
+it does not cover.
 
 A project's ref also works wherever a `<slug>` does (`hermes projects show
 P12`). `hermes ref` answers "ref not found" both for refs that name nothing
