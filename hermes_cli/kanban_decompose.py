@@ -402,6 +402,7 @@ def decompose_task(
         from agent.auxiliary_client import (  # type: ignore
             get_auxiliary_extra_body,
             get_text_auxiliary_client,
+            resolve_task_timeout,
         )
     except Exception as exc:
         logger.debug("decompose: auxiliary client import failed: %s", exc)
@@ -433,7 +434,7 @@ def decompose_task(
             ],
             temperature=0.3,
             max_tokens=4000,
-            timeout=timeout or 180,
+            timeout=timeout or resolve_task_timeout("kanban_decomposer", model=model, default=180),
             extra_body=get_auxiliary_extra_body() or None,
         )
     except Exception as exc:

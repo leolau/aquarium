@@ -19,6 +19,7 @@ import type { SkillVersionDetail, SkillVersionDiff, SkillVersionList } from "@/l
 import { hermesApiBaseUrl } from "@/lib/env";
 import type { SecurityBasicsResult } from "@/lib/api/security-basics";
 import type { AquariumSettings, AquariumSnapshot, CreatureId } from "@/lib/aquarium/creatures";
+import type { ModelTimeoutChange, ModelTimeoutsState } from "@/lib/model-timeouts";
 import type { SkillUsageEvent, SkillUsageList } from "@/lib/skills/usage";
 import type { PinResponse, PinSuggestionsResponse } from "@/types/landing";
 import type {
@@ -827,6 +828,16 @@ export class HermesApiClient {
   /** Change any of the box-wide aquarium settings; returns all. Owner/admin only (Python re-checks). */
   async setAquariumSettings(patch: Partial<AquariumSettings>): Promise<AquariumSettings> {
     return this.request("/api/aquarium/settings", { method: "PUT", json: patch });
+  }
+
+  /** Model API timeouts per provider/model and the pairs in use. Owner/admin only. */
+  async modelTimeouts(): Promise<ModelTimeoutsState> {
+    return this.request("/api/model-timeouts");
+  }
+
+  /** Set or clear (`timeout_seconds: null`) one timeout in every profile; returns all. */
+  async setModelTimeout(change: ModelTimeoutChange): Promise<ModelTimeoutsState> {
+    return this.request("/api/model-timeouts", { method: "PUT", json: change });
   }
 
   /** The signed-in person's creature; `chosen` is false for the fallback. */

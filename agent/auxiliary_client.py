@@ -52,6 +52,7 @@ import time
 import uuid
 from pathlib import Path  # noqa: F401 — used by test mocks
 from types import SimpleNamespace
+import re
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 from urllib.parse import urlparse, parse_qs, urlunparse
 
@@ -5655,6 +5656,126 @@ def _get_task_timeout(task: str, default: float = _DEFAULT_AUX_TIMEOUT) -> float
     return default
 
 
+def _builtin_task_timeout(task: str) -> Optional[float]:
+    """The shipped default for ``auxiliary.<task>.timeout`` (DEFAULT_CONFIG or plugin defaults)."""
+    if not task:
+        return None
+    try:
+        from hermes_cli.config import DEFAULT_CONFIG
+        raw = ((DEFAULT_CONFIG.get("auxiliary") or {}).get(task) or {}).get("timeout")
+        if raw is not None:
+            return float(raw)
+    except Exception:
+        pass
+    try:
+        from hermes_cli.plugins import get_plugin_auxiliary_tasks
+        for entry in get_plugin_auxiliary_tasks():
+            if entry.get("key") == task:
+                raw = (entry.get("defaults") or {}).get("timeout")
+                return float(raw) if raw is not None else None
+    except Exception:
+        pass
+    return None
+
+
+_LABEL_PROVIDER_RE = re.compile(r"\(([^()]+)\)$")
+_LABEL_INDEX_RE = re.compile(r"^(fallback_chain|fallback_providers)\[(\d+)\]")
+
+
+def _provider_from_label(label: Optional[str]) -> Optional[str]:
+    """``fallback_chain[0](opencode-go)`` → ``opencode-go``; a plain provider id is returned as is."""
+    if not label:
+        return None
+    match = _LABEL_PROVIDER_RE.search(label)
+    provider = (match.group(1) if match else label).strip()
+    return provider or None
+
+
+def _main_provider_model() -> Tuple[Optional[str], Optional[str]]:
+    try:
+        from hermes_cli.config import load_config
+        model_cfg = load_config().get("model") or {}
+    except Exception:
+        return None, None
+    if isinstance(model_cfg, str):
+        return None, model_cfg.strip() or None
+    if not isinstance(model_cfg, dict):
+        return None, None
+    provider = str(model_cfg.get("provider") or "").strip() or None
+    model = str(model_cfg.get("default") or model_cfg.get("model") or "").strip() or None
+    return provider, model
+
+
+def resolve_task_timeout(
+    task: Optional[str],
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    *,
+    explicit: Any = None,
+    default: float = _DEFAULT_AUX_TIMEOUT,
+) -> float:
+    """The timeout for one model call made for ``task``.
+
+    See :func:`hermes_cli.timeouts.resolve_model_timeout` for the order.
+    ``provider`` may be a fallback label; when it is missing or ``auto`` the
+    task's configured provider, then the main model's provider, is used.
+    """
+    from hermes_cli.timeouts import resolve_model_timeout
+
+    task_config = _get_auxiliary_task_config(task) if task else {}
+    provider = _provider_from_label(provider)
+    if not provider or provider == "auto":
+        provider = str(task_config.get("provider") or "").strip() or None
+    model = model or str(task_config.get("model") or "").strip() or None
+    if not provider or provider in ("auto", "main"):
+        main_provider, main_model = _main_provider_model()
+        if not model or model == main_model:
+            provider, model = main_provider, main_model
+        else:
+            provider = None
+    resolved = resolve_model_timeout(
+        provider,
+        model,
+        explicit=explicit,
+        task_timeout=task_config.get("timeout"),
+        task_default=_builtin_task_timeout(task),
+        default=default,
+    )
+    return resolved if resolved is not None else default
+
+
+def _fallback_entry_timeout(task: Optional[str], label: Optional[str]) -> Optional[float]:
+    """The optional ``timeout`` on the fallback_chain / fallback_providers entry behind ``label``."""
+    match = _LABEL_INDEX_RE.match(label or "")
+    if not match:
+        return None
+    try:
+        index = int(match.group(2))
+        if match.group(1) == "fallback_chain":
+            chain = _get_auxiliary_task_config(task).get("fallback_chain") if task else None
+        else:
+            from hermes_cli.config import load_config
+            from hermes_cli.fallback_config import get_fallback_chain
+            chain = get_fallback_chain(load_config())
+        entry = chain[index] if isinstance(chain, list) and index < len(chain) else None
+        raw = entry.get("timeout") if isinstance(entry, dict) else None
+        timeout = float(raw) if raw is not None else None
+    except Exception:
+        return None
+    return timeout if timeout and timeout > 0 else None
+
+
+def _fallback_timeout(
+    task: Optional[str], label: Optional[str], model: Optional[str], explicit: Any
+) -> float:
+    """A fallback's own timeout: the caller's, its entry's, else its provider/model's."""
+    if explicit is not None:
+        return explicit
+    return resolve_task_timeout(
+        task, label, model, explicit=_fallback_entry_timeout(task, label)
+    )
+
+
 def _get_task_extra_body(task: str) -> Dict[str, Any]:
     """Read auxiliary.<task>.extra_body and return a shallow copy when valid."""
     task_config = _get_auxiliary_task_config(task)
@@ -6103,7 +6224,9 @@ def _call_llm_impl(
                 f"No LLM provider configured for task={task} provider={resolved_provider}. "
                 f"Run: hermes setup")
 
-    effective_timeout = timeout if timeout is not None else _get_task_timeout(task)
+    effective_timeout = resolve_task_timeout(
+        task, resolved_provider, final_model, explicit=timeout
+    )
 
     # Log what we're about to do — makes auxiliary operations visible
     _base_info = str(getattr(client, "base_url", resolved_base_url) or "")
@@ -6506,7 +6629,8 @@ def _call_llm_impl(
                 fb_kwargs = _build_call_kwargs(
                     fb_label, fb_model, messages,
                     temperature=temperature, max_tokens=max_tokens,
-                    tools=tools, timeout=effective_timeout,
+                    tools=tools,
+                    timeout=_fallback_timeout(task, fb_label, fb_model, timeout),
                     extra_body=effective_extra_body,
                     base_url=str(getattr(fb_client, "base_url", "") or ""))
                 return _validate_llm_response(
@@ -6672,7 +6796,9 @@ async def _async_call_llm_impl(
                 f"No LLM provider configured for task={task} provider={resolved_provider}. "
                 f"Run: hermes setup")
 
-    effective_timeout = timeout if timeout is not None else _get_task_timeout(task)
+    effective_timeout = resolve_task_timeout(
+        task, resolved_provider, final_model, explicit=timeout
+    )
 
     # Pass the client's actual base_url (not just resolved_base_url) so
     # endpoint-specific temperature overrides can distinguish
@@ -6991,7 +7117,8 @@ async def _async_call_llm_impl(
                 fb_kwargs = _build_call_kwargs(
                     fb_label, fb_model, messages,
                     temperature=temperature, max_tokens=max_tokens,
-                    tools=tools, timeout=effective_timeout,
+                    tools=tools,
+                    timeout=_fallback_timeout(task, fb_label, fb_model, timeout),
                     extra_body=effective_extra_body,
                     base_url=str(getattr(fb_client, "base_url", "") or ""))
                 # Convert sync fallback client to async

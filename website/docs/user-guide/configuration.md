@@ -87,6 +87,34 @@ For AI provider setup (OpenRouter, Anthropic, Copilot, custom endpoints, self-ho
 
 You can set `providers.<id>.request_timeout_seconds` for a provider-wide request timeout, plus `providers.<id>.models.<model>.timeout_seconds` for a model-specific override. Applies to the primary turn client on every transport (OpenAI-wire, native Anthropic, Anthropic-compatible), the fallback chain, rebuilds after credential rotation, and (for OpenAI-wire) the per-request timeout kwarg — so the configured value wins over the legacy `HERMES_API_TIMEOUT` env var.
 
+The same provider and model timeouts also apply to every other model call: auxiliary tasks (vision, compression, web extract, titles, approval, MCP, MoA, project ask/clarify, kanban decompose/specify, goal judge, profile describer/suggestion), each step of an auxiliary or main fallback, and the Groq/OpenAI/xAI/ElevenLabs speech-to-text and xAI/Gemini text-to-speech calls. For one call the timeout is chosen in this order:
+
+1. a timeout passed in code for that call;
+2. `auxiliary.<task>.timeout`, when you set it to something other than the task's default;
+3. `providers.<id>.models.<model>.timeout_seconds` for the provider and model that call uses;
+4. `providers.<id>.request_timeout_seconds`;
+5. the task's built-in default (for example vision 120s).
+
+A fallback is timed with its own provider and model, not the one that failed. Entries in `fallback_providers` and in `auxiliary.<task>.fallback_chain` also take an optional `timeout` (seconds) that wins over the provider/model timeout for that entry:
+
+```yaml
+providers:
+  opencode-go:
+    models:
+      qwen3.8-max:
+        timeout_seconds: 240   # every task that uses qwen gets 240s
+auxiliary:
+  vision:
+    provider: opencode-go
+    model: qwen3.8-max
+    fallback_chain:
+      - provider: deepseek
+        model: deepseek-v4-flash
+        timeout: 60
+```
+
+Owners and admins can also edit the per-provider and per-model timeouts in agent-home under **Settings → Model timeouts**. A change there is written to every profile's `config.yaml`.
+
 You can also set `providers.<id>.stale_timeout_seconds` for the non-streaming stale-call detector, plus `providers.<id>.models.<model>.stale_timeout_seconds` for a model-specific override. This wins over the legacy `HERMES_API_CALL_STALE_TIMEOUT` env var.
 
 Leaving these unset keeps the legacy defaults (`HERMES_API_TIMEOUT=1800`s, `HERMES_API_CALL_STALE_TIMEOUT=90`s, native Anthropic 900s). The non-streaming stale detector is auto-disabled for local endpoints when left implicit and can scale upward for very large contexts. Not currently wired for AWS Bedrock (both `bedrock_converse` and AnthropicBedrock SDK paths use boto3 with its own timeout configuration). See the commented example in [`cli-config.yaml.example`](https://github.com/NousResearch/hermes-agent/blob/main/cli-config.yaml.example).
@@ -1086,7 +1114,7 @@ auxiliary:
 ```
 
 :::tip
-Each auxiliary task has a configurable `timeout` (in seconds). Defaults: vision 120s, web_extract 360s, approval 30s, compression 120s. Increase these if you use slow local models for auxiliary tasks. Vision also has a separate `download_timeout` (default 30s) for the HTTP image download — increase this for slow connections or self-hosted image servers.
+Each auxiliary task has a configurable `timeout` (in seconds). Defaults: vision 120s, web_extract 360s, approval 30s, compression 120s. Increase these if you use slow local models for auxiliary tasks, or set the provider/model timeout instead so every task using that model gets it. Vision also has a separate `download_timeout` (default 30s) for the HTTP image download — increase this for slow connections or self-hosted image servers.
 :::
 
 :::info

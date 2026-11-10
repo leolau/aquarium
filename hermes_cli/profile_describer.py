@@ -241,6 +241,7 @@ def describe_profile(
         from agent.auxiliary_client import (  # type: ignore
             get_auxiliary_extra_body,
             get_text_auxiliary_client,
+            resolve_task_timeout,
         )
     except Exception as exc:
         logger.debug("describe: auxiliary client import failed: %s", exc)
@@ -273,7 +274,7 @@ def describe_profile(
             ],
             temperature=0.3,
             max_tokens=400,
-            timeout=timeout or 60,
+            timeout=timeout or resolve_task_timeout("profile_describer", model=aux_model, default=60),
             extra_body=get_auxiliary_extra_body() or None,
         )
     except Exception as exc:

@@ -8,6 +8,7 @@ import { AppsSettings, UploadsSettings } from "@/components/settings/AppsSetting
 import { AquariumIdleSetting, CreaturePicker } from "@/components/settings/AquariumSettings";
 import { EntityGoalSection } from "@/components/settings/EntityGoalSection";
 import { MenuSection } from "@/components/settings/MenuSection";
+import { ModelTimeoutsSettings } from "@/components/settings/ModelTimeoutsSettings";
 import {
   settingsEntryHref,
   settingsIndexGroups,
@@ -140,6 +141,7 @@ const ENTRY_ICON: Record<SettingsEntryId, (p: IconProps) => ReactNode> = {
   menu: SettingsIcon,
   upgrade: RefreshIcon,
   aquarium: ClockIcon,
+  "model-timeouts": CpuIcon,
 };
 
 /** Figma `hub-card` on tablet/desktop, `list-row` on phones: the whole card is the link. */
@@ -290,6 +292,8 @@ function SettingsSection({
       return <TagsSection />;
     case "aquarium":
       return <AquariumIdleSetting canEdit={canManageMembers} />;
+    case "model-timeouts":
+      return <ModelTimeoutsSettings />;
     default:
       // tools, get-ready and upgrade have their own routes.
       return null;

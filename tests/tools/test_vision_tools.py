@@ -409,7 +409,8 @@ class TestVisionConfig:
 
         assert result["success"] is True
         assert mock_llm.await_args.kwargs["temperature"] == 1.0
-        assert mock_llm.await_args.kwargs["timeout"] == 77.0
+        # call_llm resolves the timeout (auxiliary.vision.timeout, then provider/model).
+        assert "timeout" not in mock_llm.await_args.kwargs
 
     @pytest.mark.asyncio
     async def test_vision_defaults_temperature_when_config_omits_it(self, tmp_path):
@@ -437,7 +438,8 @@ class TestVisionConfig:
 
         assert result["success"] is True
         assert mock_llm.await_args.kwargs["temperature"] == 0.1
-        assert mock_llm.await_args.kwargs["timeout"] == 120.0
+        # call_llm resolves the timeout (auxiliary.vision.timeout, then provider/model).
+        assert "timeout" not in mock_llm.await_args.kwargs
 
 
 class TestVisionSafetyGuards:

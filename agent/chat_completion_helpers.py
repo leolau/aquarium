@@ -25,7 +25,11 @@ import uuid
 from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
-from hermes_cli.timeouts import get_provider_request_timeout, get_provider_stale_timeout
+from hermes_cli.timeouts import (
+    get_provider_request_timeout,
+    get_provider_stale_timeout,
+    resolve_model_timeout,
+)
 from hermes_constants import PARTIAL_STREAM_STUB_ID, FINISH_REASON_LENGTH
 from agent.error_classifier import FailoverReason
 from agent.gemini_native_adapter import is_native_gemini_base_url
@@ -1376,7 +1380,7 @@ def try_activate_fallback(agent, reason: "FailoverReason | None" = None) -> bool
         # Honor per-provider / per-model request_timeout_seconds for the
         # fallback target (same knob the primary client uses).  None = use
         # SDK default.
-        _fb_timeout = get_provider_request_timeout(fb_provider, fb_model)
+        _fb_timeout = resolve_model_timeout(fb_provider, fb_model, explicit=fb.get("timeout"))
 
         if fb_api_mode == "anthropic_messages":
             # Build native Anthropic client instead of using OpenAI client
