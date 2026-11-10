@@ -7,12 +7,14 @@ import { CREATURE_IDS, type AquariumMetrics, type CreatureId } from "@/lib/aquar
 export const SIZE_MIN = 24;
 export const SIZE_MAX = 200;
 /**
- * Sizes are relative to the busiest person: they reach `SIZE_MAX`, and
- * someone `SIZE_DECADES` usage decades below them (in `usageScore` units)
- * sits at `SIZE_MIN`. The reference never drops below `SIZE_SCORE_FLOOR`,
- * so a box of light users doesn't swim as whales.
+ * Sizes sit on a log scale of `usageScore` between the lightest and the
+ * busiest person on the box: the busiest reaches `SIZE_MAX`, the lightest
+ * `SIZE_MIN`. The span never shrinks below `SIZE_LOG_SPAN_MIN` (in
+ * `log10(1 + score)`), so near-equal people stay near-equal in size, and the
+ * reference never drops below `SIZE_SCORE_FLOOR`, so a box of light users
+ * doesn't swim as whales.
  */
-export const SIZE_DECADES = 3.5;
+export const SIZE_LOG_SPAN_MIN = 0.25;
 export const SIZE_SCORE_FLOOR = 4;
 
 /** Swim speed in CSS px per second. */
@@ -54,12 +56,28 @@ export function sizeT(size: number): number {
   return clamp((size - SIZE_MIN) / (SIZE_MAX - SIZE_MIN), 0, 1);
 }
 
-/** Leader body size in CSS px, `SIZE_MIN`–`SIZE_MAX`, on a log scale relative to `busiest` (see `busiestScore`). */
-export function creatureSize(m: AquariumMetrics, busiest = SIZE_SCORE_FLOOR): number {
+/** The lightest non-zero score in a snapshot, the bottom of the size scale (`0` when nobody has usage yet). */
+export function lightestScore(metrics: Iterable<AquariumMetrics>): number {
+  let min = Infinity;
+  for (const m of metrics) {
+    const score = usageScore(m);
+    if (score > 0 && score < min) min = score;
+  }
+  return Number.isFinite(min) ? min : 0;
+}
+
+/**
+ * Leader body size in CSS px, `SIZE_MIN`–`SIZE_MAX`, on a log scale between
+ * `lightest` and `busiest` (see `lightestScore` / `busiestScore`).
+ */
+export function creatureSize(m: AquariumMetrics, busiest = SIZE_SCORE_FLOOR, lightest = 0): number {
   const ref = Math.max(SIZE_SCORE_FLOOR, Number.isFinite(busiest) ? busiest : SIZE_SCORE_FLOOR);
   const score = usageScore(m);
   if (!(score > 0)) return SIZE_MIN;
-  const t = clamp(1 - (ref - score) / SIZE_DECADES, 0, 1);
+  const top = Math.log10(1 + ref);
+  const bottom = Math.log10(1 + clamp(Number.isFinite(lightest) ? lightest : 0, 0, ref));
+  const span = Math.max(SIZE_LOG_SPAN_MIN, top - bottom);
+  const t = clamp(1 - (top - Math.log10(1 + score)) / span, 0, 1);
   return SIZE_MIN + (SIZE_MAX - SIZE_MIN) * t;
 }
 
