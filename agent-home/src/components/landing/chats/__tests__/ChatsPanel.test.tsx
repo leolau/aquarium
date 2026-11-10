@@ -16,7 +16,7 @@ import { ChatsDrawer } from "../ChatsDrawer";
 import { ChatsSidebar } from "../ChatsSidebar";
 import { notifySessionsChanged } from "@/lib/chat/sessions-changed";
 
-import { fakeFetch, json, sessions, withoutPins } from "./fixtures";
+import { NOW, fakeFetch, json, sessions, userChatSessions, withoutPins } from "./fixtures";
 
 const profiles = [
   { name: "default", is_default: true },
@@ -347,5 +347,105 @@ describe("pin suggestions review", () => {
     vi.useRealTimers();
     expect(await screen.findByText("2 unfinished chats worth pinning")).toBeTruthy();
     expect(calls).toBe(2);
+  });
+});
+
+describe("ChatsSidebar on the landing page", () => {
+  const userChats = userChatSessions;
+  const others = [
+    { ...userChats[4], id: "s-cron", source: "cron", title: "Nightly digest", last_active: NOW / 1000 },
+    { ...userChats[4], id: "s-run", source: "projects:acme:run-3", title: "Project run", last_active: NOW / 1000 },
+    { ...userChats[4], id: "s-tg", source: "telegram", title: "Telegram triage", pinned_at: NOW / 1000 },
+    {
+      ...userChats[4],
+      id: "s-kanban",
+      source: "agent_home",
+      title: "Kanban card",
+      cwd: "/home/a/.hermes/kanban/workspaces/t_1",
+      last_active: NOW / 1000,
+    },
+    { ...userChats[4], id: "s-report", source: "agent_home", title: "Daily report", preview: "", last_active: NOW / 1000 },
+  ];
+
+  beforeEach(() => push.mockReset());
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("asks the server for Aquarium chats only and hides everything else, pins included", async () => {
+    const f = install({ "GET /api/chat/sessions": () => json({ sessions: [...userChats, ...others] }) });
+    render(<ChatsSidebar profiles={profiles} userChatsOnly />);
+    await screen.findByRole("region", { name: "Pinned chats" });
+    const url = new URL(String(f.mock.calls[0][0]), "http://x");
+    expect(url.searchParams.get("source")).toBe("agent_home");
+    expect(rowNames("Pinned chats")).toEqual(["Refactor billing webhooks", "Q3 planning notes"]);
+    for (const title of ["Nightly digest", "Project run", "Telegram triage", "Kanban card", "Daily report"]) {
+      expect(screen.queryByText(title)).toBeNull();
+    }
+    fireEvent.change(screen.getByLabelText("Search chats"), { target: { value: "a" } });
+    expect(screen.queryByText("Telegram triage")).toBeNull();
+    expect(screen.queryByText("Daily report")).toBeNull();
+    expect(f.mock.calls.some(([, i]) => (i?.method ?? "GET") !== "GET")).toBe(false);
+  });
+
+  it("drops message hits from chats the sidebar hides", async () => {
+    install({ "GET /api/chat/sessions": () => json({ sessions: [...userChats, ...others] }) });
+    const messageSearch = vi.fn(async () => [
+      { session_id: "s-flaky", snippet: "flaky", role: "user", title: "Debug flaky e2e test", source: "agent_home" },
+      { session_id: "s-tg", snippet: "flaky", role: "user", title: "Telegram triage", source: "telegram" },
+      { session_id: "s-report", snippet: "flaky", role: "assistant", title: "Daily report", source: "agent_home" },
+    ]);
+    render(
+      <ChatsSidebar profiles={profiles} userChatsOnly messageSearch={messageSearch} onOpenMessageHit={vi.fn()} />,
+    );
+    await screen.findByText("Q3 planning notes");
+    fireEvent.change(screen.getByLabelText("Search chats"), { target: { value: "flaky" } });
+    const hits = await screen.findByRole("region", { name: /messages/i });
+    await waitFor(() => expect(within(hits).getAllByRole("button")).toHaveLength(1));
+    expect(within(hits).getByText("Debug flaky e2e test")).toBeTruthy();
+    expect(within(hits).queryByText("Telegram triage")).toBeNull();
+    expect(within(hits).queryByText("Daily report")).toBeNull();
+  });
+
+  it("still lists a chat started on the landing page at the top of Recent right away", async () => {
+    install({ "GET /api/chat/sessions": () => json({ sessions: userChats }) });
+    render(<ChatsSidebar profiles={profiles} profile="default" userChatsOnly highlightLatest />);
+    await screen.findByText("Q3 planning notes");
+    act(() => notifySessionsChanged({ profile: "default", session: { id: "s-new", preview: "draft the Q4 plan" } }));
+    expect(rowNames("Recent chats")[0]).toMatch(/^draft the Q4 plan/);
+    await waitFor(() => expect(rowNames("Recent chats")[0]).toMatch(/^draft the Q4 plan/));
+  });
+
+  it("marks the latest chat to continue while no chat is open", async () => {
+    install({ "GET /api/chat/sessions": () => json({ sessions: userChats }) });
+    const onOpenChat = vi.fn();
+    const { rerender } = render(<ChatsSidebar profiles={profiles} highlightLatest onOpenChat={onOpenChat} />);
+    await screen.findByText("Q3 planning notes");
+    const rows = document.querySelectorAll("[data-state='resume']");
+    expect(rows).toHaveLength(1);
+    const link = within(rows[0] as HTMLElement).getByRole("link");
+    expect(link.textContent).toBe("Pricing page copy review — continue your last chat");
+    expect(within(rows[0] as HTMLElement).getByText("Continue")).toBeTruthy();
+    fireEvent.click(link);
+    expect(onOpenChat).toHaveBeenCalledWith(expect.objectContaining({ id: "s-pricing" }));
+
+    rerender(
+      <ChatsSidebar profiles={profiles} highlightLatest onOpenChat={onOpenChat} activeSessionId="s-pricing" />,
+    );
+    expect(document.querySelector("[data-state='resume']")).toBeNull();
+    expect(screen.queryByText("Continue")).toBeNull();
+    expect(document.querySelector("[data-state='active']")).toBeTruthy();
+  });
+
+  it("does not mark a chat without highlightLatest or while searching", async () => {
+    install({ "GET /api/chat/sessions": () => json({ sessions: userChats }) });
+    const { rerender } = render(<ChatsSidebar profiles={profiles} />);
+    await screen.findByText("Q3 planning notes");
+    expect(document.querySelector("[data-state='resume']")).toBeNull();
+    rerender(<ChatsSidebar profiles={profiles} highlightLatest />);
+    expect(document.querySelector("[data-state='resume']")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Search chats"), { target: { value: "pricing" } });
+    expect(document.querySelector("[data-state='resume']")).toBeNull();
   });
 });

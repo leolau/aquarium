@@ -45,7 +45,7 @@ vi.mock("./topbar", () => ({
 }));
 vi.mock("./work", () => ({ LandingWorkPanel: () => <div data-component="LandingWorkPanel" /> }));
 
-import { fakeFetch, json, sessions } from "./chats/__tests__/fixtures";
+import { fakeFetch, json, userChatSessions as sessions } from "./chats/__tests__/fixtures";
 import { LandingClient } from "./LandingClient";
 
 const profiles = [{ name: "default", is_default: true }] as never;

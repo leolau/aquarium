@@ -84,4 +84,11 @@ describe("GET /api/chat/sessions", () => {
       expect.objectContaining({ limit: 200 }),
     );
   });
+
+  it("forwards a source filter", async () => {
+    await GET(new Request("http://x/api/chat/sessions?source=agent_home"));
+    expect(sessions).toHaveBeenCalledWith(expect.objectContaining({ source: "agent_home" }));
+    await GET(new Request("http://x/api/chat/sessions"));
+    expect(sessions).toHaveBeenLastCalledWith(expect.objectContaining({ source: undefined }));
+  });
 });
