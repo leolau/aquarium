@@ -8,7 +8,7 @@ import { takePendingAttachments } from "@/lib/chat/pending-attachments";
 import { parseJsonObject, uploadFailureMessage } from "@/lib/chat/upload-error";
 import { formatUploadLimit, UPLOAD_WARN_BYTES } from "@/lib/chat/upload-limit";
 import { uploadLimitBytes } from "@/lib/chat/upload-limit-client";
-import type { ChatAttachment, ChatInputMode, PendingChatInput } from "@/types";
+import type { ChatAttachment, ChatInputMode, ChatSendResult, PendingChatInput } from "@/types";
 
 /** Smallest limit Settings → Uploads allows: smaller files skip the lookup. */
 const MIN_LIMIT_BYTES = 1024 * 1024;
@@ -134,13 +134,15 @@ export function Composer({
    * failure, not a mid-turn error) — the composer then puts the draft and
    * its attachments back so nothing is lost to a flaky network. Any other
    * resolution (void/true/undefined) leaves the field cleared.
+   * `"attachments_kept"` means the text was delivered but the files were
+   * not (a running turn takes text only): the files go back into the box.
    */
   onSend: (
     text: string,
     attachments: ChatAttachment[],
     /** Set only while the agent works: how the message reaches the running turn. */
     mode?: ChatInputMode,
-  ) => void | Promise<boolean | void> | boolean;
+  ) => void | Promise<ChatSendResult | void> | ChatSendResult;
   /** Cancel the in-flight turn for the conversation on screen. */
   onStop?: () => void;
   /**
@@ -185,11 +187,10 @@ export function Composer({
   const splitRef = useRef<HTMLDivElement | null>(null);
 
   // While the agent works a message goes to the running turn, which takes
-  // text only — attachments wait for the next normal turn.
+  // text only — attachments stay in the box for the next normal turn.
   const attachmentsWait = sending && attachments.length > 0;
   const canSend =
     !uploading &&
-    !attachmentsWait &&
     (sending ? text.trim() !== "" : text.trim() !== "" || attachments.length > 0);
 
   // Close the mode menu on Escape or a press outside it.
@@ -227,15 +228,20 @@ export function Composer({
     // The turn never started — the error line names why; give the draft
     // back (unless the user already typed something new) so they retry
     // instead of retyping.
-    const restore = (ok: boolean | void) => {
+    const restore = (ok: ChatSendResult | void) => {
+      if (ok === "attachments_kept") {
+        if (sentAttachments.length > 0) setAttachments((cur) => [...sentAttachments, ...cur]);
+        return;
+      }
       if (ok !== false) return;
       setText((cur) => (cur === "" ? sent : cur));
       if (sentAttachments.length > 0) setAttachments(sentAttachments);
     };
     if (sending) {
       // Stop & send is a one-off; the next message steers again.
+      // Files in the box are not sent; they wait for the next normal turn.
       if (mode === "interrupt") setMode("steer");
-      restore(await onSend(sent, [], mode));
+      void Promise.resolve(onSend(sent, [], mode)).then(restore, () => restore(false));
       return;
     }
     setAttachments([]);
@@ -340,7 +346,8 @@ export function Composer({
       ) : null}
       {attachmentsWait ? (
         <p className="mb-2 text-xs text-[var(--color-muted)]">
-          Attachments go with your next prompt once the agent finishes.
+          Messages sent now go to the running turn as text; attachments go with your next prompt
+          once the agent finishes.
         </p>
       ) : null}
       {uploadError ? (

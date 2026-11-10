@@ -360,6 +360,13 @@ export type ChatInputMode = "steer" | "queue" | "interrupt";
  * next turn, or removed. `deferred`: a steer the turn finished before reading;
  * it runs as the next turn.
  */
+/**
+ * What a composer send resolved to: `false` — nothing reached the agent
+ * (give the draft back); `"attachments_kept"` — the text went to a running
+ * turn, which takes text only, so the files go back to the composer.
+ */
+export type ChatSendResult = boolean | "attachments_kept";
+
 export interface PendingChatInput {
   itemId: string;
   mode: ChatInputMode;

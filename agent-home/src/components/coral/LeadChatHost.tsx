@@ -17,6 +17,7 @@ import {
   dropPending,
   initialStatus,
   markDeferred,
+  notSentNotice,
   pendingFromActive,
   upsertPending,
 } from "@/lib/chat/pending-inputs";
@@ -46,6 +47,7 @@ import type {
   ChatAttachment,
   ChatInputMode,
   ChatMessage,
+  ChatSendResult,
   PendingChatInput,
 } from "@/types";
 import { useAction } from "@/lib/use-action";
@@ -121,6 +123,8 @@ export function LeadChatHost({
   const busyRef = useRef(false);
   /** `run.chained` seen on the current stream: the run to attach to next. */
   const chainRef = useRef<ChatRunChain | null>(null);
+  /** Queued items the user is taking back (their `input.removed` is expected). */
+  const removingRef = useRef(new Set<string>());
 
   const effectiveRect = dragRect ?? rect;
 
@@ -300,11 +304,19 @@ export function LeadChatHost({
   function endTurn() {
     busyRef.current = false;
     chainRef.current = null;
+    // Any chip still showing was neither read nor run.
+    const left = pendingRef.current;
     updatePending(() => []);
+    flagNotSent(left);
     setSending(false);
     setTurn(null);
     setApproval(null);
     abortRef.current = null;
+  }
+
+  function flagNotSent(items: PendingChatInput[]) {
+    const notice = notSentNotice(items);
+    if (notice) setError(notice);
   }
 
   function updatePending(update: (cur: PendingChatInput[]) => PendingChatInput[]) {
@@ -371,7 +383,12 @@ export function LeadChatHost({
         touch(() => ({}));
       },
       onInputDeferred: (itemId) => updatePending((cur) => markDeferred(cur, itemId)),
-      onInputRemoved: (itemId) => updatePending((cur) => dropPending(cur, itemId)),
+      onInputRemoved: (itemId) => {
+        const item = pendingRef.current.find((p) => p.itemId === itemId);
+        updatePending((cur) => dropPending(cur, itemId));
+        if (removingRef.current.delete(itemId) || !item) return;
+        flagNotSent([item]);
+      },
       onRunChained: (chain) => {
         chainRef.current = chain;
       },
@@ -387,7 +404,9 @@ export function LeadChatHost({
     for (let chain = chainRef.current; chain; chain = chainRef.current) {
       chainRef.current = null;
       const next = chain;
-      updatePending((cur) => dropPending(cur, next.itemId));
+      updatePending((cur) =>
+        cur.filter((p) => p.itemId !== next.itemId && !next.itemIds.includes(p.itemId)),
+      );
       setMessages((prev) => [...prev, { role: "user", content: next.text }]);
       setTurn({ ...emptyActivity(next.nextRunId), sessionId });
       setStreamText("");
@@ -424,12 +443,12 @@ export function LeadChatHost({
   }
 
   /** Steer / queue / Stop & send a message into the running turn. */
-  async function sendWhileWorking(text: string, mode: ChatInputMode) {
+  async function sendWhileWorking(text: string, mode: ChatInputMode): Promise<ChatSendResult> {
     const runId = turn?.runId ?? null;
     const sid = turn?.sessionId || leadSession;
     if (!runId || !sid) {
       setError("The agent is still starting — send that again in a moment.");
-      return;
+      return false;
     }
     setError(null);
     try {
@@ -439,16 +458,17 @@ export function LeadChatHost({
           upsertPending(cur, { itemId: item.itemId, mode: item.mode, text, status: item.status }),
         );
       }
+      return true;
     } catch (err) {
       if (err instanceof RunFinishedError) {
         // The turn ended meanwhile: its stream is closing; send a normal turn after it.
         for (let i = 0; i < 200 && busyRef.current; i += 1) {
           await new Promise((r) => window.setTimeout(r, 50));
         }
-        await send(text, []);
-        return;
+        return (await send(text, [])) ?? true;
       }
       setError(err instanceof Error ? err.message : "The message could not be sent.");
+      return false;
     }
   }
 
@@ -456,11 +476,15 @@ export function LeadChatHost({
     const runId = turn?.runId ?? null;
     const sid = turn?.sessionId || leadSession;
     if (!runId || !sid) return;
+    removingRef.current.add(itemId);
     try {
       if (await removeQueuedInput({ sessionId: sid, runId, itemId })) {
         updatePending((cur) => dropPending(cur, itemId));
+      } else {
+        removingRef.current.delete(itemId);
       }
     } catch (err) {
+      removingRef.current.delete(itemId);
       setError(err instanceof Error ? err.message : "That message could not be removed.");
     }
   }
@@ -477,11 +501,12 @@ export function LeadChatHost({
     }
   }
 
-  async function send(text: string, attachments: ChatAttachment[], mode?: ChatInputMode) {
-    if (busyRef.current) {
-      await sendWhileWorking(text, mode ?? "steer");
-      return;
-    }
+  async function send(
+    text: string,
+    attachments: ChatAttachment[],
+    mode?: ChatInputMode,
+  ): Promise<ChatSendResult | void> {
+    if (busyRef.current) return sendWhileWorking(text, mode ?? "steer");
     // Sending with no session id would start a *new* conversation, which is
     // the bug this panel used to have in a different shape: a lead chat that
     // is only this browser's. Better to say so than to fork it silently.
@@ -525,7 +550,7 @@ export function LeadChatHost({
     }
     if (busyRunId) {
       const runId = busyRunId;
-      const attached = attachRun(sessionId, runId);
+      void attachRun(sessionId, runId);
       setTurn((prev) => (prev ? { ...prev, runId, sessionId } : prev));
       try {
         const item = await steerChatTurn({ sessionId, runId, text, mode: "steer" });
@@ -534,10 +559,12 @@ export function LeadChatHost({
             upsertPending(cur, { itemId: item.itemId, mode: item.mode, text, status: item.status }),
           );
         }
+        // The running turn takes the text only; the files go back to the composer.
+        return attachments.length > 0 ? "attachments_kept" : true;
       } catch (err) {
         setError(err instanceof Error ? err.message : "The message could not be sent.");
+        return false;
       }
-      await attached;
     }
   }
 
@@ -691,7 +718,7 @@ export function LeadChatHost({
             stopping={turn?.stopping ?? false}
             storageEnabled={storageEnabled}
             sessionId={leadSession}
-            onSend={(text, attachments, mode) => void send(text, attachments, mode)}
+            onSend={(text, attachments, mode) => send(text, attachments, mode)}
             onStop={() => void stopTurn()}
             pending={pending}
             onRemovePending={(itemId) => void removePending(itemId)}

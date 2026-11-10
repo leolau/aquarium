@@ -54,7 +54,7 @@ describe("stream events for messages sent while working", () => {
       "removed:i2",
     ]);
     expect(chains).toEqual([
-      { nextRunId: "r2", itemId: "i3", text: "look at B", source: "steer_leftover" },
+      { nextRunId: "r2", itemId: "i3", itemIds: ["i3"], text: "look at B", source: "steer_leftover" },
     ]);
   });
 });
@@ -108,5 +108,31 @@ describe("steerChatTurn / removeQueuedInput", () => {
     );
     expect(err).toBeInstanceOf(TurnInProgressError);
     expect((err as TurnInProgressError).runId).toBe("r_live");
+  });
+});
+
+describe("stream events for items that will never run", () => {
+  it("reports merged chain ids and pending items named by an error frame", async () => {
+    const body = frames(
+      'event: run.chained\ndata: {"run_id":"r1","next_run_id":"r2","item_id":"i1","item_ids":["i1","i2",7],"text":"a\\nb","source":"steer_leftover"}',
+      'event: error\ndata: {"run_id":"r1","message":"Could not start the next turn.","item_ids":["q1","q2"]}',
+      'event: error\ndata: {"run_id":"r1","message":"Turn failed."}',
+      "event: done\ndata: {}",
+    );
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(body)));
+    const removed: string[] = [];
+    const errors: string[] = [];
+    const chains: ChatRunChain[] = [];
+    await attachChatStream(
+      { sessionId: "s1", runId: "r1" },
+      {
+        onInputRemoved: (id) => removed.push(id),
+        onError: (m) => errors.push(m),
+        onRunChained: (c) => chains.push(c),
+      },
+    );
+    expect(chains[0].itemIds).toEqual(["i1", "i2"]);
+    expect(errors).toEqual(["Could not start the next turn.", "Turn failed."]);
+    expect(removed).toEqual(["q1", "q2"]);
   });
 });

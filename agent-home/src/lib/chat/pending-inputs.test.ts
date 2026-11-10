@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   dropPending,
   markDeferred,
+  notSentNotice,
   pendingFromActive,
   upsertPending,
 } from "@/lib/chat/pending-inputs";
@@ -46,5 +47,18 @@ describe("pending inputs", () => {
       { itemId: "c", mode: "interrupt", text: "stop", status: "queued" },
     ]);
     expect(pendingFromActive(undefined)).toEqual([]);
+  });
+});
+
+describe("notSentNotice", () => {
+  it("names each message that never reached the agent, shortening long ones", () => {
+    expect(notSentNotice([])).toBeNull();
+    const long = "x".repeat(80);
+    expect(
+      notSentNotice([
+        { itemId: "a", mode: "queue", text: "then C", status: "queued" },
+        { itemId: "b", mode: "steer", text: long, status: "pending" },
+      ]),
+    ).toBe(`Not sent: \u201cthen C\u201d, \u201c${"x".repeat(59)}\u2026\u201d. Send it again if you still want it.`);
   });
 });

@@ -26,6 +26,7 @@ import {
   RunFinishedError,
   steerChatTurn,
   streamChatTurn,
+  TurnInProgressError,
 } from "@/lib/chat/stream";
 
 let activeBody: unknown = { runId: null };
@@ -146,7 +147,7 @@ describe("useChatConversation while a turn runs", () => {
     const attached = controlledStream(attachChatStream);
     act(() => turns[0].h.onInputAccepted?.({ itemId: "q1", mode: "queue", text: "then C" }));
     act(() =>
-      turns[0].h.onRunChained?.({ nextRunId: "run_2", itemId: "q1", text: "then C", source: "queue" }),
+      turns[0].h.onRunChained?.({ nextRunId: "run_2", itemId: "q1", itemIds: ["q1"], text: "then C", source: "queue" }),
     );
     act(() => turns[0].end());
 
@@ -203,5 +204,107 @@ describe("useChatConversation while a turn runs", () => {
     activeBody = { runId: null };
     await act(async () => attached[0].end());
     await waitFor(() => expect(result.current.selPending).toEqual([]));
+  });
+});
+
+describe("useChatConversation: sends a running turn can take only in part", () => {
+  const report = { path: "/uploads/report.pdf", name: "report.pdf", content_type: "application/pdf", size: 10 };
+
+  function turnAlreadyRunning() {
+    vi.mocked(streamChatTurn).mockRejectedValue(new TurnInProgressError("run_9"));
+    vi.mocked(attachChatStream).mockImplementation(() => new Promise(() => {}));
+  }
+
+  it("steers the text into a turn already running and hands the files back", async () => {
+    const { result } = mount();
+    turnAlreadyRunning();
+    vi.mocked(steerChatTurn).mockResolvedValue({ itemId: "i1", mode: "steer", status: "pending" });
+    let out: unknown;
+    await act(async () => {
+      out = await result.current.send("look at this", [report]);
+    });
+    expect(out).toBe("attachments_kept");
+    expect(steerChatTurn).toHaveBeenCalledWith({
+      sessionId: "s1",
+      runId: "run_9",
+      text: "look at this",
+      mode: "steer",
+      profile: "work",
+    });
+    expect(result.current.selBusy).toBe(true);
+  });
+
+  it("reports a text-only join as sent, and a failed join as not sent", async () => {
+    const first = mount();
+    turnAlreadyRunning();
+    vi.mocked(steerChatTurn).mockResolvedValueOnce({ itemId: "i1", mode: "steer", status: "pending" });
+    let out: unknown;
+    await act(async () => {
+      out = await first.result.current.send("just text", []);
+    });
+    expect(out).toBe(true);
+    first.unmount();
+
+    const second = mount();
+    vi.mocked(steerChatTurn).mockRejectedValueOnce(new Error("Steer failed."));
+    await act(async () => {
+      out = await second.result.current.send("look at this", [report]);
+    });
+    expect(out).toBe(false);
+    expect(second.result.current.error).toBe("Steer failed.");
+  });
+});
+
+describe("useChatConversation: chips the server drops", () => {
+  it("says which message was not sent when the server removes it", async () => {
+    const { result } = mount();
+    const turns = await startWorkingTurn(result);
+    act(() => turns[0].h.onInputAccepted?.({ itemId: "q1", mode: "queue", text: "then C" }));
+    act(() => turns[0].h.onInputRemoved?.("q1"));
+    expect(result.current.selPending).toEqual([]);
+    expect(result.current.error).toMatch(/Not sent: \u201cthen C\u201d/);
+  });
+
+  it("stays quiet when the user took the queued message back", async () => {
+    const { result } = mount();
+    const turns = await startWorkingTurn(result);
+    act(() => turns[0].h.onInputAccepted?.({ itemId: "q1", mode: "queue", text: "then C" }));
+    vi.mocked(removeQueuedInput).mockResolvedValue(true);
+    await act(async () => result.current.removePending("q1"));
+    act(() => turns[0].h.onInputRemoved?.("q1"));
+    expect(result.current.error).toBeNull();
+  });
+
+  it("clears every chip a merged leftover steer delivers", async () => {
+    const { result } = mount();
+    const turns = await startWorkingTurn(result);
+    const attached = controlledStream(attachChatStream);
+    act(() => turns[0].h.onInputAccepted?.({ itemId: "i1", mode: "steer", text: "a" }));
+    act(() => turns[0].h.onInputAccepted?.({ itemId: "i2", mode: "steer", text: "b" }));
+    act(() =>
+      turns[0].h.onRunChained?.({
+        nextRunId: "run_2",
+        itemId: "i1",
+        itemIds: ["i1", "i2"],
+        text: "a\nb",
+        source: "steer_leftover",
+      }),
+    );
+    act(() => turns[0].end());
+    await waitFor(() => expect(attached).toHaveLength(1));
+    expect(result.current.selPending).toEqual([]);
+    await act(async () => attached[0].end());
+    await waitFor(() => expect(result.current.selBusy).toBe(false));
+    expect(result.current.error).toBeNull();
+  });
+
+  it("flags chips still showing when the turn ends with nothing chained", async () => {
+    const { result } = mount();
+    const turns = await startWorkingTurn(result);
+    act(() => turns[0].h.onInputAccepted?.({ itemId: "q1", mode: "queue", text: "then C" }));
+    await act(async () => turns[0].end());
+    await waitFor(() => expect(result.current.selBusy).toBe(false));
+    expect(result.current.selPending).toEqual([]);
+    expect(result.current.error).toMatch(/Not sent: \u201cthen C\u201d/);
   });
 });

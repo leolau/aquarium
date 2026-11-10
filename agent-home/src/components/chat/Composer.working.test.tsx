@@ -186,3 +186,37 @@ describe("Composer at 390px", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 });
+
+describe("Composer with a file waiting while the agent works", () => {
+  const report = { path: "/uploads/report.pdf", name: "report.pdf", content_type: "application/pdf", size: 10 };
+  const seedFile = () =>
+    sessionStorage.setItem("agent-home:pending-attachments", JSON.stringify([report]));
+
+  it("still steers text, and keeps the file for the next normal prompt", async () => {
+    seedFile();
+    const { onSend } = working();
+    await screen.findByText("report.pdf");
+    type("only the text goes now");
+    const send = screen.getByRole("button", { name: /^steer$/i }) as HTMLButtonElement;
+    expect(send.disabled).toBe(false);
+    fireEvent.click(send);
+    await waitFor(() =>
+      expect(onSend).toHaveBeenCalledWith("only the text goes now", [], "steer"),
+    );
+    expect(box().value).toBe("");
+    expect(screen.getByText("report.pdf")).toBeTruthy();
+    expect(screen.getByText(/attachments go with your next prompt/i)).toBeTruthy();
+  });
+
+  it("puts the files back when the host could only deliver the text", async () => {
+    seedFile();
+    const onSend = vi.fn(async () => "attachments_kept" as const);
+    render(<Composer sending={false} storageEnabled={false} sessionId="s1" onSend={onSend} />);
+    await screen.findByText("report.pdf");
+    type("look at this");
+    fireEvent.click(screen.getByRole("button", { name: /^send$/i }));
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("look at this", [report]));
+    await waitFor(() => expect(screen.getByText("report.pdf")).toBeTruthy());
+    expect(box().value).toBe("");
+  });
+});

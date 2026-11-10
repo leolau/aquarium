@@ -60,3 +60,15 @@ export function pendingFromActive(raw: unknown): PendingChatInput[] {
   }
   return out;
 }
+
+/**
+ * The line shown when messages sent while the agent worked disappear without
+ * reaching it (a Stop discarded them, or the server could not start them).
+ */
+export function notSentNotice(items: PendingChatInput[]): string | null {
+  if (items.length === 0) return null;
+  const quoted = items
+    .map((i) => `“${i.text.length > 60 ? `${i.text.slice(0, 59)}…` : i.text}”`)
+    .join(", ");
+  return `Not sent: ${quoted}. Send it again if you still want it.`;
+}

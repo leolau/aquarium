@@ -15,6 +15,7 @@ import {
   dropPending,
   initialStatus,
   markDeferred,
+  notSentNotice,
   pendingFromActive,
   upsertPending,
 } from "@/lib/chat/pending-inputs";
@@ -47,6 +48,7 @@ import type {
   ChatAttachment,
   ChatInputMode,
   ChatMessage,
+  ChatSendResult,
   PendingChatInput,
   SessionSummary,
 } from "@/types";
@@ -149,6 +151,8 @@ export function useChatConversation({
   // the state mirrors it for rendering.
   const [pendingInputs, setPendingInputs] = useState<Record<string, PendingChatInput[]>>({});
   const pendingRef = useRef<Map<string, PendingChatInput[]>>(new Map());
+  /** Queued items the user is taking back (their `input.removed` is expected). */
+  const removingRef = useRef(new Set<string>());
   // Synchronous mirror of `sendingKeys` for code that runs after an await.
   const busyRef = useRef<Set<string>>(new Set());
   // `run.chained` seen on a turn's stream: the follow-up run to attach to
@@ -222,6 +226,19 @@ export function useChatConversation({
     busyRef.current.delete(k);
     setSendingKeys((prev) => prev.filter((x) => x !== k));
   };
+
+  /** Say which messages sent while working never reached the agent. */
+  function flagNotSent(items: PendingChatInput[]) {
+    const notice = notSentNotice(items);
+    if (notice) setError(notice);
+  }
+
+  /** A turn is over: any chip still showing was neither read nor run. */
+  function clearPending(turnKey: string) {
+    const left = pendingRef.current.get(turnKey) ?? [];
+    updatePending(turnKey, () => []);
+    flagNotSent(left);
+  }
 
   function updatePending(
     turnKey: string,
@@ -389,7 +406,13 @@ export function useChatConversation({
         touch(() => ({}));
       },
       onInputDeferred: (itemId) => updatePending(turnKey, (cur) => markDeferred(cur, itemId)),
-      onInputRemoved: (itemId) => updatePending(turnKey, (cur) => dropPending(cur, itemId)),
+      onInputRemoved: (itemId) => {
+        const item = (pendingRef.current.get(turnKey) ?? []).find((p) => p.itemId === itemId);
+        updatePending(turnKey, (cur) => dropPending(cur, itemId));
+        // The user's own ✕ needs no notice; anything else never reached the agent.
+        if (removingRef.current.delete(itemId) || !item) return;
+        flagNotSent([item]);
+      },
       onRunChained: (chain) => {
         chainRef.current.set(turnKey, chain);
       },
@@ -408,7 +431,7 @@ export function useChatConversation({
     const turnKey = keyOf(sid);
     let chain = chainRef.current.get(fromKey);
     if (!chain) {
-      updatePending(fromKey, () => []);
+      clearPending(fromKey);
       return;
     }
     chainRef.current.delete(fromKey);
@@ -421,7 +444,9 @@ export function useChatConversation({
     try {
       while (chain) {
         const next = chain;
-        updatePending(turnKey, (cur) => dropPending(cur, next.itemId));
+        updatePending(turnKey, (cur) =>
+          cur.filter((p) => p.itemId !== next.itemId && !next.itemIds.includes(p.itemId)),
+        );
         setApprovals((prev) => dropKey(prev, turnKey));
         setDecisions((prev) => dropKey(prev, turnKey));
         liveRef.current.set(turnKey, { user: next.text, assistant: "" });
@@ -459,7 +484,7 @@ export function useChatConversation({
       sessionsStale();
     } finally {
       chainRef.current.delete(turnKey);
-      updatePending(turnKey, () => []);
+      clearPending(turnKey);
       if (turnKey !== fromKey) {
         removeSending(turnKey);
         liveRef.current.delete(turnKey);
@@ -509,7 +534,7 @@ export function useChatConversation({
       removeSending(turnKey);
       liveRef.current.delete(turnKey);
       chainRef.current.delete(turnKey);
-      updatePending(turnKey, () => []);
+      clearPending(turnKey);
       setApprovals((prev) => dropKey(prev, turnKey));
       setLiveActivity((prev) => dropKey(prev, turnKey));
     }
@@ -521,7 +546,7 @@ export function useChatConversation({
    * The chip shows until the agent reads it. When the run finished in the
    * meantime the message goes out as a normal turn instead.
    */
-  async function sendWhileWorking(text: string, mode: ChatInputMode): Promise<boolean> {
+  async function sendWhileWorking(text: string, mode: ChatInputMode): Promise<ChatSendResult> {
     const turnKey = selKey;
     const turn = liveActivity[turnKey];
     const runId = turn?.runId ?? null;
@@ -554,11 +579,14 @@ export function useChatConversation({
     const runId = turn?.runId ?? null;
     const sid = turn?.sessionId || sessionId;
     if (!runId || !sid) return;
+    removingRef.current.add(itemId);
     try {
       const removed = await removeQueuedInput({ sessionId: sid, runId, itemId, profile });
       // Not removed means it already started; its own turn replaces the chip.
       if (removed) updatePending(turnKey, (cur) => dropPending(cur, itemId));
+      else removingRef.current.delete(itemId);
     } catch (err) {
+      removingRef.current.delete(itemId);
       setError(err instanceof Error ? err.message : "That message could not be removed.");
     }
   }
@@ -572,7 +600,7 @@ export function useChatConversation({
     text: string,
     attachments: ChatAttachment[],
     mode?: ChatInputMode,
-  ): Promise<boolean> {
+  ): Promise<ChatSendResult> {
     if (busyRef.current.has(selKey)) return sendWhileWorking(text, mode ?? "steer");
     return startTurn(text, attachments);
   }
@@ -587,7 +615,7 @@ export function useChatConversation({
     text: string,
     attachments: ChatAttachment[],
     { afterRunEnds = false }: { afterRunEnds?: boolean } = {},
-  ): Promise<boolean> {
+  ): Promise<ChatSendResult> {
     // The session this turn belongs to, captured up-front so late-arriving
     // events are attributed to their origin, not to whatever is selected later.
     const turnSessionId = sessionId;
@@ -689,12 +717,15 @@ export function useChatConversation({
       liveRef.current.delete(turnKey);
       abortRef.current.delete(turnKey);
       chainRef.current.delete(turnKey);
-      updatePending(turnKey, () => []);
+      clearPending(turnKey);
       setApprovals((prev) => dropKey(prev, turnKey));
       setLiveActivity((prev) => dropKey(prev, turnKey));
     }
     const joinRunId: string | null = busyRunId;
-    return joinRunId && turnSessionId ? joinRunningTurn(turnSessionId, joinRunId, text) : false;
+    if (!joinRunId || !turnSessionId) return false;
+    // The running turn takes the text only; the files go back to the composer.
+    const joined = await joinRunningTurn(turnSessionId, joinRunId, text);
+    return joined && attachments.length > 0 ? "attachments_kept" : joined;
   }
 
   /** Resolves once `turnKey` has no live turn (polls the busy mirror). */

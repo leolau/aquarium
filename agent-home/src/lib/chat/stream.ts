@@ -51,6 +51,8 @@ export interface ChatStreamHandlers {
 export interface ChatRunChain {
   nextRunId: string;
   itemId: string;
+  /** Every pending item this turn delivers (a leftover steer merges several). */
+  itemIds: string[];
   text: string;
   source: "queue" | "steer_leftover" | "interrupt";
 }
@@ -73,6 +75,14 @@ export class RunFinishedError extends Error {
     super("The agent already finished that turn.");
     this.name = "RunFinishedError";
   }
+}
+
+function itemIdsOf(data: Record<string, unknown>): string[] {
+  const ids = Array.isArray(data.item_ids)
+    ? data.item_ids.filter((id): id is string => typeof id === "string" && id !== "")
+    : [];
+  const one = typeof data.item_id === "string" && data.item_id !== "" ? data.item_id : null;
+  return one && !ids.includes(one) ? [one, ...ids] : ids;
 }
 
 const CHAIN_SOURCES: readonly ChatRunChain["source"][] = ["queue", "steer_leftover", "interrupt"];
@@ -248,6 +258,8 @@ async function consumeStream(
       landedSessionId = str(data.session_id) ?? landedSessionId;
     } else if (event === "error") {
       handlers.onError?.(str(data.message) ?? "The turn failed.");
+      // An error about a pending item means it will never run.
+      for (const itemId of itemIdsOf(data)) handlers.onInputRemoved?.(itemId);
     } else if (event === "input.accepted") {
       const itemId = str(data.item_id);
       const mode = data.mode;
@@ -270,6 +282,7 @@ async function consumeStream(
         handlers.onRunChained?.({
           nextRunId,
           itemId: str(data.item_id) ?? "",
+          itemIds: itemIdsOf(data),
           text: str(data.text) ?? "",
           source: source && CHAIN_SOURCES.includes(source) ? source : "queue",
         });

@@ -27,6 +27,7 @@ import {
   cancelChatTurn,
   steerChatTurn,
   streamChatTurn,
+  TurnInProgressError,
 } from "@/lib/chat/stream";
 import { STEER_MARKER_CLOSE, STEER_MARKER_OPEN } from "@/lib/chat/transcript";
 import { LeadChatHost } from "@/components/coral/LeadChatHost";
@@ -479,7 +480,7 @@ describe("LeadChatHost while the agent works", () => {
     );
     expect(screen.queryByRole("list", { name: /sent while working/i })).toBeNull();
 
-    handlers!.onRunChained?.({ nextRunId: "run-2", itemId: "q1", text: "then email it", source: "queue" });
+    handlers!.onRunChained?.({ nextRunId: "run-2", itemId: "q1", itemIds: ["q1"], text: "then email it", source: "queue" });
     finish();
     await waitFor(() =>
       expect(vi.mocked(attachChatStream).mock.calls[0]?.[0]).toMatchObject({
@@ -507,5 +508,88 @@ describe("LeadChatHost while the agent works", () => {
     const chips = await screen.findByRole("list", { name: /sent while working/i });
     expect(chips.textContent).toContain("then email it");
     expect(screen.getByRole("button", { name: /remove queued message/i })).toBeTruthy();
+  });
+});
+
+describe("LeadChatHost: sends that do not get through", () => {
+  /** Start a lead turn whose stream stays open; returns its handlers. */
+  async function startTurn(): Promise<ChatStreamHandlers> {
+    let handlers: ChatStreamHandlers | null = null;
+    vi.mocked(streamChatTurn).mockImplementation(
+      (_params, h) =>
+        new Promise(() => {
+          handlers = h;
+        }),
+    );
+    render(<LeadChatHost />);
+    openLeadChat();
+    await waitFor(() => expect(screen.getByPlaceholderText(/message your agent/i)).toBeTruthy());
+    await sendMessage("Plan the week");
+    await waitFor(() => expect(handlers).not.toBeNull());
+    return handlers!;
+  }
+
+  const steerBox = () => screen.findByPlaceholderText(/steer the agent/i) as Promise<HTMLTextAreaElement>;
+
+  it("gives the draft back while the run id is still pending", async () => {
+    leadFetch();
+    await startTurn();
+    const box = await steerBox();
+    fireEvent.input(box, { target: { value: "include Friday" } });
+    fireEvent.click(screen.getByRole("button", { name: /^steer$/i }));
+    await screen.findByText(/still starting/i);
+    await waitFor(() => expect(box.value).toBe("include Friday"));
+    expect(vi.mocked(steerChatTurn)).not.toHaveBeenCalled();
+  });
+
+  it("gives the draft back when the steer fails", async () => {
+    leadFetch();
+    const h = await startTurn();
+    h.onAccepted?.("run-1", "lead-abc");
+    vi.mocked(steerChatTurn).mockRejectedValue(new Error("Steer failed."));
+    const box = await steerBox();
+    fireEvent.input(box, { target: { value: "include Friday" } });
+    fireEvent.click(screen.getByRole("button", { name: /^steer$/i }));
+    await screen.findByText("Steer failed.");
+    await waitFor(() => expect(box.value).toBe("include Friday"));
+  });
+
+  it("keeps the files when a send joins a turn already running", async () => {
+    leadFetch();
+    sessionStorage.setItem(
+      "agent-home:pending-attachments",
+      JSON.stringify([
+        { path: "/uploads/report.pdf", name: "report.pdf", content_type: "application/pdf", size: 10 },
+      ]),
+    );
+    vi.mocked(streamChatTurn).mockRejectedValue(new TurnInProgressError("run-5"));
+    vi.mocked(attachChatStream).mockImplementation(() => new Promise(() => {}));
+    vi.mocked(steerChatTurn).mockResolvedValue({ itemId: "i1", mode: "steer", status: "pending" });
+    render(<LeadChatHost />);
+    openLeadChat();
+    await screen.findByText("report.pdf");
+    await sendMessage("look at this");
+    await waitFor(() =>
+      expect(vi.mocked(steerChatTurn)).toHaveBeenCalledWith({
+        sessionId: "lead-abc",
+        runId: "run-5",
+        text: "look at this",
+        mode: "steer",
+      }),
+    );
+    const box = await steerBox();
+    await waitFor(() => expect(screen.getByText("report.pdf")).toBeTruthy());
+    expect(box.value).toBe("");
+  });
+
+  it("says which message was not sent when the server removes it", async () => {
+    leadFetch();
+    const h = await startTurn();
+    h.onAccepted?.("run-1", "lead-abc");
+    h.onInputAccepted?.({ itemId: "q1", mode: "queue", text: "then email it" });
+    await screen.findByRole("list", { name: /sent while working/i });
+    h.onInputRemoved?.("q1");
+    await screen.findByText(/Not sent: \u201cthen email it\u201d/);
+    expect(screen.queryByRole("list", { name: /sent while working/i })).toBeNull();
   });
 });
