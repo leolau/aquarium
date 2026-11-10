@@ -68,7 +68,7 @@ ROLES = (VIEWER, MEMBER, ADMIN)
 ALL = (ANON,) + ROLES
 
 # Rendered by every signed-in page (layout + shell).
-SHELL_MARKERS = ("RootLayout", "MobileShell", "StatusStrip")
+SHELL_MARKERS = ("RootLayout", "MobileShell", "TopBar")
 # Shown only to owner/admin; must never reach a member/viewer's HTML.
 ADMIN_ONLY_MARKERS = ("CreateUserForm", "CsvImportPanel", "UserRow", "IdentityActivityPanel")
 
@@ -99,7 +99,7 @@ class PageSpec:
 
 
 PAGES: Tuple[PageSpec, ...] = (
-    PageSpec("/", ("PrincipalCard", "ProjectsHomeCard", "LogoutButton"), quick=True),
+    PageSpec("/", ("LandingLayout", "LandingComposer", "AccountMenu"), quick=True),
     PageSpec("/login", anon="public", anon_markers=("LoginForm",), redirect="/", quick=True),
     PageSpec("/setup", ("SetupChecking",), shell=False, anon="public", anon_markers=("SetupChecking",)),
     PageSpec("/activate/smoke-bogus-token", ("ActivateForm",), shell=False, anon="public", anon_markers=("ActivateForm",)),
@@ -108,7 +108,7 @@ PAGES: Tuple[PageSpec, ...] = (
     PageSpec("/fb/smoke-bogus-token"),
     PageSpec("/onboarding", ("OnboardingWizard",)),
     # ProfilePicker renders only for an account enrolled in two or more profiles.
-    PageSpec("/chat", ("ChatPane", "Composer", "SessionTabs"), quick=True),
+    PageSpec("/chat", ("ChatPane", "Composer", "ChatsSidebar"), quick=True),
     PageSpec("/projects", ("ProjectsList", "ProjectsFilters", "NewProjectAction"), quick=True),
     PageSpec("/projects?view=task", ("ModeSwitch", "TaskHome")),
     PageSpec("/projects?view=project", ("ModeSwitch", "ProjectsList")),
@@ -129,7 +129,7 @@ PAGES: Tuple[PageSpec, ...] = (
     PageSpec("/system", ("SystemHub", "HubCard")),
     PageSpec("/memory", ("MemoryView",), quick=True),
     PageSpec("/graph", ("GtsCentreView",)),
-    PageSpec("/core", ("CoreAreaView",)),
+    PageSpec("/core", admin_markers=("CoreAreaView",), member_markers=("LockedState",)),
     PageSpec("/activity", ("TraceTimeline",)),
     PageSpec("/activity/zz-smoke-missing", ("TraceDetailError",)),
     PageSpec("/capacity", ("CapacityView",)),
@@ -154,7 +154,7 @@ PAGES: Tuple[PageSpec, ...] = (
     PageSpec("/skills", admin_markers=("SkillsView",), member_markers=("NotAvailableForRole",)),
     PageSpec("/skills/zz-smoke-missing", admin_not_found=True, member_markers=("NotAvailableForRole",)),
     PageSpec("/skills/zz-smoke-missing/edit", admin_not_found=True, member_markers=("NotAvailableForRole",)),
-    PageSpec("/webview", ("WebviewConsole",)),
+    PageSpec("/webview", admin_markers=("WebviewConsole",), member_markers=("LockedState",)),
     PageSpec(
         "/users",
         ("UsersView", "DirectoryPanel"),
@@ -786,7 +786,7 @@ class Smoke:
         self.report.add(listed, "write: project in admin list", "listed" if listed else "missing")
         page = self.get(ADMIN, f"/projects/{q}")
         self.report.add(
-            page.status == 200 and "ProjectDetailView" in markers(page.text),
+            page.status == 200 and "ProjectViewSwitch" in markers(page.text),
             "write: /projects/[slug] renders", _status_detail(page),
         )
         for role in (MEMBER, VIEWER):
