@@ -7,10 +7,13 @@ import {
   FOLLOWER_SIZE_MIN,
   SIZE_MAX,
   SIZE_MIN,
+  SIZE_SCORE_FLOOR,
   SPEED_MAX,
   SPEED_MIN,
+  busiestScore,
   creatureSize,
   creatureSpeed,
+  followerCreature,
   followerSize,
   formatCount,
   profileCreature,
@@ -47,6 +50,36 @@ describe("creatureSize", () => {
     expect(creatureSize(metrics({ chats: 40 }))).toBeGreaterThan(creatureSize(metrics({ chats: 20 })));
   });
 
+  it("is relative to the busiest person: they are the biggest, and 120x the tokens is obviously bigger", () => {
+    const light = metrics({ tokens_in: 10_000 });
+    const heavy = metrics({ tokens_in: 1_200_000 });
+    const busiest = busiestScore([light, heavy]);
+    expect(creatureSize(heavy, busiest)).toBe(SIZE_MAX);
+    expect(creatureSize(heavy, busiest) / creatureSize(light, busiest)).toBeGreaterThan(1.8);
+    expect(creatureSize(metrics(), busiest)).toBe(SIZE_MIN);
+  });
+
+  it("is monotonic and bounded for any busiest reference, and shrinks as the reference grows", () => {
+    for (const busiest of [0, SIZE_SCORE_FLOOR, 6, 9, 15, Number.NaN]) {
+      let prev = -Infinity;
+      for (const n of LADDER) {
+        const size = creatureSize(metrics({ tokens_in: n }), busiest);
+        expect(size).toBeGreaterThanOrEqual(prev);
+        expect(size).toBeGreaterThanOrEqual(SIZE_MIN);
+        expect(size).toBeLessThanOrEqual(SIZE_MAX);
+        prev = size;
+      }
+    }
+    const m = metrics({ tokens_in: 50_000 });
+    expect(creatureSize(m, 9)).toBeLessThanOrEqual(creatureSize(m, 6));
+  });
+
+  it("never lets a box of light users grow past the floor reference", () => {
+    const tiny = metrics({ tokens_in: 9 });
+    expect(busiestScore([tiny])).toBe(SIZE_SCORE_FLOOR);
+    expect(creatureSize(tiny, busiestScore([tiny]))).toBeLessThan(SIZE_MAX / 2);
+  });
+
   it("treats junk numbers as zero", () => {
     expect(creatureSize(metrics({ chats: -5, tokens_in: Number.NaN, projects: Number.POSITIVE_INFINITY }))).toBe(SIZE_MIN);
   });
@@ -65,6 +98,17 @@ describe("creatureSpeed", () => {
     expect(creatureSpeed({ tokens_24h: 0 })).toBe(SPEED_MIN);
     expect(creatureSpeed({ tokens_24h: 1e12 })).toBe(SPEED_MAX);
   });
+
+  it("slows big creatures a little but keeps them inside the bounds", () => {
+    let prev = Infinity;
+    for (let size = SIZE_MIN; size <= SIZE_MAX; size += 8) {
+      const v = creatureSpeed({ tokens_24h: 1e6 }, size);
+      expect(v).toBeLessThanOrEqual(prev);
+      expect(v).toBeGreaterThanOrEqual(SPEED_MIN);
+      prev = v;
+    }
+    expect(creatureSpeed({ tokens_24h: 1e6 }, SIZE_MAX)).toBeGreaterThan(creatureSpeed({ tokens_24h: 1e6 }, SIZE_MIN) * 0.6);
+  });
 });
 
 describe("followerSize", () => {
@@ -77,6 +121,29 @@ describe("followerSize", () => {
       expect(f).toBeGreaterThanOrEqual(FOLLOWER_SIZE_MIN);
       expect(f).toBeLessThanOrEqual(FOLLOWER_SIZE_MAX);
       prev = f;
+    }
+  });
+
+  it("is 35-45 % of a normal leader, with a minimum", () => {
+    for (const seed of [0, 0.5, 1]) {
+      const f = followerSize(120, seed);
+      expect(f / 120).toBeGreaterThanOrEqual(0.35);
+      expect(f / 120).toBeLessThanOrEqual(0.45);
+    }
+    expect(followerSize(SIZE_MIN, 0)).toBe(FOLLOWER_SIZE_MIN);
+  });
+});
+
+describe("followerCreature", () => {
+  it("is deterministic per person + profile, varies per person, and avoids the leader's creature", () => {
+    expect(followerCreature("u1", "default")).toBe(followerCreature("u1", "default"));
+    const looks = new Set(Array.from({ length: 80 }, (_, i) => followerCreature(`user-${i}`, "default")));
+    expect(looks.size).toBeGreaterThanOrEqual(20);
+    for (let i = 0; i < 200; i++) {
+      const leader = CREATURE_IDS[i % CREATURE_IDS.length];
+      const f = followerCreature(`user-${i}`, `p${i % 7}`, leader);
+      expect(CREATURE_IDS).toContain(f);
+      expect(f).not.toBe(leader);
     }
   });
 });
