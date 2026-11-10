@@ -553,7 +553,7 @@ def test_active_run_and_attach_replay_the_turn(monkeypatch):
 
             # Once finished there is nothing active…
             assert (await ac.get("/api/sessions/s-attach/active_run")).json() == {
-                "run_id": None
+                "run_id": None, "pending": []
             }
             # …but the grace-window replay still serves a just-reloaded page.
             again = await ac.post(

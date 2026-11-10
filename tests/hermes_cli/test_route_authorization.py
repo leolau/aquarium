@@ -419,6 +419,8 @@ SIGNED_IN = {
     "GET /api/needs-you",
     "POST /api/sessions/{session_id}/chat/stream/attach",
     "POST /api/sessions/{session_id}/chat/stream/cancel",
+    "POST /api/sessions/{session_id}/chat/stream/steer",
+    "POST /api/sessions/{session_id}/chat/stream/queue/remove",
     "POST /v1/runs/{run_id}/approval",
     "POST /api/sessions",
     "DELETE /api/sessions/{session_id}",

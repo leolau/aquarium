@@ -4138,6 +4138,43 @@ class SessionDB:
 
         return self._execute_write(_do)
 
+    def update_message_content(self, message_id: int, content: Any) -> bool:
+        """Rewrite one stored message's content in place (by row id).
+
+        For a tool result the agent amended after it was persisted (a mid-turn
+        steer appended to it). Returns whether a row was updated.
+        """
+        stored_content = self._encode_content(content)
+
+        def _do(conn):
+            cursor = conn.execute(
+                "UPDATE messages SET content = ? WHERE id = ?",
+                (stored_content, message_id),
+            )
+            return cursor.rowcount > 0
+
+        return bool(self._execute_write(_do))
+
+    def append_message_content(self, message_id: int, suffix: str) -> bool:
+        """Append *suffix* to one stored text message (by row id)."""
+
+        def _do(conn):
+            row = conn.execute(
+                "SELECT content FROM messages WHERE id = ?", (message_id,)
+            ).fetchone()
+            if row is None:
+                return False
+            current = self._decode_content(row[0])
+            if current is not None and not isinstance(current, str):
+                return False
+            cursor = conn.execute(
+                "UPDATE messages SET content = ? WHERE id = ?",
+                ((current or "") + suffix, message_id),
+            )
+            return cursor.rowcount > 0
+
+        return bool(self._execute_write(_do))
+
     def _insert_message_rows(self, conn, session_id: str, messages: List[Dict[str, Any]]) -> tuple[int, int]:
         """Insert *messages* as fresh active rows for *session_id*.
 

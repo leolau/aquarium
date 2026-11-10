@@ -741,6 +741,8 @@ def run_conversation(
                         "Pre-API-call steer drain: injected into tool msg at index %d",
                         _si,
                     )
+                    from agent.agent_runtime_helpers import notify_steer_delivered
+                    notify_steer_delivered(agent, _pre_api_steer, _sm)
                     break
             if not _injected:
                 # No tool message to inject into — put it back so
@@ -755,6 +757,10 @@ def run_conversation(
                 else:
                     existing = getattr(agent, "_pending_steer", None)
                     agent._pending_steer = (existing + "\n" + _pre_api_steer) if existing else _pre_api_steer
+
+        # This request carries every steer written into a tool result so far.
+        from agent.agent_runtime_helpers import flush_sent_steers
+        flush_sent_steers(agent)
 
         # Prepare messages for API call
         # If we have an ephemeral system prompt, prepend it to the messages

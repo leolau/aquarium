@@ -12501,6 +12501,18 @@ async def _materialize_agent_home_attachments(
 
 _CHAT_RUNS: "dict[str, dict]" = {}
 _CHAT_RUN_GRACE_SECONDS = 120.0
+# Strong refs for run drivers: the event loop only holds tasks weakly, and a
+# chained run has no request coroutine keeping it alive.
+_CHAT_RUN_TASKS: "set[asyncio.Task]" = set()
+
+#: Input sent while a turn is working (agent-home composer): ``steer`` writes
+#: it into the next tool result, ``queue`` runs it as its own turn after this
+#: one, ``interrupt`` stops this turn and runs it next. Same semantics as the
+#: gateway's ``busy_input_mode``.
+_CHAT_INPUT_MODES = ("steer", "queue", "interrupt")
+#: Per-run cap on undelivered inputs, mirroring the gateway's
+#: ``_BUSY_QUEUE_MAX_PENDING``.
+_CHAT_PENDING_MAX = 32
 
 
 def _chat_run_publish(entry: dict, item) -> None:
@@ -12513,71 +12525,144 @@ def _chat_run_publish(entry: dict, item) -> None:
         sub.put_nowait(item)
 
 
-@app.post("/api/sessions/{session_id}/chat/stream")
-async def session_chat_stream(session_id: str, request: Request):
-    """POST /api/sessions/{session_id}/chat/stream — SSE one-brain turn with an
-    approval surface.
+def _chat_input_public(item: dict) -> dict:
+    return {
+        "item_id": item["item_id"],
+        "mode": item["mode"],
+        "text": item["text"],
+        "created_at": item["created_at"],
+    }
 
-    Same one-brain turn as ``/api/sessions/{id}/chat`` (shared
-    ``gateway.session_chat`` builder, same ``SessionDB``, owner-attributed C1
-    principal), but streamed as Server-Sent Events so agent-home can render live
-    assistant deltas AND — the reason this path exists — an inline approve/deny
-    card for a tool gated by ``approvals.tools`` (e.g. calendar).
 
-    A gated tool blocks the agent thread and calls the per-run notify callback
-    registered here; we forward it as an ``approval.request`` event and the
-    client resolves it via ``POST /v1/runs/{run_id}/approval``. The approval
-    session is keyed on a unique ``run_id`` so concurrent turns cannot
-    cross-resolve. Without this surface the gate fails closed with
-    ``no_surface`` — the agent-home calendar bug (the non-streaming ``/chat``
-    endpoint above binds ``platform="api_server"`` but registers no surface).
-    Prompt caching / strict alternation are preserved exactly as in ``/chat``.
+def _chat_run_pending(entry: dict) -> list:
+    """Inputs the run holds that have not reached the model yet, oldest
+    steer first and then the queue in the order it will run."""
+    lock = entry.get("input_lock")
+    if lock is None:
+        return []
+    with lock:
+        items = list(entry["steer_held"]) + list(entry["steer_inflight"]) + list(entry["queued"])
+    return [_chat_input_public(item) for item in items]
+
+
+def _chat_run_is_live(entry: dict) -> bool:
+    """Not finished and not already handed over to a chained successor."""
+    return not entry["done"] and not entry.get("next_run_id")
+
+
+def _chat_run_session_ids(entry: dict) -> set:
+    """Every id the run's conversation goes by: the one it started under and,
+    once context compression forks a continuation mid-turn, the agent's new
+    one (which is what a later request resolves the conversation to)."""
+    ids = {entry["session_id"]}
+    agent_sid = getattr(entry.get("agent"), "session_id", None)
+    if isinstance(agent_sid, str) and agent_sid:
+        ids.add(agent_sid)
+    return ids
+
+
+def _live_chat_run_id(session_ids, profile: Optional[str]) -> Optional[str]:
+    ids = {s for s in session_ids if s}
+    for run_id, entry in list(_CHAT_RUNS.items()):
+        if (
+            _chat_run_is_live(entry)
+            and _chat_run_session_ids(entry) & ids
+            and (entry.get("profile") or None) == (profile or None)
+        ):
+            return run_id
+    return None
+
+
+def _take_steers_delivered(entry: dict, text: str) -> list:
+    """Pop the in-flight steer items whose texts make up *text*.
+
+    ``AIAgent.steer`` joins queued steers with newlines and the drain takes
+    them all, so a delivery is a contiguous run of the in-flight items. A run
+    an interrupt silently dropped stays behind and is chained as a leftover.
+    Caller holds ``input_lock``.
     """
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    profile = (body or {}).get("profile") or None
-    principal = await _chat_principal(request, profile)
-    user_message = str((body or {}).get("message", "")).strip()
-    if not user_message:
-        raise HTTPException(status_code=400, detail="message is required")
+    inflight = entry["steer_inflight"]
+    texts = [item["text"] for item in inflight]
+    for start in range(len(texts)):
+        for end in range(start + 1, len(texts) + 1):
+            if "\n".join(texts[start:end]) == text:
+                taken = inflight[start:end]
+                del inflight[start:end]
+                return taken
+    taken = [item for item in inflight if item["text"] in text]
+    for item in taken:
+        inflight.remove(item)
+    return taken
 
-    typed_message = user_message
 
-    # Attachments live in a private Supabase bucket the brain can't reach;
-    # download them into the shared document cache and point the brain at the
-    # local paths so uploaded PDFs/DOCX/XLSX are actually readable (FG-20).
-    _attachments = (body or {}).get("attachments")
-    if isinstance(_attachments, list) and _attachments:
-        user_message = await _materialize_agent_home_attachments(
-            _attachments, user_message
-        )
+def _close_chat_run_inputs(entry: dict, result) -> tuple:
+    """Stop accepting input for a finished turn; return what runs next.
 
-    # Short refs the sender typed (``P12``, ``C1024``) get a one-line
-    # description appended to this same turn (FG-36); the system prompt and
-    # past turns are untouched.
-    from hermes_cli.ref_mentions import expand_ref_mentions
+    Returns ``(chain, deferred, removed)``: *chain* is the ordered list of
+    ``(item, source)`` turns still owed to the user — interrupt items, then
+    the leftover steer (merged, as the gateway delivers it), then the queue
+    FIFO; *deferred* are the steer items that missed the turn; *removed* are
+    the items an explicit Stop discarded.
+    """
+    with entry["input_lock"]:
+        entry["inputs_closed"] = True
+        agent = entry.get("agent")
+        if agent is not None:
+            # A steer that landed after the finaliser's drain would otherwise
+            # sit on the dead agent; our own records carry its text.
+            try:
+                agent._drain_pending_steer()
+            except Exception:
+                pass
+        leftover = list(entry["steer_held"]) + list(entry["steer_inflight"])
+        queued = list(entry["queued"])
+        entry["steer_held"].clear()
+        entry["steer_inflight"].clear()
+        entry["queued"].clear()
+    if entry["cancel_requested"]:
+        return [], [], leftover + queued
 
-    user_message = await expand_ref_mentions(
-        request, user_message, principal=principal, scan=typed_message
+    chain: list = [(item, "interrupt") for item in queued if item["mode"] == "interrupt"]
+    leftover_text = "\n".join(item["text"] for item in leftover)
+    if not leftover_text and isinstance(result, dict):
+        leftover_text = str(result.get("pending_steer") or "").strip()
+    if leftover_text:
+        merged = {
+            "item_id": leftover[0]["item_id"] if leftover else f"inp_{uuid.uuid4().hex[:16]}",
+            "item_ids": [item["item_id"] for item in leftover],
+            "mode": "steer",
+            "text": leftover_text,
+            "created_at": leftover[0]["created_at"] if leftover else time.time(),
+            # Waits in the successor's queue behind an interrupt item.
+            "source": "steer_leftover",
+        }
+        chain.append((merged, "steer_leftover"))
+    chain.extend(
+        (item, item.get("source", "queue")) for item in queued if item["mode"] != "interrupt"
     )
+    return chain, leftover, []
 
-    db = _open_session_db_for_profile(profile)
-    try:
-        sid = db.resolve_session_id(session_id)
-        if not sid:
-            raise HTTPException(status_code=404, detail="Session not found")
-        _require_chat_access(db, sid, _chat_scope_for(principal))
-        sid = db.resolve_resume_session_id(sid)
-        history = db.get_messages_as_conversation(sid)
-    finally:
-        db.close()
 
+def _launch_chat_run(
+    *,
+    principal,
+    profile: Optional[str],
+    sid: str,
+    user_message: str,
+    history: list,
+    primary_queue: "Optional[asyncio.Queue]" = None,
+    queued: Optional[list] = None,
+) -> tuple:
+    """Register and start one streamed turn; returns ``(run_id, entry)``.
+
+    Must be called on the event loop. Events go to *primary_queue* (the
+    request that started the turn, if any) and to every attached subscriber.
+    When the turn ends, any input still owed to the user starts the next turn
+    from here, so a queue drains with the tab closed.
+    """
     run_id = f"run_{uuid.uuid4().hex}"
     loop = asyncio.get_running_loop()
-    queue: "asyncio.Queue" = asyncio.Queue()
-    run_entry = {
+    run_entry: dict = {
         "session_id": sid,
         "buffer": [],
         "subs": [],
@@ -12590,8 +12675,26 @@ async def session_chat_stream(session_id: str, request: Request):
         "profile": profile,
         # Wall clock, for the activity bar's "running for" timer.
         "started_at": time.time(),
+        # Input sent while working (POST .../chat/stream/steer). Guarded by
+        # ``input_lock``: the agent thread reports steer delivery.
+        "input_lock": threading.Lock(),
+        "inputs_closed": False,
+        "interrupt_requested": False,
+        "steer_held": [],
+        "steer_inflight": [],
+        "queued": list(queued or []),
+        "next_run_id": None,
     }
     _CHAT_RUNS[run_id] = run_entry
+    try:
+        return _start_chat_run(run_id, run_entry, loop, principal, profile, sid, user_message, history, primary_queue)
+    except BaseException:
+        # A half-registered run would report the session busy forever.
+        _CHAT_RUNS.pop(run_id, None)
+        raise
+
+
+def _start_chat_run(run_id, run_entry, loop, principal, profile, sid, user_message, history, primary_queue) -> tuple:
     trace, ledger = _agent_home_trace(principal, sid)
     _trace_emit(trace, "inbound", sid, "agent-home chat message")
 
@@ -12600,11 +12703,14 @@ async def session_chat_stream(session_id: str, request: Request):
     marks = {"accepted": time.monotonic(), "first_delta": 0.0, "tools": 0}
 
     def _publish(item) -> None:
-        queue.put_nowait(item)
+        if primary_queue is not None:
+            primary_queue.put_nowait(item)
         _chat_run_publish(run_entry, item)
 
     def _enqueue(name: str, payload: dict) -> None:
         loop.call_soon_threadsafe(_publish, (name, payload))
+
+    run_entry["publish"] = _publish
 
     # First frame on the wire, before the executor picks the turn up: the
     # browser can show a server-confirmed "received" state within the round
@@ -12670,9 +12776,23 @@ async def session_chat_stream(session_id: str, request: Request):
         if _approval_push_ok:
             asyncio.run_coroutine_threadsafe(_push_chat_approval(event), loop)
 
+    def _steer_delivered(text: str) -> None:
+        # Agent thread, right after the text was written into a tool result.
+        with run_entry["input_lock"]:
+            delivered = _take_steers_delivered(run_entry, text)
+        for item in delivered:
+            _enqueue("input.steered", {"item_id": item["item_id"], "run_id": run_id})
+
     def _agent_ready(agent) -> None:
-        run_entry["agent"] = agent
-        if run_entry["cancel_requested"]:
+        agent.steer_delivered_callback = _steer_delivered
+        with run_entry["input_lock"]:
+            run_entry["agent"] = agent
+            for item in run_entry["steer_held"]:
+                agent.steer(item["text"])
+                run_entry["steer_inflight"].append(item)
+            run_entry["steer_held"].clear()
+            interrupt = run_entry["interrupt_requested"]
+        if run_entry["cancel_requested"] or interrupt:
             agent.interrupt()
 
     def _run():
@@ -12729,10 +12849,83 @@ async def session_chat_stream(session_id: str, request: Request):
             reset_current_session_key(approval_token)
             clear_session_vars(tokens)
 
+    def _chain_next(result, eff_sid: str) -> None:
+        # The turn is over: whatever the user sent while it worked and has not
+        # been delivered becomes the next turn, started here so it runs even
+        # with no tab open. Same principal and profile as this turn.
+        chain, deferred, removed = _close_chat_run_inputs(run_entry, result)
+        for item in removed:
+            _enqueue("input.removed", {"item_id": item["item_id"], "run_id": run_id})
+        for item in deferred:
+            _enqueue("input.deferred", {"item_id": item["item_id"], "run_id": run_id})
+        if not chain:
+            return
+        (item, source), rest = chain[0], [i for i, _ in chain[1:]]
+        try:
+            db = _open_session_db_for_profile(profile)
+            try:
+                next_sid = db.resolve_resume_session_id(eff_sid) or eff_sid
+                next_history = db.get_messages_as_conversation(next_sid)
+            finally:
+                db.close()
+            next_run_id, _ = _launch_chat_run(
+                principal=principal,
+                profile=profile,
+                sid=next_sid,
+                user_message=item["text"],
+                history=next_history,
+                queued=rest,
+            )
+        except Exception:
+            # Nothing will run what the user sent: hand every input back
+            # (with its text, so the client can restore it to the composer).
+            _log.exception("[agent-home] chaining the next turn failed run=%s", run_id)
+            for owed, _source in chain:
+                for owed_id in owed.get("item_ids") or [owed["item_id"]]:
+                    text = next(
+                        (i["text"] for i in deferred if i["item_id"] == owed_id), owed["text"]
+                    )
+                    _enqueue(
+                        "input.removed",
+                        {"item_id": owed_id, "text": text, "reason": "chain_failed", "run_id": run_id},
+                    )
+            _enqueue(
+                "error",
+                {
+                    "message": "Your follow-up could not be started; send it again.",
+                    "item_ids": [
+                        owed_id
+                        for owed, _source in chain
+                        for owed_id in owed.get("item_ids") or [owed["item_id"]]
+                    ],
+                    "run_id": run_id,
+                },
+            )
+            return
+        run_entry["next_run_id"] = next_run_id
+        payload = {
+            "next_run_id": next_run_id,
+            "item_id": item["item_id"],
+            "text": item["text"],
+            "source": source,
+            "session_id": next_sid,
+            "run_id": run_id,
+        }
+        if item.get("item_ids"):
+            payload["item_ids"] = list(item["item_ids"])
+        _enqueue("run.chained", payload)
+        _log.info(
+            "[agent-home] turn chained run=%s next=%s source=%s pending=%d",
+            run_id, next_run_id, source, len(rest),
+        )
+
     async def _driver():
+        result = None
+        eff_sid = sid
         try:
             result, usage = await loop.run_in_executor(None, _run)
-            final_response = result.get("final_response", "") if isinstance(result, dict) else ""
+            # An interrupted turn reports ``final_response: None``.
+            final_response = (result.get("final_response") or "") if isinstance(result, dict) else ""
             eff_sid = result.get("session_id", sid) if isinstance(result, dict) else sid
             if run_entry["cancel_requested"]:
                 _enqueue("run.cancelled", {"run_id": run_id, "session_id": eff_sid})
@@ -12767,6 +12960,10 @@ async def session_chat_stream(session_id: str, request: Request):
                 f"agent-home turn error: {type(exc).__name__}",
             )
         finally:
+            try:
+                _chain_next(result, eff_sid)
+            except Exception:
+                _log.exception("[agent-home] chaining the next turn failed run=%s", run_id)
             _enqueue("done", {"run_id": run_id})
             loop.call_soon_threadsafe(_publish, None)
 
@@ -12779,7 +12976,105 @@ async def session_chat_stream(session_id: str, request: Request):
             loop.create_task(_drop_later())
             await _flush_agent_home_trace(trace, ledger)
 
-    task = asyncio.create_task(_driver())
+    task = loop.create_task(_driver())
+    _CHAT_RUN_TASKS.add(task)
+    task.add_done_callback(_CHAT_RUN_TASKS.discard)
+    return run_id, run_entry
+
+
+def _turn_in_progress(run_id: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=409, content={"detail": "turn_in_progress", "run_id": run_id}
+    )
+
+
+@app.post("/api/sessions/{session_id}/chat/stream")
+async def session_chat_stream(session_id: str, request: Request):
+    """POST /api/sessions/{session_id}/chat/stream — SSE one-brain turn with an
+    approval surface.
+
+    Same one-brain turn as ``/api/sessions/{id}/chat`` (shared
+    ``gateway.session_chat`` builder, same ``SessionDB``, owner-attributed C1
+    principal), but streamed as Server-Sent Events so agent-home can render live
+    assistant deltas AND — the reason this path exists — an inline approve/deny
+    card for a tool gated by ``approvals.tools`` (e.g. calendar).
+
+    A gated tool blocks the agent thread and calls the per-run notify callback
+    registered here; we forward it as an ``approval.request`` event and the
+    client resolves it via ``POST /v1/runs/{run_id}/approval``. The approval
+    session is keyed on a unique ``run_id`` so concurrent turns cannot
+    cross-resolve. Without this surface the gate fails closed with
+    ``no_surface`` — the agent-home calendar bug (the non-streaming ``/chat``
+    endpoint above binds ``platform="api_server"`` but registers no surface).
+    Prompt caching / strict alternation are preserved exactly as in ``/chat``.
+
+    One live turn per conversation: while one runs this is a 409
+    ``{detail: "turn_in_progress", run_id}`` and the client sends its text
+    through ``.../chat/stream/steer`` instead.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    profile = (body or {}).get("profile") or None
+    principal = await _chat_principal(request, profile)
+    user_message = str((body or {}).get("message", "")).strip()
+    if not user_message:
+        raise HTTPException(status_code=400, detail="message is required")
+
+    db = _open_session_db_for_profile(profile)
+    try:
+        sid = db.resolve_session_id(session_id)
+        if not sid:
+            raise HTTPException(status_code=404, detail="Session not found")
+        _require_chat_access(db, sid, _chat_scope_for(principal))
+        sid = db.resolve_resume_session_id(sid)
+    finally:
+        db.close()
+    live = _live_chat_run_id((session_id, sid), profile)
+    if live:
+        return _turn_in_progress(live)
+
+    typed_message = user_message
+
+    # Attachments live in a private Supabase bucket the brain can't reach;
+    # download them into the shared document cache and point the brain at the
+    # local paths so uploaded PDFs/DOCX/XLSX are actually readable (FG-20).
+    _attachments = (body or {}).get("attachments")
+    if isinstance(_attachments, list) and _attachments:
+        user_message = await _materialize_agent_home_attachments(
+            _attachments, user_message
+        )
+
+    # Short refs the sender typed (``P12``, ``C1024``) get a one-line
+    # description appended to this same turn (FG-36); the system prompt and
+    # past turns are untouched.
+    from hermes_cli.ref_mentions import expand_ref_mentions
+
+    user_message = await expand_ref_mentions(
+        request, user_message, principal=principal, scan=typed_message
+    )
+
+    db = _open_session_db_for_profile(profile)
+    try:
+        history = db.get_messages_as_conversation(sid)
+    finally:
+        db.close()
+    # Re-checked after the awaits above, with no await before the run is
+    # registered, so two racing sends cannot both start a turn.
+    live = _live_chat_run_id((session_id, sid), profile)
+    if live:
+        return _turn_in_progress(live)
+
+    queue: "asyncio.Queue" = asyncio.Queue()
+    _launch_chat_run(
+        principal=principal,
+        profile=profile,
+        sid=sid,
+        user_message=user_message,
+        history=history,
+        primary_queue=queue,
+    )
 
     async def _events():
         # No cancellation of the driver on client disconnect: the turn (and
@@ -12834,10 +13129,13 @@ async def active_chat_run(
     principal = await _chat_principal(request, profile)
     _require_chat_access_by_id(session_id, profile, _chat_scope_for(principal))
     resolved = _resolved_chat_session_id(session_id, profile)
-    for run_id, entry in _CHAT_RUNS.items():
-        if not entry["done"] and entry["session_id"] in (session_id, resolved):
-            return {"run_id": run_id}
-    return {"run_id": None}
+    run_id = _live_chat_run_id((session_id, resolved), profile)
+    entry = _CHAT_RUNS.get(run_id) if run_id else None
+    if entry is not None:
+        # ``pending``: input sent while working that has not reached the
+        # model yet, so a reloaded page can redraw its chips.
+        return {"run_id": run_id, "pending": _chat_run_pending(entry)}
+    return {"run_id": None, "pending": []}
 
 
 @app.get("/api/activity/running")
@@ -13085,6 +13383,134 @@ async def session_chat_stream_cancel(session_id: str, request: Request):
             _log.exception("[agent-home] interrupt failed run=%s", run_id)
     _log.info("[agent-home] turn cancel requested run=%s session=%s", run_id, session_id)
     return {"run_id": run_id, "cancelled": True, "done": False}
+
+
+def _chat_run_for(session_id: str, run_id: str, profile: Optional[str]) -> Optional[dict]:
+    """The registered run *run_id* if it belongs to this conversation and profile."""
+    entry = _CHAT_RUNS.get(run_id)
+    if entry is None or (entry.get("profile") or None) != (profile or None):
+        return None
+    sids = _chat_run_session_ids(entry)
+    if session_id not in sids:
+        # Same chain check as active_run: the caller may hold the root id of a
+        # conversation whose turn runs under a continuation id.
+        if _resolved_chat_session_id(session_id, profile) not in sids:
+            return None
+    return entry
+
+
+@app.post("/api/sessions/{session_id}/chat/stream/steer")
+async def session_chat_stream_steer(session_id: str, request: Request):
+    """Send more input to a turn that is still working.
+
+    ``mode`` is ``steer`` (default: written into the next tool result, see
+    ``AIAgent.steer``), ``queue`` (its own turn after this one, FIFO) or
+    ``interrupt`` (stop this turn, then run the text first). Anything not
+    delivered when the turn ends runs as the next turn, started by the server
+    and announced on this run's stream as ``run.chained``. A finished turn is
+    a 409 ``run_finished``; the client then sends a normal turn.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    profile = body.get("profile") or None
+    principal = await _chat_principal(request, profile)
+    _require_chat_access_by_id(session_id, profile, _chat_scope_for(principal))
+    text = str(body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    mode = str(body.get("mode") or "steer").strip().lower()
+    if mode not in _CHAT_INPUT_MODES:
+        raise HTTPException(status_code=400, detail="mode must be steer, queue or interrupt")
+    run_id = str(body.get("run_id", "")).strip()
+    entry = _chat_run_for(session_id, run_id, profile)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="no such run")
+
+    item = {
+        "item_id": f"inp_{uuid.uuid4().hex[:16]}",
+        "mode": mode,
+        "text": text,
+        "created_at": time.time(),
+    }
+    interrupt_agent = None
+    with entry["input_lock"]:
+        if entry["done"] or entry["inputs_closed"]:
+            return JSONResponse(
+                status_code=409,
+                content={"detail": "run_finished", "next_run_id": entry.get("next_run_id")},
+            )
+        held = len(entry["steer_held"]) + len(entry["steer_inflight"]) + len(entry["queued"])
+        if held >= _CHAT_PENDING_MAX:
+            return JSONResponse(status_code=409, content={"detail": "queue_full"})
+        agent = entry.get("agent")
+        if mode == "steer":
+            if agent is None:
+                entry["steer_held"].append(item)
+            else:
+                agent.steer(text)
+                entry["steer_inflight"].append(item)
+        elif mode == "queue":
+            entry["queued"].append(item)
+        else:
+            entry["queued"].insert(0, item)
+            entry["interrupt_requested"] = True
+            interrupt_agent = agent
+    entry["publish"](
+        ("input.accepted", {"item_id": item["item_id"], "mode": mode, "text": text, "run_id": run_id})
+    )
+    if interrupt_agent is not None:
+        try:
+            interrupt_agent.interrupt()
+        except Exception:
+            _log.exception("[agent-home] interrupt failed run=%s", run_id)
+    _log.info("[agent-home] input accepted run=%s mode=%s", run_id, mode)
+    return {
+        "run_id": run_id,
+        "mode": mode,
+        "item_id": item["item_id"],
+        "status": "pending" if mode == "steer" else "queued",
+    }
+
+
+@app.post("/api/sessions/{session_id}/chat/stream/queue/remove")
+async def session_chat_stream_queue_remove(session_id: str, request: Request):
+    """Withdraw input that has not started yet (a queued item, or a steer
+    still waiting for the agent to be built). Follows the run's chain, since a
+    queue moves to the next turn when this one ends."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    profile = body.get("profile") or None
+    principal = await _chat_principal(request, profile)
+    _require_chat_access_by_id(session_id, profile, _chat_scope_for(principal))
+    run_id = str(body.get("run_id", "")).strip()
+    item_id = str(body.get("item_id", "")).strip()
+    entry = _chat_run_for(session_id, run_id, profile)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="no such run")
+    seen: set = set()
+    while entry is not None and run_id not in seen:
+        seen.add(run_id)
+        removed = None
+        with entry["input_lock"]:
+            if not entry["inputs_closed"]:
+                for bucket in (entry["queued"], entry["steer_held"]):
+                    removed = next((i for i in bucket if i["item_id"] == item_id), None)
+                    if removed is not None:
+                        bucket.remove(removed)
+                        break
+            next_run_id = entry.get("next_run_id")
+        if removed is not None:
+            entry["publish"](("input.removed", {"item_id": item_id, "run_id": run_id}))
+            return {"removed": True}
+        run_id = next_run_id or ""
+        entry = _CHAT_RUNS.get(run_id) if run_id else None
+    return {"removed": False}
 
 
 @app.post("/v1/runs/{run_id}/approval")

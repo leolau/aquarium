@@ -145,6 +145,13 @@ def finalize_turn(
     # killing the turn.
     _cleanup_errors = []
 
+    # A steer written into a tool result that no request carried (the loop
+    # ended first, e.g. on an interrupt) is taken back out before anything is
+    # saved, and returned as ``pending_steer`` below.
+    from agent.agent_runtime_helpers import restore_unsent_steers
+
+    restore_unsent_steers(agent)
+
     # Save trajectory if enabled.  ``user_message`` may be a multimodal
     # list of parts; the trajectory format wants a plain string.
     try:

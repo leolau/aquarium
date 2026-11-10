@@ -322,3 +322,133 @@ class TestSteerCommandRegistry:
 
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-v"])
+
+
+class TestSteerDeliveryRecord:
+    """``notify_steer_delivered``: the hook both drain points call once a
+    steer is in a tool result."""
+
+    def test_callback_receives_the_drained_text(self):
+        agent = _bare_agent()
+        seen = []
+        agent.steer_delivered_callback = seen.append
+        agent.steer("first")
+        agent.steer("second")
+        messages = [
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "c1"}]},
+            {"role": "tool", "content": "out", "tool_call_id": "c1"},
+        ]
+        agent._apply_pending_steer_to_tool_results(messages, 1)
+        # Written into the tool result, but no request has carried it yet.
+        assert seen == []
+        from agent.agent_runtime_helpers import flush_sent_steers
+
+        flush_sent_steers(agent)
+        assert seen == ["first\nsecond"]
+        flush_sent_steers(agent)
+        assert seen == ["first\nsecond"]
+
+    def test_failing_callback_does_not_break_the_turn(self):
+        from agent.agent_runtime_helpers import notify_steer_delivered
+
+        agent = _bare_agent()
+
+        def _boom(text):
+            raise RuntimeError("listener gone")
+
+        agent.steer_delivered_callback = _boom
+        notify_steer_delivered(agent, "x")
+        from agent.agent_runtime_helpers import flush_sent_steers
+
+        flush_sent_steers(agent)
+
+    def test_rewrites_the_already_persisted_tool_row(self, tmp_path):
+        import hermes_state
+        from agent.agent_runtime_helpers import flush_sent_steers, notify_steer_delivered
+        from run_agent import _DB_ROW_ID_KEY
+
+        db = hermes_state.SessionDB(db_path=tmp_path / "state.db")
+        try:
+            db.ensure_session("s1", source="test")
+            row_id = db.append_message("s1", "tool", "out", tool_call_id="c1")
+            agent = _bare_agent()
+            agent._session_db = db
+            msg = {"role": "tool", "content": "out" + format_steer_marker("hi"), _DB_ROW_ID_KEY: row_id}
+            notify_steer_delivered(agent, "hi", msg)
+            flush_sent_steers(agent)
+            stored = db.get_messages_as_conversation("s1")
+            assert stored[-1]["content"] == "out" + format_steer_marker("hi")
+
+            # A persistence-isolated fork never writes.
+            agent._persist_disabled = True
+            msg["content"] = "changed"
+            notify_steer_delivered(agent, "hi", msg)
+            flush_sent_steers(agent)
+            assert db.get_messages_as_conversation("s1")[-1]["content"] != "changed"
+        finally:
+            db.close()
+
+    def test_multimodal_tool_row_gets_the_marker_on_its_text_summary(self, tmp_path):
+        import hermes_state
+        from agent.agent_runtime_helpers import flush_sent_steers
+        from run_agent import _DB_ROW_ID_KEY
+
+        db = hermes_state.SessionDB(db_path=tmp_path / "state.db")
+        try:
+            db.ensure_session("s1", source="test")
+            row_id = db.append_message("s1", "tool", "screenshot taken\n[screenshot]", tool_call_id="c1")
+            agent = _bare_agent()
+            agent._session_db = db
+            agent.steer("inspect the second image")
+            image = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
+            messages = [
+                {"role": "user", "content": "go"},
+                {"role": "assistant", "content": "", "tool_calls": [{"id": "c1"}]},
+                {
+                    "role": "tool",
+                    "tool_call_id": "c1",
+                    "content": [{"type": "text", "text": "screenshot taken"}, image],
+                    _DB_ROW_ID_KEY: row_id,
+                },
+            ]
+            agent._apply_pending_steer_to_tool_results(messages, 1)
+            flush_sent_steers(agent)
+            stored = db.get_messages_as_conversation("s1")[-1]["content"]
+            assert stored == "screenshot taken\n[screenshot]" + format_steer_marker("inspect the second image")
+            assert "base64" not in stored
+        finally:
+            db.close()
+
+
+class TestUnsentSteer:
+    """A steer written into a tool result that no request carried (the turn
+    was interrupted first) goes back to being pending."""
+
+    def test_restore_takes_the_marker_out_and_returns_the_text(self):
+        from agent.agent_runtime_helpers import restore_unsent_steers
+
+        agent = _bare_agent()
+        seen = []
+        agent.steer_delivered_callback = seen.append
+        agent.steer("also check the logs")
+        tool = {"role": "tool", "content": "out", "tool_call_id": "c1"}
+        blocks = {"role": "tool", "content": [{"type": "text", "text": "img"}], "tool_call_id": "c2"}
+        messages = [
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "c1"}, {"id": "c2"}]},
+            tool,
+            blocks,
+        ]
+        agent._apply_pending_steer_to_tool_results(messages, 2)
+        assert blocks["content"][-1]["text"].startswith(STEER_MARKER_OPEN)
+        agent.steer("and the config")
+        agent._apply_pending_steer_to_tool_results(messages[:3], 1)
+        assert tool["content"].endswith(format_steer_marker("and the config"))
+        agent.steer("later one")
+
+        restore_unsent_steers(agent)
+        assert tool["content"] == "out"
+        assert blocks["content"] == [{"type": "text", "text": "img"}]
+        assert agent._drain_pending_steer() == "also check the logs\nand the config\nlater one"
+        assert seen == []
