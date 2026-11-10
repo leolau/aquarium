@@ -75,6 +75,15 @@ export function TopBarView({
           <HealthPill variant="bar" status={status} activity={activity} />
         </div>
         <div aria-hidden className="flex-1" />
+        <Link
+          href="/aquarium"
+          data-action="open-aquarium"
+          aria-label="Open the Aquarium dashboard"
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[var(--radius-full)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-[13px] font-medium text-[var(--color-fg)] hover:bg-[var(--color-surface-2)]"
+        >
+          <AquariumMark size={16} title="" />
+          <span aria-hidden="true" className="hidden sm:inline">Aquarium dashboard</span>
+        </Link>
         <div className="flex shrink-0 items-center gap-2 lg:hidden">
           <HealthPill variant="compact" status={status} activity={activity} />
           <NeedsYouBadge compact count={needsYou.count} stale={needsYou.stale} onOpen={onOpenNeedsYou} />

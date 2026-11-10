@@ -7,6 +7,7 @@ import { useMemo, useState } from "react";
 import { Sheet } from "@/components/ui/Sheet";
 import { useActivityRunning } from "@/components/ui/useActivityRunning";
 import { useStatusSummary } from "@/components/ui/useStatusSummary";
+import { useIdleRedirect } from "@/lib/aquarium/useIdleRedirect";
 import { useNeedsYou } from "@/lib/landing/needsYou";
 import type { ProfileSummary } from "@/types";
 
@@ -80,6 +81,8 @@ export function LandingClient({
   const [opened, setOpened] = useState<OpenedChat | null>(null);
   const openedChat = opened?.id === chatId ? opened : null;
   const [renamed, setRenamed] = useState<{ id: string; title: string } | null>(null);
+  const [chatBusy, setChatBusy] = useState(false);
+  useIdleRedirect({ blocked: Boolean(chatId) && chatBusy });
 
   const openChat = (id: string, profile: string, meta: Omit<OpenedChat, "id">) => {
     const href = landingChatHref(id, profile);
@@ -139,6 +142,7 @@ export function LandingClient({
               renamedTitle={renamed?.id === chatId ? renamed.title : undefined}
               highlight={openedChat?.highlight}
               storageEnabled={storageEnabled}
+              onBusyChange={setChatBusy}
               onClose={closeChat}
             />
           ) : (

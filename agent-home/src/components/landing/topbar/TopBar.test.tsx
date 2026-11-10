@@ -29,6 +29,7 @@ describe("TopBarView", () => {
     );
     const header = screen.getByRole("banner");
     expect(within(header).getByText("Aquarium")).toBeTruthy();
+    expect(within(header).getByRole("link", { name: "Open the Aquarium dashboard" }).getAttribute("href")).toBe("/aquarium");
     expect(header.querySelectorAll('[data-component="HealthPill"]')).toHaveLength(2);
     expect(within(header).getByRole("button", { name: /Account/ })).toBeTruthy();
     const badges = header.querySelectorAll<HTMLButtonElement>('[data-component="NeedsYouBadge"]');
