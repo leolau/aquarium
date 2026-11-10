@@ -2960,33 +2960,95 @@ def apply_pending_steer_to_tool_results(agent, messages: list, num_tool_msgs: in
 def notify_steer_delivered(agent, steer_text: str, message: Optional[dict] = None) -> None:
     """Record that *steer_text* was written into the tool result *message*.
 
-    If that tool result was already flushed to the session DB, its row is
+    It only reaches the model with the next API request, so nothing is
+    acknowledged yet: ``flush_sent_steers`` does that when the request starts,
+    and ``restore_unsent_steers`` takes the text back out if the turn ends
+    first (an interrupt, the iteration budget) so it runs as the next turn.
+    """
+    unsent = getattr(agent, "_steers_unsent", None)
+    if unsent is None:
+        unsent = agent._steers_unsent = []
+    unsent.append((steer_text, message))
+
+
+def flush_sent_steers(agent) -> None:
+    """The request about to start carries every recorded steer.
+
+    A tool result that was already flushed to the session DB has its row
     rewritten so the stored transcript and the next turn's history carry the
-    steer exactly as the model saw it. Then ``agent.steer_delivered_callback``
+    steer exactly as the model sees it; then ``agent.steer_delivered_callback``
     (agent-home: marks the user's input delivered) is told.
     """
-    if isinstance(message, dict):
-        _rewrite_persisted_message(agent, message)
-    callback = getattr(agent, "steer_delivered_callback", None)
-    if callback is None:
+    unsent = getattr(agent, "_steers_unsent", None)
+    if not unsent:
         return
-    try:
-        callback(steer_text)
-    except Exception:
-        _ra().logger.debug("steer_delivered_callback failed", exc_info=True)
+    sent = list(unsent)
+    unsent.clear()
+    callback = getattr(agent, "steer_delivered_callback", None)
+    for steer_text, message in sent:
+        if isinstance(message, dict):
+            _rewrite_persisted_message(agent, message, steer_text)
+        if callback is None:
+            continue
+        try:
+            callback(steer_text)
+        except Exception:
+            _ra().logger.debug("steer_delivered_callback failed", exc_info=True)
 
 
-def _rewrite_persisted_message(agent, message: dict) -> None:
+def restore_unsent_steers(agent) -> None:
+    """Undo steers written into tool results that no request carried.
+
+    The marker comes back out of the tool result (the model never saw it) and
+    the text goes back to the front of the pending steer, which the turn
+    finaliser returns as ``pending_steer`` for the next turn.
+    """
+    unsent = getattr(agent, "_steers_unsent", None)
+    if not unsent:
+        return
+    restored = list(unsent)
+    unsent.clear()
+    for steer_text, message in reversed(restored):
+        if not isinstance(message, dict):
+            continue
+        marker = format_steer_marker(steer_text)
+        content = message.get("content")
+        if isinstance(content, str) and content.endswith(marker):
+            message["content"] = content[: -len(marker)]
+        elif isinstance(content, list) and content:
+            last = content[-1]
+            if isinstance(last, dict) and last.get("type") == "text" and last.get("text") in (
+                marker,
+                marker.lstrip(),
+            ):
+                message["content"] = content[:-1]
+    text = "\n".join(t for t, _ in restored)
+    lock = getattr(agent, "_pending_steer_lock", None)
+
+    def _put_back() -> None:
+        existing = getattr(agent, "_pending_steer", None)
+        agent._pending_steer = (text + "\n" + existing) if existing else text
+
+    if lock is not None:
+        with lock:
+            _put_back()
+    else:
+        _put_back()
+
+
+def _rewrite_persisted_message(agent, message: dict, steer_text: str) -> None:
     row_id = message.get(_ra()._DB_ROW_ID_KEY)
     db = getattr(agent, "_session_db", None)
     if row_id is None or db is None or getattr(agent, "_persist_disabled", False):
         return
     content = message.get("content")
-    if not isinstance(content, str):
-        # Multimodal results are stored as a text summary; leave that row.
-        return
     try:
-        db.update_message_content(row_id, content)
+        if isinstance(content, str):
+            db.update_message_content(row_id, content)
+        else:
+            # Multimodal results are stored as their text summary (no image
+            # data); the steer goes on the end of that summary.
+            db.append_message_content(row_id, format_steer_marker(steer_text))
     except Exception:
         _ra().logger.warning("Could not persist steered tool result", exc_info=True)
 
@@ -3069,6 +3131,8 @@ __all__ = [
     "extract_api_error_context",
     "apply_pending_steer_to_tool_results",
     "notify_steer_delivered",
+    "flush_sent_steers",
+    "restore_unsent_steers",
     "_iter_pool_sockets",
     "force_close_tcp_sockets",
 ]
