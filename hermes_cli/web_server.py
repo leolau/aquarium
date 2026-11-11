@@ -315,9 +315,23 @@ async def _lifespan_services(app: "FastAPI"):
 
     db_pool_on = db_pool.enable(db_pool.settings_from_config(load_config() or {}))
 
+    # Site-to-schema scheduled refreshes (hermes_cli/site_sources.py).
+    sites_stop = asyncio.Event()
+    sites_task = None
+    try:
+        from hermes_cli import site_sources
+
+        if site_sources.scheduler_enabled(load_config() or {}):
+            sites_task = asyncio.create_task(site_sources.scheduler_loop(sites_stop))
+    except Exception:  # noqa: BLE001 - never block the dashboard on it
+        _log.debug("site scheduler not started", exc_info=True)
+
     try:
         yield
     finally:
+        sites_stop.set()
+        if sites_task is not None:
+            sites_task.cancel()
         if db_pool_on:
             await asyncio.to_thread(db_pool.disable)
         cpu_stop.set()
@@ -395,6 +409,7 @@ from hermes_cli.telegram_bot_api import router as _telegram_bot_router  # noqa: 
 from hermes_cli.email_mailboxes_api import router as _email_mailboxes_router  # noqa: E402
 from hermes_cli.mssql_connections_api import router as _mssql_connections_router  # noqa: E402
 from hermes_cli.winrm_connections_api import router as _winrm_connections_router  # noqa: E402
+from hermes_cli.site_sources_api import router as _site_sources_router  # noqa: E402
 from hermes_cli.wa_bridge_api import router as _wa_bridge_router  # noqa: E402
 from hermes_cli.backup_offsite_api import router as _backup_offsite_router  # noqa: E402
 from hermes_cli.software_upgrade_api import router as _software_upgrade_router  # noqa: E402
@@ -432,6 +447,7 @@ app.include_router(_email_accounts_router)
 app.include_router(_email_mailboxes_router)
 app.include_router(_mssql_connections_router)
 app.include_router(_winrm_connections_router)
+app.include_router(_site_sources_router)
 app.include_router(_wa_bridge_router)
 app.include_router(_backup_offsite_router)
 app.include_router(_software_upgrade_router)

@@ -404,6 +404,16 @@ CREDENTIAL_KINDS: Dict[str, KindSpec] = {
         keep_secrets_on_put=True,
         materialize=False,
     ),
+    # Saved login of a source site (hermes_cli/site_sources.py, D10): the
+    # backend refresh signs in with it; never materialized for terminals.
+    "site-login": KindSpec(
+        name="site-login",
+        required=("username", "password"),
+        optional=("login_url", "label"),
+        secret_fields=("password",),
+        keep_secrets_on_put=True,
+        materialize=False,
+    ),
     # Settings -> GitHub token (FG-33 decision 14): app source is pushed to
     # GitHub with it by hermes_cli/app_source_publish.py. Never materialized:
     # agent terminals and app processes must not hold it.

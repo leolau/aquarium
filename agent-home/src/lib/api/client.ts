@@ -24,6 +24,20 @@ import type { MySkillPermissions, SkillPermissionsChange, SkillsAccessResponse }
 import type { SkillUsageEvent, SkillUsageList } from "@/lib/skills/usage";
 import type { PinResponse, PinSuggestionsResponse } from "@/types/landing";
 import type {
+  SiteAccess,
+  SiteDesign,
+  SiteGrant,
+  SiteHistory,
+  SiteInput,
+  SiteRefreshMode,
+  SiteRun,
+  SiteSettings,
+  SiteSource,
+  SiteTable,
+  SiteTableQuery,
+  SiteTableRows,
+} from "@/types/sites";
+import type {
   ChatInputMode,
   ActivityItem,
   GoogleClientCheck,
@@ -280,6 +294,16 @@ const BOX_WIDE_PATHS = [
 export function isBoxWidePath(path: string): boolean {
   const pathname = path.split(/[?#]/, 1)[0].replace(/\/+$/, "");
   return BOX_WIDE_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}
+
+/** Query string for a site table page (empty values are left out). */
+export function siteTableParams(query: SiteTableQuery): string {
+  const qs = new URLSearchParams();
+  if (query.q) qs.set("q", query.q);
+  if (query.page) qs.set("page", String(query.page));
+  if (query.page_size) qs.set("page_size", String(query.page_size));
+  if (query.include_removed) qs.set("include_removed", "true");
+  return qs.toString();
 }
 
 /** Rows per `GET /api/sessions` page when reading a whole conversation list. */
@@ -3270,6 +3294,124 @@ export class HermesApiClient {
   }
 
   /** The caller's own SQL Server connections (never any password). */
+  // -- Site-to-schema (/api/sites/*; Hermes checks the caller's site grant) --
+
+  async sites(): Promise<{ sites: SiteSource[]; can_create: boolean }> {
+    return this.request("/api/sites");
+  }
+
+  async createSite(body: SiteInput): Promise<{ site: SiteSource }> {
+    return this.request("/api/sites", { method: "POST", json: body });
+  }
+
+  async siteSettings(): Promise<SiteSettings> {
+    return this.request("/api/sites/settings");
+  }
+
+  async putSiteSettings(body: { create_roles: string[] }): Promise<SiteSettings> {
+    return this.request("/api/sites/settings", { method: "PUT", json: body });
+  }
+
+  async site(id: string): Promise<{ site: SiteSource }> {
+    return this.request(`/api/sites/${encodeURIComponent(id)}`);
+  }
+
+  async patchSite(id: string, body: SiteInput): Promise<{ site: SiteSource }> {
+    return this.request(`/api/sites/${encodeURIComponent(id)}`, { method: "PATCH", json: body });
+  }
+
+  /** Pause (never drops the schema). */
+  async pauseSite(id: string): Promise<{ site: SiteSource }> {
+    return this.request(`/api/sites/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  async siteDesigns(id: string): Promise<{ designs: SiteDesign[] }> {
+    return this.request(`/api/sites/${encodeURIComponent(id)}/designs`);
+  }
+
+  async approveSiteDesign(
+    id: string,
+    version: number | string,
+  ): Promise<{ version: number; status: string; statements: string[] }> {
+    return this.request(
+      `/api/sites/${encodeURIComponent(id)}/designs/${encodeURIComponent(String(version))}/approve`,
+      { method: "POST", json: {} },
+    );
+  }
+
+  async siteGrants(id: string): Promise<{ owner_user_id: string; grants: SiteGrant[] }> {
+    return this.request(`/api/sites/${encodeURIComponent(id)}/grants`);
+  }
+
+  async putSiteGrant(
+    id: string,
+    body: { user_id: string; grant: SiteAccess },
+  ): Promise<{ grant: SiteGrant }> {
+    return this.request(`/api/sites/${encodeURIComponent(id)}/grants`, { method: "POST", json: body });
+  }
+
+  async revokeSiteGrant(id: string, userId: string): Promise<{ revoked: boolean }> {
+    const qs = new URLSearchParams({ user_id: userId });
+    return this.request(`/api/sites/${encodeURIComponent(id)}/grants?${qs.toString()}`, {
+      method: "DELETE",
+    });
+  }
+
+  async refreshSite(
+    id: string,
+    body: { entities?: string[]; mode?: SiteRefreshMode } = {},
+  ): Promise<{ run: SiteRun }> {
+    return this.request(`/api/sites/${encodeURIComponent(id)}/refresh`, { method: "POST", json: body });
+  }
+
+  async siteRuns(id: string): Promise<{ runs: SiteRun[] }> {
+    return this.request(`/api/sites/${encodeURIComponent(id)}/runs`);
+  }
+
+  async siteTables(id: string): Promise<{ tables: SiteTable[] }> {
+    return this.request(`/api/sites/${encodeURIComponent(id)}/tables`);
+  }
+
+  async siteTableRows(id: string, entity: string, query: SiteTableQuery = {}): Promise<SiteTableRows> {
+    const qs = siteTableParams(query);
+    return this.request(
+      `/api/sites/${encodeURIComponent(id)}/tables/${encodeURIComponent(entity)}${qs ? `?${qs}` : ""}`,
+    );
+  }
+
+  async siteHistory(id: string, entity: string, key: string): Promise<SiteHistory> {
+    return this.request(
+      `/api/sites/${encodeURIComponent(id)}/history/${encodeURIComponent(entity)}/${encodeURIComponent(key)}`,
+    );
+  }
+
+  /** The table as CSV/XLSX bytes; the caller streams the response through. */
+  async exportSiteTable(
+    id: string,
+    entity: string,
+    format: "csv" | "xlsx",
+    includeRemoved = false,
+  ): Promise<Response> {
+    const qs = new URLSearchParams({ format });
+    if (includeRemoved) qs.set("include_removed", "true");
+    const headers = new Headers();
+    if (this.hermesToken) {
+      headers.set("cookie", `hermes_session_at=${this.hermesToken}`);
+      headers.set("authorization", `Bearer ${this.hermesToken}`);
+    }
+    const path = `/api/sites/${encodeURIComponent(id)}/tables/${encodeURIComponent(entity)}/export?${qs.toString()}`;
+    const res = await fetch(`${this.baseUrl}${this.scopedPath(path)}`, { headers, cache: "no-store" });
+    if (!res.ok || !res.body) {
+      const text = res.body ? await res.text().catch(() => "") : "";
+      throw new HermesApiError(
+        res.status,
+        upstreamDetail(text ? safeJson(text) : undefined, "That export didn't go through."),
+        text,
+      );
+    }
+    return res;
+  }
+
   async mssqlConnections(): Promise<{ connections: MssqlConnection[]; driver_available: boolean }> {
     return this.request("/api/mssql/connections");
   }

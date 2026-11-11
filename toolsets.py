@@ -58,6 +58,8 @@ _HERMES_CORE_TOOLS = [
     "mssql_query",
     # The person's own Windows servers (Settings -> In&Out; gated on pypsrp)
     "windows_powershell",
+    # Source sites stored as per-site schemas (site-to-schema; gated on the app DB)
+    "site_db",
     # NOTE: the desktop Project tools (project_list/create/switch) are
     # deliberately NOT here. They only make sense where a GUI can follow the
     # move, so they live in the `project` toolset and are enabled solely by the
@@ -227,6 +229,12 @@ TOOLSETS = {
     "mssql": {
         "description": "Query the person's own SQL Server databases (read-only unless allowed)",
         "tools": ["mssql_query"],
+        "includes": []
+    },
+
+    "site_db": {
+        "description": "Study source sites into per-site database schemas and query them",
+        "tools": ["site_db"],
         "includes": []
     },
 
@@ -448,6 +456,8 @@ TOOLSETS = {
             "mssql_query",
             # The person's own Windows servers (Settings -> In&Out; gated on pypsrp)
             "windows_powershell",
+            # Source sites stored as per-site schemas (site-to-schema; gated on the app DB)
+            "site_db",
             # Session history search
             "session_search",
             # Code execution + delegation
