@@ -74,6 +74,16 @@ describe("draft helpers", () => {
     expect(stripDraft(reply)).toBe("Idea one\n\nBetter:\n\nThoughts?");
     expect(extractDraft("no draft ```python\nx\n```")).toBeNull();
   });
+
+  it("keeps code blocks nested inside a draft", () => {
+    const skill = "# Tidy\n\n```bash\nqpdf --check in.pdf\n```\n\nDone.";
+    for (const fence of ["```", "````"]) {
+      const reply = `Fixed.\n${fence}skill-draft\n${skill}\n${fence}\nTry it.`;
+      expect(extractDraft(reply)).toBe(skill);
+      expect(stripDraft(reply)).toBe("Fixed.\n\nTry it.");
+    }
+    expect(extractDraft("```skill-draft\nunterminated")).toBeNull();
+  });
 });
 
 describe("SkillImprovePanel", () => {

@@ -60,18 +60,62 @@ export interface ImproveReply {
 /** A project slug or short ref, as the projects API accepts it. */
 export const PROJECT_SLUG = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
-const DRAFT_RE = /```skill-draft[^\n]*\n([\s\S]*?)\n?```/g;
+const FENCE_RE = /^ {0,3}(`{3,}|~{3,})[ \t]*([^`\s]*)[^`]*$/;
+const DRAFT_LANG = "skill-draft";
+
+/**
+ * Line ranges of the complete ```skill-draft blocks in a reply (mirrors the
+ * server's `extract_draft`): the SKILL.md inside may hold its own fenced code
+ * blocks; a fence with an info string opens a nested block and a bare fence at
+ * least as long as the innermost opener closes it.
+ */
+function draftBlocks(lines: string[]): { start: number; end: number; body: string }[] {
+  const blocks: { start: number; end: number; body: string }[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const m = FENCE_RE.exec(lines[i]);
+    if (!m || m[2] !== DRAFT_LANG) {
+      i += 1;
+      continue;
+    }
+    const stack: string[] = [];
+    let j = i + 1;
+    let closed = false;
+    for (; j < lines.length; j += 1) {
+      const fm = FENCE_RE.exec(lines[j]);
+      if (!fm) continue;
+      const [, fence, info] = fm;
+      const top = stack.at(-1) ?? m[1];
+      const closes = !info && fence[0] === top[0] && fence.length >= top.length;
+      if (closes && !stack.length) {
+        closed = true;
+        break;
+      }
+      if (closes) stack.pop();
+      else if (info || !stack.length) stack.push(fence);
+    }
+    if (!closed) break;
+    blocks.push({ start: i, end: j, body: lines.slice(i + 1, j).join("\n").replace(/^\n+|\n+$/g, "") });
+    i = j + 1;
+  }
+  return blocks;
+}
 
 /** The SKILL.md inside the last ```skill-draft block of an agent reply, if any. */
 export function extractDraft(text: string): string | null {
-  let last: string | null = null;
-  for (const m of text.matchAll(DRAFT_RE)) last = m[1];
-  return last;
+  const found = draftBlocks(text.split("\n")).filter((b) => b.body.trim());
+  return found.length ? found[found.length - 1].body : null;
 }
 
 /** The reply with its ```skill-draft blocks removed (the draft renders as its own card). */
 export function stripDraft(text: string): string {
-  return text.replace(DRAFT_RE, "").replace(/\n{3,}/g, "\n\n").trim();
+  const lines = text.split("\n");
+  const blocks = draftBlocks(lines);
+  const kept = lines.flatMap((line, n) => {
+    const block = blocks.find((b) => n >= b.start && n <= b.end);
+    return !block ? [line] : n === block.start ? [""] : [];
+  });
+  return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /** The `n` the next saved version gets. */
