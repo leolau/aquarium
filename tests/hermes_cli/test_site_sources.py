@@ -316,3 +316,43 @@ def test_role_dsn_keeps_supavisor_tenant():
     dsn = ss.role_dsn("postgresql://postgres.tenant:pw@db.example:6543/postgres", "site_shop_ro", "p@ss")
     assert dsn == "postgresql://site_shop_ro.tenant:p%40ss@db.example:6543/postgres"
     assert ss.role_dsn("postgres://app:x@h/db", "r", "s") == "postgres://r:s@h/db"
+
+
+def test_plan_modes_recipe_always_full():
+    recipe = {"entities": {"orders": {"mode": "full", "steps": []}}}
+    modes = ss.plan_modes(DESIGN, requested_entities=["orders"], requested_mode=None,
+                          default_mode="incremental", last_full={"orders": datetime.now(timezone.utc)},
+                          recipe=recipe)
+    assert modes == {"orders": "full"}
+    assert ss.recipe_entity(recipe, "orders")["mode"] == "full"
+    assert ss.recipe_entity({"entities": [{"name": "x", "mode": "full"}]}, "x")["mode"] == "full"
+    assert ss.recipe_entity(None, "x") == {}
+
+
+def test_new_report_only_when_runner_takes_one(monkeypatch):
+    mod = types.ModuleType("fake_runner_mod")
+
+    class RunReport:
+        def __init__(self):
+            self.pages = 0
+
+    def with_report(recipe, credential, *, entities=None, mode, cursors, report=None):
+        return iter(())
+
+    def without(recipe, credential, *, entities=None, mode, cursors):
+        return iter(())
+
+    for fn in (with_report, without):
+        fn.__module__ = "fake_runner_mod"
+    mod.RunReport = RunReport
+    monkeypatch.setitem(sys.modules, "fake_runner_mod", mod)
+    assert isinstance(ss._new_report(with_report), RunReport)
+    assert ss._new_report(without) is None
+
+
+def test_merge_report_sums_over_groups():
+    into = {}
+    ss._merge_report(into, {"pages": 2, "rows": {"a": 3}, "full_entities": ["a"], "cursors": {"a": 1}})
+    ss._merge_report(into, {"pages": 1, "rows": {"a": 1, "b": 2}, "failed": {"b": "x"}})
+    assert into["pages"] == 3 and into["rows"] == {"a": 4, "b": 2}
+    assert into["full_entities"] == ["a"] and into["failed"] == {"b": "x"} and into["cursors"] == {"a": 1}
