@@ -237,3 +237,31 @@ describe("SkillEditor", () => {
     await waitFor(() => expect(screen.queryByText("Leave without saving?")).toBeNull());
   });
 });
+
+describe("SkillPage Skills permissions", () => {
+  afterEach(cleanup);
+  const READ_ONLY = { use: true, view: true, agent_edit: false, manage: false, lab: false };
+
+  it("hides the Skills Lab tabs without lab and the edit controls without manage", () => {
+    render(
+      <SkillPage name="pdf-tools" profile="default" content={DOC} skill={{ ...SKILL, source: "hub" }} details={DETAILS} installed={["pdf-tools"]} initialTab="usage" permissions={READ_ONLY} />,
+    );
+    const tabs = screen.getAllByRole("tab").map((t) => t.textContent ?? "");
+    expect(tabs.some((t) => /Usage|Versions|Improve/.test(t))).toBe(false);
+    expect(screen.getByRole("tab", { name: /Instructions/ }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.queryByRole("switch")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Edit/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    expect(screen.queryByRole("menuitem", { name: "Edit as plain text" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Uninstall…" })).toBeNull();
+    expect(screen.getByText("Copy SKILL.md")).toBeTruthy();
+  });
+
+  it("shows the Skills Lab tabs with lab", () => {
+    render(
+      <SkillPage name="pdf-tools" profile="default" content={DOC} skill={SKILL} details={DETAILS} installed={["pdf-tools"]} permissions={{ ...READ_ONLY, lab: true }} />,
+    );
+    for (const name of [/Usage/, /Versions/, /Improve/]) expect(screen.getByRole("tab", { name })).toBeTruthy();
+    expect(screen.queryByRole("switch")).toBeNull();
+  });
+});

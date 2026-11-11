@@ -41,8 +41,20 @@ export const LOCKED_APP_IDS: readonly string[] = ["home", "settings"];
  * Locked hidden for members and viewers: everything on these pages is an
  * owner/admin change (the BFF and Python both refuse anyone else), so showing
  * them would only show a page of refusals. Admins see them unless hidden.
+ * Skills is not here: it follows the role's `view` Skills permission
+ * (Settings → Skills permissions, see `withSkillsPermission`).
  */
-export const ADMIN_ONLY_APP_IDS: readonly string[] = ["profiles", "skills"];
+export const ADMIN_ONLY_APP_IDS: readonly string[] = ["profiles"];
+
+/** The app whose visibility follows the `view` Skills permission. */
+export const SKILLS_APP_ID = "skills";
+
+/** `hidden` plus the Skills app when the caller may not see skills. */
+export function withSkillsPermission(hidden: readonly string[], canViewSkills: boolean): string[] {
+  const out = [...hidden];
+  if (!canViewSkills && !out.includes(SKILLS_APP_ID)) out.push(SKILLS_APP_ID);
+  return out;
+}
 export const ADMIN_ONLY_ROLES: readonly string[] = ["member", "viewer"];
 
 /** Whether `appId` is locked off for `role` (cannot be turned on). */

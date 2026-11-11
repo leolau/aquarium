@@ -3,9 +3,11 @@
 Stored in the default profile's config.yaml as
 ``agent_home.nav.roles.<role>.hidden: [app ids]``. The owner has a list too
 (only the owner may change it); ``home`` and ``settings`` are locked visible for every role so nobody can
-hide their way out. ``ADMIN_ONLY_APP_IDS`` (Profiles, Skills) are the reverse:
+hide their way out. ``ADMIN_ONLY_APP_IDS`` (Profiles) are the reverse:
 locked hidden for members and viewers, because only an owner/admin can change
-anything there and the API refuses everyone else anyway. ``KNOWN_APP_IDS`` mirrors the Coral registry in
+anything there and the API refuses everyone else anyway. Skills is not locked:
+it follows the role's ``view`` Skills permission (``access.roles.<role>.skills``),
+which agent-home applies on top of this list. ``KNOWN_APP_IDS`` mirrors the Coral registry in
 ``agent-home/src/components/coral/coral-apps.ts`` (a Vitest test keeps the two
 in sync).
 """
@@ -18,7 +20,7 @@ NAV_ROLES = ("owner", "admin", "member", "viewer")
 
 LOCKED_APP_IDS = ("home", "settings")
 
-ADMIN_ONLY_APP_IDS = ("profiles", "skills")
+ADMIN_ONLY_APP_IDS = ("profiles",)
 ADMIN_ONLY_ROLES = ("member", "viewer")
 
 KNOWN_APP_IDS = (

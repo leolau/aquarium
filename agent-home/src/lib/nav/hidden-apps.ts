@@ -15,8 +15,9 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { HermesApiClient } from "@/lib/api/client";
-import { navRoleOf, sanitizeHidden } from "@/lib/nav/menu-access";
+import { HermesApiClient, HermesApiError } from "@/lib/api/client";
+import { navRoleOf, sanitizeHidden, withSkillsPermission } from "@/lib/nav/menu-access";
+import { defaultSkillPermissions, parseSkillPermissions } from "@/lib/skills/permissions";
 import type { Principal } from "@/types";
 
 export const NAV_CACHE_TAG = "agent-home-nav";
@@ -61,21 +62,59 @@ function lastKnown(role: string, err: unknown): string[] {
 
 type Caller = { role: Principal["role"]; is_owner?: boolean };
 
-/** The caller's hidden app ids; `[]` for a signed-out caller. */
+/** Cache tag for the caller's `view` Skills permission; a save revalidates it. */
+export const SKILLS_PERMISSIONS_CACHE_TAG = "agent-home-skills-permissions";
+
+/**
+ * Whether the caller's role may see skills in `profile` (Settings → Skills
+ * permissions). An API without the endpoint (404) gets the role default; any
+ * other failure hides Skills (the pages and BFF routes re-check anyway).
+ */
+async function canViewSkills(principal: Caller, hermesToken: string, profile: string | undefined): Promise<boolean> {
+  const role = navRoleOf(principal);
+  const key = profile && profile !== "default" ? profile : "default";
+  try {
+    return await unstable_cache(
+      async () => {
+        try {
+          const body = await new HermesApiClient({ hermesToken, profile }).mySkillPermissions();
+          return parseSkillPermissions(body?.actions)?.view ?? false;
+        } catch (err) {
+          if (err instanceof HermesApiError && err.status === 404) {
+            return defaultSkillPermissions(role, principal.is_owner).view;
+          }
+          throw err;
+        }
+      },
+      ["agent-home-skills-view", key, role],
+      { revalidate: NAV_CACHE_SECONDS, tags: [SKILLS_PERMISSIONS_CACHE_TAG] },
+    )();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The caller's hidden app ids; `[]` for a signed-out caller. Skills is added
+ * when the caller's role may not see skills in `profile` (the session's).
+ */
 export async function getHiddenApps(
   principal: Caller,
   hermesToken: string | undefined,
+  profile?: string,
 ): Promise<string[]> {
   if (!hermesToken) return [];
   const role = navRoleOf(principal);
+  let hidden: string[];
   try {
-    return await unstable_cache(() => fetchHidden(role, hermesToken), ["agent-home-nav-hidden", role], {
+    hidden = await unstable_cache(() => fetchHidden(role, hermesToken), ["agent-home-nav-hidden", role], {
       revalidate: NAV_CACHE_SECONDS,
       tags: [NAV_CACHE_TAG],
     })();
   } catch (err) {
-    return lastKnown(role, err);
+    hidden = lastKnown(role, err);
   }
+  return withSkillsPermission(hidden, await canViewSkills(principal, hermesToken, profile));
 }
 
 /**

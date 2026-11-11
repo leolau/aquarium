@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const agentHomeNav = vi.fn();
+const mySkillPermissions = vi.fn();
+const boundProfiles: Array<string | undefined> = [];
+const ALL = { use: true, view: true, agent_edit: true, manage: true, lab: true };
 const cacheKeys: unknown[][] = [];
 
 vi.mock("server-only", () => ({}));
@@ -13,6 +16,18 @@ vi.mock("next/cache", () => ({
 vi.mock("@/lib/api/client", () => ({
   HermesApiClient: class {
     agentHomeNav = agentHomeNav;
+    mySkillPermissions = mySkillPermissions;
+    constructor(opts: { profile?: string } = {}) {
+      boundProfiles.push(opts.profile);
+    }
+  },
+  HermesApiError: class extends Error {
+    constructor(
+      readonly status: number,
+      message: string,
+    ) {
+      super(message);
+    }
   },
 }));
 
@@ -32,7 +47,9 @@ describe("getHiddenApps", () => {
     vi.clearAllMocks();
     cacheKeys.length = 0;
     delete (globalThis as Record<symbol, unknown>)[STATE_KEY];
+    boundProfiles.length = 0;
     agentHomeNav.mockResolvedValue({ hidden: ["graph", "home"] });
+    mySkillPermissions.mockResolvedValue({ role: "member", actions: ALL });
     warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   });
   afterEach(() => {
@@ -43,7 +60,7 @@ describe("getHiddenApps", () => {
   it("gives the owner the owner's list, cached under the owner key", async () => {
     expect(await getHiddenApps({ role: "owner", is_owner: true }, "tok")).toEqual(["graph"]);
     expect(await getHiddenApps({ role: "admin", is_owner: true }, "tok")).toEqual(["graph"]);
-    expect(cacheKeys).toEqual([
+    expect(cacheKeys.filter((k) => k[0] === "agent-home-nav-hidden")).toEqual([
       ["agent-home-nav-hidden", "owner"],
       ["agent-home-nav-hidden", "owner"],
     ]);
@@ -51,7 +68,10 @@ describe("getHiddenApps", () => {
 
   it("returns the role's sanitized list, keyed by role and never the token", async () => {
     expect(await getHiddenApps({ role: "member" }, "secret-token")).toEqual(["graph"]);
-    expect(cacheKeys).toEqual([["agent-home-nav-hidden", "member"]]);
+    expect(cacheKeys).toEqual([
+      ["agent-home-nav-hidden", "member"],
+      ["agent-home-skills-view", "default", "member"],
+    ]);
     expect(JSON.stringify(cacheKeys)).not.toContain("secret-token");
   });
 
@@ -69,6 +89,25 @@ describe("getHiddenApps", () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("serving the last known list"));
     // Another role's list is not borrowed.
     expect(await getHiddenApps({ role: "viewer" }, "tok")).toEqual([]);
+  });
+
+  it("hides Skills when the role may not see skills in the session's profile", async () => {
+    mySkillPermissions.mockResolvedValue({ role: "member", actions: { ...ALL, view: false } });
+    expect(await getHiddenApps({ role: "member" }, "tok", "coder")).toEqual(["graph", "skills"]);
+    expect(boundProfiles).toContain("coder");
+    expect(cacheKeys).toContainEqual(["agent-home-skills-view", "coder", "member"]);
+  });
+
+  it("falls back to the role default when the API has no Skills permissions yet", async () => {
+    const { HermesApiError } = await import("@/lib/api/client");
+    mySkillPermissions.mockRejectedValue(new HermesApiError(404, "Not Found"));
+    expect(await getHiddenApps({ role: "member" }, "tok")).toEqual(["graph", "skills"]);
+    expect(await getHiddenApps({ role: "admin" }, "tok")).toEqual(["graph"]);
+  });
+
+  it("hides Skills when its permission can't be read", async () => {
+    mySkillPermissions.mockRejectedValue(new Error("down"));
+    expect(await getHiddenApps({ role: "admin" }, "tok")).toEqual(["graph", "skills"]);
   });
 
   it("middleware copy is reused within the TTL and refetched after it", async () => {

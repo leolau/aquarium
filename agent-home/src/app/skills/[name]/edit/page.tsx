@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 /**
  * Edit one skill's SKILL.md (`?view=plain` opens the plain-text view). With
  * `?draft=<version id>` it edits that draft version and saves a new draft
- * instead of the live skill. Owner/admin only.
+ * instead of the live skill. Needs the `manage` Skills permission.
  */
 export default async function Page({
   params,
@@ -23,7 +23,7 @@ export default async function Page({
   searchParams: Promise<{ profile?: string; view?: string; draft?: string }>;
 }) {
   const [{ name: raw }, { profile: requested, view, draft: draftId }] = await Promise.all([params, searchParams]);
-  const { name, profile, content, skill, skills } = await loadSkill(raw, requested, false);
+  const { name, profile, content, skill, skills } = await loadSkill(raw, requested, false, "manage");
   let draft: { id: string; n: number; content: string } | null = null;
   if (draftId) {
     const client = await apiClientForRequest({ profile: profile === "default" ? undefined : profile });

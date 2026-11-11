@@ -48,7 +48,7 @@ describe("MenuSection", () => {
     expect((screen.getByLabelText(/show graph to viewer/i) as HTMLInputElement).checked).toBe(true);
   });
 
-  it("locks Profiles and Skills off for members and viewers only", async () => {
+  it("locks Profiles off for members and viewers only; Skills follows Skills permissions", async () => {
     fetchMock.mockReturnValue(reply(NAV));
     render(<MenuSection />);
     await screen.findByRole("tabpanel");
@@ -60,11 +60,12 @@ describe("MenuSection", () => {
     }
     for (const role of ["Member", "Viewer"]) {
       fireEvent.click(screen.getByRole("tab", { name: role }));
-      for (const app of ["profiles", "skills"]) {
-        const box = screen.getByLabelText(new RegExp(`show ${app} to ${role}`, "i")) as HTMLInputElement;
-        expect(box.checked).toBe(false);
-        expect(box.disabled).toBe(true);
-      }
+      const profiles = screen.getByLabelText(new RegExp(`show profiles to ${role}`, "i")) as HTMLInputElement;
+      expect(profiles.checked).toBe(false);
+      expect(profiles.disabled).toBe(true);
+      const skills = screen.getByLabelText(new RegExp(`show skills to ${role}`, "i")) as HTMLInputElement;
+      expect(skills.disabled).toBe(false);
+      expect(document.querySelector('[data-follows="skills-permissions"]')).not.toBeNull();
     }
     expect(document.querySelectorAll('[data-locked-off="true"]').length).toBeGreaterThan(0);
   });
@@ -126,12 +127,12 @@ describe("MenuSection", () => {
     expect((screen.getByLabelText(/show to-dos to member/i) as HTMLInputElement).checked).toBe(false);
   });
 
-  it("labels Profiles and Skills 'Admins only' and lets the owner edit the Owner tab", async () => {
+  it("labels Profiles 'Admins only' and lets the owner edit the Owner tab", async () => {
     fetchMock.mockReturnValueOnce(reply({ ...NAV, role: "owner", is_owner: true }));
     render(<MenuSection />);
     await screen.findByRole("tabpanel");
     const labels = [...document.querySelectorAll('[data-locked-off="true"]')].map((n) => n.textContent);
-    expect(labels).toEqual(["Admins only", "Admins only"]);
+    expect(labels).toEqual(["Admins only"]);
     expect(document.body.textContent).toContain("the Owner tab is your own menu");
     fireEvent.click(screen.getByRole("tab", { name: "Owner" }));
     const graph = screen.getByLabelText(/show graph to owner/i) as HTMLInputElement;

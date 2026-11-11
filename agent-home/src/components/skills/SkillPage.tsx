@@ -18,11 +18,14 @@ import { extractHeadings } from "@/lib/skills/outline";
 import { useUndoToast } from "@/components/ui/UndoToast";
 import { useAction } from "@/lib/use-action";
 import { useHydrated } from "@/lib/use-hydrated";
+import { ALL_SKILL_PERMISSIONS, type SkillPermissions } from "@/lib/skills/permissions";
 import type { SkillDetails, SkillInfo } from "@/types";
 
 type Tab = "instructions" | "files" | "usage" | "versions" | "improve" | "used";
 const TABS: readonly Tab[] = ["instructions", "files", "usage", "versions", "improve", "used"];
 const isTab = (value: string | undefined): value is Tab => !!value && (TABS as readonly string[]).includes(value);
+/** The Skills Lab tabs; they need the `lab` Skills permission. */
+const LAB_TABS: readonly Tab[] = ["usage", "versions", "improve"];
 
 export const chipClass =
   "inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2.5 py-px text-[11px] text-[var(--color-muted)]";
@@ -62,6 +65,7 @@ export function SkillPage({
   installed,
   initialTab,
   activeVersion,
+  permissions = ALL_SKILL_PERMISSIONS,
 }: {
   name: string;
   profile: string;
@@ -74,13 +78,17 @@ export function SkillPage({
   initialTab?: string;
   /** The live version from version history, when there is one. */
   activeVersion?: { n: number; trial: boolean } | null;
+  /** Settings → Skills permissions: `manage` adds the edit controls, `lab` the Skills Lab tabs. */
+  permissions?: SkillPermissions;
 }) {
+  const { manage, lab } = permissions;
+  const hasTab = (value: string | undefined): value is Tab => isTab(value) && (lab || !LAB_TABS.includes(value));
   const router = useRouter();
   const parsed = useMemo(() => parseSkill(content), [content]);
   const { meta } = parsed;
   const body = useMemo(() => getBody(content), [content]);
   const headings = useMemo(() => extractHeadings(body), [body]);
-  const [tab, setTab] = useState<Tab>(isTab(initialTab) ? initialTab : "instructions");
+  const [tab, setTab] = useState<Tab>(hasTab(initialTab) ? initialTab : "instructions");
   const [enabled, setEnabled] = useState(skill?.enabled ?? true);
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmUninstall, setConfirmUninstall] = useState(false);
@@ -163,7 +171,7 @@ export function SkillPage({
 
   /** Switch tabs and keep `?tab=` in the address; false for a tab this page doesn't have. */
   function selectTab(next: string): boolean {
-    if (!isTab(next)) return false;
+    if (!hasTab(next)) return false;
     setTab(next);
     const url = new URL(window.location.href);
     if (next === "instructions") url.searchParams.delete("tab");
@@ -271,6 +279,8 @@ export function SkillPage({
             </div>
           </div>
           <div className="flex items-center gap-2 self-end sm:self-auto">
+            {manage ? (
+            <>
             <span className="text-xs text-[var(--color-muted)]">Enabled</span>
             <button
               type="button"
@@ -288,6 +298,12 @@ export function SkillPage({
             <Link href={skillHref(name, profile, "edit")} role="button" className={`${toolButtonClass} inline-flex items-center`}>
               ✎ Edit
             </Link>
+            </>
+            ) : (
+              <span data-state={enabled ? "on" : "off"} className={enabled ? accentChipClass : chipClass}>
+                {enabled ? "On" : "Off"}
+              </span>
+            )}
             <div ref={menuRef} className="relative">
               <button
                 type="button"
@@ -301,14 +317,16 @@ export function SkillPage({
               </button>
               {menuOpen ? (
                 <div role="menu" className="absolute right-0 z-20 mt-1 w-52 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-lg">
+                  {manage ? (
                   <Link role="menuitem" href={skillHref(name, profile, "edit", "view=plain")} className={`${menuItem} flex min-h-11 items-center`}>
                     Edit as plain text
                   </Link>
+                  ) : null}
                   <CopyButton text={content} label="Copy SKILL.md" className={menuItem} />
                   <button type="button" role="menuitem" className={menuItem} onClick={() => downloadText("SKILL.md", content)}>
                     Download SKILL.md
                   </button>
-                  {skill?.source === "hub" ? (
+                  {manage && skill?.source === "hub" ? (
                     <button
                       type="button"
                       role="menuitem"
@@ -336,9 +354,9 @@ export function SkillPage({
         <div role="tablist" aria-label="Skill sections" className="mb-3.5 mt-4 flex gap-0.5 overflow-x-auto border-b border-[var(--color-border)]">
           {tabButton("instructions", "Instructions")}
           {tabButton("files", "Files", details ? String(files.length) : undefined)}
-          {tabButton("usage", "Usage")}
-          {tabButton("versions", "Versions")}
-          {tabButton("improve", "Improve")}
+          {lab ? tabButton("usage", "Usage") : null}
+          {lab ? tabButton("versions", "Versions") : null}
+          {lab ? tabButton("improve", "Improve") : null}
           {tabButton("used", "Used by", details ? `${usedBy.length} ${usedBy.length === 1 ? "profile" : "profiles"}` : undefined)}
         </div>
 
@@ -417,14 +435,14 @@ export function SkillPage({
               ) : null}
             </aside>
           </div>
-        ) : tab === "usage" ? (
+        ) : tab === "usage" && lab ? (
           <SkillUsagePanel
             name={name}
             profile={profile}
             tabHref={(t) => skillHref(name, profile, "", `tab=${t}`)}
             onOpenTab={selectTab}
           />
-        ) : tab === "versions" ? (
+        ) : tab === "versions" && lab ? (
           <SkillVersionsPanel name={name} profile={profile} />
         ) : tab === "files" ? (
           <div className="max-w-2xl">
@@ -438,7 +456,7 @@ export function SkillPage({
               <p className="text-sm text-[var(--color-muted)]">The file list couldn&apos;t be loaded.</p>
             )}
           </div>
-        ) : tab === "improve" ? (
+        ) : tab === "improve" && lab ? (
           <SkillImprovePanel name={name} profile={profile} content={content} onOpenTab={selectTab} />
         ) : (
           <div className="max-w-2xl">

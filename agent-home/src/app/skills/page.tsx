@@ -5,14 +5,15 @@ import { SkillsView } from "@/components/skills/SkillsView";
 import { getT } from "@/i18n/server";
 import { toProfileInfo } from "@/lib/api/profile-info";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
-import { canAdminister } from "@/lib/auth/roles";
+import { getSkillPermissionsOrNone } from "@/lib/skills/permissions-server";
 import type { SkillInfo } from "@/types";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Skills — what each agent knows. Owner/admin only (menu, middleware, this
- * check, then Python's `_ADMIN` gate). `?profile=` picks whose skills are
+ * Skills — what each agent knows. Follows Settings → Skills permissions:
+ * `view` opens this page, `manage` adds the edit controls and the hub, `lab`
+ * the usage signals (the BFF routes and Python re-check each). `?profile=` picks whose skills are
  * shown; `?view=hub` opens the Skills hub.
  */
 export default async function Page({
@@ -22,8 +23,9 @@ export default async function Page({
 }) {
   const principal = await requirePrincipal();
   const t = await getT("system");
-  if (!canAdminister(principal)) redirect("/not-available?app=skills");
   const { profile: requested, view } = await searchParams;
+  const permissions = await getSkillPermissionsOrNone(principal, requested?.trim() || undefined);
+  if (!permissions.view) redirect("/not-available?app=skills");
 
   const [list, skillList] = await Promise.allSettled([
     (await apiClientForRequest()).profileInfos(),
@@ -47,7 +49,8 @@ export default async function Page({
         profiles={profiles.map((p) => p.name)}
         profile={profile}
         initialSkills={skills}
-        initialView={view === "hub" ? "hub" : "installed"}
+        initialView={view === "hub" && permissions.manage ? "hub" : "installed"}
+        permissions={permissions}
         error={error}
       />
     </MobileShell>

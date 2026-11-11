@@ -11,10 +11,19 @@ import { GET as sources } from "@/app/api/skills/hub/sources/route";
 import { POST as uninstall } from "@/app/api/skills/hub/uninstall/route";
 import { GET, POST } from "@/app/api/skills/route";
 import { PUT as toggle } from "@/app/api/skills/toggle/route";
+import { defaultSkillPermissions, type MySkillPermissions } from "@/lib/skills/permissions";
 import type { Principal } from "@/types";
 
 const getPrincipal = vi.fn<() => Promise<Principal | null>>();
 const boundProfiles: Array<string | undefined> = [];
+/** Profiles the Skills-permission check was bound to (kept out of `boundProfiles`). */
+const permissionProfiles: Array<string | undefined> = [];
+// GET /api/access/skills/me: the role's defaults unless a test overrides them.
+const mySkillPermissions = vi.fn(async (): Promise<MySkillPermissions> => {
+  permissionProfiles.push(boundProfiles.pop());
+  const p = await getPrincipal();
+  return { role: p?.role ?? "", actions: defaultSkillPermissions(p?.role ?? "", p?.is_owner) };
+});
 const client = {
   skillList: vi.fn(),
   createSkill: vi.fn(),
@@ -34,7 +43,7 @@ vi.mock("@/lib/auth/principal", () => ({
   getPrincipal: () => getPrincipal(),
   apiClientForRequest: async (opts: { profile?: string } = {}) => {
     boundProfiles.push(opts.profile);
-    return client;
+    return { ...client, mySkillPermissions: () => mySkillPermissions() };
   },
 }));
 
@@ -60,18 +69,32 @@ const CALLS: Array<[string, () => Promise<Response>]> = [
   ["GET content", () => getContent(get("/api/skills/content?name=a"))],
   ["GET details", () => getDetails(get("/api/skills/details?name=a"))],
   ["PUT content", () => putContent(json("PUT", { name: "a", content: "x" }))],
-  ["GET hub sources", () => sources(get("/api/skills/hub/sources"))],
-  ["GET hub search", () => search(get("/api/skills/hub/search?q=linear"))],
-  ["GET hub preview", () => preview(get("/api/skills/hub/preview?identifier=a"))],
-  ["GET hub scan", () => scan(get("/api/skills/hub/scan?identifier=a"))],
   ["POST hub install", () => install(json("POST", { identifier: "a" }))],
   ["POST hub uninstall", () => uninstall(json("POST", { name: "a" }))],
 ];
 
+/** Browsing the hub is sign-in only; installing needs `manage`. */
+const BROWSE: Array<[string, () => Promise<Response>, keyof typeof client]> = [
+  ["GET hub sources", () => sources(get("/api/skills/hub/sources")), "skillHubSources"],
+  ["GET hub search", () => search(get("/api/skills/hub/search?q=linear")), "skillHubSearch"],
+  ["GET hub preview", () => preview(get("/api/skills/hub/preview?identifier=a")), "skillHubPreview"],
+  ["GET hub scan", () => scan(get("/api/skills/hub/scan?identifier=a")), "skillHubScan"],
+];
+
 describe("Skills BFF routes", () => {
+  it.each(BROWSE)("%s: 401 signed out, open to any signed-in role", async (_label, call, method) => {
+    getPrincipal.mockResolvedValue(null);
+    expect((await call()).status).toBe(401);
+    getPrincipal.mockResolvedValue(who("viewer"));
+    client[method].mockResolvedValue({});
+    expect((await call()).status).toBe(200);
+    expect(mySkillPermissions).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     boundProfiles.length = 0;
+    permissionProfiles.length = 0;
   });
 
   it.each(CALLS)("%s: 401 when signed out", async (_label, call) => {
@@ -87,6 +110,41 @@ describe("Skills BFF routes", () => {
       for (const fn of Object.values(client)) expect(fn).not.toHaveBeenCalled();
     },
   );
+
+  it("follows the caller's Skills permissions, checked in the requested profile", async () => {
+    getPrincipal.mockResolvedValue(who("member"));
+    mySkillPermissions.mockResolvedValueOnce({
+      role: "member",
+      actions: { use: true, view: true, agent_edit: false, manage: false, lab: false },
+    });
+    client.skillList.mockResolvedValue([]);
+    expect((await GET(get("/api/skills?profile=coder"))).status).toBe(200);
+    // A one-off reply skips the default mock's bookkeeping: both the
+    // permission check and the data call are bound to "coder".
+    expect(boundProfiles).toEqual(["coder", "coder"]);
+    mySkillPermissions.mockResolvedValueOnce({
+      role: "member",
+      actions: { use: true, view: true, agent_edit: false, manage: false, lab: false },
+    });
+    const res = await toggle(json("PUT", { name: "a", enabled: false, profile: "coder" }));
+    expect(res.status).toBe(403);
+    expect((await res.json()).action).toBe("manage");
+    expect(client.toggleSkill).not.toHaveBeenCalled();
+    // An admin whose role was turned off for this profile is refused too.
+    getPrincipal.mockResolvedValue(who("admin"));
+    mySkillPermissions.mockResolvedValueOnce({
+      role: "admin",
+      actions: { use: true, view: false, agent_edit: false, manage: false, lab: false },
+    });
+    expect((await GET(get("/api/skills"))).status).toBe(403);
+  });
+
+  it("fails closed when the permissions can't be read", async () => {
+    getPrincipal.mockResolvedValue(who("owner"));
+    mySkillPermissions.mockRejectedValueOnce(new Error("socket hang up"));
+    expect((await GET(get("/api/skills"))).status).toBe(502);
+    expect(client.skillList).not.toHaveBeenCalled();
+  });
 
   it("binds the requested profile for reads and writes", async () => {
     getPrincipal.mockResolvedValue(who("admin"));

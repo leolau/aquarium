@@ -120,7 +120,7 @@ export async function MobileShell({
         accountName = accountNameOf(principal);
         accountRole = principal.role ?? null;
         const session = await readSession();
-        hiddenApps = await getHiddenApps(principal, session?.hermesToken);
+        hiddenApps = await getHiddenApps(principal, session?.hermesToken, session?.profile);
         sessionProfile = session?.profile ?? sessionProfile;
         if (session?.hermesToken) {
           const mine = await getCachedMyProfiles(session.hermesToken).catch(() => ({ profiles: [] }));

@@ -17,8 +17,9 @@ ADMIN = SimpleNamespace(user_id="ann", display="Ann", role="admin", is_owner=Fal
 MEMBER = SimpleNamespace(user_id="mia", display="Mia", role="member", is_owner=False)
 VIEWER = SimpleNamespace(user_id="vic", display="Vic", role="viewer", is_owner=False)
 
-# Profiles and Skills are locked hidden for members and viewers.
-LOCKED_OFF = ["profiles", "skills"]
+# Profiles is locked hidden for members and viewers (Skills follows the
+# role's Skills permission instead).
+LOCKED_OFF = ["profiles"]
 
 
 @pytest.fixture(autouse=True)

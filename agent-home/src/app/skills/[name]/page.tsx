@@ -8,7 +8,7 @@ import { loadSkill } from "../load-skill";
 
 export const dynamic = "force-dynamic";
 
-/** One skill rendered as a document (`?profile=` picks whose copy). Owner/admin only. */
+/** One skill rendered as a document (`?profile=` picks whose copy). Needs the `view` Skills permission. */
 export default async function Page({
   params,
   searchParams,
@@ -17,10 +17,12 @@ export default async function Page({
   searchParams: Promise<{ profile?: string; tab?: string }>;
 }) {
   const [{ name: raw }, { profile: requested, tab }] = await Promise.all([params, searchParams]);
-  const { name, profile, content, skill, skills, details } = await loadSkill(raw, requested, true);
-  // Version history is optional: older backends simply have none.
+  const { name, profile, content, skill, skills, details, permissions } = await loadSkill(raw, requested, true);
+  // Version history is optional (older backends have none) and part of the Skills Lab.
   const client = await apiClientForRequest({ profile: profile === "default" ? undefined : profile });
-  const versions = await client.skillVersions(name).then((d) => toVersionList(d, name), () => null);
+  const versions = permissions.lab
+    ? await client.skillVersions(name).then((d) => toVersionList(d, name), () => null)
+    : null;
   const active = activeVersion(versions);
   return (
     <MobileShell
@@ -39,6 +41,7 @@ export default async function Page({
         installed={skills.map((s) => s.name)}
         initialTab={tab}
         activeVersion={active ? { n: active.n, trial: Boolean(active.trial_of) } : null}
+        permissions={permissions}
       />
     </MobileShell>
   );

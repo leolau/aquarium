@@ -15,6 +15,7 @@ import { useUndoToast } from "@/components/ui/UndoToast";
 import { inputClass, primaryButtonClass } from "@/components/ui/Sheet";
 import { errorText, getJson, profileQuery, sendJson } from "@/lib/admin-fetch";
 import { useAction } from "@/lib/use-action";
+import { ALL_SKILL_PERMISSIONS, type SkillPermissions } from "@/lib/skills/permissions";
 import type { SkillUsageList, SkillUsageRow } from "@/lib/skills/usage";
 import type { SkillInfo } from "@/types";
 
@@ -24,13 +25,24 @@ export interface SkillsViewProps {
   initialSkills: SkillInfo[];
   initialView: "installed" | "hub";
   error: string | null;
+  /** What the caller may do (Settings → Skills permissions): `manage` adds the
+   *  edit controls and the hub, `lab` the usage signals. */
+  permissions?: SkillPermissions;
 }
 
 /** The Skills page body: installed skills for one profile, or the Skills hub. */
-export function SkillsView({ profiles, profile, initialSkills, initialView, error }: SkillsViewProps) {
+export function SkillsView({
+  profiles,
+  profile,
+  initialSkills,
+  initialView,
+  error,
+  permissions = ALL_SKILL_PERMISSIONS,
+}: SkillsViewProps) {
+  const { manage, lab } = permissions;
   const router = useRouter();
   const [skills, setSkills] = useState(initialSkills);
-  const [view, setView] = useState(initialView);
+  const [view, setView] = useState(manage ? initialView : "installed");
   const [filter, setFilter] = useState<SkillFilter>({ kind: "all" });
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
@@ -49,6 +61,7 @@ export function SkillsView({ profiles, profile, initialSkills, initialView, erro
   // Uses and results per skill, once per list load; the list works without them.
   const [usage, setUsage] = useState<{ days: number; byName: Map<string, SkillUsageRow> } | null>(null);
   useEffect(() => {
+    if (!lab) return;
     let live = true;
     getJson<SkillUsageList>(`/api/skills/usage?days=90${q ? `&${q}` : ""}`)
       .then((d) => live && setUsage({ days: d.days, byName: new Map(d.skills.map((r) => [r.name, r])) }))
@@ -56,7 +69,7 @@ export function SkillsView({ profiles, profile, initialSkills, initialView, erro
     return () => {
       live = false;
     };
-  }, [q]);
+  }, [q, lab]);
 
   const undo = useUndoToast();
   const setEnabled = useCallback(
@@ -137,6 +150,7 @@ export function SkillsView({ profiles, profile, initialSkills, initialView, erro
   return (
     <section data-component="SkillsView" className="space-y-4 pb-24 lg:pb-8">
       <div className="flex flex-wrap items-center gap-3">
+        {manage ? (
         <div role="tablist" aria-label="Skills view" className="inline-flex rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-2)] p-1">
           <button type="button" role="tab" data-action="view-installed" aria-selected={view === "installed"} onClick={() => setView("installed")} className={"min-h-9 rounded-[var(--radius-md)] px-3.5 text-sm font-medium aria-selected:bg-[var(--color-bg)] aria-selected:text-[var(--color-fg)] text-[var(--color-muted)]"}>
             Installed
@@ -145,6 +159,7 @@ export function SkillsView({ profiles, profile, initialSkills, initialView, erro
             Hub
           </button>
         </div>
+        ) : null}
         <span className="flex-1" />
         <label className="flex items-center gap-2 text-sm">
           <span className="text-[var(--color-muted)]">{view === "hub" ? "Install into" : "Profile"}</span>
@@ -161,7 +176,7 @@ export function SkillsView({ profiles, profile, initialSkills, initialView, erro
             ))}
           </select>
         </label>
-        {view === "installed" ? (
+        {view === "installed" && manage ? (
           <button type="button" data-action="new-skill" className={primaryButtonClass} onClick={() => setCreating(true)}>
             + New skill
           </button>
@@ -230,6 +245,8 @@ export function SkillsView({ profiles, profile, initialSkills, initialView, erro
                       </div>
                       <p className="mt-1 line-clamp-2 text-sm text-[var(--color-muted)]">{s.description}</p>
                     </div>
+                    {manage ? (
+                    <>
                     <Link
                       href={skillHref(s.name, profile, "edit")}
                       role="button"
@@ -260,27 +277,39 @@ export function SkillsView({ profiles, profile, initialSkills, initialView, erro
                         />
                       </span>
                     </button>
+                    </>
+                    ) : (
+                      <span data-state={s.enabled ? "on" : "off"} className="shrink-0">
+                        <Pill tone={s.enabled ? "success" : "muted"}>{s.enabled ? "On" : "Off"}</Pill>
+                      </span>
+                    )}
                   </li>
                 ))}
                 {visible.length === 0 ? (
                   <li className="p-6 text-center text-sm text-[var(--color-muted)]">
-                    {skills.length === 0 ? "No skills installed yet. Add one, or browse the hub." : "No skills match. Try another search or filter."}
+                    {skills.length === 0
+                      ? manage
+                        ? "No skills installed yet. Add one, or browse the hub."
+                        : "No skills installed yet."
+                      : "No skills match. Try another search or filter."}
                   </li>
                 ) : null}
               </ul>
+              {manage ? (
               <p className="flex items-center gap-1 text-xs text-[var(--color-muted)]">
                 Turning a skill off or editing it applies to new chats.
                 <InfoTip label="Why not running chats?">
                   Running chats keep their skills so their cache isn&apos;t broken (which would make every reply cost more).
                 </InfoTip>
               </p>
+              ) : null}
             </div>
           </div>
         </>
       )}
       {undo.toast}
 
-      {creating ? (
+      {creating && manage ? (
         <NewSkillModal
           profile={profile}
           categories={categoryList}

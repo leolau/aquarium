@@ -4,17 +4,26 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as detail } from "@/app/api/skills/usage/detail/route";
 import { POST as feedback } from "@/app/api/skills/usage/feedback/route";
 import { GET as usage } from "@/app/api/skills/usage/route";
+import { defaultSkillPermissions, type MySkillPermissions } from "@/lib/skills/permissions";
 import type { Principal } from "@/types";
 
 const getPrincipal = vi.fn<() => Promise<Principal | null>>();
 const boundProfiles: Array<string | undefined> = [];
+/** Profiles the Skills-permission check was bound to (kept out of `boundProfiles`). */
+const permissionProfiles: Array<string | undefined> = [];
+// GET /api/access/skills/me: the role's defaults unless a test overrides them.
+const mySkillPermissions = vi.fn(async (): Promise<MySkillPermissions> => {
+  permissionProfiles.push(boundProfiles.pop());
+  const p = await getPrincipal();
+  return { role: p?.role ?? "", actions: defaultSkillPermissions(p?.role ?? "", p?.is_owner) };
+});
 const client = { skillUsage: vi.fn(), skillUsageFeedback: vi.fn() };
 
 vi.mock("@/lib/auth/principal", () => ({
   getPrincipal: () => getPrincipal(),
   apiClientForRequest: async (opts: { profile?: string } = {}) => {
     boundProfiles.push(opts.profile);
-    return client;
+    return { ...client, mySkillPermissions: () => mySkillPermissions() };
   },
 }));
 
@@ -53,6 +62,7 @@ describe("Skill usage BFF routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     boundProfiles.length = 0;
+    permissionProfiles.length = 0;
   });
 
   it.each(CALLS)("%s: 401 when signed out", async (_label, call) => {
