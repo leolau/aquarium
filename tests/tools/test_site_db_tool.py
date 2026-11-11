@@ -108,3 +108,140 @@ def test_registered_service_gated():
     assert resolve_toolset("site_db") == ["site_db"]
     assert "site_db" in _HERMES_CORE_TOOLS
     assert "site_db" in resolve_toolset("hermes-api-server")
+
+
+@pytest.fixture
+def study(monkeypatch):
+    seen = {}
+
+    async def explore_site(site, principal, **kw):
+        seen["explore"] = (site.slug, principal.user_id, kw)
+        return {"login": "site-login/shop", "pages": []}
+
+    async def preview_recipe(site, principal, **kw):
+        seen["preview"] = (site.slug, principal.user_id, kw)
+        return {"ok": True, "entities": {}}
+
+    monkeypatch.setattr(ss, "explore_site", explore_site)
+    monkeypatch.setattr(ss, "preview_recipe", preview_recipe)
+    return seen
+
+
+def test_explore_and_preview_need_site_admin(fake_registry, study):
+    for action in ("explore", "preview"):
+        out = call("reader", "member", action=action, site="shop", goto=["/"])
+        assert out["success"] is False and "not manage" in out["error"]
+        assert call("bob", "member", action=action, site="shop")["success"] is False
+    assert study == {}
+
+
+def test_owner_explores_and_previews_in_process(fake_registry, study):
+    out = call("alice", "member", action="explore", site="shop", recipe={"login": {}}, goto=["/a"],
+               probes=[{"name": "p", "steps": []}])
+    assert out["success"] and out["site"] == "shop"
+    assert study["explore"] == ("shop", "alice", {"recipe": {"login": {}}, "probes": [{"name": "p", "steps": []}],
+                                                  "goto": ["/a"]})
+    out = call("alice", "member", action="preview", site="shop", entities=["orders"], mode="incremental",
+               cursors={"orders": "2026-01-01"}, max_rows=5, sample=1)
+    assert out["success"] and out["ok"] is True
+    _, _, kw = study["preview"]
+    assert kw == {"recipe": None, "entities": ["orders"], "mode": "incremental",
+                  "cursors": {"orders": "2026-01-01"}, "row_limit": 5, "sample": 1}
+    assert fake_registry == []
+
+
+def _with_runner(monkeypatch, browse=None, run=None):
+    import hermes_cli.site_recipe_runner as srr
+
+    if browse:
+        monkeypatch.setattr(srr, "browse", browse)
+    if run:
+        monkeypatch.setattr(srr, "run_recipe", run)
+    return srr
+
+
+def test_study_without_saved_login_refuses_before_browsing(monkeypatch, tmp_path):
+    def browse(*a, **k):
+        raise AssertionError("must not open a browser")
+
+    _with_runner(monkeypatch, browse=browse)
+
+    async def no_login(site):
+        return None
+
+    monkeypatch.setattr(ss, "load_login", no_login)
+    from hermes_cli.access import Principal
+
+    with pytest.raises(ss.SiteError, match="no saved login") as err:
+        asyncio.run(ss.explore_site(SITE, Principal(user_id="alice", display="alice", role="member"),
+                                    recipe={"login": {"url": "/"}}, goto=["/"]))
+    assert err.value.status == 409
+
+
+def test_study_recipe_stays_on_the_sites_origin():
+    with pytest.raises(ss.SiteError, match="own address"):
+        ss.study_recipe(SITE, {"base_url": "https://evil.example", "login": {}})
+    assert ss.study_recipe(SITE, {})["base_url"] == SITE.base_url
+    assert ss.study_recipe(SITE, '{"base_url": "https://SHOP.example/x"}')["site"] == "shop"
+
+
+def test_one_study_at_a_time(monkeypatch):
+    import threading
+
+    started, release = threading.Event(), threading.Event()
+
+    def browse(recipe, probes, credential, **kw):
+        started.set()
+        release.wait(5)
+        yield "home", {"url": "/", "title": "t"}
+
+    _with_runner(monkeypatch, browse=browse)
+
+    async def saved(site):
+        return {"username": "u", "password": "pw-secret"}
+
+    monkeypatch.setattr(ss, "load_login", saved)
+    from hermes_cli.access import Principal
+
+    me = Principal(user_id="alice", display="alice", role="member")
+
+    async def go():
+        first = asyncio.create_task(ss.explore_site(SITE, me, recipe={"login": {}}, goto=["/"]))
+        await asyncio.to_thread(started.wait, 5)
+        with pytest.raises(ss.SiteError, match="another site explore/preview") as err:
+            await ss.explore_site(SITE, me, recipe={"login": {}}, goto=["/"])
+        assert err.value.status == 409
+        release.set()
+        return await first
+
+    out = asyncio.run(go())
+    assert [p["name"] for p in out["pages"]] == ["home"]
+    out = asyncio.run(ss.explore_site(SITE, me, recipe={"login": {}}, goto=["/"]))  # lock released
+    assert out["pages"]
+
+
+def test_explore_output_is_capped_and_masks_the_password(monkeypatch):
+    def browse(recipe, probes, credential, **kw):
+        for probe in probes:
+            yield probe["name"], {"url": "/", "title": "pw-secret", "text": "x" * 50_000,
+                                  "links": [{"text": f"l{i}", "href": "/"} for i in range(500)]}
+
+    _with_runner(monkeypatch, browse=browse)
+
+    async def saved(site):
+        return {"username": "u", "password": "pw-secret"}
+
+    monkeypatch.setattr(ss, "load_login", saved)
+    from hermes_cli.access import Principal
+
+    out = asyncio.run(ss.explore_site(SITE, Principal(user_id="alice", display="alice", role="member"),
+                                      recipe={"login": {"url": "/"}}, goto=[f"/p{i}" for i in range(20)]))
+    text = json.dumps(out)
+    assert "pw-secret" not in text
+    assert len(text) < ss.STUDY_MAX_CHARS * 1.5
+    assert len(out["pages"]) == 20 and "inventory_omitted" in out["pages"][-1]
+    first = out["pages"][0]["inventory"]
+    assert len(first["links"]) == 60 and first["links_omitted"] == 440 and len(first["text"]) == 1500
+    with pytest.raises(ss.SiteError, match="at most"):
+        asyncio.run(ss.explore_site(SITE, Principal(user_id="alice", display="alice", role="member"),
+                                    goto=[f"/p{i}" for i in range(21)]))

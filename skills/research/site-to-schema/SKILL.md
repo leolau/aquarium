@@ -24,8 +24,8 @@ the recipe must be exact.
 **Read-only on the source site, always.** Allowed: log in, navigate, open
 menus, search, filter, choose dates, page through results. Never: save,
 add/new/create, edit/update, delete/remove, approve/reject, upload/import,
-logout, change password. The runner and `scripts/explore_site.py` refuse
-such targets and abort such requests, but you must not try them in the
+logout, change password. The runner (behind `site_db` `explore` /
+`preview` and the scripts) refuses such targets and abort such requests, but you must not try them in the
 browser either.
 
 ## When to Use
@@ -37,20 +37,28 @@ browser either.
 ## Prerequisites
 
 - The user is allowed to access the site and wants it copied. Ask if unsure.
-- The login is saved in the credential store (see `auth-web-crawler`,
-  "How the user provides credentials"): `web-login/<host>`. Never put the
-  password on a command line, in a file, in chat or in memory.
-- Playwright + Chromium for the scripts (`python -m playwright install
-  chromium` if `explore_site.py` says no Chromium).
-- The `site_db` tool (sites feature). If it is not available, stop after
-  step 6 and give the user the two files.
+- The `site_db` tool (sites feature). It runs the logged-in study steps
+  (`explore`, `preview`) on the server, where the saved login is; your
+  terminal may not be able to read the credential store at all. If the
+  tool is not available, see "Without the site_db tool" below.
+- The site exists in `site_db` with its login saved: `site_db` action
+  `list_sites` → the site's `login_saved` is `true`. Check that, not
+  `list_secrets` (that lists only the person's own `secret` entries,
+  never site logins). No site yet → `create_site` (site admins). Login
+  not saved → `explore` falls back to the person's own saved
+  `web-login/<host>` login for the same host; if it says "no saved
+  login", ask the site's owner to save it on the site's page in Sites. Never ask for the password in chat, never put it on a command
+  line, in a file or in memory.
+- Playwright + Chromium on the server (`explore` says "browser engine not
+  installed" otherwise: stop and tell the user).
 
 ## Files
 
 | File | What |
 |------|------|
-| `scripts/explore_site.py` | log in with the stored credential and inventory pages after read-only steps: buttons (incl. `onclick`), forms + fields, tables (headers, row count, sample rows), DataTables, same-origin JSON requests, pagination, text; dangerous controls flagged `forbidden` |
-| `scripts/preview_recipe.py` | dry-run `recipe.json` (no DB writes): counts, sample rows, duplicate keys, failures |
+| `site_db` `explore` | log in with the site's saved login and inventory pages after read-only steps: buttons (incl. `onclick`), forms + fields, tables (headers, row count, sample rows), DataTables, same-origin JSON requests, pagination, text; dangerous controls flagged `forbidden` |
+| `site_db` `preview` | dry-run a recipe (no DB writes, `max_rows` per entity, default 50): counts, sample rows, duplicate keys, failures |
+| `scripts/explore_site.py`, `scripts/preview_recipe.py` | the same two from a shell, for development boxes where the terminal can read the credential store; on a hardened box they stop with "use site_db explore / preview" |
 | `scripts/check_design.py` | check `design.json` + `recipe.json` shape and that they agree |
 | `references/recipe-format.md` | every recipe op and option |
 | `references/example-design.json`, `references/example-recipe.json` | a complete worked example |
@@ -62,7 +70,7 @@ Work in `~/site-study/<slug>/` (`design.json`, `recipe.json`,
 
 1. **Scope.** Restate the site, the slug (`lower_snake_case`, e.g.
    `hsdos`), what the user wants kept, and that it stays read-only. Make
-   sure the login is saved; note its store name.
+   sure the site is in `site_db list_sites` with `login_saved: true`.
 2. **Public pages.** `web_extract` the home/login page and any public
    pages. Note the login form (field names, submit button, the page you
    land on, an error text).
@@ -70,22 +78,23 @@ Work in `~/site-study/<slug>/` (`design.json`, `recipe.json`,
    `base_url` and `login` (url, `username_field`, `password_field`,
    `submit`, `success` = something only visible when logged in, e.g.
    `{"selector": "a[href*=logout]"}` or `{"text": "Welcome"}`,
-   `failure_text`). Prove it:
-   `python scripts/explore_site.py --recipe recipe.json --credential web-login/<host> --goto /`.
-   `login: FAILED` → fix selectors once; ask the user before more tries
-   (accounts lock).
+   `failure_text`). Prove it: `site_db` action `explore`, `site` = the
+   slug, `recipe` = the draft, `goto` = `["/"]`. `login failed` → fix
+   selectors once; ask the user before more tries (accounts lock).
 4. **Explore — buttons and forms, not only links.** Many sites hide data
    behind JavaScript menu buttons, search forms and date pickers; a link
    crawl finds almost nothing. Loop:
-   - Run `explore_site.py` on each menu page (`--goto`) and read the
-     inventory: buttons, forms, tables, pagination.
+   - `explore` each menu page (`goto`, a few per call) and read the
+     inventory: `summary`, then buttons, forms, tables, pagination.
    - For each safe button / sub-menu (`forbidden: false`), add a probe that
      clicks it (`{"op": "click", "text": "SKU Table"}`), and for each
      search/report form a probe that fills a wide date range
      (`{{date-3650}}`..`{{today}}`) or leaves filters empty and submits the
-     search button. Run with `--probes probes.json --out inventory/`.
+     search button. Pass them as `probes`
+     (`[{"name": ..., "steps": [...]}]`, up to 20 per call) and keep
+     what you learn in `probes.json` / `inventory/`.
    - The browser tools (`browser_snapshot`, `browser_click`) help to see
-     a confusing page, but log in through the scripts so the password is
+     a confusing page, but log in through `explore` so the password is
      never typed by you; if you must use the browser, follow
      `auth-web-crawler` step 4 and never click a `forbidden` control.
    - **Look for the data behind the table.** The inventory also lists
@@ -128,8 +137,10 @@ Work in `~/site-study/<slug>/` (`design.json`, `recipe.json`,
      changed row (set `cursor` to that column, and `full_every`, e.g.
      `P7D`, so removals are still detected); otherwise `full`. When you
      cannot tell (e.g. the date filters on creation but rows change
-     later), put the question in the entity's `question` field and **ask
-     the user** before proposing.
+     later), use the safe choice (`full`, or `incremental` with a
+     `full_every` re-check) and put the question in the entity's
+     `question` field. Ask the user before proposing only when the
+     shortcut would cut a lot of load on the site.
 6. **Write the recipe** (see `references/recipe-format.md`): one entity
    per design entity with the exact steps that reach the data —
    `goto`, `click` the menu button, `fill` the dates (`{{cursor}}` with a
@@ -146,9 +157,10 @@ Work in `~/site-study/<slug>/` (`design.json`, `recipe.json`,
    Then:
    - `python scripts/check_design.py design.json recipe.json` → fix every
      problem;
-   - `python scripts/preview_recipe.py --recipe recipe.json --credential web-login/<host> --sample 3`
-     → every entity `ok`, counts plausible, no duplicate keys, no
-     `blocked:` lines. Fix and repeat.
+   - `site_db` action `preview` (`site`, `recipe`, optional `entities`,
+     `mode`, `max_rows`) → every entity `ok`, counts plausible, no
+     `duplicate_keys`, no `blocked_requests`. `capped: true` only means
+     the preview stopped at `max_rows`. Fix and repeat.
 7. **Propose.** Call `site_db` with action `propose_design`, passing the
    design and recipe JSON objects. Tell the user, briefly: entities, kind
    + reason, key, refresh mode, row counts from the preview, anything
@@ -161,6 +173,28 @@ Work in `~/site-study/<slug>/` (`design.json`, `recipe.json`,
    `full`, then `run_status` until it finishes. Report per entity: rows
    inserted / updated, fixed versions, failures, and how refresh will
    continue (schedule or "Refresh now").
+
+## Without the site_db tool
+
+Only on a development box where your terminal can read the credential
+store (`web-login/<host>`, see `auth-web-crawler`):
+`python scripts/explore_site.py --recipe recipe.json --credential web-login/<host> --goto / [--probes probes.json --out inventory/]`
+and `python scripts/preview_recipe.py --recipe recipe.json --credential web-login/<host> --sample 3`.
+Stop after step 6 and give the user the two files. If a script says the
+credential store is not reachable, that is the hardened setup: use
+`site_db`, or stop and report (below).
+
+## Stop and report
+
+- **Study from scratch.** Do not reuse a design, recipe or probe files
+  from an earlier study unless the user points you to them.
+- **When a prerequisite fails, stop and tell the user** what is missing
+  and what they can do: the login can't be read from the credential
+  store, the `site_db` tool refuses, Playwright/Chromium is missing, or
+  the work folder isn't writable. Do not work around it: no `sudo`, no
+  reading environment variables, other people's secrets, database
+  settings or other services' files, no hunting for credentials on the
+  host.
 
 ## Pitfalls
 
@@ -183,6 +217,6 @@ Work in `~/site-study/<slug>/` (`design.json`, `recipe.json`,
 ## Verification
 
 - `check_design.py` prints `ok: ready to propose`.
-- `preview_recipe.py` exits 0 with every entity `ok` and plausible counts.
+- `site_db` `preview` returns `ok: true` with every entity `ok` and plausible counts.
 - `site_db` `run_status` of the first load is `ok` (or `partial` with the
   failed entities explained to the user).

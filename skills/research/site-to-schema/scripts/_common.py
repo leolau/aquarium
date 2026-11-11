@@ -22,6 +22,12 @@ def load_json(path: str) -> Any:
         return json.load(fh)
 
 
+_UNREACHABLE = (
+    "the credential store is not reachable from this terminal; use the site_db tool instead: "
+    "action explore / preview (site=<slug>), which logs in with the site's saved login"
+)
+
+
 def load_credential(entry: str) -> Any:
     """The ``provider/name`` entry from the box's credential store (kind ``password``).
 
@@ -31,19 +37,25 @@ def load_credential(entry: str) -> Any:
     provider, _, name = entry.partition("/")
     if not provider or not name:
         raise SystemExit("--credential expects provider/name, e.g. web-login/hsdos.eshf-it.com")
-    repo_root()
-    from hermes_cli.credential_store import default_credential_store, resolve_owner_principal
+    if os.environ.get("HERMES_TERMINAL_DB_CREDENTIALS_HIDDEN") == "1":
+        raise SystemExit(_UNREACHABLE + " (this terminal does not get the database credentials)")
+    try:
+        repo_root()
+        from hermes_cli.credential_store import default_credential_store, resolve_owner_principal
 
-    async def _load() -> Any:
-        store = default_credential_store()
-        principal = await resolve_owner_principal()
-        return await store.get(principal, provider, name)
+        async def _load() -> Any:
+            store = default_credential_store()
+            principal = await resolve_owner_principal()
+            return await store.get(principal, provider, name)
 
-    credential = asyncio.run(_load())
+        credential = asyncio.run(_load())
+    except Exception as exc:  # noqa: BLE001 - any failure here means "not from this terminal"
+        raise SystemExit(f"{_UNREACHABLE} ({type(exc).__name__}: {str(exc)[:200]})") from None
     if credential is None:
         raise SystemExit(
-            f"credential {entry} not found; save it with "
-            "skills/research/auth-web-crawler/scripts/save_login.py"
+            f"credential {entry} not found. Save it with "
+            "skills/research/auth-web-crawler/scripts/save_login.py, or use the site_db tool "
+            "(action explore / preview), which logs in with the site's saved login"
         )
     if credential.kind != "password":
         raise SystemExit(f"credential {entry} is kind {credential.kind!r}, not 'password'")
