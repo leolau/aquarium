@@ -25,6 +25,11 @@ from typing import Any, Dict, Optional
 
 OWNERS_FILE = "bridge-owners.json"
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
+UNIT_DIR = Path("/etc/systemd/system")
+UNIT_ENV_DIR = Path("/etc/aquarium")
+_UNIT_PREFIX = "hermes-wa-bridge-"
+_PORT_ARG_RE = re.compile(r"--port[ =]+(\d+)")
+_PORT_ENV_RE = re.compile(r"^\s*WA_BRIDGE_PORT\s*=\s*(\d+)\s*$", re.M)
 _lock = threading.Lock()
 
 
@@ -64,6 +69,61 @@ def recorded_port(name: str) -> Optional[int]:
     rec = load_owners().get(name) or {}
     port = rec.get("port")
     return port if isinstance(port, int) and port > 0 else None
+
+
+def _read(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+def _env_bridge_ports() -> Dict[str, int]:
+    out: Dict[str, int] = {}
+    for part in os.getenv("WHATSAPP_BRIDGES", "").split(","):
+        name, sep, port = part.strip().partition(":")
+        if sep and name.strip() and port.strip().isdigit():
+            out[name.strip()] = int(port.strip())
+    return out
+
+
+def _installed_bridge_ports() -> Dict[str, int]:
+    """Ports of bridges installed on this box: ``--port N`` in a hand-written
+    ``hermes-wa-bridge-<name>.service``, or ``WA_BRIDGE_PORT`` in the
+    ``wa-bridge-<name>.env`` file a templated instance reads."""
+    out: Dict[str, int] = {}
+    try:
+        units = sorted(UNIT_DIR.glob(f"{_UNIT_PREFIX}*.service"))
+        env_files = sorted(UNIT_ENV_DIR.glob("wa-bridge-*.env"))
+    except OSError:
+        return out
+    for unit in units:
+        name = unit.name[len(_UNIT_PREFIX):-len(".service")]
+        match = _PORT_ARG_RE.search(_read(unit))
+        if _NAME_RE.match(name) and match:
+            out[name] = int(match.group(1))
+    for env_file in env_files:
+        name = env_file.name[len("wa-bridge-"):-len(".env")]
+        match = _PORT_ENV_RE.search(_read(env_file))
+        if _NAME_RE.match(name) and match:
+            out.setdefault(name, int(match.group(1)))
+    return out
+
+
+def bridge_ports() -> Dict[str, int]:
+    """Every bridge this install can send from, ``{name: port}``.
+
+    ``WHATSAPP_BRIDGES`` entries come first, in order, so the default bridge
+    stays its first entry; bridges added in Settings and bridges installed as
+    units are added after it, so none is unreachable by name."""
+    ports = _env_bridge_ports()
+    for name in load_owners():
+        port = recorded_port(name)
+        if port:
+            ports.setdefault(name, port)
+    for name, port in _installed_bridge_ports().items():
+        ports.setdefault(name, port)
+    return ports
 
 
 def record_owner(name: str, user_id: str, *, port: Optional[int] = None) -> None:

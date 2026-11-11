@@ -158,7 +158,7 @@ SEND_MESSAGE_SCHEMA = {
             },
             "target": {
                 "type": "string",
-                "description": "Delivery target. Format: 'platform' (uses home channel), 'platform:#channel-name', 'platform:chat_id', or 'platform:chat_id:thread_id' for Telegram topics and Discord threads. Examples: 'telegram', 'telegram:-1001234567890:17585', 'discord:999888777:555444333', 'discord:#bot-home', 'slack:#engineering', 'signal:+155****4567', 'matrix:!roomid:server.org', 'matrix:@user:server.org', 'ntfy:alerts-channel' (explicit ntfy topic), 'yuanbao:direct:<account_id>' (DM), 'yuanbao:group:<group_code>' (group chat). WhatsApp: 'whatsapp:<jid-or-+E164>' uses the default bridge; when several bridges are configured (WHATSAPP_BRIDGES), prefix with the bridge name — 'whatsapp:connectar:+852...' sends from that account."
+                "description": "Delivery target. Format: 'platform' (uses home channel), 'platform:#channel-name', 'platform:chat_id', or 'platform:chat_id:thread_id' for Telegram topics and Discord threads. Examples: 'telegram', 'telegram:-1001234567890:17585', 'discord:999888777:555444333', 'discord:#bot-home', 'slack:#engineering', 'signal:+155****4567', 'matrix:!roomid:server.org', 'matrix:@user:server.org', 'ntfy:alerts-channel' (explicit ntfy topic), 'yuanbao:direct:<account_id>' (DM), 'yuanbao:group:<group_code>' (group chat). WhatsApp: 'whatsapp:<jid-or-+E164>' uses the default bridge; when several bridges are installed, prefix with the bridge name — 'whatsapp:connectar:+852...' sends from that account."
             },
             "message": {
                 "type": "string",
@@ -296,14 +296,15 @@ def _handle_react(args, remove=False):
 
 
 def _whatsapp_bridge_map() -> dict:
-    """Parse ``WHATSAPP_BRIDGES`` (e.g. ``personal:3000,connectar:3001``) into
-    a ``{name: port}`` map for deployments running more than one bridge."""
-    out = {}
-    for part in os.getenv("WHATSAPP_BRIDGES", "").split(","):
-        name, sep, port = part.strip().partition(":")
-        if sep and name.strip() and port.strip().isdigit():
-            out[name.strip()] = int(port.strip())
-    return out
+    """``{name: port}`` for every WhatsApp bridge on this install:
+    ``WHATSAPP_BRIDGES`` (e.g. ``personal:3000,connectar:3001``) first, then
+    bridges added in Settings or installed as ``hermes-wa-bridge-*`` units."""
+    try:
+        from hermes_cli.wa_bridge_owners import bridge_ports
+
+        return bridge_ports()
+    except Exception:
+        return {}
 
 
 def _whatsapp_bridge_send_denied(name, pconfig) -> str | None:
