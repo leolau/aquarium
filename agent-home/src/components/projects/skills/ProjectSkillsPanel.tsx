@@ -28,6 +28,7 @@ const FILTERS: readonly Filter[] = ["all", "worth", "created"];
 
 export interface ProjectSkillsPanelProps {
   slug: string;
+  projectName?: string;
   /** The project's host profile: new skills are drafted here. */
   hostProfile: string;
   archived?: boolean;
@@ -54,6 +55,7 @@ function sectionTitle(text: string) {
 
 export function ProjectSkillsPanel({
   slug,
+  projectName,
   hostProfile,
   archived = false,
   onOpenSetup,
@@ -278,7 +280,7 @@ export function ProjectSkillsPanel({
           <SkillUsagePanel
             name={usesOf.name}
             profile={usesOf.profile}
-            project={slug}
+            project={{ slug, name: projectName }}
             tabHref={(tab) => skillHref(usesOf.name, usesOf.profile, "", `tab=${tab}`)}
           />
         </Sheet>

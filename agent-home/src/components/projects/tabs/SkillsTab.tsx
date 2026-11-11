@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 
-import { CreateSkillSheet, ImproveSkillSheet } from "@/components/projects/skills/AiSheets";
+import { CreateSkillSheet } from "@/components/projects/skills/AiSheets";
+import { ImproveSkillSheet } from "@/components/projects/skills/ImproveSkillSheet";
 import type { ProjectSkill } from "@/components/projects/skills/model";
 import { ProjectSkillsPanel } from "@/components/projects/skills/ProjectSkillsPanel";
 import type { ProjectTabProps } from "@/components/projects/tabs/types";
@@ -15,6 +16,7 @@ export function SkillsTab({ project, onNavigate }: ProjectTabProps) {
     <div data-component="SkillsTab">
       <ProjectSkillsPanel
         slug={project.slug}
+        projectName={project.name}
         hostProfile={hostProfile}
         archived={project.archived}
         onOpenSetup={() => onNavigate("settings")}
@@ -22,7 +24,11 @@ export function SkillsTab({ project, onNavigate }: ProjectTabProps) {
         onCreate={setCreating}
       />
       {improving ? (
-        <ImproveSkillSheet slug={project.slug} skill={improving} onClose={() => setImproving(null)} />
+        <ImproveSkillSheet
+          project={{ slug: project.slug, name: project.name }}
+          skill={{ name: improving.name, profile: improving.profile }}
+          onClose={() => setImproving(null)}
+        />
       ) : null}
       {creating ? (
         <CreateSkillSheet

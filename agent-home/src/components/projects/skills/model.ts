@@ -112,14 +112,6 @@ export function canLabIn(view: ProjectSkillsView, profile: string): boolean {
   return view.profiles.some((p) => p.profile === profile && p.can_lab && !p.hidden);
 }
 
-/** "/skills/<name>?profile=<p>&tab=improve&project=<slug>" — the Skills Lab improve tab. */
-export function improveHref(name: string, profile: string, slug: string): string {
-  const q = new URLSearchParams({ tab: "improve" });
-  if (profile && profile !== "default") q.set("profile", profile);
-  q.set("project", slug);
-  return `/skills/${encodeURIComponent(name)}?${q.toString()}`;
-}
-
 export function percentLabel(rate: number | null): string {
   return rate === null ? "—" : `${Math.round(rate * 100)}%`;
 }
