@@ -282,6 +282,12 @@ youtube = [
   # at first invocation with ModuleNotFoundError (issue #22243).
   "youtube-transcript-api==1.2.4",
 ]
+# Site sources (hermes_cli/site_recipe_runner.py): the backend refresh drives a
+# headless Chromium. Kept on the same minor as the node `playwright` in
+# package-lock.json (1.62.x) so both use one browser build in ~/.cache/ms-playwright.
+# Opt-in, so not in [all] (lazy-installable as `sites.playwright`); the Aquarium
+# installers (install-aquarium.sh, deploy/aquarium.py, deploy-hermes.sh) add it.
+sites = ["playwright==1.62.0"]
 # `hermes dashboard` (localhost SPA + API).  Not in core to keep the default install lean.
 # starlette==1.0.1 pinned for CVE-2026-48710 (BadHost) — fastapi pulls Starlette
 # transitively and pre-1.0.1 is the vulnerable range. See the mcp extra above.

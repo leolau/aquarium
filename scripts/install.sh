@@ -2241,6 +2241,26 @@ install_node_deps() {
     restore_dirty_lockfiles "$INSTALL_DIR"
 }
 
+# Site-source refreshes (hermes_cli/site_recipe_runner.py) drive Chromium through
+# the Python playwright package (the `sites` extra, when installed). Its browser
+# build matches the node playwright's above (same minor), so this is a no-op when
+# that already ran; it covers boxes without Node.js. System libraries come from
+# the --with-deps step above.
+install_python_browser() {
+    local py="$INSTALL_DIR/venv/bin/python"
+    if [ "$SKIP_BROWSER" = true ] || [ -n "${DETECTED_BROWSER_EXECUTABLE:-}" ]; then
+        return 0
+    fi
+    if [ ! -x "$py" ] || ! "$py" -c 'import playwright' 2>/dev/null; then
+        return 0
+    fi
+    log_info "Installing Chromium for site refreshes (python -m playwright install chromium)..."
+    run_with_timeout 600 "$py" -m playwright install chromium >/dev/null || {
+        log_warn "Chromium install failed — site refreshes will report \"browser engine not installed\"."
+        log_warn "Try running manually: $py -m playwright install chromium"
+    }
+}
+
 run_setup_wizard() {
     if [ "$RUN_SETUP" = false ]; then
         log_info "Skipping setup wizard (--skip-setup)"
@@ -2988,6 +3008,7 @@ run_stage_body() {
             require_install_dir
             check_node
             install_node_deps
+            install_python_browser
             ;;
         path)
             detect_os
@@ -3101,6 +3122,7 @@ main() {
     setup_venv
     install_deps
     install_node_deps
+    install_python_browser
     setup_path
     copy_config_templates
     run_setup_wizard

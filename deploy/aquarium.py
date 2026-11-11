@@ -101,7 +101,7 @@ LABEL_RE = re.compile(r"^(?:v\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]{0,40})?|g
 TARBALL = "aquarium-{version}-linux-x86_64.tar.gz"
 
 # Must match install-aquarium.sh "Python dependencies" (a test keeps them equal).
-PY_EXTRAS = "all,dev,messaging,app-push,documents,mssql,winrm,edge-tts,bedrock"
+PY_EXTRAS = "all,dev,messaging,app-push,documents,mssql,winrm,edge-tts,bedrock,sites"
 PY_PINS = [
     "mcp>=1.26,<2", "websockets>=15,<16", "google-genai==2.13.0", "pymupdf==1.28.2",
     "pymysql==1.2.0", "pytesseract==0.3.13", "tabulate==0.10.0", "tornado==6.5.7", "numpy==2.4.3",
@@ -721,6 +721,32 @@ def build_release(cfg: Dict[str, str], rel: Path) -> None:
         cmd = ["npm", "ci"] if (bridge / "package-lock.json").exists() else ["npm", "install"]
         run(cmd + ["--no-audit", "--no-fund"], env=env, cwd=bridge, as_service=user, timeout=1800)
     seal_release(cfg, rel)
+    install_site_browser(cfg, rel)
+
+
+def install_site_browser(cfg: Dict[str, str], rel: Path) -> None:
+    """Chromium for site-source refreshes in the service user's ~/.cache/ms-playwright.
+
+    Runs as the service user (release code never runs as root here); the system
+    libraries come from install-aquarium.sh (deploy/install-site-browser). A no-op
+    when that browser build is already there.
+    """
+    python = rel / ".venv/bin/python"
+    if not python.exists():
+        return
+    user = cfg["SERVICE_USER"]
+    try:
+        home = pwd.getpwnam(user).pw_dir
+    except KeyError:
+        return
+    env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": home}
+    step("Site browser (Chromium)")
+    proc = run([str(python), "-I", "-m", "playwright", "install", "chromium"], check=False,
+               env=env, cwd=rel, as_service=user, timeout=900)
+    if proc.returncode != 0:
+        say("  warning: Chromium is not installed; site refreshes will fail with "
+            "\"browser engine not installed\".")
+        say(f"  Fix: sudo bash {AQ}/current/deploy/install-site-browser {AQ}/current/.venv/bin/python {user}")
 
 
 def seal_release(cfg: Dict[str, str], rel: Path) -> None:

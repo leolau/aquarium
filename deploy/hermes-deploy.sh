@@ -200,14 +200,17 @@ fi
 
 echo "== reinstalling package =="
 # Optional drivers whose tools are service-gated on the import (SQL Server,
-# WinRM). A subset of the installer's extras (install-aquarium.sh); the rest
-# are test/dev or channel extras this box does not run.
+# WinRM) and the site-source browser (playwright). A subset of the installer's
+# extras (install-aquarium.sh); the rest are test/dev or channel extras this box
+# does not run.
 # install-aquarium.sh builds the venv with `uv venv`, which has no pip.
 if ./.venv/bin/python -I -m pip --version >/dev/null 2>&1; then
-  ./.venv/bin/python -I -m pip install -q -e ".[mssql,winrm]"
+  ./.venv/bin/python -I -m pip install -q -e ".[mssql,winrm,sites]"
 else
-  uv pip install -q --python ./.venv/bin/python -e ".[mssql,winrm]"
+  uv pip install -q --python ./.venv/bin/python -e ".[mssql,winrm,sites]"
 fi
+echo "== site browser (Chromium for hermes) =="
+bash deploy/install-site-browser "$REPO/.venv/bin/python" hermes
 # The services run as hermes and can't write __pycache__ in this root-owned
 # tree, so compile here; otherwise every start recompiles in memory.
 nice -n 15 ./.venv/bin/python -I -m compileall -q -j 0 \
