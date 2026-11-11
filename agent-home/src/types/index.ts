@@ -603,6 +603,27 @@ export interface ChatApprovalRequest {
   choices: string[];
 }
 
+/**
+ * A pending secret request surfaced mid-turn on the chat stream (FG-37
+ * `secret.request`). The agent's `request_secret` tool blocks the turn until
+ * the person stores the value via `POST /api/chat/secret` or declines. The
+ * event never carries a value; the agent only ever learns `name`.
+ */
+export interface ChatSecretRequest {
+  requestId: string;
+  messageId?: string;
+  /** Slug the secret is stored under (`provider="secret"`). */
+  name: string;
+  label: string;
+  purpose: string;
+  /** `secret` = one value; `password` = username + password. */
+  kind: "secret" | "password";
+  /** Prefill for `kind: "password"`. */
+  username: string | null;
+  /** Epoch seconds, or null when the server sent none. */
+  expiresAt: number | null;
+}
+
 /** The result of creating a conversation via `POST /api/sessions`. */
 export interface SessionCreateResponse {
   session_id: string;

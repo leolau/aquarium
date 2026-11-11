@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } f
 import Link from "next/link";
 
 import { ApprovalModal } from "@/components/chat/ApprovalModal";
+import { SecretRequestPrompt } from "@/components/chat/SecretRequestPrompt";
 import { Composer } from "@/components/chat/Composer";
 import { LiveActivity } from "@/components/chat/LiveActivity";
 import { MessageBubble } from "@/components/chat/MessageBubble";
@@ -47,6 +48,7 @@ import {
 import { usePersistentState } from "@/lib/use-persistent-state";
 import type {
   ChatApprovalRequest,
+  ChatSecretRequest,
   ChatAttachment,
   ChatInputMode,
   ChatMessage,
@@ -111,6 +113,7 @@ export function LeadChatHost({
   const [streamText, setStreamText] = useState("");
   const [approval, setApproval] = useState<ChatApprovalRequest | null>(null);
   const [resolvingApproval, setResolvingApproval] = useState(false);
+  const [secretRequest, setSecretRequest] = useState<ChatSecretRequest | null>(null);
   /** Inline note after an approval decision or a Stop, like the main chat. */
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -195,7 +198,7 @@ export function LeadChatHost({
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages, streamText, turn, approval, note, error, open]);
+  }, [messages, streamText, turn, approval, secretRequest, note, error, open]);
 
   // Wall clock, ticked only while a turn is in flight, so the elapsed counter,
   // long-task hint and stall warning advance.
@@ -316,6 +319,7 @@ export function LeadChatHost({
     setSending(false);
     setTurn(null);
     setApproval(null);
+    setSecretRequest(null);
     abortRef.current = null;
   }
 
@@ -367,6 +371,10 @@ export function LeadChatHost({
         setApproval(req);
         touch(() => ({}));
       },
+      onSecretRequest: (req) => {
+        setSecretRequest(req);
+        touch(() => ({}));
+      },
       onCompleted: (content) => {
         // Deliberately does NOT re-pin to the id the turn reports: a compacted
         // conversation answers under a continuation id, and adopting it here
@@ -377,6 +385,7 @@ export function LeadChatHost({
         }
         setStreamText("");
         setApproval(null);
+        setSecretRequest(null);
       },
       onError: (message) => setError(message),
       onInputAccepted: (input) =>
@@ -418,6 +427,7 @@ export function LeadChatHost({
       setTurn({ ...emptyActivity(next.nextRunId), sessionId });
       setStreamText("");
       setApproval(null);
+      setSecretRequest(null);
       setNote(null);
       const controller = new AbortController();
       abortRef.current = controller;
@@ -624,6 +634,7 @@ export function LeadChatHost({
     busy: sending,
     turn,
     approval: approval !== null,
+    secret: secretRequest !== null,
     hasOutput: streamText !== "",
   });
   const tool = runningTool(turn);
@@ -772,6 +783,15 @@ export function LeadChatHost({
       >
         <span aria-hidden>✦</span>
       </button>
+      {secretRequest && !approval ? (
+        <SecretRequestPrompt
+          request={secretRequest}
+          onResolved={(text) => {
+            setSecretRequest(null);
+            setNote(text);
+          }}
+        />
+      ) : null}
       {approval ? (
         <ApprovalModal
           request={approval}
