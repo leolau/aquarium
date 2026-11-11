@@ -711,6 +711,67 @@ signed release, switches to it, restarts the services and runs health checks.
 If the checks fail, it rolls back to the previous release automatically. On a
 release install, `aquarium-update.sh` hands over to `sudo aquarium update`.
 
+## 12.3 Removing Aquarium and installing again {#uninstall}
+
+There are two ways to remove Aquarium:
+
+- `sudo aquarium uninstall` removes the Aquarium software but **keeps the
+  data** (database, hermes homes, settings), unless you add `--purge-data`.
+- `sudo ./uninstall-aquarium.sh` (in the git clone, next to the installer)
+  puts the server back to how it was **before** `install-aquarium.sh` ran, so
+  you can install again from scratch and get a brand-new Aquarium.
+
+```bash
+cd aquarium                               # the clone you installed from
+sudo ./uninstall-aquarium.sh --dry-run    # only show what would be removed
+sudo ./uninstall-aquarium.sh              # show the plan, then type the server name to confirm
+sudo ./install-aquarium.sh                # install again from scratch
+```
+
+The uninstaller first prints everything it will remove and asks you to type
+the server name (as shown by `hostname`). Without a terminal it refuses unless
+you add `--yes`. It removes only what the installer (and the `aquarium`
+tools it installs) created:
+
+- the Aquarium services, timers and slices (`agent-home`, `app-mcp`,
+  `hermes-*`, `aquarium*`) and their settings in `/etc/systemd/system`,
+- the Supabase database containers **and their volumes** (all database data)
+  and the local-app database clusters; other Docker containers stay,
+- the data folder (`/opt/data`: code, hermes homes, `hermes.env`,
+  `aquarium-secrets.env`, Supabase, embedding service, `deploy-hermes.sh`),
+  `/etc/aquarium`, `/etc/hermes-tools`, `/opt/aquarium`, `/var/lib/aquarium-apps`,
+- the root helpers in `/usr/local/sbin` (`aquarium`, `hermes-vpn-helper`,
+  `hermes-security-check`, `hermes-tools-*`, `aquarium-app-*`) and the
+  `hermes-*` / `aquarium-*` files in `/etc/sudoers.d`,
+- the Caddyfile the installer wrote (only if it still proxies to Aquarium;
+  Caddy is then switched off),
+- the `hermes` and `hermes-tools` accounts and their home folders.
+
+It keeps the packages (Docker, Caddy, Node.js, `uv`, ...), the firewall
+rules, the swap file, automatic security updates, and the backups in
+`/var/backups/aquarium`. A folder in `/opt/data` that the installer did not
+create is left in place (the uninstaller tells you which).
+
+**Backup first.** Before removing anything it writes a backup to
+`/var/backups/aquarium-uninstall/<date-time>/` (readable by root only):
+`postgres.dump` (`pg_dump -Fc` of the database, restore with `pg_restore`),
+`postgres-globals.sql` (roles) and `files.tar.gz` (settings, secrets, hermes
+homes and data, without code and models). If the backup fails, nothing is
+removed. Copy this folder off the server if you are going to rebuild it.
+
+| Option | Meaning |
+|---|---|
+| `--yes` | do not ask for the typed confirmation (for scripts) |
+| `--no-backup` | skip the database dump and files tarball |
+| `--backup-dir DIR` | put the backup folder in `DIR` (must be outside what is removed) |
+| `--purge-packages` | also remove Caddy, Node.js, `uv`, the VPN client and OCR packages, and Docker when no other containers use it |
+| `--data-root DIR` | the data folder, if it is not in `/etc/aquarium/aquarium.conf` |
+| `--dry-run` | print the plan and stop |
+| `--list` | print every path, service and account the uninstaller covers |
+
+Running it again is safe: on a half-removed server it removes what is left
+and prints `Nothing to remove` once everything is gone.
+
 # 13. Troubleshooting {#troubleshooting}
 
 ## 13.1 First step: run the doctor
@@ -802,4 +863,5 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:9119/   # 200, 302 or 
 - **Automatic security updates** for Ubuntu are turned on by the installer.
   Reboot the server from time to time when Ubuntu asks for it.
 - **Removing Aquarium:** `sudo aquarium uninstall` (keeps data unless you add
-  `--purge-data`).
+  `--purge-data`), or `sudo ./uninstall-aquarium.sh` to return the server to
+  its state before the install (section 12.3).
