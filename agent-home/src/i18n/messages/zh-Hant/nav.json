@@ -17,6 +17,7 @@
     "activity": { "name": "活動", "hint": "互動記錄" },
     "graph": { "name": "圖譜", "hint": "目標、任務、技能" },
     "capacity": { "name": "容量", "hint": "這部伺服器的剩餘資源" },
+    "sites": { "name": "網站", "hint": "把網站存成資料表" },
     "users": { "name": "用戶", "hint": "名冊及登記" },
     "suggestions": { "name": "建議", "hint": "建議的子目標" },
     "tools": { "name": "工具", "hint": "助理建立的應用程式" },
