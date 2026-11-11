@@ -269,9 +269,9 @@ def check_recipe(recipe: Any) -> Dict[str, Any]:
     if not isinstance(recipe, Mapping):
         raise SiteError("recipe must be an object")
     try:
-        from hermes_cli import site_recipe_runner
+        from hermes_cli import site_recipe_runner  # ty: ignore[unresolved-import]
     except ImportError:
-        site_recipe_runner = None  # type: ignore[assignment]
+        site_recipe_runner = None
     validator = getattr(site_recipe_runner, "validate_recipe", None)
     if callable(validator):
         try:
@@ -1952,7 +1952,7 @@ async def list_runs(site: Site, *, limit: int = 50, db: Optional[SiteDatabase] =
 def _recipe_runner() -> Callable[..., Iterator[Any]]:
     """``site_recipe_runner.run_recipe`` (workstream B), import-guarded."""
     try:
-        from hermes_cli import site_recipe_runner
+        from hermes_cli import site_recipe_runner  # ty: ignore[unresolved-import]
     except ImportError:
         raise SiteError("the site recipe runner is not installed on this box yet", 503) from None
     run_recipe = getattr(site_recipe_runner, "run_recipe", None)
