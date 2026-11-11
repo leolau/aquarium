@@ -296,6 +296,36 @@ def _save_sync(
 # ── Routes ───────────────────────────────────────────────────────────────────
 
 
+async def _require_lab_in(request: Request, profile: Optional[str]) -> None:
+    """``lab`` in the profile the body names.
+
+    The router's ``SKILLS_LAB`` dependency only sees ``?profile=`` (these
+    routes take a raw JSON body), so a body naming another profile is checked
+    here against that profile's principal and Settings → Skills.
+    """
+    from hermes_cli.config import load_config
+    from hermes_cli.route_roles import SKILLS_DENIED, _role_allows
+    from tools import skills_access
+
+    ws = _ws()
+    if not ws._comms_session_subject(request):
+        return
+    try:
+        principal = await ws._chat_principal(request, profile)
+    except ws._CommsNotConfigured:
+        return
+    if _role_allows(principal, "owner"):
+        return
+
+    def _config() -> Dict[str, Any]:
+        with ws._profile_scope(profile):
+            return load_config()
+
+    config = await asyncio.to_thread(_config)
+    if not skills_access.allows(getattr(principal, "role", None), "lab", config):
+        raise HTTPException(status_code=403, detail=SKILLS_DENIED["lab"])
+
+
 def _card_ids(raw: Any) -> List[str]:
     if raw is None:
         return []
@@ -309,6 +339,7 @@ def _card_ids(raw: Any) -> List[str]:
 async def start_create_session(request: Request) -> Dict[str, Any]:
     body = await _json_body(request)
     profile = _clean_profile(body.get("profile"))
+    await _require_lab_in(request, profile)
     slug = _clean_slug(body.get("project"))
     goal = str(body.get("goal") or "").strip()[:_MAX_GOAL_CHARS] or None
     candidate_id = str(body.get("candidate_id") or "").strip() or None
@@ -339,7 +370,9 @@ async def start_create_session(request: Request) -> Dict[str, Any]:
 
 @router.post("/message")
 async def create_message(request: Request) -> Dict[str, Any]:
-    return await run_lab_turn(request, await _json_body(request), kind="create", session_re=_SESSION_ID_RE)
+    body = await _json_body(request)
+    await _require_lab_in(request, _clean_profile(body.get("profile")))
+    return await run_lab_turn(request, body, kind="create", session_re=_SESSION_ID_RE)
 
 
 @router.post("/save")
@@ -351,6 +384,7 @@ async def save_created_skill(request: Request) -> Dict[str, Any]:
 
     body = await _json_body(request)
     profile = _clean_profile(body.get("profile"))
+    await _require_lab_in(request, profile)
     name = str(body.get("name") or "").strip()
     try:
         skill_versions.validate_name(name)

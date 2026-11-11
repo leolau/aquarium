@@ -47,7 +47,7 @@ export function SkillsTab({ project, board, canLead, onNavigate }: ProjectTabPro
           candidate={candidate}
           cards={cards}
           canPreload={canLead && !project.archived}
-          preloaded={(project.skills ?? "").split(",").map((s) => s.trim()).filter(Boolean)}
+          preloaded={(project.skills ?? "").split(",").map((s) => s.trim().replace(/^\/+/, "")).filter(Boolean)}
           onClose={() => setCreating(null)}
           onCreated={() => void reload()}
         />
