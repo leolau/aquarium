@@ -429,8 +429,10 @@ from hermes_cli.skills_versions_api import router as _skills_versions_router  # 
 from hermes_cli.skills_usage_api import router as _skills_usage_router  # noqa: E402
 from hermes_cli.aquarium_api import router as _aquarium_router  # noqa: E402
 from hermes_cli.model_timeouts_api import router as _model_timeouts_router  # noqa: E402
+from hermes_cli.secret_links_api import router as _secret_links_router  # noqa: E402
 
 app.include_router(_memory_oauth_router)
+app.include_router(_secret_links_router)
 app.include_router(_memory_explorer_router)
 app.include_router(_files_router)
 app.include_router(_incomings_router)
@@ -525,7 +527,7 @@ app.add_middleware(
 # endpoints belong there.
 # ---------------------------------------------------------------------------
 from hermes_cli.dashboard_auth.public_paths import (
-    PUBLIC_API_PATHS as _PUBLIC_API_PATHS,
+    is_public_api_path as _is_public_api_path,
 )
 
 
@@ -795,7 +797,7 @@ async def auth_middleware(request: Request, call_next):
     if getattr(request.app.state, "auth_required", False):
         return await call_next(request)
     path = request.url.path
-    if path.startswith("/api/") and path not in _PUBLIC_API_PATHS:
+    if path.startswith("/api/") and not _is_public_api_path(path):
         if not _has_valid_session_token(request) and not _has_valid_query_token(request, path):
             return JSONResponse(
                 status_code=401,

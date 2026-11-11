@@ -2068,6 +2068,15 @@ onboarding:
 - `profile_build` — controls the profile-build path offered on the very first gateway message ever. `"ask"` (default) offers to build a user profile; the offer is **opt-in and consent-gated** — the agent asks before any lookup and never reads connected accounts silently. `"off"` shows a plain intro only. The offer fires at most once.
 - `seen` — internal state. Hermes latches each shown hint here so it never fires again; the profile-build offer is also recorded here once shown. Don't hand-edit it — wipe the whole `onboarding` section if you want to re-see all hints.
 
+## agent-home
+
+```yaml
+agent_home:
+  public_url: ""   # https origin of agent-home, e.g. "https://aquarium.example.com"
+```
+
+- `public_url` — the https address people open agent-home at. When the agent needs a secret (password, personal access token, API key) during a WhatsApp, Telegram or email chat, it never asks for it as chat text: it sends a **one-time secure link** `<public_url>/secret/<token>`. The link works once, expires after 15 minutes and needs no sign-in; the person types or pastes the secret into a masked form, and it is saved to the credential store of the person who was chatting. The agent only learns the secret's name. Links are sent only in direct chats with a person linked to an Aquarium account. While `public_url` is empty or not `https://`, no link is sent and the agent asks the person to add the secret in **Settings → Connected accounts** instead.
+
 ## Dashboard
 
 Configuration for the [web dashboard](/user-guide/features/web-dashboard) — visual theme, public URL, and authentication providers. The auth providers (OAuth, basic password, drain) are documented in detail on the web-dashboard page; this is the `config.yaml` shape.
