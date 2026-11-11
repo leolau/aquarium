@@ -9512,7 +9512,17 @@ class GatewayRunner(
             # via skill_manage. Mirrors the /blueprint fall-through so role
             # alternation is preserved. No engine, works on any backend.
             from agent.learn_prompt import build_learn_prompt
+            from tools.access_policy import denied_tools as _learn_denied
 
+            if "skill_manage" in _learn_denied(
+                source.internal_user_id,
+                source.internal_user_role,
+                trusted_local=self._get_principal_store() is None,
+            ):
+                return (
+                    "Your role can't ask me to create or edit skills, so /learn "
+                    "isn't available. Ask the owner or an admin if you need it."
+                )
             _learn_req = event.get_command_args().strip()
             _ack = (
                 "Learning a skill from what you described…"

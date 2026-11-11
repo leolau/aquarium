@@ -97,6 +97,8 @@ from hermes_cli import route_roles as _route_roles
 
 #: Owner/admin-only routes (security review F2).
 _ADMIN = _route_roles.ADMIN
+_SKILLS_VIEW = _route_roles.SKILLS_VIEW
+_SKILLS_MANAGE = _route_roles.SKILLS_MANAGE
 from hermes_cli.invitations import RedeemThrottle as _SeminarThrottle
 from hermes_cli.seminar_survey import (
     SurveyError,
@@ -15960,7 +15962,7 @@ def _profile_cli_args(profile: Optional[str]) -> List[str]:
     return ["-p", profiles_mod.normalize_profile_name(requested)]
 
 
-@app.post("/api/skills/hub/install", dependencies=_ADMIN)
+@app.post("/api/skills/hub/install", dependencies=_SKILLS_MANAGE)
 async def install_skill_hub(body: SkillInstallRequest, profile: Optional[str] = None):
     identifier = (body.identifier or "").strip()
     if not identifier:
@@ -15984,7 +15986,7 @@ class SkillUninstallRequest(BaseModel):
     profile: Optional[str] = None
 
 
-@app.post("/api/skills/hub/uninstall", dependencies=_ADMIN)
+@app.post("/api/skills/hub/uninstall", dependencies=_SKILLS_MANAGE)
 async def uninstall_skill_hub(body: SkillUninstallRequest, profile: Optional[str] = None):
     name = (body.name or "").strip()
     if not name:
@@ -16006,7 +16008,7 @@ class SkillsUpdateRequest(BaseModel):
     profile: Optional[str] = None
 
 
-@app.post("/api/skills/hub/update", dependencies=_ADMIN)
+@app.post("/api/skills/hub/update", dependencies=_SKILLS_MANAGE)
 async def update_skills_hub(
     body: Optional[SkillsUpdateRequest] = None, profile: Optional[str] = None
 ):
@@ -17308,7 +17310,7 @@ class SkillToggle(BaseModel):
     profile: Optional[str] = None
 
 
-@app.get("/api/skills")
+@app.get("/api/skills", dependencies=_SKILLS_VIEW)
 async def get_skills(profile: Optional[str] = None):
     from tools.skills_tool import _find_all_skills
     from hermes_cli.skills_config import get_disabled_skills
@@ -17354,7 +17356,7 @@ def _skill_origins(skills_dir: Path) -> Dict[str, Dict[str, Any]]:
     return origins
 
 
-@app.put("/api/skills/toggle", dependencies=_ADMIN)
+@app.put("/api/skills/toggle", dependencies=_SKILLS_MANAGE)
 async def toggle_skill(body: SkillToggle, profile: Optional[str] = None):
     from hermes_cli.skills_config import get_disabled_skills, save_disabled_skills
     with _profile_scope(body.profile or profile):
@@ -17394,7 +17396,7 @@ def _clear_skills_prompt_cache() -> None:
         pass
 
 
-@app.get("/api/skills/content")
+@app.get("/api/skills/content", dependencies=_SKILLS_VIEW)
 async def get_skill_content(name: str, profile: Optional[str] = None):
     """Return the raw SKILL.md text for a skill, for the dashboard editor."""
     from tools.skill_manager_tool import _find_skill
@@ -17413,7 +17415,7 @@ async def get_skill_content(name: str, profile: Optional[str] = None):
         return {"name": name, "content": content, "path": str(skill_md)}
 
 
-@app.post("/api/skills", dependencies=_ADMIN)
+@app.post("/api/skills", dependencies=_SKILLS_MANAGE)
 async def create_skill(body: SkillCreate, request: Request):
     """Create a new custom skill (SKILL.md) from the dashboard editor.
 
@@ -17436,7 +17438,7 @@ async def create_skill(body: SkillCreate, request: Request):
     return result
 
 
-@app.put("/api/skills/content", dependencies=_ADMIN)
+@app.put("/api/skills/content", dependencies=_SKILLS_MANAGE)
 async def update_skill_content(body: SkillContentUpdate, request: Request):
     """Replace the SKILL.md of an existing skill (full rewrite) from the editor."""
     from tools.skill_manager_tool import _edit_skill
@@ -17531,7 +17533,7 @@ def _skill_details_sync(name: str, profile: Optional[str]) -> Dict[str, Any]:
     return details
 
 
-@app.get("/api/skills/details", dependencies=_ADMIN)
+@app.get("/api/skills/details", dependencies=_SKILLS_MANAGE)
 async def get_skill_details(name: str, profile: Optional[str] = None):
     """Side facts for the agent-home skill page: the skill folder's files
     (relative paths + sizes), when SKILL.md last changed, and which profiles
@@ -17722,6 +17724,120 @@ async def update_role_limits(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         save_config(config)
     return {"ok": True, "roles": role_limits(config)}
+
+
+class SkillsAccessUpdate(BaseModel):
+    actions: Optional[Dict[str, Any]] = None
+    reset: bool = False
+    profile: Optional[str] = None
+
+
+async def _skills_access_caller(request: "Request", target: Any) -> tuple:
+    """``(role, is_owner)`` of the caller in the addressed profile.
+
+    No login, or no multi-user datastore, acts as the owner (as the
+    ``SKILLS_*`` route gates do).
+    """
+    from hermes_cli.profile_route_scope import ProfileScope
+
+    if isinstance(target, ProfileScope):
+        principal = target.principal
+        if principal is None:
+            return "owner", True
+    elif not _comms_session_subject(request):
+        return "owner", True
+    else:
+        try:
+            principal = await _comms_resolve_principal(request)
+        except _CommsNotConfigured:
+            return "owner", True
+    role = getattr(principal, "role", None) or "viewer"
+    return role, bool(getattr(principal, "is_owner", False)) or role == "owner"
+
+
+async def _require_skills_access_editor(request: "Request", target: Any) -> tuple:
+    role, is_owner = await _skills_access_caller(request, target)
+    if not is_owner and role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Only the owner or an admin can see or change skills permissions.",
+        )
+    return role, is_owner
+
+
+@app.get("/api/access/skills")
+async def get_skills_access(
+    request: Request,
+    profile: Optional[str] = None,
+    target: Any = Depends(require_profile_scope),
+):
+    """Settings → Skills permissions: the five skill rows for every role.
+
+    Owner and admin only. ``use``/``agent_edit`` come from the role's
+    ``deny_tools``; ``view``/``manage``/``lab`` from ``access.roles.<role>.skills``.
+    """
+    from tools import skills_access
+
+    role, is_owner = await _require_skills_access_editor(request, target)
+    with _profile_scope(profile):
+        config = load_config()
+    return skills_access.matrix(config, role, is_owner)
+
+
+@app.get("/api/access/skills/me")
+async def get_my_skills_access(
+    request: Request,
+    profile: Optional[str] = None,
+    target: Any = Depends(require_profile_scope),
+):
+    """The caller's own five skill rows in the addressed profile."""
+    from tools import skills_access
+
+    role, is_owner = await _skills_access_caller(request, target)
+    if is_owner:
+        role = "owner"
+    with _profile_scope(profile):
+        config = load_config()
+    return {"role": role, "actions": skills_access.role_actions(role, config)}
+
+
+@app.put("/api/access/skills/{role}")
+async def update_skills_access(
+    role: str,
+    body: SkillsAccessUpdate,
+    request: Request,
+    profile: Optional[str] = None,
+    target: Any = Depends(require_profile_scope),
+):
+    """Change *role*'s skill rows (partial ``actions``) or ``reset`` them.
+
+    The owner column is locked (400); only the owner may change admins (403);
+    member and viewer are open to the owner and admins. Implications are
+    restored on write. API rows apply on the next request, tool rows on the
+    next new chat.
+    """
+    from tools import skills_access
+
+    caller_role, is_owner = await _require_skills_access_editor(request, target)
+    try:
+        skills_access.check_edit(caller_role, is_owner, role)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    if not body.reset and body.actions is None:
+        raise HTTPException(status_code=400, detail="Send actions or reset.")
+    with _profile_scope(body.profile or profile):
+        config = load_config()
+        try:
+            if body.reset:
+                skills_access.reset_role_actions(config, role)
+            else:
+                skills_access.set_role_actions(config, role, body.actions or {})
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        save_config(config)
+    return skills_access.matrix(config, caller_role, is_owner)
 
 
 class AgentHomeNavUpdate(BaseModel):

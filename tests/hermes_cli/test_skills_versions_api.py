@@ -51,8 +51,8 @@ def client(monkeypatch, homes):
     return c
 
 
-def test_routes_are_admin_only():
-    from hermes_cli.route_roles import ADMIN
+def test_routes_follow_the_lab_permission():
+    from hermes_cli.route_roles import SKILLS_LAB
     from hermes_cli.skills_versions_api import router
 
     assert {r.path for r in router.routes} == {
@@ -63,7 +63,7 @@ def test_routes_are_admin_only():
         "/api/skills/versions/activate",
     }
     for route in router.routes:
-        assert [d.dependency for d in route.dependencies] == [d.dependency for d in ADMIN]
+        assert [d.dependency for d in route.dependencies] == [d.dependency for d in SKILLS_LAB]
 
 
 def test_full_lifecycle(client, homes):

@@ -283,14 +283,14 @@ def test_message_validates_text(client):
     assert r.status_code == 400
 
 
-def test_routes_are_admin_only():
+def test_routes_follow_the_lab_permission():
     from hermes_cli.route_roles import declared_role
     from hermes_cli.web_server import app
 
     paths = {"/api/skills/improve/start", "/api/skills/improve/message", "/api/skills/improve/sessions"}
     found = {r.path: r for r in app.routes if getattr(r, "path", None) in paths}
     assert set(found) == paths
-    assert all(declared_role(r) == "admin" for r in found.values())
+    assert all(declared_role(r) == "skills:lab" for r in found.values())
 
 
 # ── Draft extraction ─────────────────────────────────────────────────────────

@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from fastapi import APIRouter, HTTPException, Request
 
 from hermes_cli import skill_ledger
-from hermes_cli.route_roles import ADMIN
+from hermes_cli.route_roles import SKILLS_LAB
 
 logger = logging.getLogger(__name__)
 
@@ -166,12 +166,12 @@ def _feedback_sync(
         return _decorate([event])[0]
 
 
-@router.get("", dependencies=ADMIN)
+@router.get("", dependencies=SKILLS_LAB)
 async def get_usage(profile: Optional[str] = None, days: int = 90) -> Dict[str, Any]:
     return await asyncio.to_thread(_usage_sync, profile, days)
 
 
-@router.get("/detail", dependencies=ADMIN)
+@router.get("/detail", dependencies=SKILLS_LAB)
 async def get_usage_detail(
     name: str,
     profile: Optional[str] = None,
@@ -185,7 +185,7 @@ async def get_usage_detail(
     return await asyncio.to_thread(_detail_sync, name, profile, days, limit, cursor)
 
 
-@router.post("/feedback", dependencies=ADMIN)
+@router.post("/feedback", dependencies=SKILLS_LAB)
 async def post_usage_feedback(request: Request, profile: Optional[str] = None) -> Dict[str, Any]:
     try:
         body = await request.json()

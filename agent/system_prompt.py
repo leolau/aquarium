@@ -271,7 +271,9 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
             if "gpt" in _model_lower or "codex" in _model_lower or "grok" in _model_lower:
                 stable_parts.append(OPENAI_MODEL_EXECUTION_GUIDANCE)
 
-    has_skills_tools = any(name in agent.valid_tool_names for name in ['skills_list', 'skill_view', 'skill_manage'])
+    # The index is the "use" permission: without skills_list/skill_view
+    # (Settings → Skills permissions) the agent can't load what it lists.
+    has_skills_tools = any(name in agent.valid_tool_names for name in ['skills_list', 'skill_view'])
     if has_skills_tools:
         avail_toolsets = {
             toolset

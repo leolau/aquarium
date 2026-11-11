@@ -101,6 +101,8 @@ HANDLER_CHECKED = {
     "POST /api/tools/{name}/purge": ("member", "_lifecycle_call"),
     "PUT /api/access/roles/{role}": ("admin", "_require_role_limits_editor"),
     "PUT /api/agent-home/nav/{role}": ("admin", "_require_role_limits_editor"),
+    "GET /api/access/skills": ("admin", "_require_skills_access_editor"),
+    "PUT /api/access/skills/{role}": ("admin", "_require_skills_access_editor"),
     "PUT /api/agent-home/uploads": ("admin", "_require_role_limits_editor"),
     "POST /api/profiles/suggestions/{suggestion_id}/adopt": ("owner", "principal.is_owner"),
     "POST /api/profiles/suggestions/{suggestion_id}/dismiss": ("owner", "principal.is_owner"),
@@ -444,10 +446,10 @@ SIGNED_IN = {
     "GET /api/profiles/{name}/soul",
     "GET /api/capacity",
     "GET /api/profiles/suggestions",
-    "GET /api/skills",
-    "GET /api/skills/content",
     "GET /api/tools/toolsets",
     "GET /api/access/roles",
+    # the caller's own skills permissions in the addressed profile
+    "GET /api/access/skills/me",
     # caller-scoped: own effective list; per-role lists only for owner/admin
     "GET /api/agent-home/nav",
     # Settings → Uploads: the upload size limit (the composer pre-checks it)
