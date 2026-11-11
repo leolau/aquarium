@@ -4016,3 +4016,26 @@ export interface ProjectSkillsResponse {
   candidates?: ProjectSkillCandidate[];
 }
 // ── end Project › Skills tab ───────────────────────────────────────────────
+
+/** FG-37 `GET /api/secret-links/{token}`: what a one-time secret link asks for. */
+export interface SecretLinkInfo {
+  ok: true;
+  label: string;
+  purpose: string;
+  kind: "secret" | "password";
+  username: string | null;
+  /** Unix seconds. */
+  expires_at: number;
+}
+
+/** FG-37 `POST /api/secret-links/{token}` body: the values, or a decline. */
+export type SecretLinkSubmit =
+  | { values: Record<string, string> }
+  | { decline: true };
+
+/** FG-37 `POST /api/secret-links/{token}` result; never carries a value. */
+export interface SecretLinkResult {
+  ok: true;
+  status: "stored" | "declined";
+  name?: string;
+}

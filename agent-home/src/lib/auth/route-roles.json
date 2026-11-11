@@ -211,6 +211,8 @@
   "POST /api/projects/[slug]/summarise": "signed-in",
   "PATCH /api/projects/[slug]/tools": "signed-in",
   "GET /api/projects/doctor": "signed-in",
+  "GET /api/secret-links/[token]": "public",
+  "POST /api/secret-links/[token]": "public",
   "GET /api/security-basics": "admin",
   "POST /api/security-basics/test": "admin",
   "POST /api/seminar/survey/submit": "public",
