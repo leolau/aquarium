@@ -201,10 +201,11 @@ def test_writer_stores_naive_timestamps_in_the_design_timezone(site):
             }
         ],
     }
-    approve(site, design)
+    utc_design = {k: v for k, v in design.items() if k != "timezone"}
+    approve(site, utc_design)
 
-    async def go():
-        w = await _writer(site, design)
+    async def load(approved):
+        w = await _writer(site, approved)
         try:
             await w.begin_run("full", "manual")
             await w.upsert(
@@ -218,13 +219,23 @@ def test_writer_stores_naive_timestamps_in_the_design_timezone(site):
             rows = await w.conn.fetch("SELECT _key, placed_at FROM orders ORDER BY _key")
         finally:
             await w.conn.close()
-        utc = timezone.utc
-        assert {r["_key"]: r["placed_at"].astimezone(utc) for r in rows} == {
-            "L1": datetime(2026, 11, 11, 1, 30, tzinfo=utc),
-            "Z1": datetime(2026, 11, 11, 9, 30, tzinfo=utc),
-        }
+        return {r["_key"]: r["placed_at"].astimezone(timezone.utc) for r in rows}
 
-    run(go())
+    utc = timezone.utc
+    # Loaded under the default (UTC), then the approved revision names the site's zone:
+    # rows already stored are re-derived even though their payload hash is unchanged.
+    assert run(load(utc_design))["L1"] == datetime(2026, 11, 11, 9, 30, tzinfo=utc)
+
+    async def revise():
+        proposed = await ss.propose_design(site, design, RECIPE, by="alice")
+        return await ss.apply_design(site, proposed["version"], approved_by="alice")
+
+    assert run(revise())["rezoned"] == {"orders": 2}
+    expected = {
+        "L1": datetime(2026, 11, 11, 1, 30, tzinfo=utc),
+        "Z1": datetime(2026, 11, 11, 9, 30, tzinfo=utc),
+    }
+    assert run(load(design)) == expected
 
 
 def test_reader_role_is_confined(site):

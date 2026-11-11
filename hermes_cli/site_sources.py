@@ -1686,6 +1686,17 @@ async def apply_design(
             )
             for statement in statements:
                 await conn.execute(statement)
+            previous = await conn.fetchval(
+                f"SELECT design FROM {s}._designs WHERE status = 'approved' AND version <> $1 "
+                "ORDER BY version DESC LIMIT 1",
+                int(version),
+            )
+            rezoned = (
+                await _rezone_timestamps(conn, site.schema_name, design)
+                if previous is not None
+                and (_json_in(previous).get("timezone") or "UTC") != (design.get("timezone") or "UTC")
+                else {}
+            )
             await conn.execute(
                 f"UPDATE {s}._designs SET status = 'superseded' "
                 "WHERE status = 'approved' AND version <> $1",
@@ -1709,7 +1720,38 @@ async def apply_design(
             "WHERE id = $1::uuid AND status <> 'paused'",
             site.id,
         )
-    return {"version": int(version), "status": "approved", "statements": statements}
+    out: Dict[str, Any] = {"version": int(version), "status": "approved", "statements": statements}
+    if rezoned:
+        out["rezoned"] = rezoned
+    return out
+
+
+async def _rezone_timestamps(conn: Any, schema: str, design: Mapping[str, Any]) -> Dict[str, int]:
+    """Re-derive timestamp columns from ``_payload`` after the design's timezone changed.
+
+    Unchanged rows are never rewritten by ``upsert`` (their payload hash
+    matches), so naive values stored under the old zone are fixed here.
+    """
+    zone = design_zone(design)
+    out: Dict[str, int] = {}
+    for spec in design["entities"]:
+        cols = [c["name"] for c in spec["columns"] if COLUMN_TYPES[c["type"]] == "timestamptz"]
+        if spec["kind"] != "variable" or not cols:
+            continue
+        table = f"{_ident(schema)}.{_ident(spec['name'])}"
+        rows = await conn.fetch(f"SELECT _key, _payload FROM {table}")
+        if not rows:
+            continue
+        sets = ", ".join(f"{_ident(n)} = ${i}" for i, n in enumerate(cols, start=2))
+        await conn.executemany(
+            f"UPDATE {table} SET {sets} WHERE _key = $1",
+            [
+                (r["_key"], *(coerce((_json_in(r["_payload"]) or {}).get(n), "timestamptz", zone) for n in cols))
+                for r in rows
+            ],
+        )
+        out[spec["name"]] = len(rows)
+    return out
 
 
 # ---------------------------------------------------------------------------
