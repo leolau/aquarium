@@ -30,7 +30,7 @@ import re
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, FrozenSet, List, Optional
+from typing import Any, Dict, FrozenSet, List, Optional, Pattern, Tuple
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -400,12 +400,28 @@ def _read_seed(session_id: str, profile: Optional[str]) -> Optional[Dict[str, An
     return data if isinstance(data, dict) else None
 
 
-def _improve_skill_of(db: Any, session_id: str) -> Optional[str]:
+#: Skills Lab chat kinds by session tag prefix: improve an existing skill, or
+#: write a new one (:mod:`hermes_cli.skills_create_api`).
+LAB_TAG_PREFIXES: Dict[str, str] = {"improve": TAG_PREFIX, "create": "skill-create:"}
+
+
+def _lab_session_kind(db: Any, session_id: str) -> Optional[Tuple[str, str]]:
+    """``(kind, value)`` of a Skills Lab chat from its tag, or None.
+
+    ``value`` is the skill name for ``improve`` and the project slug (or
+    ``-``) for ``create``.
+    """
     for tag in db.get_session_tags(session_id):
         tag_name = str(tag.get("name") or "")
-        if tag_name.lower().startswith(TAG_PREFIX):
-            return tag_name[len(TAG_PREFIX):]
+        for kind, prefix in LAB_TAG_PREFIXES.items():
+            if tag_name.lower().startswith(prefix):
+                return kind, tag_name[len(prefix):]
     return None
+
+
+def _improve_skill_of(db: Any, session_id: str) -> Optional[str]:
+    found = _lab_session_kind(db, session_id)
+    return found[1] if found and found[0] == "improve" else None
 
 
 async def improve_draft_author(
@@ -456,12 +472,18 @@ async def start_improve_session(request: Request) -> Dict[str, Any]:
 
 @router.post("/message")
 async def improve_message(request: Request) -> Dict[str, Any]:
+    return await run_lab_turn(request, await _json_body(request), kind="improve", session_re=_SESSION_ID_RE)
+
+
+async def run_lab_turn(
+    request: Request, body: dict, *, kind: str, session_re: Pattern[str]
+) -> Dict[str, Any]:
+    """One turn of a Skills Lab chat of ``kind``, locked down and seeded once."""
     ws = _ws()
-    body = await _json_body(request)
     session_id = str(body.get("session_id") or "").strip()
     text = str(body.get("text") or "").strip()
     profile = _clean_profile(body.get("profile") or request.query_params.get("profile"))
-    if not _SESSION_ID_RE.match(session_id):
+    if not session_re.match(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
@@ -473,7 +495,8 @@ async def improve_message(request: Request) -> Dict[str, Any]:
         if not db.get_session(session_id):
             raise HTTPException(status_code=404, detail="Session not found")
         ws._require_chat_access(db, session_id, ws._chat_scope_for(principal))
-        if not _improve_skill_of(db, session_id):
+        found = _lab_session_kind(db, session_id)
+        if not found or found[0] != kind:
             raise HTTPException(status_code=404, detail="Session not found")
         sid = db.resolve_resume_session_id(session_id)
         history = db.get_messages_as_conversation(sid)
@@ -491,7 +514,7 @@ async def improve_message(request: Request) -> Dict[str, Any]:
     from hermes_cli.interactions import bind_trace
 
     trace, ledger = ws._agent_home_trace(principal, sid)
-    ws._trace_emit(trace, "inbound", sid, "skill improve message")
+    ws._trace_emit(trace, "inbound", sid, f"skill {kind} message")
 
     def _run():
         tokens = set_session_vars(
@@ -524,9 +547,9 @@ async def improve_message(request: Request) -> Dict[str, Any]:
     try:
         result, _usage = await asyncio.get_running_loop().run_in_executor(None, _run)
         reply = result.get("final_response", "") if isinstance(result, dict) else ""
-        ws._trace_emit(trace, "outbound", sid, f"skill improve reply ({len(reply)} chars)")
+        ws._trace_emit(trace, "outbound", sid, f"skill {kind} reply ({len(reply)} chars)")
     except Exception as exc:
-        ws._trace_emit(trace, "error", type(exc).__name__, f"skill improve turn error: {type(exc).__name__}")
+        ws._trace_emit(trace, "error", type(exc).__name__, f"skill {kind} turn error: {type(exc).__name__}")
         raise
     finally:
         await ws._flush_agent_home_trace(trace, ledger)

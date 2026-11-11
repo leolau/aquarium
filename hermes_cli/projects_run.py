@@ -2402,7 +2402,7 @@ def _available_skill_names(profile: str) -> List[str]:
         if not home.is_dir():
             return []  # unknown profile → fail closed: no grant
         with profile_runtime_scope(home):
-            return list(get_skill_commands().keys())
+            return [str(v.get("name") or k.lstrip("/")) for k, v in get_skill_commands().items()]
     except Exception:  # noqa: BLE001 — fail closed: no grant
         return []
 

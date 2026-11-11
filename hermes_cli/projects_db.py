@@ -333,6 +333,20 @@ CREATE TABLE IF NOT EXISTS project_skill_candidates (
 CREATE INDEX IF NOT EXISTS idx_project_skill_candidates
     ON project_skill_candidates(project_id, created_at DESC);
 
+-- Skills written with AI from a project (Skills tab "New skill with AI").
+-- One row per (project, profile, skill): the Skills tab shows "Created here".
+-- Profiles stay separate: the same name in two profiles is two skills.
+CREATE TABLE IF NOT EXISTS project_created_skills (
+    project_id    TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    profile       TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    created_by    TEXT,
+    session_id    TEXT,
+    candidate_id  TEXT,
+    created_at    INTEGER NOT NULL,
+    PRIMARY KEY (project_id, profile, name)
+);
+
 -- Scope clarification (before implementation): the agent asks the owner
 -- questions about goal and scope in rounds; the confirmed understanding and
 -- the answers feed the plan draft and every later run's guidance block.
@@ -539,6 +553,14 @@ _RUN_COLUMN_MIGRATIONS: tuple[tuple[str, str], ...] = (
 )
 
 
+# Columns added to `project_skill_candidates` later. `dismissed_at` marks a
+# retro candidate the Skills tab no longer offers (dismissed, or turned into
+# a skill).
+_CANDIDATE_COLUMN_MIGRATIONS: tuple[tuple[str, str], ...] = (
+    ("dismissed_at", "dismissed_at INTEGER"),
+)
+
+
 def _migrate_add_optional_columns(conn: sqlite3.Connection) -> None:
     """Add columns introduced after v1 to legacy DBs (safe on every open)."""
     cols = {row["name"] for row in conn.execute("PRAGMA table_info(projects)")}
@@ -555,6 +577,12 @@ def _migrate_add_optional_columns(conn: sqlite3.Connection) -> None:
     for col, ddl in _RUN_COLUMN_MIGRATIONS:
         if col not in rcols:
             _add_column_if_missing(conn, "project_runs", col, ddl)
+    ccols = {
+        row["name"] for row in conn.execute("PRAGMA table_info(project_skill_candidates)")
+    }
+    for col, ddl in _CANDIDATE_COLUMN_MIGRATIONS:
+        if col not in ccols:
+            _add_column_if_missing(conn, "project_skill_candidates", col, ddl)
     # Created here, not in SCHEMA_SQL: a legacy DB only has the column once
     # the ADD COLUMN above has run.
     conn.execute(
@@ -2869,6 +2897,63 @@ def list_skill_candidates(
     rows = conn.execute(
         "SELECT * FROM project_skill_candidates WHERE project_id = ? "
         "ORDER BY created_at DESC, rowid DESC",
+        (project_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_skill_candidate(
+    conn: sqlite3.Connection, project_id: str, candidate_id: str
+) -> Optional[dict]:
+    row = conn.execute(
+        "SELECT * FROM project_skill_candidates WHERE project_id = ? AND id = ?",
+        (project_id, str(candidate_id or "")),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def dismiss_skill_candidate(
+    conn: sqlite3.Connection, project_id: str, candidate_id: str
+) -> bool:
+    """Stamp ``dismissed_at`` (first time only). False if no such candidate."""
+    with write_txn(conn):
+        cur = conn.execute(
+            "UPDATE project_skill_candidates SET dismissed_at = COALESCE(dismissed_at, ?) "
+            "WHERE project_id = ? AND id = ?",
+            (_now(), project_id, str(candidate_id or "")),
+        )
+    return cur.rowcount > 0
+
+
+# ---------------------------------------------------------------------------
+# Skills created from a project ("New skill with AI")
+# ---------------------------------------------------------------------------
+
+
+def record_created_skill(
+    conn: sqlite3.Connection,
+    *,
+    project_id: str,
+    profile: str,
+    name: str,
+    created_by: Optional[str] = None,
+    session_id: Optional[str] = None,
+    candidate_id: Optional[str] = None,
+) -> None:
+    with write_txn(conn):
+        conn.execute(
+            """INSERT OR REPLACE INTO project_created_skills
+               (project_id, profile, name, created_by, session_id, candidate_id, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (project_id, profile, name, created_by, session_id, candidate_id, _now()),
+        )
+
+
+def list_created_skills(conn: sqlite3.Connection, project_id: str) -> List[dict]:
+    """``[{profile, name, created_by, session_id, candidate_id, created_at}]``, newest first."""
+    rows = conn.execute(
+        "SELECT profile, name, created_by, session_id, candidate_id, created_at "
+        "FROM project_created_skills WHERE project_id = ? ORDER BY created_at DESC, name",
         (project_id,),
     ).fetchall()
     return [dict(r) for r in rows]
