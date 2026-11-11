@@ -133,6 +133,10 @@ def _pipe_stdin(proc: subprocess.Popen, data: str) -> None:
     threading.Thread(target=_write, daemon=True).start()
 
 
+#: Process-env names that carry ``secret_env`` values into bash.
+SECRET_ENV_CARRIER_PREFIX = "HERMES_SECRET_ENV_"
+
+
 def _popen_bash(
     cmd: list[str], stdin_data: str | None = None, **kwargs
 ) -> subprocess.Popen:
@@ -297,6 +301,8 @@ class BaseEnvironment(ABC):
 
     # Subclasses that embed stdin as a heredoc (Modal, Daytona) set this.
     _stdin_mode: str = "pipe"  # "pipe" or "heredoc"
+    #: ``execute(secret_env=...)`` works (``_run_bash`` takes ``extra_env``).
+    supports_secret_env: bool = False
 
     # Snapshot creation timeout (override for slow cold-starts).
     _snapshot_timeout: int = 30
@@ -460,9 +466,17 @@ class BaseEnvironment(ABC):
             return f"$HOME/{shlex.quote(cwd[2:])}"
         return shlex.quote(cwd)
 
-    def _wrap_command(self, command: str, cwd: str) -> str:
+    def _wrap_command(
+        self, command: str, cwd: str, secret_carriers: dict | None = None
+    ) -> str:
         """Build the full bash script that sources snapshot, cd's, runs command,
-        re-dumps env vars, and emits CWD markers."""
+        re-dumps env vars, and emits CWD markers.
+
+        *secret_carriers* maps ``ENV_VAR`` to the carrier variable that holds
+        its value in the process environment (``secret_env``): the value is
+        bound only as a temporary assignment on the ``eval`` and the carriers
+        are unset first, so it never reaches the env snapshot or the script.
+        """
         escaped = command.replace("'", "'\\''")
 
         # Quote the snapshot / cwd-file paths so Git Bash on Windows handles
@@ -500,8 +514,23 @@ class BaseEnvironment(ABC):
         parts.append(f"builtin cd -- {quoted_cwd} || exit 126")
 
         # Run the actual command
-        parts.append(f"eval '{escaped}'")
+        holders = []
+        for index, carrier in enumerate((secret_carriers or {}).values()):
+            holder = f"__hermes_sv{index}"
+            holders.append(holder)
+            parts.append(f'{holder}="${{{carrier}}}"; unset {carrier}')
+        assignments = "".join(
+            f'{name}="${holder}" '
+            for name, holder in zip((secret_carriers or {}), holders)
+        )
+        parts.append(f"{assignments}eval '{escaped}'")
         parts.append("__hermes_ec=$?")
+        if holders:
+            # The command may have exported an injected name; drop it so the
+            # value cannot reach the snapshot below.
+            for name, holder in zip(secret_carriers, holders):
+                parts.append(f'[ "${{{name}-}}" = "${holder}" ] && unset {name}')
+            parts.append("unset " + " ".join(holders))
 
         # Re-dump env vars to snapshot (atomic replacement to avoid races).
         # Chain mv on the export succeeding so a failed/partial dump never
@@ -894,8 +923,18 @@ class BaseEnvironment(ABC):
         timeout: int | None = None,
         stdin_data: str | None = None,
         rewrite_compound_background: bool = True,
+        secret_env: dict | None = None,
     ) -> dict:
-        """Execute a command, return {"output": str, "returncode": int}."""
+        """Execute a command, return {"output": str, "returncode": int}.
+
+        *secret_env* (``{"ENV_VAR": value}``) is set for this one command only,
+        on backends with ``supports_secret_env``; values never enter the
+        command text or the env snapshot.
+        """
+        if secret_env and not self.supports_secret_env:
+            raise ValueError(
+                f"secret_env is not supported on the {type(self).__name__} backend"
+            )
         self._before_execute()
 
         exec_command, sudo_stdin = self._prepare_command(command)
@@ -921,13 +960,26 @@ class BaseEnvironment(ABC):
             exec_command = self._embed_stdin_heredoc(exec_command, effective_stdin)
             effective_stdin = None
 
-        wrapped = self._wrap_command(exec_command, effective_cwd)
+        carriers = {
+            name: f"{SECRET_ENV_CARRIER_PREFIX}{index}"
+            for index, name in enumerate(secret_env or {})
+        }
+        if carriers:
+            wrapped = self._wrap_command(exec_command, effective_cwd, carriers)
+        else:
+            wrapped = self._wrap_command(exec_command, effective_cwd)
 
         # Use login shell if snapshot failed (so user's profile still loads)
         login = not self._snapshot_ready
 
+        run_kwargs = {}
+        if carriers:
+            run_kwargs["extra_env"] = {
+                carrier: secret_env[name] for name, carrier in carriers.items()
+            }
         proc = self._run_bash(
-            wrapped, login=login, timeout=effective_timeout, stdin_data=effective_stdin
+            wrapped, login=login, timeout=effective_timeout, stdin_data=effective_stdin,
+            **run_kwargs,
         )
         result = self._wait_for_process(proc, timeout=effective_timeout)
         self._update_cwd(result)

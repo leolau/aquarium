@@ -1988,6 +1988,44 @@ def _resolve_command_cwd(
     return default_cwd
 
 
+def _secret_env_error(message: str) -> str:
+    return json.dumps(
+        {"output": "", "exit_code": -1, "error": message, "status": "error"},
+        ensure_ascii=False,
+    )
+
+
+def _terminal_with_secrets(secret_env: Any, **kwargs: Any) -> str:
+    """Run one foreground command with ``secret_env`` resolved and masked.
+
+    Values are resolved for the principal bound to this tool call, passed to
+    the backend out of band (never in the command text, history or env
+    snapshot), and every exact occurrence — plus base64/JSON-escaped forms —
+    is masked as ``***`` in the result and in any log line emitted meanwhile.
+    """
+    from agent.redact import mask_known_values, runtime_secrets
+    from tools.secret_list_tool import SecretEnvError, resolve_secret_env, secret_masks
+
+    if kwargs.get("background"):
+        return _secret_env_error(
+            "secret_env works only for foreground commands; drop background=true"
+        )
+    try:
+        values = resolve_secret_env(secret_env)
+    except SecretEnvError as exc:
+        return _secret_env_error(str(exc))
+    except Exception as exc:
+        logger.warning("secret_env lookup failed: %s", type(exc).__name__)
+        return _secret_env_error(f"could not read stored secrets ({type(exc).__name__})")
+    masks = secret_masks(values.values())
+    with runtime_secrets(masks):
+        try:
+            result = terminal_tool(_secret_values=values, **kwargs)
+        except Exception as exc:
+            result = _secret_env_error(f"{type(exc).__name__}: {exc}")
+        return mask_known_values(result, masks)
+
+
 def terminal_tool(
     command: str,
     background: bool = False,
@@ -1999,6 +2037,8 @@ def terminal_tool(
     pty: bool = False,
     notify_on_complete: bool = False,
     watch_patterns: Optional[List[str]] = None,
+    secret_env: Optional[Dict[str, str]] = None,
+    _secret_values: Optional[Dict[str, str]] = None,
 ) -> str:
     """
     Execute a command in the configured terminal environment.
@@ -2031,6 +2071,14 @@ def terminal_tool(
         # Force run after user confirmation
         # Note: force parameter is internal only, not exposed to model API
     """
+    if secret_env:
+        return _terminal_with_secrets(
+            secret_env,
+            command=command, background=background, timeout=timeout,
+            task_id=task_id, session_id=session_id, force=force, workdir=workdir,
+            pty=pty, notify_on_complete=notify_on_complete,
+            watch_patterns=watch_patterns,
+        )
     try:
         if not isinstance(command, str):
             logger.warning(
@@ -2331,6 +2379,12 @@ def terminal_tool(
         except Exception:
             pass
 
+        if _secret_values and not getattr(env, "supports_secret_env", False):
+            return _secret_env_error(
+                f"secret_env is not supported on the {env_type} terminal backend "
+                "(local and docker only)"
+            )
+
         if background:
             # Spawn a tracked background process via the process registry.
             # For local backends: uses subprocess.Popen with output buffering.
@@ -2593,6 +2647,8 @@ def terminal_tool(
                         "timeout": effective_timeout,
                         "cwd": command_cwd,
                     }
+                    if _secret_values:
+                        execute_kwargs["secret_env"] = _secret_values
                     result = env.execute(command, **execute_kwargs)
                 except Exception as e:
                     error_str = str(e).lower()
@@ -2942,6 +2998,11 @@ TERMINAL_SCHEMA = {
                 "description": "When true (and background=true), you'll be automatically notified exactly once when the process finishes. **This is the right choice for almost every long-running task** — tests, builds, deployments, multi-item batch jobs, anything that takes over a minute and has a defined end. Use this and keep working on other things; the system notifies you on exit. MUTUALLY EXCLUSIVE with watch_patterns — when both are set, watch_patterns is dropped.",
                 "default": False
             },
+            "secret_env": {
+                "type": "object",
+                "additionalProperties": {"type": "string"},
+                "description": "Stored secrets for THIS command only, as {\"ENV_VAR\": \"secret-name\"} (or \"secret-name.username\" / \".password\" / \".value\"). Reference them as $ENV_VAR in the command; you never see the values and any printed occurrence comes back as ***. Names come from list_secrets; ask for a missing one with request_secret. Foreground commands on the local and docker backends only."
+            },
             "watch_patterns": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -2964,6 +3025,7 @@ def _handle_terminal(args, **kw):
         pty=args.get("pty", False),
         notify_on_complete=args.get("notify_on_complete", False),
         watch_patterns=args.get("watch_patterns"),
+        secret_env=args.get("secret_env"),
     )
 
 

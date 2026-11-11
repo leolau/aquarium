@@ -142,6 +142,8 @@ class TestApiServerAdapterToolset:
             mock_agent_cls.assert_called_once()
             call_kwargs = mock_agent_cls.call_args
             toolsets = call_kwargs.kwargs.get("enabled_toolsets")
-            # email_mailbox, mssql, site_db and winrm are non-configurable toolsets of the platform
-            # default, so it is recovered even with an explicit override.
-            assert sorted(toolsets) == ["email_mailbox", "mssql", "site_db", "terminal", "web", "winrm"]
+            # email_mailbox, mssql, secrets, site_db and winrm are non-configurable toolsets of the
+            # platform default, so they are recovered even with an explicit override.
+            assert sorted(toolsets) == [
+                "email_mailbox", "mssql", "secrets", "site_db", "terminal", "web", "winrm",
+            ]
