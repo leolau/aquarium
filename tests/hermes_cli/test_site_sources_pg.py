@@ -101,9 +101,9 @@ def approve(site, design=DESIGN):
     return run(go())
 
 
-async def _writer(site):
+async def _writer(site, design=DESIGN):
     conn = await ss.database().restricted(site, write=True)
-    return ss.SiteWriter(site, DESIGN, conn)
+    return ss.SiteWriter(site, design, conn)
 
 
 def test_provision_and_apply_design(site):
@@ -183,6 +183,46 @@ def test_writer_semantics_and_change_log(site):
         assert [c["op"] for c in hist_a1["changes"]] == ["insert", "update"]
         runs = await ss.list_runs(site)
         assert len(runs) == 6
+
+    run(go())
+
+
+def test_writer_stores_naive_timestamps_in_the_design_timezone(site):
+    from datetime import datetime, timezone
+
+    design = {
+        "timezone": "Asia/Hong_Kong",
+        "entities": [
+            {
+                "name": "orders",
+                "kind": "variable",
+                "columns": [{"name": "order_no", "type": "text"}, {"name": "placed_at", "type": "timestamp"}],
+                "key": ["order_no"],
+            }
+        ],
+    }
+    approve(site, design)
+
+    async def go():
+        w = await _writer(site, design)
+        try:
+            await w.begin_run("full", "manual")
+            await w.upsert(
+                "orders",
+                [
+                    {"order_no": "L1", "placed_at": "2026-11-11T09:30:00"},
+                    {"order_no": "Z1", "placed_at": "2026-11-11T09:30:00Z"},
+                ],
+            )
+            await w.finish_run(full_entities=["orders"])
+            rows = await w.conn.fetch("SELECT _key, placed_at FROM orders ORDER BY _key")
+        finally:
+            await w.conn.close()
+        utc = timezone.utc
+        assert {r["_key"]: r["placed_at"].astimezone(utc) for r in rows} == {
+            "L1": datetime(2026, 11, 11, 1, 30, tzinfo=utc),
+            "Z1": datetime(2026, 11, 11, 9, 30, tzinfo=utc),
+        }
 
     run(go())
 
