@@ -205,3 +205,69 @@ class TestEnvironHome:
             assert ss.get_secret(name) == "box-value"
         finally:
             ss.reset_secret_scope(token)
+
+
+class TestDeploymentDatabaseUrlFallback:
+    """The box's one Postgres DSN, set by the unit file, reaches every profile
+    whose own .env names none; a DSN loaded from a profile .env never does."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_env_file_keys(self):
+        saved = set(ss._ENV_FILE_KEYS)
+        ss._ENV_FILE_KEYS.discard("DATABASE_URL")
+        yield
+        ss._ENV_FILE_KEYS.clear()
+        ss._ENV_FILE_KEYS.update(saved)
+
+    def test_unit_file_dsn_fills_a_scope_without_one(self, monkeypatch):
+        monkeypatch.setenv("DATABASE_URL", "postgresql://box")
+        ss.set_multiplex_active(True)
+        token = ss.set_secret_scope({"ANTHROPIC_API_KEY": "sk-mine"})
+        try:
+            assert ss.expand_env_ref("DATABASE_URL") == "postgresql://box"
+            assert ss.get_secret("DATABASE_URL") == "postgresql://box"
+        finally:
+            ss.reset_secret_scope(token)
+
+    def test_profile_dsn_wins_over_unit_file(self, monkeypatch):
+        monkeypatch.setenv("DATABASE_URL", "postgresql://box")
+        token = ss.set_secret_scope({"DATABASE_URL": "postgresql://hr"})
+        try:
+            assert ss.expand_env_ref("DATABASE_URL") == "postgresql://hr"
+            assert ss.get_secret("DATABASE_URL") == "postgresql://hr"
+        finally:
+            ss.reset_secret_scope(token)
+
+    def test_dsn_from_another_profiles_env_file_does_not_cross(self, monkeypatch):
+        monkeypatch.setenv("DATABASE_URL", "postgresql://default-profile")
+        ss.note_env_file_keys(["DATABASE_URL"])
+        token = ss.set_secret_scope({})
+        try:
+            assert ss.expand_env_ref("DATABASE_URL") is None
+            assert ss.get_secret("DATABASE_URL") is None
+        finally:
+            ss.reset_secret_scope(token)
+
+    def test_other_unit_file_secrets_still_do_not_cross(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-unit-file")
+        token = ss.set_secret_scope({})
+        try:
+            assert ss.expand_env_ref("OPENAI_API_KEY") is None
+            assert ss.get_secret("OPENAI_API_KEY") is None
+        finally:
+            ss.reset_secret_scope(token)
+
+    def test_profile_scope_expands_config_dsn_e2e(self, tmp_path, monkeypatch):
+        """A fresh install: DSN only in the unit file, profile .env empty."""
+        from agent.profile_runtime import profile_runtime_scope
+        from hermes_cli.datastore import get_store
+
+        (tmp_path / ".env").write_text("")
+        (tmp_path / "config.yaml").write_text(
+            "datastore:\n  mode: prod\n  supabase_app:\n    dsn: ${DATABASE_URL}\n"
+        )
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        monkeypatch.setenv("DATABASE_URL", "postgresql://box")
+        with profile_runtime_scope(tmp_path):
+            store = get_store("supabase-app")
+        assert store.dsn == "postgresql://box"
