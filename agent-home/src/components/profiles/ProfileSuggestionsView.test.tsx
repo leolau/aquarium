@@ -103,6 +103,27 @@ describe("ProfileSuggestionsView", () => {
     expect(trailOnly).not.toContain("SuggestionsEmpty");
   });
 
+  it("keeps the root marker in every loaded state and drops it on a load error", () => {
+    const states = [
+      { suggestions: [], reviewed: [] },
+      { suggestions: [], reviewed: REVIEWED },
+      { suggestions: [OPEN], reviewed: [] },
+      { suggestions: [OPEN], reviewed: REVIEWED },
+    ];
+    for (const { suggestions, reviewed } of states) {
+      const html = renderToStaticMarkup(
+        <ProfileSuggestionsView role="member" suggestions={suggestions} reviewed={reviewed} error={null} />,
+      );
+      expect(html).toContain('data-component="ProfileSuggestionsView"');
+    }
+
+    const failed = renderToStaticMarkup(
+      <ProfileSuggestionsView role="owner" suggestions={[]} reviewed={[]} error="upstream 500" />,
+    );
+    expect(failed).toContain("SuggestionsError");
+    expect(failed).not.toContain('data-component="ProfileSuggestionsView"');
+  });
+
   it("hides adopt/dismiss for a non-owner (the 403 upstream is the real gate)", () => {
     const html = renderToStaticMarkup(
       <ProfileSuggestionsView
