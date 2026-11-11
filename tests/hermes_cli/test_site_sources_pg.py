@@ -1,0 +1,215 @@
+"""site_sources against a real Postgres: provisioning, roles, SiteWriter, refresh.
+
+Needs a disposable server: ``HERMES_TEST_SITE_PG_DSN=postgresql://postgres:pw@host:port/db``
+(a superuser or a login with CREATEROLE). Skipped otherwise.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import sys
+import types
+import uuid
+
+import pytest
+
+import hermes_cli.site_sources as ss
+from hermes_cli.access import Principal
+
+DSN = os.environ.get("HERMES_TEST_SITE_PG_DSN", "")
+pytestmark = pytest.mark.skipif(not DSN, reason="HERMES_TEST_SITE_PG_DSN not set")
+
+DESIGN = {
+    "entities": [
+        {
+            "name": "about",
+            "kind": "fixed",
+            "columns": [{"name": "title", "type": "text"}, {"name": "body", "type": "text"}],
+            "key": ["title"],
+        },
+        {
+            "name": "orders",
+            "kind": "variable",
+            "columns": [{"name": "order_no", "type": "text"}, {"name": "amount", "type": "number"}],
+            "key": ["order_no"],
+            "refresh": {"mode": "incremental", "cursor": "amount"},
+        },
+    ]
+}
+RECIPE = {"entities": {"orders": {"steps": [{"action": "goto", "url": "/orders"}]}}}
+ALICE = Principal(user_id="alice", display="Alice", role="member")
+
+
+def run(coro):
+    return asyncio.run(coro)
+
+
+@pytest.fixture
+def site(tmp_path, monkeypatch):
+    monkeypatch.setattr(ss, "_role_secrets_path", lambda: tmp_path / "roles.json")
+    monkeypatch.setattr(ss, "current_profile", lambda: "default")
+    monkeypatch.setattr(ss, "_registry_ready", set())
+    db = ss.SiteDatabase(DSN)
+    ss.set_database(db)
+    slug = f"t{uuid.uuid4().hex[:10]}"
+    created = run(ss.create_site(ALICE, {"name": slug, "base_url": "https://shop.example"}))
+    yield created
+    ss.set_database(None)
+
+    async def drop():
+        import asyncpg
+
+        conn = await asyncpg.connect(DSN)
+        try:
+            await conn.execute(f'DROP SCHEMA IF EXISTS "{created.schema_name}" CASCADE')
+            for role in (created.writer_role, created.reader_role):
+                await conn.execute(f"DROP OWNED BY {role}")
+                await conn.execute(f"DROP ROLE IF EXISTS {role}")
+            await conn.execute("DELETE FROM public.site_sources WHERE id = $1::uuid", created.id)
+        finally:
+            await conn.close()
+
+    run(drop())
+
+
+def approve(site, design=DESIGN):
+    async def go():
+        proposed = await ss.propose_design(site, design, RECIPE, by="alice")
+        return await ss.apply_design(site, proposed["version"], approved_by="alice")
+
+    return run(go())
+
+
+async def _writer(site):
+    conn = await ss.database().restricted(site, write=True)
+    return ss.SiteWriter(site, DESIGN, conn)
+
+
+def test_provision_and_apply_design(site):
+    assert site.status == "draft" and site.schema_name == f"site_{site.slug}"
+    out = approve(site)
+    assert any("CREATE TABLE" in s for s in out["statements"])
+    again = run(ss.propose_design(site, DESIGN, RECIPE, by="alice"))
+    assert run(ss.apply_design(site, again["version"], approved_by="alice"))["statements"] == []
+    retyped = {"entities": [dict(DESIGN["entities"][1], columns=[
+        {"name": "order_no", "type": "text"}, {"name": "amount", "type": "text"}])]}
+    with pytest.raises(ss.DesignConflict):  # refused when proposed, before any approval
+        run(ss.propose_design(site, retyped, RECIPE, by="alice"))
+    assert run(ss.get_site(site.id)).status == "active"
+
+
+def test_writer_semantics_and_change_log(site):
+    approve(site)
+
+    async def go():
+        w = await _writer(site)
+        try:
+            r1 = await w.begin_run("full", "manual")
+            await w.upsert("orders", [{"order_no": "A1", "amount": "10"}, {"order_no": "A2", "amount": "5"}])
+            assert await w.record_fixed("about", None, {"title": "Us", "body": "v1"}) == "insert"
+            r1 = await w.finish_run(r1, full_entities=["orders", "about"])
+            assert (r1.status, r1.inserted, r1.removed) == ("ok", 2, 0)
+
+            # incremental: A2 unseen -> NOT removed; A1 changed -> update
+            r2 = await w.begin_run("incremental", "schedule")
+            counts = await w.upsert("orders", [{"order_no": "A1", "amount": "11"}])
+            assert counts["updated"] == 1
+            r2 = await w.finish_run(r2, full_entities=[])
+            assert r2.removed == 0
+
+            # failed full run never removes
+            r3 = await w.begin_run("full", "manual")
+            await w.upsert("orders", [{"order_no": "A1", "amount": "11"}])
+            r3 = await w.finish_run(r3, full_entities=["orders"], error="boom")
+            assert (r3.status, r3.removed) == ("error", 0)
+
+            # clean full run: A2 unseen -> removed (kept, marked)
+            r4 = await w.begin_run("full", "manual")
+            c4 = await w.upsert("orders", [{"order_no": "A1", "amount": "11"}])
+            assert c4["unchanged"] == 1
+            assert await w.record_fixed("about", None, {"title": "Us", "body": "v2"}) == "version"
+            r4 = await w.finish_run(r4, full_entities=["orders", "about"])
+            assert r4.removed == 1 and r4.versions == 1
+
+            # A2 comes back -> restore
+            r5 = await w.begin_run("incremental", "manual")
+            assert (await w.upsert("orders", [{"order_no": "A2", "amount": "5"}]))["restored"] == 1
+            await w.finish_run(r5)
+        finally:
+            await w.conn.close()
+
+        rows = await ss.table_rows(site, "orders", include_removed=True)
+        by_key = {r["_key"]: r for r in rows["rows"]}
+        assert set(by_key) == {"A1", "A2"} and by_key["A2"]["_removed_at"] is None
+        hist = await ss.history(site, "orders", "A2")
+        assert [c["op"] for c in hist["changes"]] == ["insert", "remove", "restore"]
+        fixed = await ss.history(site, "about", "Us")
+        assert [v["version"] for v in fixed["versions"]] == [1, 2]
+        assert [c["op"] for c in fixed["changes"]] == ["insert", "version"]
+        hist_a1 = await ss.history(site, "orders", "A1")
+        assert [c["op"] for c in hist_a1["changes"]] == ["insert", "update"]
+        runs = await ss.list_runs(site)
+        assert len(runs) == 5
+
+    run(go())
+
+
+def test_reader_role_is_confined(site):
+    approve(site)
+
+    async def go():
+        out = await ss.query(site, "SELECT count(*) AS n FROM orders")
+        assert out["rows"][0][0] == 0 or out["rows"][0] == {"n": 0} or out["rows"]
+        for bad in (
+            "SELECT * FROM public.site_sources",
+            "SELECT * FROM public.site_source_grants",
+        ):
+            with pytest.raises(ss.SiteError):
+                await ss.query(site, bad)
+        conn = await ss.database().restricted(site, write=False)
+        try:
+            import asyncpg
+
+            with pytest.raises(asyncpg.PostgresError):
+                await conn.execute("INSERT INTO orders (_key, _hash, _payload) VALUES ('x', 'h', '{}')")
+        finally:
+            await conn.close()
+        wconn = await ss.database().restricted(site, write=True)
+        try:
+            import asyncpg
+
+            with pytest.raises(asyncpg.PostgresError):
+                await wconn.execute("DELETE FROM orders")
+            with pytest.raises(asyncpg.PostgresError):
+                await wconn.execute("CREATE TABLE sneaky (a int)")
+        finally:
+            await wconn.close()
+
+    run(go())
+
+
+def test_refresh_now_calls_run_recipe(site, monkeypatch):
+    approve(site)
+    seen = {}
+
+    def run_recipe(recipe, credential, *, entities=None, mode, cursors):
+        seen.setdefault("calls", []).append((tuple(entities), mode))
+        if mode == "full":
+            yield ("about", "fixed", "Us", {"title": "Us", "body": "hello"})
+        else:
+            yield ("_page", "", None, {})
+            yield ("orders", "variable", "B1", {"order_no": "B1", "amount": 3})
+
+    fake = types.ModuleType("hermes_cli.site_recipe_runner")
+    fake.run_recipe = run_recipe
+    monkeypatch.setitem(sys.modules, "hermes_cli.site_recipe_runner", fake)
+    import hermes_cli
+
+    monkeypatch.setattr(hermes_cli, "site_recipe_runner", fake, raising=False)
+    site = run(ss.get_site(site.id))
+    out = run(ss.start_refresh(site, trigger="manual", wait=True))
+    assert out["entity_modes"] == {"about": "full", "orders": "incremental"}
+    assert sorted(seen["calls"]) == [(("about",), "full"), (("orders",), "incremental")]
+    runs = run(ss.list_runs(site))
+    assert runs[0]["status"] == "ok" and runs[0]["inserted"] == 1 and runs[0]["pages"] == 1
