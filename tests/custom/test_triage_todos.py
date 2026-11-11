@@ -236,3 +236,15 @@ def test_notify_breaks_a_priority_tie(registration):
 
 def test_a_todo_with_no_title_is_never_registered(registration):
     assert registration.register_todo(title="   ") is None
+
+
+def test_a_recorded_todo_marks_its_arrival_for_incomings(handlers, recorded):
+    batch = _email_batch(None)
+    handlers.process_result(
+        {"todos": [{"title": "Sign the quote", "priority": "high"}]},
+        batch,
+        _NullDb(),
+    )
+    assert batch["_todo_arrivals"] == [
+        ("email", "leo@example.com", "<abc@mail>", "high")
+    ]

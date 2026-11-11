@@ -44,6 +44,13 @@ async def _resolve_principal(request: Request):
     return await _comms_resolve_principal(request, allow_as=True)
 
 
+async def _resolve_write_principal(request: Request):
+    """The acting principal for a write: ``?as=`` never applies."""
+    from hermes_cli.web_server import _comms_resolve_principal
+
+    return await _comms_resolve_principal(request, allow_as=False)
+
+
 def _registry(mode: Optional[str] = None):
     from hermes_cli.inbound_registry import default_registry
 
@@ -100,8 +107,29 @@ def _when(value: Optional[str], *, field: str) -> Optional[datetime]:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+def _todos(mode: Optional[str] = None):
+    from hermes_cli.todo_store import default_store
+
+    return default_store(mode)
+
+
+async def _todo_counts(principal, item_ids: list[str]) -> dict[str, int]:
+    """Live to-dos linked to each arrival, in one query per page.
+
+    Best-effort: a box with no to-do store yet shows ``0``, not a 500.
+    """
+    if not item_ids:
+        return {}
+    try:
+        return await _todos().live_counts_by_source(principal, ENTITY_KIND, item_ids)
+    except Exception as exc:  # noqa: BLE001 - a count is never worth a 500
+        logger.debug("incomings: to-do counts unavailable (%s)", exc)
+        return {}
+
+
 async def _decorate(tag_registry, principal, items: list) -> list[dict[str, Any]]:
-    """Item dicts with their tags and short refs (``M512``) attached."""
+    """Item dicts with their tags, to-do counts and short refs attached."""
+    counts = await _todo_counts(principal, [str(item.id) for item in items])
     out: list[dict[str, Any]] = []
     for item in items:
         payload = item.as_dict()
@@ -109,8 +137,21 @@ async def _decorate(tag_registry, principal, items: list) -> list[dict[str, Any]
             tag.as_dict()
             for tag in await tag_registry.for_entity(principal, ENTITY_KIND, item.id)
         ]
+        payload["todo_count"] = counts.get(str(item.id), 0)
         out.append(payload)
     return await _with_refs(out)
+
+
+def _attention(value: Optional[str]) -> str:
+    from hermes_cli.inbound_registry import ATTENTION_FILTERS
+
+    choice = str(value or "any").strip().lower() or "any"
+    if choice not in ATTENTION_FILTERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"attention must be one of {', '.join(ATTENTION_FILTERS)}",
+        )
+    return choice
 
 
 async def _with_refs(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -135,6 +176,7 @@ async def list_incomings(
     has_attachments: Optional[str] = None,
     since: str = "",
     until: str = "",
+    attention: str = "any",
     limit: int = _DEFAULT_LIMIT,
     cursor: str = "",
 ) -> dict[str, Any]:
@@ -142,8 +184,11 @@ async def list_incomings(
 
     All list-ish parameters are comma-separated. ``next_cursor`` is ``None``
     at the end; there is no total, because counting the filtered set on every
-    page is the full scan keyset paging exists to avoid.
+    page is the full scan keyset paging exists to avoid. ``attention=open``
+    is the landing Incomings tab: the caller's own items triage flagged and
+    nobody has marked Done / Dismissed yet.
     """
+    attention_filter = _attention(attention)
     principal = await _resolve_principal(request)
     registry = _registry()
     if not await _table_exists(registry):
@@ -152,7 +197,11 @@ async def list_incomings(
     # A short ref (``M512``) typed into search puts that arrival first (on the
     # first page); the text still runs as an ordinary search too.
     _, target = await profile_refs.search_target(profile_refs.MESSAGE, q)
-    pinned = await registry.get(principal, target) if target and not cursor else None
+    pinned = (
+        await registry.get(principal, target)
+        if target and not cursor and attention_filter == "any"
+        else None
+    )
 
     page = await registry.list(
         principal,
@@ -165,6 +214,7 @@ async def list_incomings(
         until=_when(until, field="until"),
         remembered=_flag(remembered),
         has_attachments=_flag(has_attachments),
+        attention=attention_filter,
         include_tags=_csv(tag),
         exclude_tags=_csv(exclude_tag),
         tag_match="all" if str(tag_match).lower() == "all" else "any",
@@ -205,6 +255,20 @@ async def incomings_facets(request: Request) -> dict[str, Any]:
     }
 
 
+@router.get("/attention-count")
+async def incomings_attention_count(request: Request) -> dict[str, Any]:
+    """The landing badge: open "needs you" items, capped at 99.
+
+    ``{"count", "urgent", "by_surface"}``. Declared before ``/{item_id}`` so
+    the literal path is not read as an id.
+    """
+    principal = await _resolve_principal(request)
+    registry = _registry()
+    if not await _table_exists(registry):
+        return {"count": 0, "urgent": 0, "by_surface": {}}
+    return await registry.attention_count(principal)
+
+
 @router.get("/{item_id}")
 async def get_incoming(request: Request, item_id: str) -> dict[str, Any]:
     """One arrival with its attachments and tags, or 404.
@@ -221,6 +285,7 @@ async def get_incoming(request: Request, item_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="No such item")
 
     payload = (await _with_refs([item.as_dict()]))[0]
+    payload["todo_count"] = (await _todo_counts(principal, [item.id])).get(item.id, 0)
     payload["attachments"] = await registry.attachments(principal, item_id)
     payload["tags"] = [
         tag.as_dict()
@@ -353,3 +418,53 @@ async def remember_incoming(request: Request, item_id: str) -> dict[str, Any]:
     except RememberError as error:
         raise HTTPException(status_code=error.status, detail=str(error)) from error
     return remembered.as_dict()
+
+
+@router.post("/{item_id}/attention")
+async def set_incoming_attention(request: Request, item_id: str) -> dict[str, Any]:
+    """Clear (Done / Dismiss) or reopen an arrival in the landing Incomings.
+
+    Body ``{"action": "clear", "outcome": "done" | "dismissed"}`` or
+    ``{"action": "reopen"}``; returns the updated item. A write, so the acting
+    principal is never narrowed with ``?as=``. Only the item's owner may write
+    (as with remember): a reader who can see it through a grant or a role gets
+    403, and one who cannot see it at all gets the same 404 as a missing id.
+    """
+    from hermes_cli.inbound_registry import ATTENTION_OUTCOMES
+
+    try:
+        body = await request.json()
+    except Exception as exc:  # noqa: BLE001 - any unparsable body is the caller's
+        raise HTTPException(status_code=400, detail="body must be JSON") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="body must be a JSON object")
+    action = str(body.get("action") or "").strip().lower()
+    outcome = str(body.get("outcome") or "").strip().lower()
+    if action not in ("clear", "reopen"):
+        raise HTTPException(status_code=400, detail="action must be clear or reopen")
+    if action == "clear" and outcome not in ATTENTION_OUTCOMES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"outcome must be one of {', '.join(ATTENTION_OUTCOMES)}",
+        )
+
+    principal = await _resolve_write_principal(request)
+    registry = _registry()
+    if not await _table_exists(registry):
+        raise HTTPException(status_code=404, detail="No such item")
+    item = await registry.get(principal, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="No such item")
+    if item.owner_user_id != principal.user_id:
+        raise HTTPException(
+            status_code=403, detail="Only the item's owner can change this"
+        )
+
+    if action == "clear":
+        updated = await registry.clear_attention(principal, item_id, outcome=outcome)
+    else:
+        updated = await registry.reopen_attention(principal, item_id)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="No such item")
+    payload = (await _decorate(_tags(), principal, [updated]))[0]
+    return payload

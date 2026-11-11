@@ -1146,3 +1146,274 @@ async def test_short_ref_backfill_reads_every_private_arrival(
     )
     assert refs[first.id] != refs[second.id]
     assert short_refs.lookup(refs[first.id]).internal_id == first.id
+
+
+async def _flag(registry, principal, external_id, reason, priority=None, **kw):
+    return await registry.flag_attention(
+        principal,
+        surface=kw.get("surface", "email"),
+        external_id=external_id,
+        account_id=kw.get("account_id", "leo@example.com"),
+        reason=reason,
+        priority=priority,
+    )
+
+
+@pytest.mark.asyncio
+async def test_attention_is_flagged_listed_cleared_and_reopened(
+    postgres_dsn: str,
+) -> None:
+    registry = await _registry(postgres_dsn)
+    leo = _principal("leo", role="owner")
+    item = await _arrive(registry, leo, external_id="att-1")
+    await _arrive(registry, leo, external_id="att-quiet")
+
+    assert await _flag(registry, leo, "att-1", "escalated", "high") is True
+    flagged = await registry.get(leo, item.id)
+    assert flagged is not None and flagged.needs_attention
+    assert (flagged.attention_reason, flagged.attention_priority) == (
+        "escalated",
+        "high",
+    )
+    page = await registry.list(leo, attention="open")
+    assert [i.external_id for i in page.items] == ["att-1"]
+    assert len((await registry.list(leo, attention="any")).items) == 2
+
+    cleared = await registry.clear_attention(leo, item.id, outcome="dismissed")
+    assert cleared is not None and not cleared.needs_attention
+    assert cleared.attention_outcome == "dismissed"
+    assert cleared.attention_cleared_by == "leo"
+    assert (await registry.list(leo, attention="open")).items == []
+    assert [i.id for i in (await registry.list(leo, attention="cleared")).items] == [
+        item.id
+    ]
+
+    reopened = await registry.reopen_attention(leo, item.id)
+    assert reopened is not None and reopened.needs_attention
+    assert reopened.attention_outcome is None
+    assert reopened.attention_at == flagged.attention_at
+
+
+@pytest.mark.asyncio
+async def test_a_re_poll_keeps_the_flag_and_the_users_decision(
+    postgres_dsn: str,
+) -> None:
+    registry = await _registry(postgres_dsn)
+    leo = _principal("leo", role="owner")
+    item = await _arrive(registry, leo, external_id="att-2", body="v1")
+    await _flag(registry, leo, "att-2", "todo", "medium")
+
+    await _arrive(registry, leo, external_id="att-2", body="v2 edited")
+    kept = await registry.get(leo, item.id)
+    assert kept is not None and kept.body == "v2 edited" and kept.needs_attention
+
+    await registry.clear_attention(leo, item.id, outcome="done")
+    await _arrive(registry, leo, external_id="att-2", body="v3 edited")
+    still = await registry.get(leo, item.id)
+    assert still is not None and still.attention_outcome == "done"
+    assert not still.needs_attention
+
+
+@pytest.mark.asyncio
+async def test_a_cleared_item_returns_only_for_a_higher_verdict(
+    postgres_dsn: str,
+) -> None:
+    registry = await _registry(postgres_dsn)
+    leo = _principal("leo", role="owner")
+    item = await _arrive(registry, leo, external_id="att-3")
+    await _flag(registry, leo, "att-3", "todo", "high")
+    await registry.clear_attention(leo, item.id, outcome="done")
+
+    # The same verdict, or a weaker one, is what the user already handled.
+    assert await _flag(registry, leo, "att-3", "todo", "high") is False
+    assert await _flag(registry, leo, "att-3", "escalated", "low") is False
+    assert not (await registry.get(leo, item.id)).needs_attention
+
+    # A meeting rescheduled into a conflict is news.
+    assert await _flag(registry, leo, "att-3", "critical_event", "urgent") is True
+    back = await registry.get(leo, item.id)
+    assert back.needs_attention and back.attention_reason == "critical_event"
+    assert back.attention_outcome is None
+
+    # An open flag is upgraded by a stronger verdict, never downgraded.
+    assert await _flag(registry, leo, "att-3", "todo", "low") is False
+    assert (await registry.get(leo, item.id)).attention_reason == "critical_event"
+
+
+@pytest.mark.asyncio
+async def test_attention_is_the_owner_s_own(postgres_dsn: str) -> None:
+    """The owner role may read Ada's inbox, but her Incomings are hers."""
+    registry = await _registry(postgres_dsn)
+    ada = _principal("ada")
+    leo = _principal("leo", role="owner")
+    item = await _arrive(registry, ada, external_id="att-4", account_id="ada@x")
+
+    assert await _flag(registry, _principal("bob"), "att-4", "escalated",
+                       account_id="ada@x") is False
+    assert await _flag(registry, ada, "att-4", "escalated", "urgent",
+                       account_id="ada@x") is True
+    assert await registry.get(leo, item.id) is not None
+    assert (await registry.list(leo, attention="open")).items == []
+    assert (await registry.attention_count(leo))["count"] == 0
+    assert await registry.clear_attention(leo, item.id, outcome="done") is None
+    assert await registry.clear_attention(
+        _principal("bob"), item.id, outcome="done"
+    ) is None
+    assert (await registry.get(ada, item.id)).needs_attention
+    assert (await registry.attention_count(ada))["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_id_is_not_found(postgres_dsn: str) -> None:
+    registry = await _registry(postgres_dsn)
+    leo = _principal("leo", role="owner")
+    assert await registry.clear_attention(leo, "M512", outcome="done") is None
+    assert await registry.reopen_attention(leo, "not-a-uuid") is None
+
+
+@pytest.mark.asyncio
+async def test_an_unflagged_item_is_not_invented_into_incomings(
+    postgres_dsn: str,
+) -> None:
+    registry = await _registry(postgres_dsn)
+    leo = _principal("leo", role="owner")
+    item = await _arrive(registry, leo, external_id="att-5")
+    same = await registry.clear_attention(leo, item.id, outcome="done")
+    assert same is not None and same.attention_cleared_at is None
+    assert (await registry.list(leo, attention="cleared")).items == []
+
+
+@pytest.mark.asyncio
+async def test_remembering_does_not_clear_attention(postgres_dsn: str) -> None:
+    registry = await _registry(postgres_dsn)
+    leo = _principal("leo", role="owner")
+    item = await _arrive(registry, leo, external_id="att-6")
+    await _flag(registry, leo, "att-6", "escalated", "high")
+    await registry.mark_remembered(
+        leo, item.id, document_id=str(uuid.uuid4()), remembered_by="leo"
+    )
+    kept = await registry.get(leo, item.id)
+    assert kept.remembered and kept.needs_attention
+
+
+@pytest.mark.asyncio
+async def test_attention_count_groups_by_surface_and_urgency(
+    postgres_dsn: str,
+) -> None:
+    registry = await _registry(postgres_dsn)
+    leo = _principal("leo", role="owner")
+    await _arrive(registry, leo, external_id="c-1")
+    await _arrive(registry, leo, external_id="c-2")
+    await _arrive(registry, leo, surface="calendar", external_id="c-3")
+    cleared = await _arrive(registry, leo, external_id="c-4")
+    await _flag(registry, leo, "c-1", "escalated", "urgent")
+    await _flag(registry, leo, "c-2", "todo", "high")
+    await _flag(registry, leo, "c-3", "critical_event", "urgent", surface="calendar")
+    await _flag(registry, leo, "c-4", "escalated", "high")
+    await registry.clear_attention(leo, cleared.id, outcome="done")
+
+    assert await registry.attention_count(leo) == {
+        "count": 3,
+        "urgent": 2,
+        "by_surface": {"email": 2, "calendar": 1},
+    }
+
+
+@pytest.mark.asyncio
+async def test_attention_count_is_capped_for_the_badge(postgres_dsn: str) -> None:
+    registry = await _registry(postgres_dsn)
+    leo = _principal("leo", role="owner")
+    for n in range(101):
+        await _arrive(registry, leo, external_id=f"cap-{n}")
+        await _flag(registry, leo, f"cap-{n}", "todo", "low")
+    count = await registry.attention_count(leo)
+    assert count["count"] == 99
+    assert count["by_surface"] == {"email": 99}
+
+
+async def _todo_store(dsn: str):
+    from hermes_cli.todo_store import TodoStore
+
+    store = TodoStore(get_store("supabase-app", "prod", config=_config(dsn)))
+    await store.initialize()
+    return store
+
+
+@pytest.mark.asyncio
+async def test_todo_counts_are_batched_and_scoped(postgres_dsn: str) -> None:
+    registry = await _registry(postgres_dsn)
+    todos = await _todo_store(postgres_dsn)
+    leo = _principal("leo", role="owner")
+    ada = _principal("ada")
+    one = await _arrive(registry, leo, external_id="t-1")
+    two = await _arrive(registry, leo, external_id="t-2")
+    for title in ("Sign it", "Send it"):
+        await todos.create(leo, title=title, source_kind="inbound", source_ref=one.id)
+    done = await todos.create(
+        leo, title="Old one", stage="done", source_kind="inbound", source_ref=two.id
+    )
+    assert done.stage == "done"
+
+    assert await todos.live_counts_by_source(
+        leo, "inbound", [one.id, two.id, "not-a-uuid"]
+    ) == {one.id: 2}
+    assert await todos.live_counts_by_source(ada, "inbound", [one.id]) == {}
+
+
+@pytest.mark.asyncio
+async def test_the_backfill_flags_what_already_needed_the_user_once(
+    postgres_dsn: str,
+) -> None:
+    registry = await _registry(postgres_dsn)
+    todos = await _todo_store(postgres_dsn)
+    leo = _principal("leo", role="owner")
+    ada = _principal("ada")
+    urgent = await _arrive(registry, leo, external_id="b-1", importance="high")
+    event = await _arrive(
+        registry, leo, surface="calendar", external_id="b-2", importance="critical"
+    )
+    quiet = await _arrive(registry, leo, external_id="b-3", importance="informational")
+    tasked = await _arrive(registry, ada, external_id="b-4", account_id="ada@x")
+    finished = await _arrive(registry, leo, external_id="b-5")
+    await todos.create(
+        ada, title="Reply", stage="staged", priority="critical",
+        source_kind="inbound", source_ref=tasked.id,
+    )
+    await todos.create(
+        leo, title="Was done", stage="done",
+        source_kind="inbound", source_ref=finished.id,
+    )
+
+    # The box as it was before this release: no attention columns.
+    conn = await asyncpg.connect(postgres_dsn, ssl=False)
+    try:
+        await conn.execute("SET search_path TO app_prod")
+        await conn.execute(
+            f"ALTER TABLE {INBOUND_ITEMS_TABLE}"
+            " DROP COLUMN attention_at, DROP COLUMN attention_reason,"
+            " DROP COLUMN attention_priority, DROP COLUMN attention_cleared_at,"
+            " DROP COLUMN attention_cleared_by, DROP COLUMN attention_outcome"
+        )
+    finally:
+        await conn.close()
+    await registry.initialize()
+
+    got = {i.external_id: i for i in [
+        await registry.get(leo, x.id) for x in (urgent, event, quiet, finished)
+    ] + [await registry.get(ada, tasked.id)]}
+    assert (got["b-1"].attention_reason, got["b-1"].attention_priority) == (
+        "escalated", "high"
+    )
+    assert (got["b-2"].attention_reason, got["b-2"].attention_priority) == (
+        "critical_event", "urgent"
+    )
+    assert (got["b-4"].attention_reason, got["b-4"].attention_priority) == (
+        "todo", "urgent"
+    )
+    assert not got["b-3"].needs_attention
+    assert not got["b-5"].needs_attention
+
+    # One-off: once the columns exist, a Done is never undone by a restart.
+    await registry.clear_attention(leo, urgent.id, outcome="done")
+    await registry.initialize()
+    assert not (await registry.get(leo, urgent.id)).needs_attention
