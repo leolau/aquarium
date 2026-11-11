@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 const APP = join(__dirname);
 
 /** Signed-out routes; each needs its own loading.tsx or the root one (with the launcher) shows. */
-const SIGNED_OUT = ["login", "setup", "activate", "survey"];
+const SIGNED_OUT = ["login", "setup", "activate", "survey", "secret"];
 
 describe("signed-out loading states", () => {
   it.each(SIGNED_OUT)("/%s has a launcher-free loading.tsx", (route) => {
