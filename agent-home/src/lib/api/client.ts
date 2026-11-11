@@ -3017,7 +3017,7 @@ export class HermesApiClient {
     return this.request(`/api/backups/offsite/${action}`, { method: "POST" });
   }
 
-  // -- software upgrade (Settings → Software upgrade; owner, admins read) ----
+  // -- software upgrade (Settings → Software upgrade; owner and admins) -----
 
   async softwareUpgrade(): Promise<SoftwareUpgradeStatus> {
     return this.request("/api/software-upgrade");

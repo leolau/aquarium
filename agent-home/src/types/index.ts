@@ -3850,7 +3850,7 @@ export interface SoftwareUpgradeStatus {
     commits: { sha: string | null; title: string; date: string | null }[];
     error: string | null;
   } | null;
-  /** Set by the BFF: owners can upgrade, admins only look. */
+  /** Set by the BFF: owners and admins can upgrade and roll back. */
   can_upgrade?: boolean;
 }
 

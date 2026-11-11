@@ -7,7 +7,7 @@ import { NextResponse } from "next/server";
 
 import { refuse, upstream } from "@/lib/api/admin-route";
 import { apiClientForRequest, getPrincipal } from "@/lib/auth/principal";
-import { canAdminister } from "@/lib/auth/roles";
+import { canAdminister, canUpgradeSoftware } from "@/lib/auth/roles";
 
 export async function GET(): Promise<NextResponse> {
   const principal = await getPrincipal();
@@ -15,6 +15,6 @@ export async function GET(): Promise<NextResponse> {
   const client = await apiClientForRequest();
   return upstream(
     () => client.softwareUpgradeJob(),
-    (data) => ({ ...data, can_upgrade: principal.role === "owner" }),
+    (data) => ({ ...data, can_upgrade: canUpgradeSoftware(principal) }),
   );
 }

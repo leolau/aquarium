@@ -1,9 +1,9 @@
 {
   "title": "軟件升級",
-  "navHint": "在此伺服器安裝較新的 Aquarium 版本，或回復舊版。只限擁有者；管理員可查看。",
+  "navHint": "在此伺服器安裝較新的 Aquarium 版本，或回復舊版。只限擁有者及管理員。",
   "navOpen": "開啟軟件升級",
   "unavailable": "此伺服器暫時未能在這裏執行軟件升級。{detail}",
-  "readOnly": "你以管理員身份查看。只有擁有者可以升級或回復。",
+  "readOnly": "你可以查看此頁，但只有擁有者或管理員可以升級或回復。",
   "installed": "已安裝版本",
   "release": "版本",
   "installedWhen": "安裝時間",

@@ -94,7 +94,7 @@ describe("SoftwareUpgradeView", () => {
     vi.unstubAllGlobals();
   });
 
-  it("is read only for admins", () => {
+  it("is read only without can_upgrade", () => {
     render(<SoftwareUpgradeView initial={{ ...STATUS, can_upgrade: false }} />);
     expect(screen.getByTestId("upgrade-read-only")).toBeTruthy();
     expect(screen.queryByTestId("upgrade-button")).toBeNull();

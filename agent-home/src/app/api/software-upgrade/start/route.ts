@@ -1,17 +1,17 @@
 /**
- * POST /api/software-upgrade/start {version, password} — owner only. The
- * Python API re-checks the password with the login provider, then the box
+ * POST /api/software-upgrade/start {version, password} — owner or admin. The
+ * Python API re-checks the caller's own password with the login provider, then the box
  * starts the upgrade as its own job and this returns at once (202).
  */
 import { NextResponse } from "next/server";
 
 import { BAD_JSON, badRequest, readJsonBody, str } from "@/lib/api/admin-route";
-import { forwardMemberError, requireMemberOwner } from "@/lib/api/member-bff";
+import { forwardMemberError, requireMemberAdmin } from "@/lib/api/member-bff";
 
 const VERSION = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]{0,40})?$/;
 
 export async function POST(request: Request): Promise<NextResponse> {
-  const gate = await requireMemberOwner("Only the owner can upgrade the software.");
+  const gate = await requireMemberAdmin();
   if ("response" in gate) return gate.response;
   const body = await readJsonBody(request);
   if (!body) return BAD_JSON();

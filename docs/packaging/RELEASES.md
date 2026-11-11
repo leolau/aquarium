@@ -147,16 +147,16 @@ minutes (npm ci + two Next builds). Local builds are not signed.
 
 ## 8. Settings → Software upgrade (agent-home)
 
-The owner can upgrade (or roll back) from agent-home: Settings → Software
-upgrade. It is a front end to the same `aquarium update` described above; it
-does not download or verify anything itself.
+The owner or an admin can upgrade (or roll back) from agent-home: Settings →
+Software upgrade. It is a front end to the same `aquarium update` described
+above; it does not download or verify anything itself.
 
-**Who:** the owner upgrades and rolls back; admins see the page read only;
-members and viewers are refused by the page, the agent-home BFF
-(`/api/software-upgrade/*`) and the Python API (`hermes_cli/software_upgrade_api.py`).
-Starting an upgrade or a rollback needs the owner's password again; the Python
-API re-checks it with the same login provider (Supabase password sign-in), with
-the login page's attempt limit.
+**Who:** the owner and admins upgrade and roll back; members and viewers are
+refused by the page, the agent-home BFF (`/api/software-upgrade/*`) and the
+Python API (`hermes_cli/software_upgrade_api.py`). Starting an upgrade or a
+rollback needs the caller's own password again (the history records who did it);
+the Python API re-checks it with the same login provider (Supabase password
+sign-in), with the login page's attempt limit.
 
 **Privilege boundary:** the dashboard runs as `hermes`. The only root it gets
 for this is `deploy/sudoers.d/aquarium-upgrade` (installed by

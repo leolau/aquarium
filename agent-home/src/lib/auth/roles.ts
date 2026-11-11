@@ -29,3 +29,6 @@ export function canAdminister(
 
 /** Tool and MCP settings follow the same owner/admin rule. */
 export const canManageTools = canAdminister;
+
+/** Software upgrade and roll back: owner or admin, as the Python API. */
+export const canUpgradeSoftware = canAdminister;
