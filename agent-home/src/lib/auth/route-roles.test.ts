@@ -128,12 +128,13 @@ const roles = table as Record<string, string>;
 
 describe("agent-home BFF route roles", () => {
   it("gates every Skills route by its Skills permission", () => {
+    // Mirrors the Python gates (`route_roles.SKILLS_*`); browsing the hub is sign-in only.
     for (const [key, role] of Object.entries(roles)) {
       if (!key.includes(" /api/skills")) continue;
-      const method = key.split(" ")[0];
       const lab = /\/api\/skills\/(usage|versions|improve)/.test(key);
-      const view = method === "GET" && /^GET \/api\/skills(\/content|\/details)?$/.test(key);
-      expect(role, key).toBe(lab ? "skill:lab" : view ? "skill:view" : "skill:manage");
+      const view = /^GET \/api\/skills(\/content)?$/.test(key);
+      const browse = /^GET \/api\/skills\/hub\/(sources|search|preview|scan)$/.test(key);
+      expect(role, key).toBe(browse ? "signed-in" : lab ? "skill:lab" : view ? "skill:view" : "skill:manage");
     }
   });
 

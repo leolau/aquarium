@@ -6,7 +6,7 @@ import { requireSkillPermission } from "@/lib/skills/permissions-server";
 import type { SkillDetails } from "@/types";
 
 export async function GET(request: Request) {
-  const gate = await requireSkillPermission("view", profileFromUrl(request.url));
+  const gate = await requireSkillPermission("manage", profileFromUrl(request.url));
   if (!gate.ok) return gate.response;
   const name = str(new URL(request.url).searchParams.get("name"));
   if (!name) return badRequest("name is required.");

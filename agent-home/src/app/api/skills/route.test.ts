@@ -69,15 +69,28 @@ const CALLS: Array<[string, () => Promise<Response>]> = [
   ["GET content", () => getContent(get("/api/skills/content?name=a"))],
   ["GET details", () => getDetails(get("/api/skills/details?name=a"))],
   ["PUT content", () => putContent(json("PUT", { name: "a", content: "x" }))],
-  ["GET hub sources", () => sources(get("/api/skills/hub/sources"))],
-  ["GET hub search", () => search(get("/api/skills/hub/search?q=linear"))],
-  ["GET hub preview", () => preview(get("/api/skills/hub/preview?identifier=a"))],
-  ["GET hub scan", () => scan(get("/api/skills/hub/scan?identifier=a"))],
   ["POST hub install", () => install(json("POST", { identifier: "a" }))],
   ["POST hub uninstall", () => uninstall(json("POST", { name: "a" }))],
 ];
 
+/** Browsing the hub is sign-in only; installing needs `manage`. */
+const BROWSE: Array<[string, () => Promise<Response>, keyof typeof client]> = [
+  ["GET hub sources", () => sources(get("/api/skills/hub/sources")), "skillHubSources"],
+  ["GET hub search", () => search(get("/api/skills/hub/search?q=linear")), "skillHubSearch"],
+  ["GET hub preview", () => preview(get("/api/skills/hub/preview?identifier=a")), "skillHubPreview"],
+  ["GET hub scan", () => scan(get("/api/skills/hub/scan?identifier=a")), "skillHubScan"],
+];
+
 describe("Skills BFF routes", () => {
+  it.each(BROWSE)("%s: 401 signed out, open to any signed-in role", async (_label, call, method) => {
+    getPrincipal.mockResolvedValue(null);
+    expect((await call()).status).toBe(401);
+    getPrincipal.mockResolvedValue(who("viewer"));
+    client[method].mockResolvedValue({});
+    expect((await call()).status).toBe(200);
+    expect(mySkillPermissions).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     boundProfiles.length = 0;

@@ -39,7 +39,8 @@ export async function loadSkill(
   const [content, list, details] = await Promise.allSettled([
     client.skillContent(name),
     client.skillList(),
-    withDetails ? client.skillDetails(name) : Promise.resolve(null),
+    // Files and "used by" need `manage` (Python gates /api/skills/details on it).
+    withDetails && permissions.manage ? client.skillDetails(name) : Promise.resolve(null),
   ]);
   if (content.status === "rejected") {
     const err = content.reason;
