@@ -328,7 +328,9 @@ CREATE TABLE IF NOT EXISTS project_skill_candidates (
     run_no      INTEGER NOT NULL,
     name        TEXT NOT NULL,
     body        TEXT NOT NULL,
-    created_at  INTEGER NOT NULL
+    created_at  INTEGER NOT NULL,
+    dismissed_at INTEGER,            -- set when someone dismissed it on the Skills tab
+    dismissed_by TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_project_skill_candidates
     ON project_skill_candidates(project_id, created_at DESC);
@@ -539,6 +541,14 @@ _RUN_COLUMN_MIGRATIONS: tuple[tuple[str, str], ...] = (
 )
 
 
+# Columns added to `project_skill_candidates` later: the project Skills tab's
+# Dismiss hides a retro suggestion without deleting its provenance.
+_SKILL_CANDIDATE_COLUMN_MIGRATIONS: tuple[tuple[str, str], ...] = (
+    ("dismissed_at", "dismissed_at INTEGER"),
+    ("dismissed_by", "dismissed_by TEXT"),
+)
+
+
 def _migrate_add_optional_columns(conn: sqlite3.Connection) -> None:
     """Add columns introduced after v1 to legacy DBs (safe on every open)."""
     cols = {row["name"] for row in conn.execute("PRAGMA table_info(projects)")}
@@ -555,6 +565,13 @@ def _migrate_add_optional_columns(conn: sqlite3.Connection) -> None:
     for col, ddl in _RUN_COLUMN_MIGRATIONS:
         if col not in rcols:
             _add_column_if_missing(conn, "project_runs", col, ddl)
+    ccols = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(project_skill_candidates)")
+    }
+    for col, ddl in _SKILL_CANDIDATE_COLUMN_MIGRATIONS:
+        if col not in ccols:
+            _add_column_if_missing(conn, "project_skill_candidates", col, ddl)
     # Created here, not in SCHEMA_SQL: a legacy DB only has the column once
     # the ADD COLUMN above has run.
     conn.execute(
@@ -2865,13 +2882,40 @@ def add_skill_candidate(
 def list_skill_candidates(
     conn: sqlite3.Connection,
     project_id: str,
+    *,
+    include_dismissed: bool = True,
 ) -> List[dict]:
+    query = "SELECT * FROM project_skill_candidates WHERE project_id = ?"
+    if not include_dismissed:
+        query += " AND dismissed_at IS NULL"
     rows = conn.execute(
-        "SELECT * FROM project_skill_candidates WHERE project_id = ? "
-        "ORDER BY created_at DESC, rowid DESC",
-        (project_id,),
+        query + " ORDER BY created_at DESC, rowid DESC", (project_id,)
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def dismiss_skill_candidate(
+    conn: sqlite3.Connection,
+    *,
+    project_id: str,
+    candidate_id: str,
+    dismissed_by: Optional[str],
+) -> Optional[dict]:
+    """Hide a retro skill suggestion; idempotent (the first dismissal stays).
+
+    Returns the row, or None when the project has no such candidate.
+    """
+    with write_txn(conn):
+        conn.execute(
+            "UPDATE project_skill_candidates SET dismissed_at = ?, dismissed_by = ?"
+            " WHERE id = ? AND project_id = ? AND dismissed_at IS NULL",
+            (_now(), dismissed_by, candidate_id, project_id),
+        )
+    row = conn.execute(
+        "SELECT * FROM project_skill_candidates WHERE id = ? AND project_id = ?",
+        (candidate_id, project_id),
+    ).fetchone()
+    return dict(row) if row else None
 
 
 # ---------------------------------------------------------------------------
