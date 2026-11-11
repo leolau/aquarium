@@ -160,6 +160,20 @@ _GLOBAL_ENV_PREFIXES = (
 )
 
 
+# The box's one Postgres: every profile is a schema in it, so a profile whose
+# ``.env`` names no DSN uses the deployment's. Only a value the operator set
+# in the unit file or shell qualifies; one a profile ``.env`` loaded into
+# ``os.environ`` belongs to that profile and never crosses into another.
+_DEPLOYMENT_FALLBACK_ENV = frozenset({"DATABASE_URL"})
+
+
+def _deployment_fallback(name: str) -> Optional[str]:
+    """``os.environ[name]`` when it is a deployment-level fallback, else None."""
+    if name in _DEPLOYMENT_FALLBACK_ENV and name not in _ENV_FILE_KEYS:
+        return os.environ.get(name)
+    return None
+
+
 def _is_global_env(name: str) -> bool:
     """Return True for genuinely process-global (non-profile-secret) env vars."""
     if name in _GLOBAL_ENV_EXACT:
@@ -194,6 +208,8 @@ def get_secret(name: str, default: Optional[str] = None) -> Optional[str]:
     scope = _SECRET_SCOPE.get()
     if scope is not None:
         val = scope.get(name)
+        if val is None:
+            val = _deployment_fallback(name)
         return val if val is not None else default
 
     if _MULTIPLEX_ACTIVE and not _environ_is_current_profile():
@@ -249,7 +265,8 @@ def expand_env_ref(name: str) -> Optional[str]:
         return os.environ.get(name)
     scope = _SECRET_SCOPE.get()
     if scope is not None:
-        return scope.get(name)
+        val = scope.get(name)
+        return val if val is not None else _deployment_fallback(name)
     return os.environ.get(name)
 
 
