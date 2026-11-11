@@ -542,7 +542,8 @@ def test_site_admin_migrate_by_non_superuser_owner_adopts_old_sites(tmp_path, mo
         async def unadopt_table():
             conn = await asyncpg.connect(f"{DSN.rsplit('/', 1)[0]}/{dbname}")
             try:
-                await conn.execute(f"ALTER TABLE {site.schema_name}._designs OWNER TO {owner_role}")
+                for table in ("_designs", "_meta"):
+                    await conn.execute(f"ALTER TABLE {site.schema_name}.{table} OWNER TO {owner_role}")
             finally:
                 await conn.close()
 
@@ -562,7 +563,11 @@ def test_site_admin_migrate_by_non_superuser_owner_adopts_old_sites(tmp_path, mo
         with pytest.raises(RuntimeError, match="SUPERUSER"):
             run(as_owner(lambda c: ss.ensure_site_admin(c, password="never-applied")))
         assert ss._role_password(ss.SITE_ADMIN_ROLE, create=False) == f"new-{tag}"
-        run(as_superuser(f"ALTER ROLE {ss.SITE_ADMIN_ROLE} NOSUPERUSER"))
+        run(as_superuser(f"ALTER ROLE {ss.SITE_ADMIN_ROLE} NOSUPERUSER CREATEDB"))
+        with pytest.raises(RuntimeError, match="CREATEDB"):
+            run(as_owner(lambda c: ss.ensure_site_admin(c, password="never-applied")))
+        assert ss._role_password(ss.SITE_ADMIN_ROLE, create=False) == f"new-{tag}"
+        run(as_superuser(f"ALTER ROLE {ss.SITE_ADMIN_ROLE} NOCREATEDB"))
 
         # The site admin now runs everything, including re-provisioning both roles.
         run(ss.provision_schema(site))

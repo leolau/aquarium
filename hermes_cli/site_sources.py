@@ -1044,6 +1044,13 @@ async def ensure_site_admin(conn: Any, *, password: Optional[str] = None) -> Non
                     f"a superuser must run: ALTER ROLE {role} NOSUPERUSER NOBYPASSRLS"
                 )
             await conn.execute(f"ALTER ROLE {role} NOSUPERUSER NOBYPASSRLS")
+        if existing["rolcreatedb"] and not await conn.fetchval(
+            "SELECT rolcreatedb FROM pg_roles WHERE rolname = current_user"
+        ):
+            raise RuntimeError(
+                f"{role} has CREATEDB, which a provisioning login must not; a superuser "
+                f"must run: ALTER ROLE {role} NOCREATEDB"
+            )
         changes = [
             option
             for option, wrong in (
@@ -1079,6 +1086,46 @@ async def ensure_site_admin(conn: Any, *, password: Optional[str] = None) -> Non
         await _adopt_site(conn, row["id"], row["slug"], row["schema_name"])
 
 
+async def _site_marker(conn: Any, schema: str, owner: str) -> Optional[str]:
+    """``_meta.site_id`` of ``schema``, read as whoever can after a partial adoption.
+
+    An adopted schema shuts the old owner out, and a ``_meta`` not yet moved is
+    unreadable to the site admin; then the old owner borrows schema USAGE from
+    the site admin for this transaction only.
+    """
+    role = SITE_ADMIN_ROLE
+    meta = await conn.fetchrow(
+        "SELECT has_table_privilege(c.oid, 'SELECT') AS me, "
+        "has_table_privilege($2, c.oid, 'SELECT') AS admin "
+        "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE n.nspname = $1 AND c.relname = '_meta' AND c.relkind = 'r'",
+        schema,
+        role,
+    )
+    if meta is None:
+        return None
+    s = _ident(schema)
+    read = f"SELECT value #>> '{{}}' FROM {s}._meta WHERE key = 'site_id'"
+    async with conn.transaction():
+        if await conn.fetchval("SELECT has_schema_privilege($1, 'USAGE')", schema):
+            if meta["me"]:
+                return await conn.fetchval(read)
+        if owner != role:
+            return None
+        if meta["admin"]:
+            await conn.execute(f"SET LOCAL ROLE {role}")
+            marker = await conn.fetchval(read)
+            await conn.execute("RESET ROLE")
+            return marker
+        if not meta["me"]:
+            return None
+        me = _ident(await conn.fetchval("SELECT current_user"))
+        await conn.execute(f"SET LOCAL ROLE {role}; GRANT USAGE ON SCHEMA {s} TO {me}; RESET ROLE")
+        marker = await conn.fetchval(read)
+        await conn.execute(f"SET LOCAL ROLE {role}; REVOKE USAGE ON SCHEMA {s} FROM {me}; RESET ROLE")
+        return marker
+
+
 async def _adopt_site(conn: Any, site_id: str, slug: str, schema: str) -> None:
     """Hand a site provisioned by another login to ``aquarium_site_admin``.
 
@@ -1096,18 +1143,7 @@ async def _adopt_site(conn: Any, site_id: str, slug: str, schema: str) -> None:
     )
     if owner is None:
         return
-    async with conn.transaction():
-        # An adopted schema shuts this login out; read its marker as the new owner.
-        if not await conn.fetchval("SELECT has_schema_privilege($1, 'USAGE')", schema):
-            if owner != role:
-                return
-            await conn.execute(f"SET LOCAL ROLE {role}")
-        marker = None
-        if await conn.fetchval("SELECT to_regclass($1)", f"{schema}._meta") is not None:
-            marker = await conn.fetchval(
-                f"SELECT value #>> '{{}}' FROM {_ident(schema)}._meta WHERE key = 'site_id'"
-            )
-        await conn.execute("RESET ROLE")
+    marker = await _site_marker(conn, schema, owner)
     if marker != site_id:
         logger.warning("site registry row %s does not match schema %s; not adopted", site_id, schema)
         return
