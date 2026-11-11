@@ -65,16 +65,20 @@ export function ProfileSuggestionsView({
     );
   }
 
+  // The root marker is present in every loaded state, empty included (a fresh
+  // install has no suggestions yet); only a load failure renders without it.
   if (open.length === 0 && reviewed.length === 0) {
     return (
-      <p
-        data-component="SuggestionsEmpty"
-        className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
-      >
-        No suggestions right now. The system proposes a new profile when your
-        work clusters into a distinct sub-goal — at most once a month, and only
-        when nothing is already waiting for you here.
-      </p>
+      <div data-component="ProfileSuggestionsView" className="mx-auto max-w-2xl space-y-4 pb-24 lg:pb-8">
+        <p
+          data-component="SuggestionsEmpty"
+          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]"
+        >
+          No suggestions right now. The system proposes a new profile when your
+          work clusters into a distinct sub-goal — at most once a month, and only
+          when nothing is already waiting for you here.
+        </p>
+      </div>
     );
   }
 

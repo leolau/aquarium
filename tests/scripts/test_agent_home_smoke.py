@@ -98,6 +98,16 @@ def test_page_verdict_member_redirect_applies_to_members_only():
     assert not smoke.page_verdict(spec, ADMIN, 200, sent)[0]
 
 
+def test_profile_suggestions_spec_passes_empty_queue_and_fails_load_error():
+    # A fresh install has no suggestions: the empty state must still pass.
+    spec = next(p for p in smoke.PAGES if p.path == "/profiles/suggestions")
+    empty = _html(*SHELL, "ProfileSuggestionsView", "SuggestionsEmpty")
+    for role in (ADMIN, MEMBER, VIEWER):
+        assert smoke.page_verdict(spec, role, 200, empty)[0]
+    ok, detail = smoke.page_verdict(spec, ADMIN, 200, _html(*SHELL, "SuggestionsError"))
+    assert not ok and "SuggestionsError" in detail
+
+
 def test_page_verdict_not_found_page():
     spec = PageSpec("/todos/x", not_found=True)
     assert smoke.page_verdict(spec, MEMBER, 200, '"NEXT_HTTP_ERROR_FALLBACK;404"')[0]
