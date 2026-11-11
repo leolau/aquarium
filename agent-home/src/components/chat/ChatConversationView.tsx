@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { SecretRequestPrompt } from "@/components/chat/SecretRequestPrompt";
 import { ApprovalCard } from "@/components/chat/thread/ApprovalCard";
 import { Composer } from "@/components/chat/Composer";
 import { LiveActivity } from "@/components/chat/LiveActivity";
@@ -43,6 +44,7 @@ export function ChatConversationView({
     selKey,
     selBusy,
     selApproval,
+    selSecretRequest,
     selDecision,
     selTurn,
     selRunningTool,
@@ -124,6 +126,13 @@ export function ChatConversationView({
             request={selApproval}
             busy={resolvingApproval}
             onResolve={conv.resolveApproval}
+          />
+        ) : null}
+        {selSecretRequest ? (
+          <SecretRequestPrompt
+            request={selSecretRequest}
+            profile={conv.profile}
+            onResolved={conv.resolveSecretRequest}
           />
         ) : null}
       </div>

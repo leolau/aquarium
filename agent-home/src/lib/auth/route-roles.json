@@ -28,6 +28,7 @@
   "PUT /api/backups/offsite": "owner",
   "GET /api/chat/active": "signed-in",
   "POST /api/chat/approval": "signed-in",
+  "POST /api/chat/secret": "signed-in",
   "POST /api/chat/attach": "signed-in",
   "POST /api/chat/cancel": "signed-in",
   "GET /api/chat/lead": "signed-in",

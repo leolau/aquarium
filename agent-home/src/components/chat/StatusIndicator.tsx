@@ -13,6 +13,7 @@ import { useNow } from "@/lib/use-now";
  *   - `tool`      — a tool call is running (`detail` names it);
  *   - `streaming` — tokens are arriving (the reply is being written);
  *   - `waiting_approval` — a gated tool is blocked on the user's decision;
+ *   - `waiting_secret` — the agent asked for a secret (FG-37 popup);
  *   - `stopping`  — the user hit Stop; the server is winding the turn down.
  * Every active phase shows the elapsed time so a long turn visibly advances.
  * Rendered as an aria-live region so the state is also announced to AT.
@@ -24,6 +25,7 @@ export type ChatActivity =
   | "tool"
   | "streaming"
   | "waiting_approval"
+  | "waiting_secret"
   | "stopping";
 
 /** Silence (no assistant text yet) after which we explain the wait. */
@@ -36,6 +38,7 @@ const LABELS: Record<Exclude<ChatActivity, "idle" | "tool">, string> = {
   thinking: "a4all agent is thinking…",
   streaming: "a4all agent is writing…",
   waiting_approval: "Waiting for your approval…",
+  waiting_secret: "Waiting for you to enter a secret…",
   stopping: "Stopping…",
 };
 
@@ -99,7 +102,7 @@ export function StatusIndicator({
     quietProp ??
     (lastEventAt !== undefined ? Math.max(0, now - lastEventAt) : undefined);
   if (activity === "idle") return null;
-  const waiting = activity === "waiting_approval";
+  const waiting = activity === "waiting_approval" || activity === "waiting_secret";
   const label =
     activity === "tool" ? `Running ${detail || "a tool"}…` : LABELS[activity];
   const clock =

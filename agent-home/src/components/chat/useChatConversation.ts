@@ -47,6 +47,7 @@ import { mayGetAutoTitle, waitForAutoTitle } from "@/lib/landing/titles";
 import { useAction } from "@/lib/use-action";
 import type {
   ChatApprovalRequest,
+  ChatSecretRequest,
   ChatAttachment,
   ChatInputMode,
   ChatMessage,
@@ -139,6 +140,8 @@ export function useChatConversation({
   // per turn.
   const [now, setNow] = useState(() => Date.now());
   const [resolvingApproval, setResolvingApproval] = useState(false);
+  /** FG-37: the secret request each paused turn is waiting on, by turn key. */
+  const [secretRequests, setSecretRequests] = useState<Record<string, ChatSecretRequest>>({});
   const threadRef = useRef<HTMLDivElement | null>(null);
   const followRef = useFollowLatest(threadRef);
   // Mirrors the selected session for use inside async stream callbacks, and
@@ -187,6 +190,7 @@ export function useChatConversation({
   const watchBusy = sendingKeys.includes(selKey);
   const selBusy = sendingKeys.includes(selKey);
   const selApproval = approvals[selKey] ?? null;
+  const selSecretRequest = secretRequests[selKey] ?? null;
   const selDecision = decisions[selKey] ?? null;
   const selTurn = selBusy ? (liveActivity[selKey] ?? null) : null;
   const selRunningTool = runningTool(selTurn);
@@ -195,6 +199,7 @@ export function useChatConversation({
     busy: selBusy,
     turn: selTurn,
     approval: selApproval !== null,
+    secret: selSecretRequest !== null,
     hasOutput: !assistantIsEmpty(messages),
   });
 
@@ -218,7 +223,16 @@ export function useChatConversation({
       cancelAnimationFrame(raf1);
       cancelAnimationFrame(raf2);
     };
-  }, [messages, sendingKeys, selApproval, selDecision, loadingThread, liveActivity, followRef]);
+  }, [
+    messages,
+    sendingKeys,
+    selApproval,
+    selSecretRequest,
+    selDecision,
+    loadingThread,
+    liveActivity,
+    followRef,
+  ]);
 
   const addSending = (k: string) => {
     busyRef.current.add(k);
@@ -387,8 +401,13 @@ export function useChatConversation({
         setApprovals((prev) => ({ ...prev, [turnKey]: req }));
         touch(() => ({}));
       },
+      onSecretRequest: (req) => {
+        setSecretRequests((prev) => ({ ...prev, [turnKey]: req }));
+        touch(() => ({}));
+      },
       onCompleted: (content) => {
         setApprovals((prev) => dropKey(prev, turnKey));
+        setSecretRequests((prev) => dropKey(prev, turnKey));
         if (content) setLive(content);
       },
       onError: (message) => setError(message),
@@ -455,6 +474,7 @@ export function useChatConversation({
           cur.filter((p) => p.itemId !== next.itemId && !next.itemIds.includes(p.itemId)),
         );
         setApprovals((prev) => dropKey(prev, turnKey));
+        setSecretRequests((prev) => dropKey(prev, turnKey));
         setDecisions((prev) => dropKey(prev, turnKey));
         liveRef.current.set(turnKey, { user: next.text, assistant: "" });
         setLiveActivity((prev) => ({
@@ -496,6 +516,7 @@ export function useChatConversation({
         removeSending(turnKey);
         liveRef.current.delete(turnKey);
         setApprovals((prev) => dropKey(prev, turnKey));
+        setSecretRequests((prev) => dropKey(prev, turnKey));
         setLiveActivity((prev) => dropKey(prev, turnKey));
       }
     }
@@ -543,6 +564,7 @@ export function useChatConversation({
       chainRef.current.delete(turnKey);
       clearPending(turnKey);
       setApprovals((prev) => dropKey(prev, turnKey));
+      setSecretRequests((prev) => dropKey(prev, turnKey));
       setLiveActivity((prev) => dropKey(prev, turnKey));
     }
   }
@@ -636,6 +658,7 @@ export function useChatConversation({
     }
     setError(null);
     setApprovals((prev) => dropKey(prev, turnKey));
+    setSecretRequests((prev) => dropKey(prev, turnKey));
     setDecisions((prev) => dropKey(prev, turnKey));
     followRef.current = true;
     addSending(turnKey);
@@ -726,6 +749,7 @@ export function useChatConversation({
       chainRef.current.delete(turnKey);
       clearPending(turnKey);
       setApprovals((prev) => dropKey(prev, turnKey));
+      setSecretRequests((prev) => dropKey(prev, turnKey));
       setLiveActivity((prev) => dropKey(prev, turnKey));
     }
     const joinRunId: string | null = busyRunId;
@@ -872,6 +896,13 @@ export function useChatConversation({
     }
   }
 
+  /** The secret popup answered (or declined) the request: clear it, leave a note. */
+  function resolveSecretRequest(note: string) {
+    const targetKey = selKey;
+    setSecretRequests((prev) => dropKey(prev, targetKey));
+    setDecisions((prev) => ({ ...prev, [targetKey]: note }));
+  }
+
   // Approve and Deny share one lock: a second press before the first answer
   // lands is dropped, so the server never gets two decisions for one request.
   const { run: resolveApprovalOnce } = useAction(resolveApproval);
@@ -913,6 +944,7 @@ export function useChatConversation({
     selKey,
     selBusy,
     selApproval,
+    selSecretRequest,
     selDecision,
     selTurn,
     selRunningTool,
@@ -931,6 +963,8 @@ export function useChatConversation({
     selPending,
     removePending,
     resolveApproval: resolveApprovalOnce,
+    resolveSecretRequest,
+    profile,
   };
 }
 
