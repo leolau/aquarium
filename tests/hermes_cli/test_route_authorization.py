@@ -42,6 +42,8 @@ PUBLIC = {
     "POST /api/auth/invitations/request",
     "POST /api/seminar/survey/state",
     "POST /api/seminar/survey/submit",
+    "GET /api/secret-links/{token}",
+    "POST /api/secret-links/{token}",
     "GET /login",
     "GET /api/auth/providers",
     "GET /auth/login",
@@ -616,6 +618,8 @@ def test_public_api_routes_match_the_login_gate_allowlist():
         path = key.split(" ", 1)[1]
         if "{" not in path:
             assert _path_is_public(path), key
+        elif path.startswith("/api/") and path.count("{") == 1 and path.endswith("}"):
+            assert _path_is_public(path.split("{", 1)[0] + "sample-token"), key
 
 
 # Admin-grade routes named in the review (and a sample of each family). Body
