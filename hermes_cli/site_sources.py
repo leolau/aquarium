@@ -30,6 +30,7 @@ import asyncio
 import contextlib
 import csv
 import hashlib
+import importlib
 import inspect
 import io
 import json
@@ -271,10 +272,10 @@ def check_recipe(recipe: Any) -> Dict[str, Any]:
     if not isinstance(recipe, Mapping):
         raise SiteError("recipe must be an object")
     try:
-        from hermes_cli import site_recipe_runner  # ty: ignore[unresolved-import]
+        runner_module: Any = _runner_module()
     except ImportError:
-        site_recipe_runner = None
-    validator = getattr(site_recipe_runner, "validate_recipe", None)
+        runner_module = None
+    validator = getattr(runner_module, "validate_recipe", None)
     if callable(validator):
         try:
             validator(recipe)
@@ -1979,13 +1980,18 @@ async def list_runs(site: Site, *, limit: int = 50, db: Optional[SiteDatabase] =
 # ---------------------------------------------------------------------------
 
 
+def _runner_module() -> Any:
+    """``hermes_cli.site_recipe_runner`` via sys.modules (an import-blocked entry raises)."""
+    return importlib.import_module("hermes_cli.site_recipe_runner")
+
+
 def _recipe_runner() -> Callable[..., Iterator[Any]]:
     """``site_recipe_runner.run_recipe`` (workstream B), import-guarded."""
     try:
-        from hermes_cli import site_recipe_runner  # ty: ignore[unresolved-import]
+        runner_module = _runner_module()
     except ImportError:
         raise SiteError("the site recipe runner is not installed on this box yet", 503) from None
-    run_recipe = getattr(site_recipe_runner, "run_recipe", None)
+    run_recipe = getattr(runner_module, "run_recipe", None)
     if not callable(run_recipe):
         raise SiteError("the site recipe runner has no run_recipe()", 503)
     return run_recipe

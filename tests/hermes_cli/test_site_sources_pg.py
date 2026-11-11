@@ -37,7 +37,26 @@ DESIGN = {
         },
     ]
 }
-RECIPE = {"entities": {"orders": {"steps": [{"action": "goto", "url": "/orders"}]}}}
+RECIPE = {
+    "version": 1,
+    "site": "shop",
+    "base_url": "https://shop.example",
+    "entities": {
+        "orders": {
+            "kind": "variable",
+            "key": ["order_no"],
+            "cursor": "amount",
+            "steps": [
+                {"op": "goto", "url": "/orders"},
+                {
+                    "op": "extract_table",
+                    "table": "#orders",
+                    "columns": {"order_no": {"header": "Order"}, "amount": {"header": "Amount", "type": "int"}},
+                },
+            ],
+        }
+    },
+}
 ALICE = Principal(user_id="alice", display="Alice", role="member")
 
 
