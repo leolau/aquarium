@@ -19,7 +19,10 @@
     "collapseTasks": "收合「需要你」及工作面板",
     "expandTasks": "展開「需要你」及工作面板",
     "chats": "對話",
-    "tasks": "需要你"
+    "tasks": "需要你",
+    "chatsAndIncomings": "對話及來件",
+    "incomingsWaiting": "{count} 項來件待處理",
+    "sidebarTabs": "左側面板"
   },
   "running": {
     "label": "執行中",

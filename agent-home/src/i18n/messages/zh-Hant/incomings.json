@@ -1,0 +1,107 @@
+{
+  "tabs": {
+    "chats": "對話",
+    "incomings": "來件",
+    "countLabel": "{count} 項需要你"
+  },
+  "search": "搜尋來件",
+  "filters": {
+    "label": "篩選來件",
+    "all": "全部",
+    "messages": "訊息",
+    "email": "電郵",
+    "calendar": "日曆"
+  },
+  "groups": {
+    "urgent": "緊急",
+    "needsLook": "需要看一看"
+  },
+  "reason": {
+    "escalated": "分流已上報",
+    "escalatedPriority": "分流已上報 · {priority}優先",
+    "todo": "分流已為此建立待辦",
+    "todoCount": "分流已為此建立 {count} 項待辦",
+    "critical_event": "重要日曆事件",
+    "flagged": "分流已標記"
+  },
+  "priority": {
+    "urgent": "緊急",
+    "high": "高",
+    "medium": "中",
+    "low": "低"
+  },
+  "urgentDot": "緊急",
+  "hasAttachment": "附有檔案",
+  "actions": {
+    "done": "完成",
+    "doneLabel": "將「{title}」標為完成",
+    "askInChat": "在對話中詢問",
+    "askLabel": "在對話中詢問「{title}」",
+    "more": "「{title}」的更多操作",
+    "replyWithAi": "用 AI 回覆",
+    "makeTodo": "建立待辦",
+    "makingTodo": "正在建立待辦…",
+    "remember": "記住",
+    "remembering": "正在記住…",
+    "seeRemembered": "已在記憶中",
+    "addToProject": "加入專案",
+    "openInInbox": "在收件匣開啟",
+    "reopen": "重新開啟",
+    "back": "返回",
+    "closeDrawer": "關閉對話列"
+  },
+  "toast": {
+    "done": "已標為完成。{who} 已移出來件（仍在收件匣）。",
+    "todo": "已從 {ref} 建立待辦。",
+    "remembered": "已存入記憶。",
+    "reopened": "已放回來件。"
+  },
+  "errors": {
+    "write": "未能完成，請再試一次。",
+    "load": "未能載入來件。",
+    "detail": "未能載入這項來件。它可能已被移除，或不屬於你。",
+    "retry": "再試一次",
+    "notOwner": "只有收件人本人才能標記完成或重新開啟。"
+  },
+  "empty": {
+    "title": "全部處理好了",
+    "body": "沒有分流標記的事項在等你。其他收到的內容都在收件匣。",
+    "filtered": "這個篩選沒有內容。",
+    "search": "沒有符合「{query}」的來件。",
+    "noSourcesTitle": "這個設定檔尚未收到任何內容",
+    "noSources": "來件會列出分流為你標記的訊息、電郵及日曆事件。目前沒有郵箱、WhatsApp 或日曆把內容送到這個設定檔，所以分流在這裏沒有可標記的事項。"
+  },
+  "openInbox": "開啟收件匣",
+  "detail": {
+    "label": "來件",
+    "why": "分流標記的原因：",
+    "tagUrgent": "緊急",
+    "tagNeedsLook": "需要看一看",
+    "attachments": "{count} 個附件",
+    "attachment": "1 個附件",
+    "footnote": "按「完成」會將它移出來件；它仍會留在收件匣 › 已收到。",
+    "loading": "載入中…",
+    "state": "需要你",
+    "handled": "已處理",
+    "outcome": {
+      "done": "完成",
+      "dismissed": "已略過",
+      "todo": "已建立待辦",
+      "remembered": "已記住",
+      "replied": "已回覆"
+    },
+    "markedDone": "已標為完成，已移出來件。",
+    "reopened": "已重新開啟，已放回來件。",
+    "backHome": "主頁"
+  },
+  "surface": {
+    "email": "電郵",
+    "whatsapp": "WhatsApp",
+    "calendar": "日曆",
+    "telegram": "Telegram",
+    "slack": "Slack",
+    "discord": "Discord",
+    "imessage": "iMessage",
+    "agent_home": "Aquarium"
+  }
+}

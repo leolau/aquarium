@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { MobileShell } from "@/components/MobileShell";
 import { IncomingDetailView } from "@/components/inbox/IncomingDetailView";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
+import { inboxBackHref } from "@/lib/inbox/backHref";
 import type { IncomingDetail } from "@/types";
 
 // The arrival is C2-scoped, so it is read per request under the live principal.
@@ -15,12 +16,6 @@ export const dynamic = "force-dynamic";
  * renders the same not-found either way rather than confirming that somebody
  * else's message exists.
  */
-/** Only an Inbox query string is a valid Back target (no open redirects). */
-function inboxBackHref(from: string | string[] | undefined): string {
-  const value = Array.isArray(from) ? from[0] : from;
-  return value && value.startsWith("?") && !value.includes("//") ? `/inbox${value}` : "/inbox";
-}
-
 export default async function Page({
   params,
   searchParams,
@@ -28,7 +23,7 @@ export default async function Page({
   params: Promise<{ id: string }>;
   searchParams?: Promise<{ from?: string | string[] }>;
 }) {
-  await requirePrincipal();
+  const principal = await requirePrincipal();
   const { id } = await params;
 
   // The fetch is kept outside the JSX so a render error cannot be mistaken
@@ -41,14 +36,15 @@ export default async function Page({
     notFound();
   }
 
+  const backHref = inboxBackHref((await searchParams)?.from);
   return (
     <MobileShell
       title={
         item.subject?.trim() || item.sender_name?.trim() || item.sender_id?.trim() || "(untitled)"
       }
-      back={{ href: inboxBackHref((await searchParams)?.from), label: "Inbox" }}
+      back={{ href: backHref, label: backHref === "/" ? "Home" : "Inbox" }}
     >
-      <IncomingDetailView item={item} />
+      <IncomingDetailView item={item} canChangeAttention={item.owner_user_id === principal.user_id} />
     </MobileShell>
   );
 }

@@ -36,7 +36,11 @@ vi.mock("@/lib/landing/needsYou", () => ({
     bySeverity: { blocking: 0 },
   }),
 }));
-vi.mock("./chats", () => ({ ChatsSidebar: () => null, ChatsDrawer: () => null }));
+vi.mock("./chats", async (orig) => ({
+  ...(await orig<typeof import("./chats")>()),
+  ChatsSidebar: () => null,
+  ChatsDrawer: () => null,
+}));
 
 import { resetActivityRunningCache } from "@/components/ui/useActivityRunning";
 

@@ -13,6 +13,7 @@ import { surfaceLabel } from "@/components/inbox/IncomingsFilters";
 import { formatSize, formatWhen } from "@/components/files/FilesView";
 import { AddToProjectSheet } from "@/components/projects/AddToProjectSheet";
 import { RefBadge } from "@/components/refs/RefBadge";
+import { attentionErrorKey, setIncomingAttention } from "@/lib/landing/incomings";
 import type { IncomingDetail } from "@/types";
 
 /**
@@ -23,13 +24,47 @@ import type { IncomingDetail } from "@/types";
  * than a side effect of arriving — a corpus that ingested every group chat
  * would answer questions with noise.
  */
-export function IncomingDetailView({ item }: { item: IncomingDetail }) {
+export function IncomingDetailView({
+  item,
+  canChangeAttention = true,
+}: {
+  item: IncomingDetail;
+  /** The viewer owns the arrival: only the owner may mark it Done / Reopen. */
+  canChangeAttention?: boolean;
+}) {
   const [current, setCurrent] = useState(item);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [justRemembered, setJustRemembered] = useState(false);
   const t = useT("inbox");
+  const ti = useT("incomings");
+  const [attentionBusy, setAttentionBusy] = useState(false);
+  const [attentionNote, setAttentionNote] = useState<string | null>(null);
+  const flagged = canChangeAttention && Boolean(current.attention_at);
+  const attentionOpen = flagged && !current.attention_cleared_at;
+
+  // Done / Reopen (plan A.1): the same write the landing Incomings tab makes.
+  async function toggleAttention() {
+    setAttentionBusy(true);
+    setError(null);
+    setAttentionNote(null);
+    const res = await setIncomingAttention(
+      current.id,
+      attentionOpen ? { action: "clear", outcome: "done" } : { action: "reopen" },
+    );
+    setAttentionBusy(false);
+    if (!res.ok) {
+      setError(ti(attentionErrorKey(res)));
+      return;
+    }
+    setCurrent((c) => ({
+      ...c,
+      ...res.data,
+      attention_cleared_at: attentionOpen ? (res.data.attention_cleared_at ?? new Date().toISOString()) : null,
+    }));
+    setAttentionNote(attentionOpen ? ti("detail.markedDone") : ti("detail.reopened"));
+  }
 
   async function remember() {
     setBusy(true);
@@ -150,8 +185,20 @@ export function IncomingDetailView({ item }: { item: IncomingDetail }) {
       </h2>
       {error ? <InlineAlert tone="danger">{error}</InlineAlert> : null}
       {justRemembered ? <InlineAlert tone="success">{t("detail.remembered")}</InlineAlert> : null}
+      {attentionNote ? <InlineAlert tone="success">{attentionNote}</InlineAlert> : null}
 
       <div className="flex flex-wrap gap-2 text-sm lg:flex-col">
+        {flagged ? (
+          <ActionButton
+            busy={attentionBusy}
+            onAction={toggleAttention}
+            busyLabel={attentionOpen ? ti("actions.done") : ti("actions.reopen")}
+            data-action={attentionOpen ? "incoming-done" : "incoming-reopen"}
+            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] px-3 py-2 font-medium"
+          >
+            {attentionOpen ? `✓ ${ti("actions.done")}` : ti("actions.reopen")}
+          </ActionButton>
+        ) : null}
         {current.document_id ? (
           <Link
             href={`/memory?document=${encodeURIComponent(current.document_id)}`}
