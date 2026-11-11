@@ -56,6 +56,8 @@ export async function POST(req: Request): Promise<NextResponse> {
     description?: string;
     priority?: string;
     due_at?: string | null;
+    source_kind?: string;
+    source_ref?: string;
   };
   const title = (body.title ?? "").trim();
   if (!title) {
@@ -72,6 +74,10 @@ export async function POST(req: Request): Promise<NextResponse> {
         description: body.description,
         priority: body.priority,
         due_at: body.due_at ?? null,
+        // Only an arrival link is forwarded; every other origin is the server's call.
+        ...(body.source_kind === "inbound" && typeof body.source_ref === "string" && body.source_ref
+          ? { source_kind: "inbound", source_ref: body.source_ref }
+          : {}),
       }),
     );
   } catch (err) {
