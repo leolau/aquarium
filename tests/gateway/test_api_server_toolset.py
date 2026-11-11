@@ -144,4 +144,4 @@ class TestApiServerAdapterToolset:
             toolsets = call_kwargs.kwargs.get("enabled_toolsets")
             # email_mailbox, mssql, site_db and winrm are non-configurable toolsets of the platform
             # default, so it is recovered even with an explicit override.
-            assert sorted(toolsets) == ["email_mailbox", "mssql", "site_db", "terminal", "web", "winrm"]
+            assert sorted(toolsets) == ["email_mailbox", "mssql", "send_message", "site_db", "terminal", "web", "winrm"]
