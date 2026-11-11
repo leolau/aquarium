@@ -42,6 +42,8 @@ PUBLIC = {
     "POST /api/auth/invitations/request",
     "POST /api/seminar/survey/state",
     "POST /api/seminar/survey/submit",
+    "GET /api/secret-links/{token}",
+    "POST /api/secret-links/{token}",
     "GET /login",
     "GET /api/auth/providers",
     "GET /auth/login",
@@ -341,6 +343,12 @@ SIGNED_IN = {
     "PUT /api/registry/projects/{slug}/schedule",
     "DELETE /api/registry/projects/{slug}/schedule",
     "GET /api/registry/projects/{slug}/doctor",
+    # --- B1 projects_skills_api: project read (D6 summary) per project; run
+    # details/candidate bodies need `lab` re-resolved in each profile; dismiss
+    # needs project write or host-profile `lab` ---
+    "GET /api/registry/projects/{slug}/skills",
+    "POST /api/registry/projects/{slug}/skills/candidates/{candidate_id}/dismiss",
+    # --- end B1 ---
     # projects_ask_api: project membership checked per project
     "POST /api/registry/projects/{slug}/ask",
     # projects_clarify_api: project membership checked per project
@@ -610,6 +618,8 @@ def test_public_api_routes_match_the_login_gate_allowlist():
         path = key.split(" ", 1)[1]
         if "{" not in path:
             assert _path_is_public(path), key
+        elif path.startswith("/api/") and path.count("{") == 1 and path.endswith("}"):
+            assert _path_is_public(path.split("{", 1)[0] + "sample-token"), key
 
 
 # Admin-grade routes named in the review (and a sample of each family). Body

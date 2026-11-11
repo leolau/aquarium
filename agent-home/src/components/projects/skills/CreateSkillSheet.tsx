@@ -18,11 +18,18 @@ import { Sheet, inputClass } from "@/components/ui/Sheet";
 import { Spinner } from "@/components/ui/Spinner";
 import { useT } from "@/i18n";
 import { errorText, getJson, sendJson } from "@/lib/admin-fetch";
+import { stripDraft } from "@/lib/skills/improve";
 import { useAction } from "@/lib/use-action";
-import { draftSkillName, isValidSkillName, type CreatedSkill, type SkillCandidateRef } from "@/lib/skills/create";
+import {
+  CREATE_SEED_START,
+  draftSkillName,
+  isValidSkillName,
+  type CreatedSkill,
+  type SkillCandidateRef,
+} from "@/lib/skills/create";
 import type { ProjectBoardTask, ProjectBoardView } from "@/types";
 
-const MAX_CARDS = 12;
+export const MAX_CREATE_CARDS = 12;
 const DEFAULT_PICKS = 5;
 const btn = "inline-flex min-h-11 items-center justify-center rounded-full px-4 text-sm font-medium disabled:opacity-60 sm:min-h-9";
 const primary = `${btn} bg-[var(--color-accent)] text-[var(--color-accent-fg)]`;
@@ -47,7 +54,8 @@ export interface CreateSkillSheetProps {
   onCreated?(skill: CreatedSkill): void;
 }
 
-function doneCards(view: ProjectBoardView): ProjectBoardTask[] {
+/** The project's finished cards, newest first. */
+export function doneCards(view: ProjectBoardView): ProjectBoardTask[] {
   return view.columns
     .flatMap((c) => c.tasks)
     .filter((t) => t.status === "done")
@@ -66,24 +74,19 @@ export function CreateSkillSheet({
   onCreated,
 }: CreateSkillSheetProps) {
   const t = useT("projects");
-  const scope = useMemo(() => ({ profile }), [profile]);
-  const chat = useLabChat({ startUrl: "/api/skills/create/start", messageUrl: "/api/skills/create/message", scope });
   const [goal, setGoal] = useState("");
   const [cards, setCards] = useState<ProjectBoardTask[] | null>(givenCards ?? null);
   const [cardsError, setCardsError] = useState<string | null>(null);
   const [pickedSet, setPicked] = useState<Set<string> | null>(null);
-  const [text, setText] = useState("");
   const [typedName, setName] = useState<string | null>(null);
   const [category, setCategory] = useState("");
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [saved, setSaved] = useState<CreatedSkill | null>(null);
   const [preload, setPreload] = useState<"idle" | "done" | string>("idle");
 
   useEffect(() => {
     if (givenCards) return;
     let live = true;
     getJson<ProjectBoardView>(`/api/projects/${encodeURIComponent(slug)}/board`)
-      .then((view) => live && setCards(doneCards(view).slice(0, MAX_CARDS)))
+      .then((view) => live && setCards(doneCards(view).slice(0, MAX_CREATE_CARDS)))
       .catch((err) => live && setCardsError(errorText(err)));
     return () => {
       live = false;
@@ -94,48 +97,43 @@ export function CreateSkillSheet({
     () => pickedSet ?? new Set((cards ?? []).slice(0, DEFAULT_PICKS).map((c) => c.id)),
     [pickedSet, cards],
   );
-  const name = typedName ?? (chat.draft ? draftSkillName(chat.draft) : null) ?? "";
+  const chat = useLabChat<CreatedSkill>({
+    startUrl: "/api/skills/create/start",
+    startBody: (g) => ({
+      profile,
+      project: slug,
+      ...(g ? { goal: g } : {}),
+      ...(candidate ? { candidate_id: candidate.id } : {}),
+      card_ids: [...picked],
+    }),
+    messageUrl: "/api/skills/create/message",
+    messageBody: { profile },
+    transcriptQuery: `profile=${encodeURIComponent(profile)}`,
+    seedStart: CREATE_SEED_START,
+    save: async (content: string, sessionId: string | null): Promise<CreatedSkill> => {
+      const res: CreatedSkill = await sendJson<CreatedSkill>("/api/skills/create/save", "POST", {
+        profile,
+        project: slug,
+        name,
+        content,
+        ...(category.trim() ? { category: category.trim() } : {}),
+        ...(sessionId ? { session_id: sessionId } : {}),
+        ...(candidate ? { candidate_id: candidate.id } : {}),
+      });
+      onCreated?.(res);
+      return res;
+    },
+  });
+  const { draft, saved, turns, send, text, setText, composerRef } = chat;
+  const name: string = typedName ?? (draft ? draftSkillName(draft) : null) ?? "";
 
   const started = chat.sessionId !== null;
   const canDraft = Boolean(goal.trim() || candidate || picked.size);
 
-  const draft = useAction(async () => {
+  const drafting = useAction(async () => {
     if (!canDraft) return;
-    const id = await chat.start({
-      profile,
-      project: slug,
-      ...(goal.trim() ? { goal: goal.trim() } : {}),
-      ...(candidate ? { candidate_id: candidate.id } : {}),
-      card_ids: [...picked],
-    });
-    if (id) await chat.send(goal.trim() || t("createSkill.firstTurn"));
+    if (await chat.start.run(goal)) await send.run(goal.trim() || t("createSkill.firstTurn"));
   });
-  const drafting = draft.pending;
-
-  const refine = useAction(async () => {
-    if (await chat.send(text)) setText("");
-  });
-
-  const save = useAction(async () => {
-    if (!chat.draft || !isValidSkillName(name)) return;
-    setSaveError(null);
-    try {
-      const res = await sendJson<CreatedSkill>("/api/skills/create/save", "POST", {
-        profile,
-        project: slug,
-        name,
-        content: chat.draft,
-        ...(category.trim() ? { category: category.trim() } : {}),
-        ...(chat.sessionId ? { session_id: chat.sessionId } : {}),
-        ...(candidate ? { candidate_id: candidate.id } : {}),
-      });
-      setSaved(res);
-      onCreated?.(res);
-    } catch (err) {
-      setSaveError(errorText(err));
-    }
-  });
-  const saving = save.pending;
 
   const preloadIt = useAction(async () => {
     if (!saved) return;
@@ -151,12 +149,12 @@ export function CreateSkillSheet({
 
   function submitGoal(e: FormEvent) {
     e.preventDefault();
-    void draft.run();
+    void drafting.run();
   }
 
   function submitMessage(e: FormEvent) {
     e.preventDefault();
-    void refine.run();
+    void send.run(text);
   }
 
   const toggle = (id: string) =>
@@ -180,10 +178,10 @@ export function CreateSkillSheet({
     <>
       <ActionButton
         className={primary}
-        disabled={!chat.draft || !isValidSkillName(name)}
-        busy={saving}
+        disabled={!draft || !isValidSkillName(name)}
+        busy={chat.save.pending}
         busyLabel={t("createSkill.saving")}
-        onAction={() => save.run()}
+        onAction={() => chat.save.run()}
       >
         {t("createSkill.saveDraft")}
       </ActionButton>
@@ -193,7 +191,7 @@ export function CreateSkillSheet({
     </>
   ) : (
     <>
-      <ActionButton type="submit" form="create-skill-goal" className={primary} disabled={!canDraft} busy={drafting} busyLabel={t("createSkill.drafting")}>
+      <ActionButton type="submit" form="create-skill-goal" className={primary} disabled={!canDraft} busy={drafting.pending} busyLabel={t("createSkill.drafting")}>
         {t("createSkill.draftIt")}
       </ActionButton>
       <button type="button" className={secondary} onClick={onClose}>
@@ -282,22 +280,22 @@ export function CreateSkillSheet({
         {started && !saved ? (
           <>
             <section aria-label={t("createSkill.chatLabel")} className="flex flex-col gap-2">
-              {chat.turns.map((m) =>
+              {turns.map((m, i) =>
                 m.content ? (
                   <div
-                    key={m.key}
+                    key={m.clientKey ?? m.id ?? i}
                     className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-3 py-2 ${
                       m.role === "user" ? "self-end bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "self-start bg-[var(--color-surface-2)]"
                     }`}
                   >
-                    {m.content}
+                    {m.role === "assistant" ? stripDraft(m.content) || t("createSkill.draftLabel") : m.content}
                   </div>
                 ) : null,
               )}
-              {chat.sending ? <p className="flex items-center gap-2 text-[var(--color-muted)]"><Spinner />{t("createSkill.thinking")}</p> : null}
+              {send.pending ? <p className="flex items-center gap-2 text-[var(--color-muted)]"><Spinner />{t("createSkill.thinking")}</p> : null}
             </section>
 
-            {chat.draft ? (
+            {draft ? (
               <section className={card} aria-label={t("createSkill.draftLabel")}>
                 <div className="mb-2 flex flex-wrap items-end gap-2">
                   <label className="min-w-40 flex-1">
@@ -318,12 +316,13 @@ export function CreateSkillSheet({
                   </span>
                 </div>
                 {!isValidSkillName(name) ? <p className="mb-2 text-xs text-[var(--color-danger)]">{t("createSkill.nameInvalid")}</p> : null}
-                <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-xl bg-[var(--color-surface-2)] p-3 font-mono text-xs">{chat.draft}</pre>
+                <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-xl bg-[var(--color-surface-2)] p-3 font-mono text-xs">{draft}</pre>
               </section>
             ) : null}
 
             <form onSubmit={submitMessage} className="flex items-end gap-2">
               <textarea
+                ref={composerRef}
                 aria-label={t("createSkill.messageLabel")}
                 className={`${inputClass} min-h-11 flex-1`}
                 rows={2}
@@ -331,15 +330,15 @@ export function CreateSkillSheet({
                 onChange={(e) => setText(e.target.value)}
                 placeholder={t("createSkill.messagePlaceholder")}
               />
-              <ActionButton type="submit" className={secondary} disabled={!text.trim()} busy={refine.pending || chat.sending}>
+              <ActionButton type="submit" className={secondary} disabled={!text.trim()} busy={send.pending}>
                 {t("createSkill.send")}
               </ActionButton>
             </form>
           </>
         ) : null}
 
-        {chat.error ? <InlineAlert tone="danger">{chat.error}</InlineAlert> : null}
-        {saveError ? <InlineAlert tone="danger">{saveError}</InlineAlert> : null}
+        {chat.sendError ? <InlineAlert tone="danger">{chat.sendError.message}</InlineAlert> : null}
+        {chat.notice ? <InlineAlert tone="danger">{chat.notice}</InlineAlert> : null}
       </div>
     </Sheet>
   );

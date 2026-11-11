@@ -7,12 +7,52 @@ Short tokens (< 18 chars) are fully masked. Longer tokens preserve
 the first 6 and last 4 characters for debuggability.
 """
 
+import contextlib
 import logging
 import os
 import re
 import shlex
+import threading
+from collections import Counter
 
 logger = logging.getLogger(__name__)
+
+# Exact secret values in use right now (terminal ``secret_env``). Masked in
+# every redaction pass, even with redaction switched off, while registered.
+_RUNTIME_SECRETS: Counter = Counter()
+_RUNTIME_SECRETS_LOCK = threading.Lock()
+
+
+@contextlib.contextmanager
+def runtime_secrets(values):
+    """Mask each exact string in *values* in all redaction while the block runs."""
+    held = [v for v in dict.fromkeys(values) if isinstance(v, str) and v]
+    with _RUNTIME_SECRETS_LOCK:
+        _RUNTIME_SECRETS.update(held)
+    try:
+        yield
+    finally:
+        with _RUNTIME_SECRETS_LOCK:
+            _RUNTIME_SECRETS.subtract(held)
+            for value in held:
+                if _RUNTIME_SECRETS[value] <= 0:
+                    del _RUNTIME_SECRETS[value]
+
+
+def mask_known_values(text: str, values) -> str:
+    """Replace every occurrence of each value in *values* with ``***``, longest first."""
+    for value in sorted({v for v in values if v}, key=len, reverse=True):
+        if value in text:
+            text = text.replace(value, "***")
+    return text
+
+
+def _mask_runtime_secrets(text: str) -> str:
+    if not _RUNTIME_SECRETS:
+        return text
+    with _RUNTIME_SECRETS_LOCK:
+        values = list(_RUNTIME_SECRETS)
+    return mask_known_values(text, values)
 
 # Sensitive query-string parameter names (case-insensitive exact match).
 # Ported from nearai/ironclaw#2529 — catches tokens whose values don't match
@@ -523,6 +563,7 @@ def redact_sensitive_text(
         text = str(text)
     if not text:
         return text
+    text = _mask_runtime_secrets(text)
     if not (force or _REDACT_ENABLED):
         return text
 

@@ -1407,6 +1407,19 @@ updates:
 
 
 # =============================================================================
+# agent-home
+# =============================================================================
+# The https origin people reach agent-home at. When the agent needs a secret
+# (password, PAT, API key) during a WhatsApp, Telegram or email chat, it sends
+# a one-time secure link `<public_url>/secret/<token>` (works once, expires in
+# 15 minutes) instead of asking for the secret as chat text. Empty or non-https
+# disables the links; the agent then asks the person to add the secret in
+# Settings -> Connected accounts.
+#
+# agent_home:
+#   public_url: "https://aquarium.example.com"
+
+# =============================================================================
 # Web Dashboard
 # =============================================================================
 # OAuth gate configuration for `hermes dashboard --host <non-loopback>`.

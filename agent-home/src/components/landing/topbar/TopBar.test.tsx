@@ -37,7 +37,13 @@ describe("TopBarView", () => {
     const header = screen.getByRole("banner");
     expect(within(header).getByText("Aquarium")).toBeTruthy();
     expect(within(header).getByRole("link", { name: "Open the Aquarium dashboard" }).getAttribute("href")).toBe("/aquarium");
-    expect(header.querySelectorAll('[data-component="HealthPill"]')).toHaveLength(2);
+    expect(header.querySelectorAll('[data-component="HealthPill"]')).toHaveLength(3);
+    expect(header.querySelector('[data-fit-show="health"] [data-component="HealthPill"]')?.getAttribute("data-variant")).toBe(
+      "compact",
+    );
+    for (const step of ["updated", "aquarium-label", "health", "needs-text", "identity", "brand-label"]) {
+      expect(header.querySelector(`[data-fit-hide="${step}"]`), step).toBeTruthy();
+    }
     expect(within(header).getByRole("button", { name: /Account/ })).toBeTruthy();
     const badges = header.querySelectorAll<HTMLButtonElement>('[data-component="NeedsYouBadge"]');
     expect(badges).toHaveLength(2);
@@ -111,7 +117,9 @@ describe("TopBar", () => {
       return new Response("nope", { status: 404 });
     });
     render(<TopBar />);
-    expect(await screen.findByText("3 need you")).toBeTruthy();
+    expect((await screen.findAllByRole("button", { name: /^3 items need you/ })).map((b) => b.textContent)).toContain(
+      "3 need you",
+    );
     expect(await screen.findByText("23%")).toBeTruthy();
     expect((await screen.findByTestId("activity-count")).textContent).toContain("4 working");
     expect((await screen.findByTestId("running-count")).textContent).toBe("4");

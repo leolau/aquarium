@@ -25,7 +25,12 @@ export function NeedsYouBadge({
     state === "some"
       ? compact
         ? String(count)
-        : `${count} need${count === 1 ? "s" : ""} you`
+        : (
+            <>
+              {count}
+              <span data-fit-hide="needs-text">{` need${count === 1 ? "s" : ""} you`}</span>
+            </>
+          )
       : state === "none"
         ? "All clear"
         : "Needs you";
@@ -50,7 +55,7 @@ export function NeedsYouBadge({
       aria-label={aria}
       title={stale ? `${aria} (couldn't refresh — showing the last count)` : aria}
       onClick={onOpen}
-      className={`inline-flex h-8 shrink-0 items-center gap-2 rounded-full px-3 text-[13px] font-medium transition-opacity hover:opacity-90 ${tone} ${
+      className={`inline-flex h-8 shrink-0 items-center gap-2 whitespace-nowrap rounded-full px-3 text-[13px] font-medium transition-opacity hover:opacity-90 ${tone} ${
         stale ? "opacity-70" : ""
       } ${className}`}
     >

@@ -324,3 +324,133 @@ def test_refresh_uses_runner_report(site, monkeypatch):
     stock = run(ss.table_rows(site, "stock", include_removed=True))["rows"]
     assert [r["_removed_at"] for r in stock] == [None]  # failed entity -> kept
     assert any(c.get("orders") == 99 for c in plan["seen_cursors"])  # stored report cursor fed back
+
+
+# -- least-privilege app login (hermes_app-like, not the schema owner) ----------
+
+
+def test_non_owner_app_login_needs_migrate_and_site_admin(tmp_path, monkeypatch):
+    """A login without CREATEROLE / CREATE fails loudly; after the migrate steps it works."""
+    import asyncpg
+
+    tag = uuid.uuid4().hex[:8]
+    dbname, app_role = f"sitenonowner_{tag}", f"t_app_{tag}"
+    app_pw = f"pw{tag}"
+    monkeypatch.setattr(ss, "_role_secrets_path", lambda: tmp_path / "roles.json")
+    monkeypatch.setattr(ss, "current_profile", lambda: "default")
+    monkeypatch.setattr(ss, "_registry_ready", set())
+    base = DSN.rsplit("/", 1)[0]
+    owner_dsn = f"{base}/{dbname}"
+    host = DSN.split("@", 1)[1]
+    app_dsn = f"postgresql://{app_role}:{app_pw}@{host.rsplit('/', 1)[0]}/{dbname}"
+
+    async def owner(sql_or_fn):
+        conn = await asyncpg.connect(owner_dsn)
+        try:
+            if callable(sql_or_fn):
+                return await sql_or_fn(conn)
+            return await conn.execute(sql_or_fn)
+        finally:
+            await conn.close()
+
+    async def setup():
+        conn = await asyncpg.connect(DSN)
+        try:
+            await conn.execute(f'CREATE DATABASE "{dbname}"')
+            await conn.execute(
+                f"CREATE ROLE {app_role} LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB PASSWORD '{app_pw}'"
+            )
+        finally:
+            await conn.close()
+        # Like the box: public is not writable by the app login.
+        await owner("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
+
+    async def teardown(site_roles):
+        conn = await asyncpg.connect(DSN)
+        try:
+            await conn.execute(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)')
+            for role in (*site_roles, ss.SITE_ADMIN_ROLE, app_role):
+                await conn.execute(f"DROP ROLE IF EXISTS {role}")
+        finally:
+            await conn.close()
+
+    run(setup())
+    site_roles: list = []
+    try:
+        db = ss.SiteDatabase(app_dsn)
+        ss.set_database(db)
+        body = {"name": f"np{tag}", "base_url": "https://shop.example"}
+
+        # 1. No registry and no right to create it: a clear 503, nothing skipped silently.
+        with pytest.raises(ss.SiteError) as err:
+            run(ss.create_site(ALICE, body))
+        assert err.value.status == 503 and "hermes db migrate" in str(err.value)
+
+        # 2. Registry from migrate (owner) but no site admin yet: the app login cannot provision.
+        run(owner(lambda c: ss.migrate_registry(c, app_role=app_role)))
+        ss._registry_ready.clear()
+        assert run(ss.list_sites()) == []
+        with pytest.raises(ss.SiteError) as err:
+            run(ss.create_site(ALICE, body))
+        assert err.value.status == 503 and ss.SITE_ADMIN_ROLE in str(err.value)
+        assert run(ss.list_sites()) == []  # no half-created registry row left behind
+
+        # 3. Migrate's site admin login (password in the hermes-readable role file).
+        run(owner(lambda c: ss.ensure_site_admin(c, password="site-admin-pw")))
+        assert ss._role_password(ss.SITE_ADMIN_ROLE, create=False) == "site-admin-pw"
+        attrs = run(owner(lambda c: c.fetchrow(
+            "SELECT rolsuper, rolcreaterole, rolbypassrls, rolcanlogin FROM pg_roles WHERE rolname = $1",
+            ss.SITE_ADMIN_ROLE,
+        )))
+        assert dict(attrs) == {"rolsuper": False, "rolcreaterole": True, "rolbypassrls": False, "rolcanlogin": True}
+
+        site = run(ss.create_site(ALICE, body))
+        site_roles = [site.writer_role, site.reader_role]
+        approve(site)
+        assert run(ss.approved_design(site))[0] == 1
+        assert run(ss.get_site(site.id)).status == "active"
+        info = run(owner(lambda c: c.fetchrow(
+            "SELECT pg_get_userbyid(nspowner) AS owner, has_schema_privilege($2, nspname, 'USAGE') AS app "
+            "FROM pg_namespace WHERE nspname = $1",
+            site.schema_name,
+            app_role,
+        )))
+        assert info["owner"] == ss.SITE_ADMIN_ROLE and info["app"] is False
+        assert run(ss.table_rows(site, "orders"))["rows"] == []
+
+        # 4. A wrong stored password names the fix instead of a raw auth error.
+        ss._store_role_password(ss.SITE_ADMIN_ROLE, "wrong")
+        with pytest.raises(ss.SiteError) as err:
+            run(ss.list_designs(site))
+        assert err.value.status == 503 and "hermes db migrate" in str(err.value)
+    finally:
+        ss.set_database(None)
+        run(teardown(site_roles))
+
+def test_refresh_without_browser_engine_records_clear_error(site, monkeypatch):
+    """The real runner on a box without playwright: the run fails with a readable error, no traceback text."""
+    import tools.lazy_deps
+
+    for name in [m for m in sys.modules if m == "playwright" or m.startswith("playwright.")]:
+        monkeypatch.delitem(sys.modules, name)
+    monkeypatch.setitem(sys.modules, "playwright", None)
+
+    def no_install(*_a, **_k):
+        raise tools.lazy_deps.FeatureUnavailable("sites.playwright", ("playwright",), "lazy installs are disabled")
+
+    monkeypatch.setattr(tools.lazy_deps, "ensure", no_install)
+    monkeypatch.setattr("tools.url_safety.is_safe_url", lambda _url: True)  # shop.example has no DNS here
+
+    async def saved_login(_site):
+        return {"username": "u", "password": "hunter2"}
+
+    monkeypatch.setattr(ss, "load_login", saved_login)
+    approve(site)
+    site = run(ss.get_site(site.id))
+    run(ss.start_refresh(site, trigger="manual", wait=True))
+
+    latest = run(ss.list_runs(site))[0]
+    assert latest["status"] == "error"
+    assert latest["error"].startswith("browser engine not installed")
+    assert "Traceback" not in latest["error"] and "ImportError" not in latest["error"]
+    assert "hunter2" not in latest["error"]

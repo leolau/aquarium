@@ -8,6 +8,8 @@ import { accentChipClass, chipClass, toolButtonClass } from "@/components/skills
 import { ActionButton } from "@/components/ui/ActionButton";
 import { FolderIcon, MessageIcon, PlayIcon, PlusIcon } from "@/components/ui/icons";
 import { InlineAlert } from "@/components/ui/InlineAlert";
+import { ProjectEvidenceChip } from "@/components/skills/ProjectEvidenceChip";
+import { projectParam, type EvidenceProject } from "@/components/skills/SkillImprovePanel";
 import { errorText, getJson, profileQuery, sendJson } from "@/lib/admin-fetch";
 import {
   applyRating,
@@ -65,9 +67,14 @@ export function SkillUsagePanel({
   profile,
   tabHref,
   onOpenTab,
+  project = null,
+  onClearProject,
 }: {
   name: string;
   profile: string;
+  /** Show only this project's runs. */
+  project?: EvidenceProject | null;
+  onClearProject?: () => void;
   /** Deep link to another tab of this skill (`?tab=`). */
   tabHref: (tab: UsageLinkTab) => string;
   /** Switch tabs in place; returning false (or no handler) lets the link navigate. */
@@ -85,17 +92,19 @@ export function SkillUsagePanel({
 
   const q = profileQuery(profile);
   const base = `name=${encodeURIComponent(name)}${q ? `&${q}` : ""}`;
+  const pq = projectParam(project);
+  const slug = project?.slug ?? null;
   const key = `${base}&days=${days}#${reloads}`;
 
   useEffect(() => {
     let live = true;
-    getJson<SkillUsageDetail>(`/api/skills/usage/detail?${base}&days=${days}&limit=${PAGE}`)
+    getJson<SkillUsageDetail>(`/api/skills/usage/detail?${base}${pq}&days=${days}&limit=${PAGE}`)
       .then((data) => live && setLoaded({ key, data }))
       .catch((err) => live && setLoaded({ key, error: errorText(err) }));
     return () => {
       live = false;
     };
-  }, [base, days, key]);
+  }, [base, pq, days, key]);
 
   // The active version comes from the version history; it only colours the chart.
   useEffect(() => {
@@ -110,7 +119,8 @@ export function SkillUsagePanel({
 
   const current = loaded && loaded.key === key ? loaded : null;
   const data = current?.data ?? null;
-  const events = useMemo(() => data?.events ?? [], [data]);
+  // Older backends ignore `?project=`; keep only this project's runs either way.
+  const events = useMemo(() => (data?.events ?? []).filter((e) => !slug || e.project?.slug === slug), [data, slug]);
   const active = activeVersion ?? events.find((e) => e.version_id)?.version_id ?? null;
 
   const patch = (fn: (d: SkillUsageDetail) => SkillUsageDetail) =>
@@ -121,7 +131,7 @@ export function SkillUsagePanel({
     setMessage(null);
     try {
       const more = await getJson<SkillUsageDetail>(
-        `/api/skills/usage/detail?${base}&days=${days}&limit=${PAGE}&cursor=${encodeURIComponent(data.next_cursor)}`,
+        `/api/skills/usage/detail?${base}${pq}&days=${days}&limit=${PAGE}&cursor=${encodeURIComponent(data.next_cursor)}`,
       );
       patch((d) => ({ ...d, events: [...d.events, ...more.events.filter((e) => !d.events.some((x) => x.id === e.id))], next_cursor: more.next_cursor }));
     } catch (err) {
@@ -149,7 +159,7 @@ export function SkillUsagePanel({
       }));
       // Per-version rates can't be recomputed locally (the server sends rates,
       // not counts), so reload them from the ledger.
-      getJson<SkillUsageDetail>(`/api/skills/usage/detail?${base}&days=${days}&limit=1`)
+      getJson<SkillUsageDetail>(`/api/skills/usage/detail?${base}${pq}&days=${days}&limit=1`)
         .then((fresh) => patch((d) => ({ ...d, by_version: fresh.by_version })))
         .catch(() => undefined);
     } catch (err) {
@@ -258,6 +268,7 @@ export function SkillUsagePanel({
         <div className="flex flex-wrap items-center gap-2">
           <p className="flex-1 text-sm text-[var(--color-muted)]">Every chat, kanban task and project run that loaded {name}, and what came of it.</p>
           {windowPicker}
+          {project ? <ProjectEvidenceChip project={project} onClear={onClearProject} className="basis-full sm:basis-auto" /> : null}
         </div>
 
         <dl className="grid grid-cols-2 gap-3 lg:grid-cols-4">

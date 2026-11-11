@@ -424,14 +424,17 @@ from hermes_cli.projects_outputs_api import router as _projects_outputs_router  
 from hermes_cli.projects_live_api import router as _projects_live_router  # noqa: E402
 from hermes_cli.projects_changes_api import router as _projects_changes_router  # noqa: E402
 from hermes_cli.projects_board_api import router as _projects_board_router  # noqa: E402
+from hermes_cli.projects_skills_api import router as _projects_skills_router  # noqa: E402
 from hermes_cli.skills_improve_api import router as _skills_improve_router  # noqa: E402
 from hermes_cli.skills_create_api import router as _skills_create_router  # noqa: E402
 from hermes_cli.skills_versions_api import router as _skills_versions_router  # noqa: E402
 from hermes_cli.skills_usage_api import router as _skills_usage_router  # noqa: E402
 from hermes_cli.aquarium_api import router as _aquarium_router  # noqa: E402
 from hermes_cli.model_timeouts_api import router as _model_timeouts_router  # noqa: E402
+from hermes_cli.secret_links_api import router as _secret_links_router  # noqa: E402
 
 app.include_router(_memory_oauth_router)
+app.include_router(_secret_links_router)
 app.include_router(_memory_explorer_router)
 app.include_router(_files_router)
 app.include_router(_incomings_router)
@@ -462,6 +465,7 @@ app.include_router(_projects_clarify_router)
 app.include_router(_projects_outputs_router)
 app.include_router(_projects_live_router)
 app.include_router(_projects_changes_router)
+app.include_router(_projects_skills_router)
 app.include_router(_projects_board_router)
 app.include_router(_skills_improve_router)
 app.include_router(_skills_create_router)
@@ -527,7 +531,7 @@ app.add_middleware(
 # endpoints belong there.
 # ---------------------------------------------------------------------------
 from hermes_cli.dashboard_auth.public_paths import (
-    PUBLIC_API_PATHS as _PUBLIC_API_PATHS,
+    is_public_api_path as _is_public_api_path,
 )
 
 
@@ -797,7 +801,7 @@ async def auth_middleware(request: Request, call_next):
     if getattr(request.app.state, "auth_required", False):
         return await call_next(request)
     path = request.url.path
-    if path.startswith("/api/") and path not in _PUBLIC_API_PATHS:
+    if path.startswith("/api/") and not _is_public_api_path(path):
         if not _has_valid_session_token(request) and not _has_valid_query_token(request, path):
             return JSONResponse(
                 status_code=401,
@@ -953,6 +957,9 @@ _CATEGORY_MERGE: Dict[str, str] = {
     # with the other messaging-platform config (discord) so it isn't an
     # orphan tab of one field.
     "telegram": "discord",
+    # `agent_home.public_url` (FG-37 one-time secret links) is the only
+    # agent_home field; it is messaging delivery config, so it joins discord.
+    "agent_home": "discord",
     # `computer_use.cua_telemetry` is the only schema-surfaced computer_use
     # field — fold it into the agent tab rather than spawning a one-field
     # orphan category.

@@ -127,6 +127,17 @@ registerApp({
   order: 90,
 });
 
+registerApp({
+  id: "sites",
+  name: "Sites",
+  glyph: "▥",
+  hint: "Websites kept as tables",
+  kind: "next-route",
+  route: "/sites",
+  category: "workspace",
+  order: 95,
+});
+
 // ── System cluster ─────────────────────────────────────────────────────────
 
 registerApp({

@@ -465,6 +465,42 @@ def _browser_available() -> bool:
 needs_browser = pytest.mark.skipif(not _browser_available(), reason="playwright + Chromium not installed")
 
 
+def _block_playwright(monkeypatch):
+    import tools.lazy_deps
+
+    for name in [m for m in sys.modules if m == "playwright" or m.startswith("playwright.")]:
+        monkeypatch.delitem(sys.modules, name)
+    monkeypatch.setitem(sys.modules, "playwright", None)
+
+    def no_install(*_a, **_k):
+        raise tools.lazy_deps.FeatureUnavailable("sites.playwright", ("playwright",), "lazy installs are disabled")
+
+    monkeypatch.setattr(tools.lazy_deps, "ensure", no_install)
+
+
+def test_missing_playwright_package_is_browser_not_installed(monkeypatch):
+    _block_playwright(monkeypatch)
+    recipe = {"version": 1, "site": "s", "base_url": "http://127.0.0.1:9", "entities": {
+        "about": {"kind": "fixed", "steps": [{"op": "extract_fields", "fields": {"t": {"selector": "h1"}}}]}}}
+    with pytest.raises(srr.BrowserNotInstalled) as err:
+        list(srr.run_recipe(recipe, {"username": "u", "password": "hunter2"}, mode="full", allow_private=True))
+    message = str(err.value)
+    assert message.startswith("browser engine not installed (the playwright Python package is missing)")
+    assert err.value.__cause__ is None and "hunter2" not in message
+
+
+@pytest.mark.skipif(importlib.util.find_spec("playwright") is None, reason="playwright not installed")
+def test_missing_chromium_is_browser_not_installed(monkeypatch, tmp_path):
+    """Real playwright, empty browser cache, no system Chrome: one readable line, not Playwright's banner."""
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path))
+    monkeypatch.setattr(srr, "_chromium_candidates", lambda: [])
+    with pytest.raises(srr.BrowserNotInstalled) as err:
+        srr.PlaywrightDriver(timeout_ms=5000)
+    message = str(err.value)
+    assert message.startswith("browser engine not installed (Chromium does not start: ")
+    assert "\n" not in message and len(message) < 400
+
+
 @pytest.fixture
 def site():
     with fx.serve_fixture() as running:

@@ -23,11 +23,11 @@ const app = (over: Partial<AppManifest> & { id: string }): AppManifest => ({
 });
 
 describe("coral Phase 1 registrations", () => {
-  it("registers all 20 destinations with unique ids and routes", () => {
+  it("registers all 21 destinations with unique ids and routes", () => {
     const apps = getApps();
-    expect(apps).toHaveLength(20);
-    expect(new Set(apps.map((a) => a.id)).size).toBe(20);
-    expect(new Set(apps.map((a) => a.route)).size).toBe(20);
+    expect(apps).toHaveLength(21);
+    expect(new Set(apps.map((a) => a.id)).size).toBe(21);
+    expect(new Set(apps.map((a) => a.route)).size).toBe(21);
   });
 
   it("builds 8 petals: 6 apps + 2 clusters, in order-band sequence", () => {
@@ -45,7 +45,7 @@ describe("coral Phase 1 registrations", () => {
     ]);
   });
 
-  it("clusters hold the remaining 14 destinations", () => {
+  it("clusters hold the remaining 15 destinations", () => {
     const petals = buildCoralLayout();
     const workspace = petals.find((p) => p.type === "cluster" && p.id === "workspace");
     const system = petals.find((p) => p.type === "cluster" && p.id === "system");
@@ -57,6 +57,7 @@ describe("coral Phase 1 registrations", () => {
       "activity",
       "graph",
       "capacity",
+      "sites",
     ]);
     expect(system.members.map((m) => m.id)).toEqual([
       "users",

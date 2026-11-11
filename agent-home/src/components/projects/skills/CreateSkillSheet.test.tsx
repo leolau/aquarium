@@ -44,6 +44,7 @@ beforeEach(() => {
   routes = {
     "GET /api/projects/digest/board": ok(BOARD),
     "POST /api/skills/create/start": ok({ session_id: "skillnew_1_abcd1234" }),
+    "GET /api/chat/messages": ok({ messages: [] }),
     "POST /api/skills/create/message": ok({ reply: "Here it is:\n````skill-draft\n" + DRAFT + "````", draft: DRAFT }),
     "POST /api/skills/create/save": ok({ name: "digest-tone", enabled: false, created_here: true, version: { id: "v1", n: 1, status: "draft" } }),
     "PATCH /api/projects/digest/tools": ok({ skills: ["email", "digest-tone"] }),

@@ -6,6 +6,7 @@ import { ActionButton } from "@/components/projects/ActionButton";
 import { ActionError } from "@/components/projects/ActionError";
 import { useProjectAction } from "@/components/projects/useProjectAction";
 import { BusyRegion } from "@/components/ui/BusyRegion";
+import { useT } from "@/i18n";
 import type { ProjectDetail, ProjectToolsResolution } from "@/types";
 
 function splitCsv(value: string | null): string[] {
@@ -46,10 +47,14 @@ function ChipGroup({ label, items }: { label: string; items: string[] }) {
 export function ToolsPanel({
   project,
   archived = false,
+  onOpenSkills,
 }: {
   project: ProjectDetail;
   archived?: boolean;
+  /** Switch to the project's Skills tab (usage + AI improve/create). */
+  onOpenSkills?: () => void;
 }) {
+  const t = useT("projects");
   const [toolsets, setToolsets] = useState(splitCsv(project.toolsets));
   const [skills, setSkills] = useState(splitCsv(project.skills));
   const [toolsetsDraft, setToolsetsDraft] = useState(
@@ -90,9 +95,22 @@ export function ToolsPanel({
       data-component="ToolsPanel"
       className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
     >
-      <h2 className="text-xs uppercase tracking-wide text-[var(--color-muted)]">
-        Tools
-      </h2>
+      <div className="flex items-center gap-2">
+        <h2 className="mr-auto text-xs uppercase tracking-wide text-[var(--color-muted)]">
+          Tools
+        </h2>
+        <a
+          href="?tab=skills"
+          onClick={(e) => {
+            if (!onOpenSkills) return;
+            e.preventDefault();
+            onOpenSkills();
+          }}
+          className="inline-flex min-h-11 items-center text-xs text-[var(--color-accent)] underline-offset-2 hover:underline md:min-h-0"
+        >
+          {t("skillsTab.manageInTab")}
+        </a>
+      </div>
 
       <ActionError action={action} />
 

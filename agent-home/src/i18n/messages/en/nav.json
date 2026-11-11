@@ -17,6 +17,7 @@
     "activity": { "name": "Activity", "hint": "Interaction traces" },
     "graph": { "name": "Graph", "hint": "Goals, tasks, skills" },
     "capacity": { "name": "Capacity", "hint": "Headroom on this box" },
+    "sites": { "name": "Sites", "hint": "Websites kept as tables" },
     "users": { "name": "Users", "hint": "Directory + enrolment" },
     "suggestions": { "name": "Suggestions", "hint": "Proposed sub-goals" },
     "tools": { "name": "Tools", "hint": "Apps the agent built" },

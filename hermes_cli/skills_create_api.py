@@ -376,7 +376,8 @@ async def save_created_skill(request: Request) -> Dict[str, Any]:
         await _create_session_author(request, session_id, profile)
         if session_id else await acting_author(request)
     )
-    message = f"Drafted with AI for project {project.name}" if project else "Drafted with AI"
+    # ``project:<slug>`` is how the Skills tab tells a skill was created here.
+    message = f"Drafted with AI for project:{project.slug}" if project else "Drafted with AI"
     out = await asyncio.to_thread(
         lambda: _save_sync(
             profile=profile, name=name, category=category, content=content, author=author, message=message
@@ -391,7 +392,10 @@ async def save_created_skill(request: Request) -> Dict[str, Any]:
                     candidate_id=candidate_id,
                 )
                 if candidate_id:
-                    projects_db.dismiss_skill_candidate(conn, project.id, candidate_id)
+                    projects_db.dismiss_skill_candidate(
+                        conn, project_id=project.id, candidate_id=candidate_id,
+                        dismissed_by=getattr(principal, "user_id", None) or None,
+                    )
 
         await asyncio.to_thread(_mark)
         out.update({"project": project.slug, "created_here": True})

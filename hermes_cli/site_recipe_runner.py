@@ -81,6 +81,7 @@ __all__ = [
     "ForbiddenTarget",
     "LoginFailed",
     "RecipeRunError",
+    "BrowserNotInstalled",
     "recipe_problems",
     "validate_recipe",
     "is_forbidden_text",
@@ -167,6 +168,16 @@ class RecipeRunError(RuntimeError):
         self.report = report
         detail = "; ".join(f"{name}: {err}" for name, err in report.failed.items())
         super().__init__(f"{len(report.failed)} entit{'y' if len(report.failed) == 1 else 'ies'} failed: {detail}")
+
+
+class BrowserNotInstalled(RuntimeError):
+    """The Python playwright package or its Chromium is missing on this box."""
+
+    def __init__(self, detail: str):
+        super().__init__(
+            f"browser engine not installed ({detail}); an admin runs "
+            "`sudo deploy/install-site-browser` from the checkout"
+        )
 
 
 # --------------------------------------------------------------------------
@@ -772,6 +783,21 @@ def _chromium_candidates() -> List[str]:
     return found
 
 
+def _import_playwright() -> Tuple[Any, Any]:
+    """``(sync_playwright, TimeoutError)``; a dev checkout may lazy-install the package."""
+    try:
+        from playwright.sync_api import TimeoutError as PlaywrightTimeout, sync_playwright
+    except ImportError:
+        try:
+            from tools.lazy_deps import ensure
+
+            ensure("sites.playwright", prompt=False)
+            from playwright.sync_api import TimeoutError as PlaywrightTimeout, sync_playwright
+        except Exception:
+            raise BrowserNotInstalled("the playwright Python package is missing") from None
+    return sync_playwright, PlaywrightTimeout
+
+
 class PlaywrightDriver(Driver):
     """Headless Chromium through the Playwright sync API.
 
@@ -781,14 +807,7 @@ class PlaywrightDriver(Driver):
 
     def __init__(self, *, timeout_ms: int = DEFAULT_TIMEOUT_MS, guard: Optional[Callable[..., Optional[str]]] = None,
                  on_blocked: Optional[Callable[[str], None]] = None, headless: bool = True):
-        try:
-            from playwright.sync_api import sync_playwright
-        except ImportError:
-            from tools.lazy_deps import ensure
-
-            ensure("sites.playwright", prompt=False)
-            from playwright.sync_api import sync_playwright
-        from playwright.sync_api import TimeoutError as PlaywrightTimeout
+        sync_playwright, PlaywrightTimeout = _import_playwright()
 
         self._timeout_error = PlaywrightTimeout
         self._timeout_ms = timeout_ms
@@ -831,10 +850,8 @@ class PlaywrightDriver(Driver):
                     return self._pw.chromium.launch(headless=headless, executable_path=exe)
                 except Exception:
                     continue
-            raise RuntimeError(
-                "no Chromium for the site recipe runner; install one with "
-                "`python -m playwright install chromium`"
-            ) from first
+            line = next((ln.strip() for ln in str(first).splitlines() if ln.strip()), "")
+            raise BrowserNotInstalled(f"Chromium does not start: {line[:200]}") from None
 
     # -- helpers -------------------------------------------------------------
 

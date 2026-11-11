@@ -105,6 +105,7 @@ PAGES: Tuple[PageSpec, ...] = (
     PageSpec("/activate/smoke-bogus-token", ("ActivateForm",), shell=False, anon="public", anon_markers=("ActivateForm",)),
     PageSpec("/activate/default/smoke-bogus-token", ("ActivateForm",), shell=False, anon="public", anon_markers=("ActivateForm",)),
     PageSpec("/survey/smoke-bogus-token", ("SurveyLinkInvalid",), shell=False, anon="public", anon_markers=("SurveyLinkInvalid",)),
+    PageSpec("/secret/smoke-bogus-token-0000000000000000000000", ("SecretLinkUnusable",), shell=False, anon="public", anon_markers=("SecretLinkUnusable",)),
     PageSpec("/fb/smoke-bogus-token"),
     PageSpec("/onboarding", ("OnboardingWizard",)),
     # ProfilePicker renders only for an account enrolled in two or more profiles.

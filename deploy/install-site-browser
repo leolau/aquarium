@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# install-site-browser — headless Chromium for the site-source refresh
+# (hermes_cli/site_recipe_runner.py), installed for the service account.
+#
+#   sudo deploy/install-site-browser [PYTHON] [USER]
+#     PYTHON  the venv the dashboard/gateway run on (default: /opt/data/hermes-agent/.venv/bin/python)
+#     USER    the account those services run as      (default: hermes)
+#
+# Run by install-aquarium.sh and deploy-hermes.sh. Idempotent: the system
+# libraries (`playwright install-deps`, apt, as root) are installed once per
+# Playwright version, and `playwright install chromium` (as USER, into its
+# ~/.cache/ms-playwright) skips a browser build that is already there. Ends
+# with a launch check. Never fails the caller: a box without the browser only
+# loses site refreshes, which then fail with "browser engine not installed".
+set -uo pipefail
+
+PY=${1:-/opt/data/hermes-agent/.venv/bin/python}
+SVC_USER=${2:-hermes}
+STAMP_DIR=${AQUARIUM_STATE_DIR:-/var/lib/aquarium}
+TIMEOUT=${SITE_BROWSER_TIMEOUT:-900}
+
+warn() { printf '\033[1;33mwarning: %s\033[0m\n' "$*" >&2; }
+
+[ "$(id -u)" -eq 0 ] || { warn "install-site-browser must run as root"; exit 0; }
+id "$SVC_USER" >/dev/null 2>&1 || { warn "no $SVC_USER account; site browser not installed"; exit 0; }
+version=$("$PY" -I -c 'from importlib.metadata import version; print(version("playwright"))' 2>/dev/null) || {
+  warn "the playwright package is not installed in $PY; site refreshes are unavailable"
+  exit 0
+}
+home=$(getent passwd "$SVC_USER" | cut -d: -f6)
+as_user() { runuser -u "$SVC_USER" -- env HOME="$home" PATH=/usr/local/bin:/usr/bin:/bin "$@"; }
+
+stamp=$STAMP_DIR/site-browser-deps
+if [ "$(cat "$stamp" 2>/dev/null)" != "$version" ]; then
+  echo "installing Chromium system libraries (playwright $version install-deps)"
+  if DEBIAN_FRONTEND=noninteractive timeout "$TIMEOUT" "$PY" -I -m playwright install-deps chromium >/dev/null; then
+    install -d -m 755 "$STAMP_DIR" && printf '%s\n' "$version" > "$stamp"
+  else
+    warn "playwright install-deps chromium failed; retry: sudo $PY -m playwright install-deps chromium"
+  fi
+fi
+
+if ! as_user timeout "$TIMEOUT" "$PY" -I -m playwright install chromium >/dev/null; then
+  warn "playwright install chromium failed for $SVC_USER; retry: sudo -u $SVC_USER -H $PY -m playwright install chromium"
+  exit 0
+fi
+
+if as_user timeout 120 "$PY" -I -c '
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    p.chromium.launch(headless=True).close()
+' >/dev/null 2>&1; then
+  echo "site browser OK (playwright $version, Chromium for $SVC_USER)"
+else
+  warn "Chromium is installed for $SVC_USER but does not start; check: sudo -u $SVC_USER -H $PY -m playwright install --with-deps chromium"
+fi
+exit 0

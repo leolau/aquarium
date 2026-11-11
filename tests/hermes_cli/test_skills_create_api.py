@@ -200,6 +200,8 @@ def test_save_creates_disabled_draft_marks_project_and_candidate(client, model, 
     hist = skill_versions.index_payload("digest-tone")
     assert hist["active"] is None and hist["draft_only"] is True
     assert [v["status"] for v in hist["versions"]] == ["draft"]
+    # The project Skills tab's `created_here` reads `project:<slug>` from v1's message.
+    assert f"project:{project.slug}" in hist["versions"][0]["message"]
     # Opening the Versions tab (ensure_baseline) must not promote the draft.
     skill_versions.ensure_baseline("digest-tone")
     assert [v["status"] for v in skill_versions.list_versions("digest-tone")] == ["draft"]

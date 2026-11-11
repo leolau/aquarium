@@ -38,6 +38,9 @@ export interface SkillCandidateRef {
   body?: string;
 }
 
+/** Start of the hidden first-turn seed (`SEED_START` in `hermes_cli/skills_create_api.py`). */
+export const CREATE_SEED_START = "You are helping me write a new skill";
+
 const NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
 /** `name:` from a SKILL.md frontmatter, when it is a valid skill name. */

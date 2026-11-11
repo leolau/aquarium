@@ -14,6 +14,7 @@ const INHERITS: Record<string, string> = {
   members: "redirects to /users without a backend call",
   "activate/[...link]": "signed-out; activate/loading.tsx",
   "survey/[token]": "signed-out; survey/loading.tsx",
+  "secret/[token]": "signed-out; secret/loading.tsx",
   "settings/[section]": "title comes from the param; settings/loading.tsx",
 };
 
