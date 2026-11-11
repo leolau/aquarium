@@ -138,6 +138,10 @@ PAGES: Tuple[PageSpec, ...] = (
     PageSpec("/models", ("ModelsView",), quick=True),
     PageSpec("/tools", ("ToolsRegistry",), quick=True),
     PageSpec("/tools/zz-smoke-missing", ("ToolsError",)),
+    PageSpec("/sites", ("SitesList",)),
+    # sites.create_roles defaults to owner+admin; others get the not-allowed notice.
+    PageSpec("/sites/new", admin_markers=("AddSiteForm",), member_markers=("InlineAlert",)),
+    PageSpec("/sites/zz-smoke-missing", not_found=True),
     PageSpec("/settings", ("SettingsView",), quick=True),
     PageSpec("/settings/account", ("SettingsView", "AccountSecurity")),
     PageSpec("/settings/tools", ("ToolsSettings", "RoleLimitsSection")),
@@ -174,6 +178,7 @@ PAGES: Tuple[PageSpec, ...] = (
 # agent-home/src/lib/nav/menu-access.ts as (path, exact) rules.
 APP_URLS: Mapping[str, Tuple[Tuple[Tuple[str, bool], ...], Tuple[Tuple[str, bool], ...]]] = {
     "todos": ((("/todos", False),), (("/api/todos", False),)),
+    "sites": ((("/sites", False),), (("/api/sites", False),)),
     "chat": ((("/chat", False),), ()),
     "inbox": ((("/inbox", True),), (("/api/incomings", True), ("/api/incomings/facets", False))),
     "memory": ((("/memory", False),), (("/api/memory/projection", False), ("/api/memory/query", False))),
@@ -295,6 +300,9 @@ APIS: Tuple[ApiSpec, ...] = (
     ApiSpec("/api/settings/apps/github", ADMIN_ONLY),
     ApiSpec("/api/settings/apps/limits", ADMIN_ONLY),
     ApiSpec("/api/settings/apps/storage", ADMIN_ONLY),
+    ApiSpec("/api/sites", OK),
+    ApiSpec("/api/sites/settings", OK),
+    ApiSpec("/api/sites/zz-smoke-missing", _same(404)),
     ApiSpec("/api/telegram-bot", OK),
     ApiSpec("/api/todos", OK, quick=True),
     ApiSpec("/api/todos/facets", OK),

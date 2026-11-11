@@ -1021,32 +1021,45 @@ async def ensure_site_admin(conn: Any, *, password: Optional[str] = None) -> Non
     from hermes_cli.access import _quote_literal
 
     role = SITE_ADMIN_ROLE
-    if password:
-        _store_role_password(role, password)
-    literal = _quote_literal(_role_password(role, create=True) or "")
-    attrs = "LOGIN CREATEROLE NOCREATEDB NOINHERIT"
-    # Only a superuser may name SUPERUSER/BYPASSRLS/CREATEDB in ALTER ROLE, even
-    # to keep them off; a CREATEROLE schema owner checks them instead.
+    secret = password or _role_password(role, create=False) or secrets.token_urlsafe(32)
+    literal = _quote_literal(secret)
     am_super = await conn.fetchval("SELECT rolsuper FROM pg_roles WHERE rolname = current_user")
     existing = await conn.fetchrow(
-        "SELECT rolsuper, rolbypassrls, rolcreaterole, rolinherit FROM pg_roles WHERE rolname = $1",
+        "SELECT rolsuper, rolbypassrls, rolcanlogin, rolcreaterole, rolcreatedb, rolinherit "
+        "FROM pg_roles WHERE rolname = $1",
         role,
     )
     if existing is None:
         await conn.execute(
-            f"CREATE ROLE {role} {attrs} NOSUPERUSER NOBYPASSRLS PASSWORD {literal}"
+            f"CREATE ROLE {role} LOGIN CREATEROLE NOCREATEDB NOINHERIT NOSUPERUSER NOBYPASSRLS "
+            f"PASSWORD {literal}"
         )
-    elif am_super:
-        await conn.execute(f"ALTER ROLE {role} {attrs} NOSUPERUSER NOBYPASSRLS PASSWORD {literal}")
-    elif existing["rolsuper"] or existing["rolbypassrls"]:
-        raise RuntimeError(
-            f"{role} has SUPERUSER or BYPASSRLS; a superuser must remove it "
-            f"(ALTER ROLE {role} NOSUPERUSER NOBYPASSRLS)"
-        )
-    else:  # name only what changes: CREATEDB etc. are superuser-only too
-        changes = "LOGIN" + ("" if existing["rolcreaterole"] else " CREATEROLE")
-        changes += " NOINHERIT" if existing["rolinherit"] else ""
-        await conn.execute(f"ALTER ROLE {role} {changes} PASSWORD {literal}")
+    else:
+        # Name only attributes that differ: PostgreSQL refuses SUPERUSER,
+        # BYPASSRLS and CREATEDB options from a non-superuser even as no-ops.
+        if existing["rolsuper"] or existing["rolbypassrls"]:
+            if not am_super:
+                raise RuntimeError(
+                    f"{role} has SUPERUSER or BYPASSRLS, which a provisioning login must not; "
+                    f"a superuser must run: ALTER ROLE {role} NOSUPERUSER NOBYPASSRLS"
+                )
+            await conn.execute(f"ALTER ROLE {role} NOSUPERUSER NOBYPASSRLS")
+        changes = [
+            option
+            for option, wrong in (
+                ("LOGIN", not existing["rolcanlogin"]),
+                ("CREATEROLE", not existing["rolcreaterole"]),
+                ("NOCREATEDB", existing["rolcreatedb"]),
+                ("NOINHERIT", existing["rolinherit"]),
+            )
+            if wrong
+        ]
+        if changes:
+            await conn.execute(f"ALTER ROLE {role} {' '.join(changes)}")
+        await conn.execute(f"ALTER ROLE {role} PASSWORD {literal}")
+    # Saved only once the database has it, so runtime never holds a password
+    # the role does not.
+    _store_role_password(role, secret)
     current_db = await conn.fetchval("SELECT current_database()")
     await conn.execute(
         f'GRANT CONNECT ON DATABASE "{current_db}" TO {role} WITH GRANT OPTION; '

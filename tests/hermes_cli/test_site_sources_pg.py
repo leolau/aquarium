@@ -507,6 +507,15 @@ def test_site_admin_migrate_by_non_superuser_owner_adopts_old_sites(tmp_path, mo
         run(as_owner(forge))
         for _ in range(2):  # the second run alters the existing role: no superuser-only options
             run(as_owner(lambda c: ss.ensure_site_admin(c)))
+        # Re-run with a new password (as deploy does once db-admin.env carries one).
+        run(as_owner(lambda c: ss.ensure_site_admin(c, password=f"new-{tag}")))
+        assert ss._role_password(ss.SITE_ADMIN_ROLE, create=False) == f"new-{tag}"
+
+        async def site_admin_login():
+            conn = await asyncpg.connect(f"postgresql://{ss.SITE_ADMIN_ROLE}:new-{tag}@{host}/{dbname}")
+            await conn.close()
+
+        run(site_admin_login())
 
         async def owners(conn):
             return {
@@ -540,6 +549,20 @@ def test_site_admin_migrate_by_non_superuser_owner_adopts_old_sites(tmp_path, mo
         run(unadopt_table())
         run(as_owner(lambda c: ss.ensure_site_admin(c)))
         assert run(as_owner(owners))["tables"] == {ss.SITE_ADMIN_ROLE}
+
+        # A role that gained SUPERUSER: refused loudly, and the stored password is kept.
+        async def as_superuser(sql):
+            conn = await asyncpg.connect(f"{DSN.rsplit('/', 1)[0]}/{dbname}")
+            try:
+                await conn.execute(sql)
+            finally:
+                await conn.close()
+
+        run(as_superuser(f"ALTER ROLE {ss.SITE_ADMIN_ROLE} SUPERUSER"))
+        with pytest.raises(RuntimeError, match="SUPERUSER"):
+            run(as_owner(lambda c: ss.ensure_site_admin(c, password="never-applied")))
+        assert ss._role_password(ss.SITE_ADMIN_ROLE, create=False) == f"new-{tag}"
+        run(as_superuser(f"ALTER ROLE {ss.SITE_ADMIN_ROLE} NOSUPERUSER"))
 
         # The site admin now runs everything, including re-provisioning both roles.
         run(ss.provision_schema(site))
