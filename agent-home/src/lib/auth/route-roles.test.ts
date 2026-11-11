@@ -7,6 +7,9 @@
  * - `signed-in` — any signed-in user; the Python API scopes data to them
  * - `admin`     — owner or admin only (checked here, before proxying)
  * - `owner`     — owner only
+ * - `skill:<action>` — Settings → Skills permissions (`use`, `view`,
+ *   `agent_edit`, `manage`, `lab`): the handler calls
+ *   `requireSkillPermission("<action>", …)` before proxying
  *
  * A new route (or a new method on an existing route) that is not in the table
  * fails this test, and a route labelled admin/owner must call the matching
@@ -17,11 +20,16 @@ import { join, relative, sep } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { SKILL_ACTIONS, type SkillAction } from "@/lib/skills/permissions";
+
 import table from "./route-roles.json";
 
-type Role = "public" | "internal" | "signed-in" | "admin" | "owner";
+type Role = "public" | "internal" | "signed-in" | "admin" | "owner" | `skill:${SkillAction}`;
 
 const ROLE_CHECKS: Record<Role, string[]> = {
+  ...(Object.fromEntries(
+    SKILL_ACTIONS.map((a) => [`skill:${a}`, [`requireSkillPermission("${a}",`]]),
+  ) as Record<`skill:${SkillAction}`, string[]>),
   public: [],
   internal: ["verifyAppPushSecret("],
   "signed-in": [
@@ -119,6 +127,25 @@ export function routeRoleProblems(
 const roles = table as Record<string, string>;
 
 describe("agent-home BFF route roles", () => {
+  it("gates every Skills route by its Skills permission", () => {
+    for (const [key, role] of Object.entries(roles)) {
+      if (!key.includes(" /api/skills")) continue;
+      const method = key.split(" ")[0];
+      const lab = /\/api\/skills\/(usage|versions|improve)/.test(key);
+      const view = method === "GET" && /^GET \/api\/skills(\/content|\/details)?$/.test(key);
+      expect(role, key).toBe(lab ? "skill:lab" : view ? "skill:view" : "skill:manage");
+    }
+  });
+
+  it("fails when a Skills route checks a different permission", () => {
+    const handlers = new Map([
+      ["PUT /api/skills/toggle", 'export async function PUT() { await requireSkillPermission("view", p); }'],
+    ]);
+    expect(routeRoleProblems(handlers, { "PUT /api/skills/toggle": "skill:manage" })).toEqual([
+      'PUT /api/skills/toggle: labelled skill:manage but calls none of requireSkillPermission("manage",',
+    ]);
+  });
+
   it("every route.ts handler declares who may call it", () => {
     expect(routeRoleProblems(allHandlers(), roles)).toEqual([]);
   });
@@ -171,6 +198,8 @@ describe("agent-home BFF route roles", () => {
       "POST /api/models/test",
       "DELETE /api/tools/mcp/[name]",
       "PUT /api/access/roles/[role]",
+      "GET /api/access/skills",
+      "PUT /api/access/skills/[role]",
     ]) {
       expect(roles[key], key).toBe("admin");
     }

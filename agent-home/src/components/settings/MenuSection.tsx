@@ -13,7 +13,7 @@ import "@/components/coral/coral-apps";
 import { getApps } from "@/components/coral/coral-registry";
 import { CLUSTER_CATEGORIES, type AppManifest } from "@/components/coral/coral-types";
 import { useAction } from "@/lib/use-action";
-import { isLockedOff, LOCKED_APP_IDS, NAV_ROLES, type NavRole } from "@/lib/nav/menu-access";
+import { isLockedOff, LOCKED_APP_IDS, NAV_ROLES, SKILLS_APP_ID, type NavRole } from "@/lib/nav/menu-access";
 import type { AgentHomeNav } from "@/types";
 
 const ROLE_LABEL: Record<NavRole, string> = {
@@ -183,6 +183,15 @@ export function MenuSection() {
                         {app.name}
                         {locked ? (
                           <span className="ml-2 text-xs text-[var(--color-muted)]">Always shown</span>
+                        ) : null}
+                        {app.id === SKILLS_APP_ID ? (
+                          <span
+                            data-follows="skills-permissions"
+                            className="ml-2 text-xs text-[var(--color-muted)]"
+                            title="Also needs “See the skill list” in Settings → Skills permissions"
+                          >
+                            Needs Skills permissions
+                          </span>
                         ) : null}
                         {lockedOff ? (
                           <span

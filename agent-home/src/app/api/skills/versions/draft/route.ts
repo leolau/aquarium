@@ -1,15 +1,15 @@
-/** POST /api/skills/versions/draft — save a SKILL.md as a new draft version; the live skill is untouched (owner/admin). */
-import { BAD_JSON, badRequest, readJsonBody, refuse, str, upstream } from "@/lib/api/admin-route";
-import { apiClientForRequest, getPrincipal } from "@/lib/auth/principal";
-import { canAdminister } from "@/lib/auth/roles";
+/** POST /api/skills/versions/draft — save a SKILL.md as a new draft version; the live skill is untouched (Skills permissions). */
+import { BAD_JSON, badRequest, readJsonBody, str, upstream } from "@/lib/api/admin-route";
+import { apiClientForRequest } from "@/lib/auth/principal";
 import { profileFromBody } from "@/lib/chat/profile";
 import type { SkillVersionMeta } from "@/lib/skills/improve";
+import { requireSkillPermission } from "@/lib/skills/permissions-server";
 
 export async function POST(request: Request) {
-  const principal = await getPrincipal();
-  if (!principal || !canAdminister(principal)) return refuse(principal);
   const body = await readJsonBody(request);
   if (!body) return BAD_JSON();
+  const gate = await requireSkillPermission("lab", profileFromBody(body));
+  if (!gate.ok) return gate.response;
   const name = str(body.name);
   const content = typeof body.content === "string" ? body.content : "";
   if (!name || !content.trim()) return badRequest("name and content are required.");

@@ -16,6 +16,7 @@ import {
   navRoleOf,
   NAV_ROLES,
   withAdminOnly,
+  withSkillsPermission,
 } from "@/lib/nav/menu-access";
 
 describe("menu access mapping", () => {
@@ -76,12 +77,17 @@ describe("menu access mapping", () => {
     expect(blockedAppForPath("/api/chat/profiles", ["profiles"])).toBeNull();
   });
 
-  it("locks Profiles and Skills off for members and viewers", () => {
+  it("locks Profiles off for members and viewers; Skills follows the view permission", () => {
     for (const role of ["member", "viewer"]) {
       expect(isLockedOff(role, "profiles")).toBe(true);
-      expect(isLockedOff(role, "skills")).toBe(true);
-      expect(withAdminOnly(role, ["graph"])).toEqual(["graph", "profiles", "skills"]);
+      expect(isLockedOff(role, "skills")).toBe(false);
+      expect(withAdminOnly(role, ["graph"])).toEqual(["graph", "profiles"]);
     }
+    expect(withSkillsPermission(["graph"], false)).toEqual(["graph", "skills"]);
+    expect(withSkillsPermission(["graph"], true)).toEqual(["graph"]);
+    // Hidden from the menu stays hidden even when the role may see skills.
+    expect(withSkillsPermission(["skills"], true)).toEqual(["skills"]);
+    expect(withSkillsPermission(["skills"], false)).toEqual(["skills"]);
     expect(isLockedOff("admin", "profiles")).toBe(false);
     expect(isLockedOff("member", "graph")).toBe(false);
     expect(withAdminOnly("admin", [])).toEqual([]);
@@ -91,7 +97,7 @@ describe("menu access mapping", () => {
     const src = readFileSync(resolve(__dirname, "../../../../hermes_cli/agent_home_nav.py"), "utf8");
     const ids = (name: string) =>
       [...(new RegExp(`${name} = \\(([^)]*)\\)`).exec(src)?.[1] ?? "").matchAll(/"([a-z-]+)"/g)].map((m) => m[1]);
-    expect(ids("ADMIN_ONLY_APP_IDS")).toEqual(["profiles", "skills"]);
+    expect(ids("ADMIN_ONLY_APP_IDS")).toEqual(["profiles"]);
     expect(ids("ADMIN_ONLY_ROLES")).toEqual(["member", "viewer"]);
     for (const role of ids("ADMIN_ONLY_ROLES")) {
       for (const app of ids("ADMIN_ONLY_APP_IDS")) expect(isLockedOff(role, app)).toBe(true);

@@ -20,6 +20,7 @@ import { hermesApiBaseUrl } from "@/lib/env";
 import type { SecurityBasicsResult } from "@/lib/api/security-basics";
 import type { AquariumSettings, AquariumSnapshot, CreatureId } from "@/lib/aquarium/creatures";
 import type { ModelTimeoutChange, ModelTimeoutsState } from "@/lib/model-timeouts";
+import type { MySkillPermissions, SkillPermissionsChange, SkillsAccessResponse } from "@/lib/skills/permissions";
 import type { SkillUsageEvent, SkillUsageList } from "@/lib/skills/usage";
 import type { PinResponse, PinSuggestionsResponse } from "@/types/landing";
 import type {
@@ -685,6 +686,24 @@ export class HermesApiClient {
       method: "PUT",
       json: change,
     });
+  }
+
+  /** What each role may do with skills (Settings → Skills permissions). Owner/admin only. */
+  async skillPermissions(): Promise<SkillsAccessResponse> {
+    return this.request("/api/access/skills");
+  }
+
+  /** Change some of a role's skill permissions, or `reset` them. Returns every role, normalised. */
+  async setSkillPermissions(role: string, change: SkillPermissionsChange): Promise<SkillsAccessResponse> {
+    return this.request(`/api/access/skills/${encodeURIComponent(role)}`, {
+      method: "PUT",
+      json: change,
+    });
+  }
+
+  /** What the signed-in caller may do with skills in the bound profile. */
+  async mySkillPermissions(): Promise<MySkillPermissions> {
+    return this.request("/api/access/skills/me");
   }
 
   /** Which agent-home menu items the caller may see (Settings → Menu). */

@@ -49,3 +49,32 @@ describe("SkillsView usefulness signal", () => {
     expect(container.querySelector('[data-component="SkillUsageSignal"]')).toBeNull();
   });
 });
+
+describe("SkillsView Skills permissions", () => {
+  const READ_ONLY = { use: true, view: true, agent_edit: false, manage: false, lab: false };
+
+  it("without manage or lab: read-only list, no hub, no usage fetch", async () => {
+    fetchMock.mockImplementation(() => reply([]));
+    const { container } = render(
+      <SkillsView profiles={["default"]} profile="default" initialSkills={SKILLS} initialView="hub" error={null} permissions={READ_ONLY} />,
+    );
+    expect(screen.getByText("pdf-tools")).toBeTruthy();
+    expect(screen.queryByRole("tab", { name: "Hub" })).toBeNull();
+    expect(container.querySelector('[data-action="new-skill"]')).toBeNull();
+    expect(screen.queryByRole("switch")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Edit / })).toBeNull();
+    expect(container.querySelectorAll('[data-state="on"]')).toHaveLength(2);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fetchMock.mock.calls.filter(([u]) => String(u).startsWith("/api/skills/usage"))).toEqual([]);
+  });
+
+  it("with manage: edit controls and the hub", () => {
+    fetchMock.mockImplementation(() => reply([]));
+    const { container } = render(
+      <SkillsView profiles={["default"]} profile="default" initialSkills={SKILLS} initialView="installed" error={null} permissions={{ ...READ_ONLY, manage: true }} />,
+    );
+    expect(screen.getByRole("tab", { name: "Hub" })).toBeTruthy();
+    expect(container.querySelector('[data-action="new-skill"]')).not.toBeNull();
+    expect(screen.getAllByRole("switch")).toHaveLength(2);
+  });
+});

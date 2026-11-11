@@ -23,15 +23,18 @@ async function meta(load: () => Promise<string>): Promise<string | null> {
 /**
  * `/system` — the System hub (Figma "Inner — System hub" 20:2060). One card
  * per System destination, in two groups; each card's counts load on their
- * own. Admin-only destinations: Profiles and Skills disappear for members
- * (they are menu-locked); Core and the agent web browser are hidden (their URLs show a friendly "for admins" page).
+ * own. Profiles disappears for members (it is menu-locked) and Skills when
+ * the role may not see skills (Settings → Skills permissions); Core and the agent web browser are hidden (their URLs show a friendly "for admins" page).
  */
 export default async function Page() {
   const principal = await requirePrincipal();
   const t = await getT("system");
   const admin = canAdminister(principal);
   const session = await readSession();
-  const hidden = withAdminOnly(principal.role, await getHiddenApps(principal, session?.hermesToken).catch(() => []));
+  const hidden = withAdminOnly(
+    principal.role,
+    await getHiddenApps(principal, session?.hermesToken, session?.profile).catch(() => ["skills"]),
+  );
   const client = await apiClientForRequest();
 
   const [profiles, skills, memory, graph, models, tools, core, webview] = await Promise.all([

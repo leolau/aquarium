@@ -1,12 +1,12 @@
-/** GET /api/skills/usage/detail — one skill's recorded runs, newest first (owner/admin). */
-import { badRequest, refuse, str, upstream } from "@/lib/api/admin-route";
-import { apiClientForRequest, getPrincipal } from "@/lib/auth/principal";
-import { canAdminister } from "@/lib/auth/roles";
+/** GET /api/skills/usage/detail — one skill's recorded runs, newest first (Skills permissions). */
+import { badRequest, str, upstream } from "@/lib/api/admin-route";
+import { apiClientForRequest } from "@/lib/auth/principal";
 import { profileFromUrl } from "@/lib/chat/profile";
+import { requireSkillPermission } from "@/lib/skills/permissions-server";
 
 export async function GET(request: Request) {
-  const principal = await getPrincipal();
-  if (!principal || !canAdminister(principal)) return refuse(principal);
+  const gate = await requireSkillPermission("lab", profileFromUrl(request.url));
+  if (!gate.ok) return gate.response;
   const params = new URL(request.url).searchParams;
   const name = str(params.get("name"));
   if (!name) return badRequest("name is required.");
