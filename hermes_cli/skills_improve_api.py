@@ -38,7 +38,7 @@ from hermes_cli import route_roles
 
 _log = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/skills/improve", dependencies=route_roles.ADMIN)
+router = APIRouter(prefix="/api/skills/improve", dependencies=route_roles.SKILLS_LAB)
 
 TAG_PREFIX = "skill-improve:"
 TITLE_PREFIX = "Improve skill: "

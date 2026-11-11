@@ -14,7 +14,7 @@ from typing import Any, Callable, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from hermes_cli.route_roles import ADMIN
+from hermes_cli.route_roles import SKILLS_LAB
 from tools import skill_versions
 
 router = APIRouter(prefix="/api/skills/versions")
@@ -71,7 +71,7 @@ def _require_skill(name: str) -> None:
         raise skill_versions.SkillVersionNotFound(f"Skill '{name}' not found.")
 
 
-@router.get("", dependencies=ADMIN)
+@router.get("", dependencies=SKILLS_LAB)
 async def list_skill_versions(name: str, profile: Optional[str] = None) -> dict:
     def _work() -> dict:
         skill_versions.validate_name(name)
@@ -81,12 +81,12 @@ async def list_skill_versions(name: str, profile: Optional[str] = None) -> dict:
     return await _in_profile(profile, _work)
 
 
-@router.get("/detail", dependencies=ADMIN)
+@router.get("/detail", dependencies=SKILLS_LAB)
 async def get_skill_version(name: str, id: str, profile: Optional[str] = None) -> dict:
     return await _in_profile(profile, lambda: skill_versions.get_version(name, id))
 
 
-@router.get("/diff", dependencies=ADMIN)
+@router.get("/diff", dependencies=SKILLS_LAB)
 async def diff_skill_versions(name: str, a: str, b: str, profile: Optional[str] = None) -> dict:
     def _work() -> dict:
         return {"a": a, "b": b, "diff": skill_versions.diff(name, a, b)}
@@ -94,7 +94,7 @@ async def diff_skill_versions(name: str, a: str, b: str, profile: Optional[str] 
     return await _in_profile(profile, _work)
 
 
-@router.post("/draft", dependencies=ADMIN)
+@router.post("/draft", dependencies=SKILLS_LAB)
 async def create_skill_draft(
     body: DraftRequest, request: Request, profile: Optional[str] = None
 ) -> dict:
@@ -126,7 +126,7 @@ async def create_skill_draft(
     return await _in_profile(body.profile or profile, _work)
 
 
-@router.post("/activate", dependencies=ADMIN)
+@router.post("/activate", dependencies=SKILLS_LAB)
 async def activate_skill_version(
     body: ActivateRequest, request: Request, profile: Optional[str] = None
 ) -> dict:
