@@ -72,7 +72,7 @@ which reaches every other schema.
 
 ### 3.3 Design document (`design.json`)
 ```json
-{"version": 1, "site": "hsdos",
+{"version": 1, "site": "hsdos", "timezone": "Asia/Hong_Kong",
  "entities": [
    {"name": "rma_cases", "kind": "variable", "reason": "paginated search results table",
     "source": {"page": "/rma", "via": "search form"},
@@ -86,6 +86,8 @@ which reaches every other schema.
  ]}
 ```
 `question` holds a clarification for the user when the agent cannot decide incremental vs full.
+`timezone` (optional IANA name, default `UTC`) is the zone of the site's wall-clock times: the
+writer stores a timestamp without an offset as that local time; one with an offset keeps it.
 
 ### 3.4 Extraction recipe (`recipe.json`)
 Declarative, deterministic steps per entity, executed by the runner with no LLM:

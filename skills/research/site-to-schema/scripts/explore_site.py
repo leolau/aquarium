@@ -35,6 +35,14 @@ def _summary(name: str, inv: dict) -> str:
     lines = [f"[{name}] {inv.get('title', '')} — {inv.get('url', '')}"]
     for t in inv.get("tables") or []:
         lines.append(f"  table {t['selector']}: {t['rows']} rows; headers {t['headers'][:12]}")
+    for t in inv.get("datatables") or []:
+        mode = "server-side" if t.get("server_side") else "client-side"
+        keys = [c.get("data") for c in t.get("columns") or []]
+        lines.append(f"  datatable {t['selector']} ({mode}, {t.get('total')} rows in the page"
+                     f"{', ajax ' + t['ajax_url'] if t.get('ajax_url') else ''}): data keys {keys[:15]}")
+    for r in inv.get("json_requests") or []:
+        lines.append(f"  json {r['method']} {r['url']} query {r['query_keys'][:10]} body {r['body_keys'][:15]}"
+                     f" -> {r['status']}{', ' + str(r['bytes']) + ' bytes' if r.get('bytes') else ''}")
     for f in inv.get("forms") or []:
         flag = " FORBIDDEN" if f.get("forbidden") else ""
         fields = [x.get("name") or x.get("id") for x in f.get("fields") or [] if x.get("type") != "hidden"]

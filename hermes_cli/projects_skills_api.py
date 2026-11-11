@@ -27,7 +27,7 @@ from typing import Any, Dict, Iterator, List, Optional
 from fastapi import APIRouter, HTTPException, Request
 
 from hermes_cli import projects_api, projects_db, skill_ledger
-from hermes_cli.projects_run import parse_csv_field
+from hermes_cli.projects_run import parse_skill_field
 
 logger = logging.getLogger(__name__)
 
@@ -309,7 +309,7 @@ def _candidate(row: dict, *, with_body: bool) -> Dict[str, Any]:
 def _project_skills_sync(project, profiles: List[dict], grants: List[_ProfileGrant], days: int) -> Dict[str, Any]:
     slug = project.slug
     host = _host_profile(profiles)
-    preload_list = parse_csv_field(project.skills)
+    preload_list = parse_skill_field(project.skills)
     rows: List[Dict[str, Any]] = []
     all_cards: set = set()
     run_nos: set = set()

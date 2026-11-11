@@ -11,6 +11,17 @@ shapes the runner must handle on real back-office sites:
   button and per-row ``Edit`` links that must never be followed.
 - ``/reference``: a "Warehouse Table" button that loads a table with ``fetch``.
 - ``/about``: a fixed text page.
+- ``/devices``: big client-side DataTables tables (only 10 rows in the DOM):
+  ``#devices`` loads every row once from ``/api/devices`` (objects, nested
+  fields, HTML cells) through the jQuery plugin; ``#parts`` is a DOM-sourced
+  table started with the DataTables 2 ``window.DataTable`` global; ``#cases``
+  is server-side (``serverSide: true``) on ``POST /api/rma_cases``
+  (draw/start/length, ``{draw, recordsTotal, recordsFiltered, data}``).
+  ``/static/datatables-shim.js`` implements the subset of the DataTables
+  public API the runner uses, so the fixture stays offline.
+- ``POST /search/rma_case``: a JSON read endpoint (top-level array) filtered
+  by ``date_from`` / ``date_to``; ``/api/rma_stream`` sends it without a
+  Content-Length.
 - ``/logout``, ``/admin/change_passwd``, ``/orders/new``, ``/orders/edit``,
   ``/orders/delete``: traps. Every hit is recorded in ``state.forbidden_hits``.
 
@@ -34,7 +45,114 @@ from urllib.parse import parse_qs, urlparse
 USERNAME = "reader"
 PASSWORD = "Fixture-Pa55-xyz!"
 PAGE_SIZE = 10
-TRAP_PATHS = ("/logout", "/admin/change_passwd", "/orders/new", "/orders/edit", "/orders/delete")
+TRAP_PATHS = ("/logout", "/admin/change_passwd", "/orders/new", "/orders/edit", "/orders/delete",
+              "/api/rma_cases/delete")
+
+
+def _default_devices(count: int = 2500) -> List[Dict[str, Any]]:
+    models = [("iPhone 15", "Apple"), ("Galaxy S24", "Samsung"), ("Pixel 9", "Google")]
+    return [
+        {
+            "id": i + 1,
+            "imei": f"35{i:013d}",
+            "model": {"name": models[i % 3][0], "brand": models[i % 3][1]},
+            "grade": "<span class='badge'>" + "ABC"[i % 3] + "</span>",
+            "link": f"<a href='/devices/view?id={i + 1}'>view</a>",
+        }
+        for i in range(count)
+    ]
+
+
+def _default_cases(today: dt.date, count: int = 230) -> List[Dict[str, Any]]:
+    return [
+        {"case_no": f"RMA-{5001 + i}", "opened": (today - dt.timedelta(days=i // 5)).isoformat(),
+         "customer": {"name": ["Acme Ltd", "Bolt & Co"][i % 2]}, "qty": i % 7 + 1}
+        for i in range(count)
+    ]
+
+
+_DATATABLES_SHIM = r"""
+(function () {
+  const tables = new Map();
+  // Scroll header clones: isDataTable() is true for them, but new Api(clone) has no instance (0 rows).
+  const clones = new Set();
+  const none = {table: null, data: [], aoColumns: []};
+  function resolve(sel) { return typeof sel === 'string' ? document.querySelector(sel) : (sel && sel.jquery ? sel[0] : sel); }
+  function wrap(list) { const a = list.slice(); a.toArray = () => list.slice(); a.count = () => list.length; return a; }
+  function Api(sel) {
+    const el = resolve(sel);
+    this.s = tables.get(el) || (clones.has(el) ? none : null);
+    if (!this.s) throw new Error('not a DataTable');
+  }
+  Api.prototype.settings = function () { return wrap(this.s === none ? [] : [this.s]); };
+  Api.prototype.table = function () { const s = this.s; return {node: () => s.table}; };
+  Api.prototype.columns = function () { const n = this.s.aoColumns.length; return {count: () => n}; };
+  Api.prototype.column = function (i) {
+    const c = this.s.aoColumns[i];
+    return {header: () => c.nTh, dataSrc: () => c.mData};
+  };
+  Api.prototype.rows = function () {
+    const data = this.s.data;
+    return {count: () => data.length, data: () => wrap(data), indexes: () => wrap(data.map((_, i) => i))};
+  };
+  Api.prototype.cell = function (r, c) { const s = this.s; return {data: () => { const src = s.aoColumns[c].mData; return s.data[r][src]; }}; };
+  Object.defineProperty(Api.prototype, 'ajax', {get() { const s = this.s; return {url: () => s.ajaxUrl, json: () => s.json}; }});
+  function draw(s) {
+    const tbody = s.table.tBodies[0] || s.table.appendChild(document.createElement('tbody'));
+    tbody.innerHTML = s.data.slice(s.start, s.start + 10).map((row) => '<tr>' + s.aoColumns.map((c) => {
+      let v = row; for (const p of String(c.mData).split('.')) v = v == null ? null : v[p];
+      return '<td>' + (v == null ? '' : v) + '</td>';
+    }).join('') + '</tr>').join('');
+  }
+  function init(el, opts) {
+    const ths = Array.from(el.tHead.rows[0].cells);
+    const s = {table: el, start: 0, data: [], json: undefined, _bInitComplete: false,
+               oFeatures: {bServerSide: !!opts.serverSide},
+               ajaxUrl: opts.ajax ? (opts.ajax.url || opts.ajax) : null,
+               aoColumns: ths.map((th, i) => ({nTh: th, mData: opts.columns ? opts.columns[i].data : i}))};
+    tables.set(el, s);
+    el.classList.add('dataTable');
+    if (opts.scrollX || opts.scrollY) {
+      // Like DataTables: the visible header is a clone (no id) in a scroll-head div, before the body table.
+      const wrapper = document.createElement('div');
+      wrapper.className = 'dataTables_scroll';
+      const head = document.createElement('div');
+      head.className = 'dataTables_scrollHead';
+      const headTable = el.cloneNode(false);
+      headTable.removeAttribute('id');
+      headTable.appendChild(el.tHead.cloneNode(true));
+      head.appendChild(headTable);
+      const body = document.createElement('div');
+      body.className = 'dataTables_scrollBody';
+      el.parentNode.insertBefore(wrapper, el);
+      body.appendChild(el);
+      wrapper.append(head, body);
+      clones.add(headTable);
+    }
+    const done = () => { s._bInitComplete = true; draw(s); };
+    if (opts.serverSide) {
+      const body = new URLSearchParams({draw: '1', start: '0', length: '10'});
+      fetch(s.ajaxUrl, {method: 'POST', body}).then((r) => r.json()).then((j) => { s.json = j; s.data = j.data; done(); });
+    } else if (opts.ajax) {
+      setTimeout(() => fetch(s.ajaxUrl).then((r) => r.json()).then((j) => { s.json = j; s.data = j.data; done(); }), 300);
+    } else {
+      s.data = Array.from(el.tBodies[0].rows).map((tr) => Array.from(tr.cells).map((td) => td.innerHTML));
+      done();
+    }
+    return new Api(el);
+  }
+  const DataTable = function (sel, opts) { return init(resolve(sel), opts || {}); };
+  DataTable.Api = Api;
+  DataTable.isDataTable = (sel) => tables.has(resolve(sel)) || clones.has(resolve(sel));
+  window.DataTable = DataTable;
+  if (window.__withJquery) {
+    const $ = (sel) => ({0: resolve(sel), jquery: '3.7.1', DataTable(opts) { return tables.has(resolve(sel)) ? new Api(sel) : init(resolve(sel), opts || {}); }});
+    $.fn = {dataTable: DataTable};
+    window.jQuery = window.$ = $;
+    delete window.DataTable;
+  }
+})();
+"""
 
 
 def _default_orders(today: dt.date, count: int = 45) -> List[Dict[str, object]]:
@@ -65,6 +183,9 @@ class FixtureState:
     about_title: str = "About Fixture WMS"
     about_body: str = "Fixture WMS keeps stock records.\nSupport: ops@example.test"
     about_version: str = "3.2"
+    devices: List[Dict[str, Any]] = field(default_factory=_default_devices)
+    cases: List[Dict[str, Any]] = field(default_factory=list)
+    json_calls: List[Dict[str, Any]] = field(default_factory=list)
     sessions: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     logins: int = 0
     failed_logins: int = 0
@@ -75,6 +196,8 @@ class FixtureState:
     def __post_init__(self) -> None:
         if not self.orders:
             self.orders = _default_orders(self.today)
+        if not self.cases:
+            self.cases = _default_cases(self.today)
 
     def expire_sessions(self) -> None:
         with self.lock:
@@ -160,6 +283,8 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if path == "/login":
             return self._login(method)
+        if path == "/static/datatables-shim.js":
+            return self._send(200, _DATATABLES_SHIM, ctype="text/javascript")
         session = self._session()
         if session is None:
             return self._redirect("/login")
@@ -170,6 +295,12 @@ class _Handler(BaseHTTPRequestHandler):
             "/reference": self._reference,
             "/api/warehouses": self._warehouses_api,
             "/about": self._about,
+            "/devices": self._devices,
+            "/devices/scroll": self._devices_scroll,
+            "/api/devices": self._devices_api,
+            "/api/rma_cases": self._rma_cases_api,
+            "/search/rma_case": self._rma_search,
+            "/api/rma_stream": self._rma_stream,
         }.get(path)
         if handler is None:
             return self._send(404, _page("Not found", "<p>Not found</p>"))
@@ -295,6 +426,94 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _warehouses_api(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
         self._send(200, json.dumps(self.state.warehouses), ctype="application/json")
+
+    def _devices(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
+        parts = "".join(
+            f"<tr><td>P-{i:04d}</td><td><b>Part</b> {i}</td><td>{i * 3}</td></tr>" for i in range(1, 1201)
+        )
+        jquery = (query.get("jquery") or ["1"])[0] != "0"
+        body = (
+            "<h1>Devices</h1>"
+            f"<script>window.__withJquery = {'true' if jquery else 'false'};</script>"
+            '<script src="/static/datatables-shim.js"></script>'
+            '<table id="devices"><thead><tr><th>IMEI</th><th>Model</th><th>Brand</th><th>Grade</th>'
+            "<th>Action</th></tr></thead><tbody></tbody></table>"
+            '<table id="parts"><thead><tr><th>Part No</th><th>Name</th><th>Stock</th></tr></thead>'
+            f"<tbody>{parts}</tbody></table>"
+            '<table id="cases"><thead><tr><th>Case</th><th>Opened</th></tr></thead><tbody></tbody></table>'
+            '<table id="plain"><thead><tr><th>A</th></tr></thead><tbody><tr><td>1</td></tr></tbody></table>'
+            "<script>"
+            "const DT = window.jQuery ? (s, o) => window.jQuery(s).DataTable(o) : (s, o) => new DataTable(s, o);"
+            "DT('#devices', {ajax: '/api/devices', columns: [{data: 'imei'}, {data: 'model.name'},"
+            " {data: 'model.brand'}, {data: 'grade'}, {data: 'link'}]});"
+            "DT('#parts', {});"
+            "DT('#cases', {serverSide: true, ajax: {url: '/api/rma_cases', type: 'POST'},"
+            " columns: [{data: 'case_no'}, {data: 'opened'}]});"
+            "</script>"
+        )
+        self._send(200, _page("Devices", body))
+
+    def _devices_scroll(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
+        tables = int((query.get("tables") or ["1"])[0])
+        body = '<h1>Devices (scrolling)</h1><script src="/static/datatables-shim.js"></script>'
+        for n in range(1, tables + 1):
+            body += (f'<table id="scrolled{n}"><thead><tr><th>IMEI</th><th>Model</th></tr></thead>'
+                     "<tbody></tbody></table>")
+        body += "<script>" + "".join(
+            f"new DataTable('#scrolled{n}', {{ajax: '/api/devices', scrollX: true,"
+            " columns: [{data: 'imei'}, {data: 'model.name'}]});"
+            for n in range(1, tables + 1)
+        ) + "</script>"
+        self._send(200, _page("Devices", body))
+
+    def _devices_api(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
+        self._send(200, json.dumps({"data": self.state.devices}), ctype="application/json")
+
+    def _note_json_call(self, method: str, values: Dict[str, str]) -> None:
+        with self.state.lock:
+            self.state.json_calls.append({"path": urlparse(self.path).path, "method": method,
+                                          "values": values, "xhr": self.headers.get("X-Requested-With")})
+
+    def _rma_cases_api(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
+        form = self._form() if method == "POST" else {k: v[0] for k, v in query.items()}
+        self._note_json_call(method, form)
+        start, length = int(form.get("start") or 0), int(form.get("length") or 10)
+        cases = self.state.cases
+        page = cases[start: start + length] if length > 0 else cases
+        self._send(200, json.dumps({"draw": int(form.get("draw") or 0), "recordsTotal": len(cases),
+                                    "recordsFiltered": len(cases), "data": page}), ctype="application/json")
+
+    def _rma_rows(self, values: Dict[str, str]) -> List[Dict[str, Any]]:
+        lo, hi = _parse_date(values.get("date_from", "")), _parse_date(values.get("date_to", ""))
+        return [c for c in self.state.cases
+                if (lo is None or c["opened"] >= lo.isoformat()) and (hi is None or c["opened"] <= hi.isoformat())]
+
+    def _rma_search(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
+        if method != "POST":
+            return self._send(405, "[]", ctype="application/json")
+        ctype = self.headers.get("Content-Type") or ""
+        if ctype.startswith("application/json"):
+            raw = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode("utf-8")
+            values = {k: str(v) for k, v in json.loads(raw or "{}").items()}
+        else:
+            values = self._form()
+        self._note_json_call(method, values)
+        self._send(200, json.dumps(self._rma_rows(values)), ctype="application/json")
+
+    def _rma_stream(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
+        self._note_json_call(method, {})
+        data = json.dumps(self.state.cases).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        try:
+            for i in range(0, len(data), 4096):
+                self.wfile.write(data[i: i + 4096])
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        self.close_connection = True
 
     def _about(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
         paras = "".join(f"<p>{html.escape(line)}</p>" for line in self.state.about_body.split("\n"))

@@ -686,6 +686,18 @@ def test_detail_brief_keeps_an_old_waiting_run(env):
 # ---------------------------------------------------------------------------
 
 
+def test_tools_route_accepts_a_legacy_slash_skill_name(env):
+    project = _active_project(env)
+    client, _state = env
+    resp = client.patch(
+        f"/api/registry/projects/{project['slug']}/tools",
+        json={"skills": ["/digest"]},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["skills"] == ["digest"]
+    assert resp.json()["effective_skills"] == ["digest"]
+
+
 def test_tools_route_validates_names_and_shows_the_intersection(env):
     project = _active_project(env)
     client, state = env

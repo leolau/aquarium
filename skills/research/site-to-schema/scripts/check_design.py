@@ -19,6 +19,7 @@ import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Tuple
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import load_json, repo_root  # noqa: E402
@@ -43,13 +44,15 @@ def _recipe_columns(ent: Mapping[str, Any]) -> Tuple[List[str], bool, bool]:
     cols: List[str] = []
     tabular = uses_cursor = False
     for step in _walk(ent.get("steps")):
-        if step.get("op") in ("extract_table", "paginate"):
+        op = step.get("op")
+        if op in ("extract_table", "extract_datatable", "extract_json", "paginate"):
             tabular = True
-        if step.get("op") == "extract_table":
+        if op in ("extract_table", "extract_datatable", "extract_json"):
             cols += list((step.get("columns") or {}).keys())
-        if step.get("op") == "extract_fields":
+        if op == "extract_fields":
             cols += list((step.get("fields") or {}).keys())
-        if any("{{" in str(v) and "cursor" in str(v) for v in step.values() if isinstance(v, str)):
+        own = {k: v for k, v in step.items() if k != "steps"}
+        if re.search(r"\{\{\s*cursor", json.dumps(own, default=str)):
             uses_cursor = True
     return cols, tabular, uses_cursor
 
@@ -71,6 +74,14 @@ def check(design: Any, recipe: Any) -> Tuple[List[str], List[str], List[str]]:
         problems.append("design.site must be a lower_snake_case slug")
     elif isinstance(recipe, dict) and recipe.get("site") not in (None, site):
         problems.append(f"design.site {site!r} != recipe.site {recipe.get('site')!r}")
+    zone = design.get("timezone")
+    if zone is not None:
+        try:
+            valid = isinstance(zone, str) and bool(zone.strip()) and ZoneInfo(zone) is not None
+        except (ZoneInfoNotFoundError, ValueError):
+            valid = False
+        if not valid:
+            problems.append(f"design.timezone {zone!r} must be an IANA time zone name, e.g. Asia/Hong_Kong")
     entities = design.get("entities")
     if not isinstance(entities, list) or not entities:
         return problems + ["design.entities must be a non-empty list"], warnings, questions

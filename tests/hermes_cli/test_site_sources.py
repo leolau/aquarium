@@ -201,6 +201,34 @@ def test_coerce(value, kind, out):
         assert got == out
 
 
+def test_naive_timestamps_use_the_design_timezone():
+    hk = ss.design_zone({"timezone": "Asia/Hong_Kong"})
+    utc = timezone.utc
+    assert ss.design_zone({}) is utc
+    assert ss.coerce("2026-11-11T09:30:00", "timestamp", hk).astimezone(utc) == datetime(2026, 11, 11, 1, 30, tzinfo=utc)
+    assert ss.coerce(datetime(2026, 11, 11, 9, 30), "timestamptz", hk).astimezone(utc).hour == 1
+    # Values that carry an offset keep it; the default stays UTC.
+    assert ss.coerce("2026-11-11T09:30:00Z", "timestamp", hk) == datetime(2026, 11, 11, 9, 30, tzinfo=utc)
+    assert ss.coerce("2026-11-11T09:30:00+02:00", "timestamp", hk).astimezone(utc).hour == 7
+    assert ss.coerce("2026-11-11T09:30:00", "timestamp") == datetime(2026, 11, 11, 9, 30, tzinfo=utc)
+    # DST zones resolve per date.
+    ny = ss.design_zone({"timezone": "America/New_York"})
+    assert ss.coerce("2026-07-01T12:00:00", "timestamp", ny).astimezone(utc).hour == 16
+    assert ss.coerce("2026-12-01T12:00:00", "timestamp", ny).astimezone(utc).hour == 17
+
+
+@pytest.mark.parametrize("zone", ["HKT", "", 8, "Not/AZone"])
+def test_validate_design_rejects_a_bad_timezone(zone):
+    design = {"timezone": zone, "entities": [{"name": "about", "kind": "fixed", "columns": []}]}
+    with pytest.raises(ss.SiteError, match="IANA"):
+        ss.validate_design(design)
+
+
+def test_validate_design_keeps_a_valid_timezone():
+    design = {"timezone": "Asia/Hong_Kong", "entities": [{"name": "about", "kind": "fixed", "columns": []}]}
+    assert ss.validate_design(design)["timezone"] == "Asia/Hong_Kong"
+
+
 # -- refresh planning ---------------------------------------------------------
 
 

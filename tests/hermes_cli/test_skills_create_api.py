@@ -252,6 +252,43 @@ def test_create_routes_need_lab():
     from hermes_cli.web_server import app
 
     paths = {"/api/skills/create/start", "/api/skills/create/message", "/api/skills/create/save"}
-    found = {r.path: r for r in app.routes if getattr(r, "path", None) in paths}
+    try:
+        from fastapi.routing import iter_route_contexts
+    except ImportError:  # older FastAPI copies included routes flat into app.routes
+        routes = list(app.routes)
+    else:  # newer FastAPI keeps included routers nested
+        routes = list(iter_route_contexts(app.routes))
+    found = {r.path: r for r in routes if getattr(r, "path", None) in paths}
     assert set(found) == paths
     assert all(declared_role(r) == "skills:lab" for r in found.values())
+
+
+def test_lab_is_checked_in_the_profile_the_body_names(client, model, who, home, monkeypatch):
+    """`lab` in profile A (default) but not in B: start/save naming B are 403."""
+    from hermes_cli import profiles, web_server
+    from tools import skills_access
+
+    b_home = home / "profiles" / "b"
+    (b_home / "skills").mkdir(parents=True)
+    (b_home / "config.yaml").write_text("lab_test: false\n")
+    (home / "config.yaml").write_text("lab_test: true\n")
+    monkeypatch.setattr(profiles, "profile_exists", lambda name: name in ("default", "b"))
+    monkeypatch.setattr(profiles, "get_profile_dir", lambda name: b_home if name == "b" else home)
+    monkeypatch.setattr(web_server, "_comms_session_subject", lambda request: "sub-member")
+    monkeypatch.setattr(
+        skills_access, "allows",
+        lambda role, action, cfg: action != "lab" or bool((cfg or {}).get("lab_test")),
+    )
+    who["p"] = SimpleNamespace(user_id="mo", display="Mo", role="member", is_owner=False)
+
+    r = client.post("/api/skills/create/start", json={"profile": "b", "goal": "Write the digest"})
+    assert r.status_code == 403, r.text
+    r = client.post("/api/skills/create/save", json={"profile": "b", "name": "digest-tone", "content": DRAFT})
+    assert r.status_code == 403, r.text
+    assert not (b_home / "skills" / "digest-tone").exists()
+
+    r = client.post("/api/skills/create/start", json={"profile": "default", "goal": "Write the digest"})
+    assert r.status_code == 200, r.text
+    r = client.post("/api/skills/create/save", json={"profile": "default", "name": "digest-tone", "content": DRAFT})
+    assert r.status_code == 200, r.text
+    assert r.json()["enabled"] is False

@@ -555,6 +555,19 @@ def test_toolset_intersection_records_drops_on_the_run(stores):
     assert "dropped" in result["run"]["summary"]
 
 
+def test_a_legacy_slash_skill_grant_still_resolves(stores, monkeypatch):
+    # Grants stored before skill names were checked against the loader's
+    # names can hold its slash-command keys.
+    monkeypatch.setattr(projects_run, "_available_skill_names", lambda profile: ["docx-editing", "digest"])
+    project, _ = _make_project(skills=["/docx-editing", "digest"])
+    _save_playbook(project.id, [{"key": "one", "title": "One"}])
+    with projects_db.connect_closing() as conn:
+        projects_db.activate_playbook_rev(conn, project.id, 1)
+    result = _start(project.id)
+    assert result["skills_effective"] == ["docx-editing", "digest"]
+    assert result["skills_dropped"] == []
+
+
 def test_empty_instruments_mean_whatever_the_host_does(stores):
     project, _ = _make_project()
     _save_playbook(project.id, [{"key": "one", "title": "One"}])

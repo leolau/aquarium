@@ -32,6 +32,12 @@ describe("LiveActivity", () => {
     const full = panel.querySelector('[data-component="LiveReasoningFull"]')!;
     expect(full.textContent).toBe(reasoning);
     expect(full.className).not.toContain("max-h-24");
+    // Phones keep the bottom-sheet height (only `mobileFull` sheets fill the screen)
+    // and the steps scroll inside the panel.
+    const box = panel.firstElementChild as HTMLElement;
+    expect(box.className.split(/\s+/)).toEqual(expect.arrayContaining(["max-h-[92vh]", "rounded-t-2xl", "sm:h-[90vh]"]));
+    expect(box.className).not.toMatch(/(^|\s)(h-\[92vh\]|h-\[100dvh\])/);
+    expect(box.querySelector(".overflow-y-auto")?.contains(full)).toBe(true);
     fireEvent.keyDown(window, { key: "Escape" });
     expect(document.querySelector('[data-component="LiveActivityMaximized"]')).toBeNull();
   });
