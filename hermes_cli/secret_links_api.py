@@ -255,6 +255,12 @@ def _submit(token: str, body: Dict[str, Any]) -> JSONResponse:
         with _profile_scope(home):
             try:
                 stored = registry.fulfil_by_token(token, values=values)
+            except getattr(registry, "SecretRequestError", ()) as exc:
+                if getattr(exc, "status_code", None) != 400:
+                    return _not_found()
+                # Values the kind rejects (e.g. a password with no username):
+                # the link is still open, so let the page ask again.
+                return _json(400, {"ok": False, "error": "invalid"})
             except Exception as exc:
                 # Never format the exception: it could carry a value.
                 logger.warning("secret link: fulfil failed (%s)", type(exc).__name__)

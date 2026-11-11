@@ -1,5 +1,7 @@
 # Secrets
 
+To give the agent a password or token during a chat, use the [secret prompt](./secret-prompt) — never paste it as chat text.
+
 Hermes can pull API keys from external secret managers at process startup instead of storing them in `~/.hermes/.env`. The bootstrap token for the secret manager lives in `.env`; every other provider key (OpenAI, Anthropic, OpenRouter, etc.) can stay in the manager and rotate centrally.
 
 Supported:
