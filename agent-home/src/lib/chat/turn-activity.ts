@@ -60,18 +60,21 @@ export function emptyActivity(runId: string | null = null): TurnActivity {
 }
 
 /**
- * Which indicator phase to show for a turn. `approval` wins (the agent is
- * blocked on the user), then a stop in progress, then the running tool, then
+ * Which indicator phase to show for a turn. `approval` (then a `secret`
+ * request) wins (the agent is blocked on the user), then a stop in progress, then the running tool, then
  * streaming text, then whether the server has acknowledged the turn yet.
  */
 export function deriveActivity(input: {
   busy: boolean;
   turn: TurnActivity | null;
   approval: boolean;
+  /** An FG-37 secret request is waiting on the user. */
+  secret?: boolean;
   hasOutput: boolean;
 }): ChatActivity {
-  const { busy, turn, approval, hasOutput } = input;
+  const { busy, turn, approval, secret, hasOutput } = input;
   if (approval) return "waiting_approval";
+  if (secret) return "waiting_secret";
   if (!busy) return "idle";
   if (turn?.stopping) return "stopping";
   if (turn?.tools.some((t) => !t.done)) return "tool";

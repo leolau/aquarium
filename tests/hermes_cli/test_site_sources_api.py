@@ -122,6 +122,8 @@ def client(monkeypatch):
     monkeypatch.setattr(ss, "table_summaries", record("table_summaries", []))
     monkeypatch.setattr(ss, "table_rows", record("table_rows", {"rows": []}))
     monkeypatch.setattr(ss, "export_rows", record("export_rows", (["a"], [["=1"]])))
+    # Route tests check authorization; XLSX encoding (openpyxl, optional) is tested in test_site_sources.
+    monkeypatch.setattr(ss, "to_xlsx", lambda columns, rows, *, title: b"PK\x03\x04")
     monkeypatch.setattr(ss, "history", record("history", {"changes": []}))
     monkeypatch.setattr(ss, "create_site", record("create_site", SITE))
 

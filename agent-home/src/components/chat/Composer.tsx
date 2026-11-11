@@ -1,11 +1,16 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { SecretRequestModal } from "@/components/chat/SecretRequestModal";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { LockIcon } from "@/components/ui/icons";
+import { useT } from "@/i18n";
 import { useAction } from "@/lib/use-action";
 
 import { dockComposer } from "@/lib/chat/composer-dock";
 import { takePendingAttachments } from "@/lib/chat/pending-attachments";
+import { detectSecret, removeSecret, suggestedSecretName } from "@/lib/chat/secret-detect";
+import { insertSecretRef, saveVolunteeredSecret } from "@/lib/chat/secret-prompt";
 import { parseJsonObject, uploadFailureMessage } from "@/lib/chat/upload-error";
 import { formatUploadLimit, UPLOAD_WARN_BYTES } from "@/lib/chat/upload-limit";
 import { uploadLimitBytes } from "@/lib/chat/upload-limit-client";
@@ -173,6 +178,31 @@ export function Composer({
   const [oversizeFiles, setOversizeFiles] = useState<File[] | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const textRef = useRef<HTMLTextAreaElement | null>(null);
+  const ts = useT("secretPrompt");
+  // FG-37: the "share a secret" popup (lock button, or text moved out of the box).
+  const [secretBox, setSecretBox] = useState<{
+    name: string;
+    value: string;
+    insertAt: number;
+  } | null>(null);
+  const [keptAsText, setKeptAsText] = useState<string | null>(null);
+  const detected = useMemo(() => detectSecret(text), [text]);
+  const secretWarning = detected && detected.value !== keptAsText ? detected : null;
+
+  function openSecretBox() {
+    const at = textRef.current?.selectionStart ?? text.length;
+    setSecretBox({ name: "", value: "", insertAt: at });
+  }
+
+  function moveSecretToBox() {
+    if (!secretWarning) return;
+    setText(removeSecret(text, secretWarning));
+    setSecretBox({
+      name: suggestedSecretName(secretWarning.kind),
+      value: secretWarning.value,
+      insertAt: secretWarning.start,
+    });
+  }
 
   // A file sent here from Files → Browse ("Ask the agent about this file").
   // Read after mount (sessionStorage is browser-only, so not in the initial
@@ -378,6 +408,51 @@ export function Composer({
       {uploadError ? (
         <p className="mb-2 text-xs text-[var(--color-danger)]">{uploadError}</p>
       ) : null}
+      {secretWarning ? (
+        <div
+          data-component="SecretPasteWarning"
+          role="alert"
+          className="mb-2 rounded-xl border border-[var(--color-danger)] bg-[var(--color-surface-2)] px-3 py-2 text-xs"
+        >
+          <p className="flex items-start gap-1.5 text-[var(--color-fg)]">
+            <LockIcon className="mt-px text-[var(--color-danger)]" size={14} />
+            {ts("composer.detected", { kind: ts(`composer.kind.${secretWarning.kind}`) })}
+          </p>
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              onClick={moveSecretToBox}
+              className="rounded-lg bg-[var(--color-accent)] px-3 py-1.5 font-medium text-[var(--color-accent-fg)]"
+            >
+              {ts("composer.move")}
+            </button>
+            <button
+              type="button"
+              onClick={() => setKeptAsText(secretWarning.value)}
+              className="rounded-lg border border-[var(--color-border)] px-3 py-1.5"
+            >
+              {ts("composer.dismiss")}
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {secretBox ? (
+        <SecretRequestModal
+          mode="save"
+          initialName={secretBox.name}
+          initialValue={secretBox.value}
+          onSubmit={async (values, name) => {
+            // The modal holds its own copy; drop ours before the network call.
+            setSecretBox((cur) => (cur ? { ...cur, value: "" } : cur));
+            await saveVolunteeredSecret(name, values.value ?? "");
+            const at = secretBox.insertAt;
+            setSecretBox(null);
+            setText((cur) => insertSecretRef(cur, at, name));
+            textRef.current?.focus();
+          }}
+          onDismiss={() => setSecretBox(null)}
+        />
+      ) : null}
       {oversizeFiles ? (
         <div
           data-component="OversizeConfirm"
@@ -440,6 +515,18 @@ export function Composer({
             </button>
           </>
         ) : null}
+        <button
+          type="button"
+          data-component="SecretLockButton"
+          aria-label={ts("composer.lock")}
+          title={ts("composer.lock")}
+          onClick={openSecretBox}
+          className={`rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3 text-sm${
+            !storageEnabled && sending && launcherClearance ? (narrow ? " ml-14" : " max-sm:ml-14") : ""
+          }`}
+        >
+          <LockIcon />
+        </button>
         <textarea
           ref={textRef}
           value={text}

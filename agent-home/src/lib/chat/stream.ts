@@ -6,9 +6,17 @@
  * that is new to agent-home is `approval.request`: a tool gated by
  * `approvals.tools` (e.g. calendar) blocks the turn and asks for approval, so
  * the caller renders an approve/deny card and resolves it via
- * `POST /api/chat/approval`. Runs in the browser (client component only).
+ * `POST /api/chat/approval`. FG-37 adds `secret.request`: the agent needs a
+ * secret, so the caller opens a masked popup that posts the value to
+ * `POST /api/chat/secret` (never into the chat). Runs in the browser (client
+ * component only).
  */
-import type { ChatApprovalRequest, ChatAttachment, ChatInputMode } from "@/types";
+import type {
+  ChatApprovalRequest,
+  ChatAttachment,
+  ChatInputMode,
+  ChatSecretRequest,
+} from "@/types";
 
 import { formatUiContext, getUiContext } from "@/lib/app-mcp/state";
 import { isInputMode } from "@/lib/chat/pending-inputs";
@@ -26,6 +34,8 @@ export interface ChatStreamHandlers {
   onToolComplete?(tool: ChatToolEvent): void;
   /** A tool is blocked awaiting the user's approval decision. */
   onApproval?(req: ChatApprovalRequest): void;
+  /** The agent asked for a secret (FG-37); render the masked popup. */
+  onSecretRequest?(req: ChatSecretRequest): void;
   /** The turn was stopped at the user's request; completion frames follow. */
   onCancelled?(): void;
   /** The turn finished; `content` is the full assistant message. */
@@ -132,6 +142,29 @@ function parseFrame(block: string): StreamFrame | null {
 
 function str(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+/**
+ * Read a `secret.request` frame (FG-37). Null when it lacks a request id or a
+ * name, so a malformed frame never opens a popup that cannot be answered.
+ */
+export function parseSecretRequest(data: Record<string, unknown>): ChatSecretRequest | null {
+  const requestId = str(data.request_id)?.trim() ?? "";
+  const name = str(data.name)?.trim() ?? "";
+  if (!requestId || !name) return null;
+  const expires = typeof data.expires_at === "number" && Number.isFinite(data.expires_at)
+    ? data.expires_at
+    : null;
+  return {
+    requestId,
+    messageId: str(data.message_id),
+    name,
+    label: str(data.label)?.trim() || name,
+    purpose: str(data.purpose)?.trim() ?? "",
+    kind: data.kind === "password" ? "password" : "secret",
+    username: str(data.username) || null,
+    expiresAt: expires,
+  };
 }
 
 /**
@@ -250,6 +283,9 @@ async function consumeStream(
           ? (data.choices.filter((c) => typeof c === "string") as string[])
           : ["once", "deny"],
       });
+    } else if (event === "secret.request") {
+      const req = parseSecretRequest(data);
+      if (req) handlers.onSecretRequest?.(req);
     } else if (event === "run.cancelled") {
       handlers.onCancelled?.();
     } else if (event === "assistant.completed") {

@@ -30,12 +30,15 @@ import asyncio
 import contextlib
 import csv
 import hashlib
+import importlib
+import inspect
 import io
 import json
 import logging
 import os
 import re
 import secrets
+import sys
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -269,10 +272,10 @@ def check_recipe(recipe: Any) -> Dict[str, Any]:
     if not isinstance(recipe, Mapping):
         raise SiteError("recipe must be an object")
     try:
-        from hermes_cli import site_recipe_runner  # ty: ignore[unresolved-import]
+        runner_module: Any = _runner_module()
     except ImportError:
-        site_recipe_runner = None
-    validator = getattr(site_recipe_runner, "validate_recipe", None)
+        runner_module = None
+    validator = getattr(runner_module, "validate_recipe", None)
     if callable(validator):
         try:
             validator(recipe)
@@ -1430,6 +1433,10 @@ class SiteRun:
     entity_modes: Dict[str, str] = field(default_factory=dict)
     errors: List[str] = field(default_factory=list)
     status: str = "running"
+    #: Entities whose extraction or storage failed this run ("*" = unknown).
+    failed_entities: Set[str] = field(default_factory=set)
+    #: The runner's RunReport (merged over the run's mode groups).
+    report: Dict[str, Any] = field(default_factory=dict)
 
     def view(self) -> Dict[str, Any]:
         return {
@@ -1609,28 +1616,52 @@ class SiteWriter:
         full_entities: Sequence[str] = (),
         *,
         error: Optional[str] = None,
+        cursors: Optional[Mapping[str, Any]] = None,
     ) -> SiteRun:
-        """Close the run; mark unseen content removed for clean full refreshes."""
+        """Close the run; mark unseen content removed for clean full refreshes.
+
+        Removal happens only when the run did not fail as a whole, only for
+        the entities in ``full_entities`` and never for an entity that failed
+        (or when a failure could not be tied to an entity). ``cursors`` are
+        the runner's next cursors, kept for entities that did not fail.
+        """
         run = run or self._need_run()
         if error:
             run.status = "error"
-        elif run.failed or run.errors:
+        elif run.failed or run.errors or run.failed_entities:
             run.status = "partial"
         else:
             run.status = "ok"
-        if run.status == "ok":
-            for name in full_entities:
+        removed_for: List[str] = []
+        if run.status != "error" and "*" not in run.failed_entities:
+            for name in dict.fromkeys(full_entities):
                 spec = self.entities.get(name)
-                if spec is None:
+                if spec is None or name in run.failed_entities:
                     continue
                 run.removed += await self._remove_unseen(spec, run)
+                removed_for.append(name)
+        if cursors and run.status != "error":
+            keep = {
+                n: jsonable(v)
+                for n, v in cursors.items()
+                if n in self.entities and n not in run.failed_entities and v is not None
+            }
+            if keep:
+                await self.conn.execute(
+                    "INSERT INTO _meta (key, value) VALUES ('cursors', $1) "
+                    "ON CONFLICT (key) DO UPDATE SET value = COALESCE(_meta.value, '{}'::jsonb) || EXCLUDED.value",
+                    keep,
+                )
         detail = {
             "entity_modes": run.entity_modes,
-            "full_entities": [n for n in full_entities if n in self.entities],
+            "full_entities": removed_for,
             "restored": run.restored,
             "failed": run.failed,
+            "failed_entities": sorted(run.failed_entities),
             "errors": run.errors[:20],
         }
+        if run.report:
+            detail["report"] = run.report
         await self.conn.execute(
             "UPDATE _runs SET finished_at = now(), status = $2, pages = $3, inserted = $4, "
             "updated = $5, removed = $6, versions = $7, error = $8, detail = $9 WHERE id = $1::uuid",
@@ -1949,13 +1980,18 @@ async def list_runs(site: Site, *, limit: int = 50, db: Optional[SiteDatabase] =
 # ---------------------------------------------------------------------------
 
 
+def _runner_module() -> Any:
+    """``hermes_cli.site_recipe_runner`` via sys.modules (an import-blocked entry raises)."""
+    return importlib.import_module("hermes_cli.site_recipe_runner")
+
+
 def _recipe_runner() -> Callable[..., Iterator[Any]]:
     """``site_recipe_runner.run_recipe`` (workstream B), import-guarded."""
     try:
-        from hermes_cli import site_recipe_runner  # ty: ignore[unresolved-import]
+        runner_module = _runner_module()
     except ImportError:
         raise SiteError("the site recipe runner is not installed on this box yet", 503) from None
-    run_recipe = getattr(site_recipe_runner, "run_recipe", None)
+    run_recipe = getattr(runner_module, "run_recipe", None)
     if not callable(run_recipe):
         raise SiteError("the site recipe runner has no run_recipe()", 503)
     return run_recipe
@@ -1969,6 +2005,53 @@ def _item_parts(item: Any) -> Tuple[str, str, Optional[str], Dict[str, Any]]:
     return entity, kind, key, dict(payload or {})
 
 
+def recipe_entity(recipe: Optional[Mapping[str, Any]], name: str) -> Mapping[str, Any]:
+    """The recipe's entry for entity ``name`` (``{}`` when absent)."""
+    entities = (recipe or {}).get("entities") if isinstance(recipe, Mapping) else None
+    if isinstance(entities, Mapping):
+        value = entities.get(name)
+        return value if isinstance(value, Mapping) else {}
+    if isinstance(entities, list):
+        for value in entities:
+            if isinstance(value, Mapping) and value.get("name") == name:
+                return value
+    return {}
+
+
+def _new_report(run_recipe: Callable[..., Any]) -> Any:
+    """A fresh ``RunReport`` when the runner accepts ``report=`` (workstream B)."""
+    try:
+        params = inspect.signature(run_recipe).parameters
+    except (TypeError, ValueError):
+        return None
+    if "report" not in params:
+        return None
+    module = sys.modules.get(getattr(run_recipe, "__module__", "") or "")
+    report_cls = getattr(module, "RunReport", None)
+    return report_cls() if callable(report_cls) else None
+
+
+def _report_dict(report: Any) -> Dict[str, Any]:
+    if hasattr(report, "as_dict"):
+        data = report.as_dict()
+    else:
+        data = dict(vars(report))
+    return jsonable(data) if isinstance(data, dict) else {}
+
+
+def _merge_report(into: Dict[str, Any], data: Mapping[str, Any]) -> None:
+    into["pages"] = int(into.get("pages") or 0) + int(data.get("pages") or 0)
+    for key in ("rows",):
+        merged = dict(into.get(key) or {})
+        for name, count in (data.get(key) or {}).items():
+            merged[name] = int(merged.get(name) or 0) + int(count or 0)
+        into[key] = merged
+    for key in ("failed", "cursors"):
+        into[key] = {**(into.get(key) or {}), **(data.get(key) or {})}
+    for key in ("completed", "full_entities", "warnings", "blocked_requests"):
+        into[key] = list(into.get(key) or []) + list(data.get(key) or [])
+
+
 def plan_modes(
     design: Mapping[str, Any],
     *,
@@ -1977,6 +2060,7 @@ def plan_modes(
     default_mode: str,
     last_full: Mapping[str, datetime],
     now: Optional[datetime] = None,
+    recipe: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, str]:
     """``{entity: mode}`` for one refresh.
 
@@ -1998,7 +2082,11 @@ def plan_modes(
     for name in names:
         spec = entities[name]
         refresh = spec.get("refresh") or {}
-        if spec["kind"] == "fixed" or not refresh.get("cursor"):
+        if (
+            spec["kind"] == "fixed"
+            or not refresh.get("cursor")
+            or recipe_entity(recipe, name).get("mode") == "full"
+        ):
             mode = "full"
         elif requested_mode:
             mode = requested_mode
@@ -2024,7 +2112,7 @@ def _lock_key(site: Site) -> int:
 async def _last_full_by_entity(conn: Any, site: Site) -> Dict[str, datetime]:
     rows = await conn.fetch(
         f"SELECT finished_at, detail FROM {_ident(site.schema_name)}._runs "
-        "WHERE status = 'ok' AND detail IS NOT NULL ORDER BY finished_at DESC LIMIT 200"
+        "WHERE status IN ('ok', 'partial') AND detail IS NOT NULL ORDER BY finished_at DESC LIMIT 200"
     )
     out: Dict[str, datetime] = {}
     for row in rows:
@@ -2035,10 +2123,18 @@ async def _last_full_by_entity(conn: Any, site: Site) -> Dict[str, datetime]:
 
 
 async def _cursors(conn: Any, design: Mapping[str, Any], modes: Mapping[str, str]) -> Dict[str, Any]:
+    """Next cursor per incremental entity: the runner's last report, else the column max."""
     out: Dict[str, Any] = {}
+    stored = await conn.fetchval("SELECT value FROM _meta WHERE key = 'cursors'")
+    stored = _json_in(stored) if stored is not None else {}
+    if not isinstance(stored, Mapping):
+        stored = {}
     for spec in validate_design(design)["entities"]:
         cursor = (spec.get("refresh") or {}).get("cursor")
         if modes.get(spec["name"]) != "incremental" or not cursor:
+            continue
+        if stored.get(spec["name"]) is not None:
+            out[spec["name"]] = stored[spec["name"]]
             continue
         value = await conn.fetchval(
             f"SELECT max({_ident(cursor)}) FROM {_ident(spec['name'])} WHERE _removed_at IS NULL"
@@ -2090,6 +2186,7 @@ async def start_refresh(
                 requested_mode=mode,
                 default_mode=site.default_refresh_mode,
                 last_full=await _last_full_by_entity(lock_conn, site),
+                recipe=recipe,
             )
             credential = await load_login(site)
             writer_conn = await db.restricted(site, write=True)
@@ -2136,21 +2233,44 @@ async def _drive(
 ) -> None:
     error: Optional[str] = None
     full: List[str] = []
+    next_cursors: Dict[str, Any] = {}
     try:
         for group_mode in REFRESH_MODES:
             names = [n for n, m in modes.items() if m == group_mode]
             if not names:
                 continue
-            iterator = run_recipe(
-                recipe,
-                credential,
-                entities=names,
-                mode=group_mode,
-                cursors={n: cursors.get(n) for n in names if n in cursors},
+            report = _new_report(run_recipe)
+            kwargs: Dict[str, Any] = {
+                "entities": names,
+                "mode": group_mode,
+                "cursors": {n: cursors.get(n) for n in names if n in cursors},
+            }
+            if report is not None:
+                kwargs["report"] = report
+            iterator = run_recipe(recipe, credential, **kwargs)
+            try:
+                await _consume(writer, run, iterator, set(names))
+            except Exception as exc:
+                # RecipeRunError: some entities failed, the rest completed and
+                # the report says which. Anything else fails the whole run.
+                if report is None or type(exc).__name__ != "RecipeRunError":
+                    raise
+            if report is None:
+                if group_mode == "full":
+                    full.extend(
+                        n for n in names if recipe_entity(recipe, n).get("removal_safe", True) is not False
+                    )
+                continue
+            data = _report_dict(report)
+            _merge_report(run.report, data)
+            run.pages += int(data.get("pages") or 0)
+            for name, message in (data.get("failed") or {}).items():
+                run.failed_entities.add(str(name))
+                run.errors.append(f"{name}: {message}")
+            full.extend(n for n in data.get("full_entities") or [] if n in names)
+            next_cursors.update(
+                {n: v for n, v in (data.get("cursors") or {}).items() if n in names}
             )
-            await _consume(writer, run, iterator, set(names))
-            if group_mode == "full":
-                full.extend(names)
     except Exception as exc:  # noqa: BLE001 - recorded on the run
         password = str((credential or {}).get("password") or "")
         error = f"{type(exc).__name__}: {exc}"
@@ -2158,7 +2278,7 @@ async def _drive(
             error = error.replace(password, "***")
         logger.warning("site %s refresh failed: %s", site.slug, error)
     try:
-        await writer.finish_run(run, full_entities=full, error=error)
+        await writer.finish_run(run, full_entities=full, error=error, cursors=next_cursors)
     except Exception:  # noqa: BLE001
         logger.exception("site %s: could not close run %s", site.slug, run.id)
     finally:
@@ -2177,19 +2297,23 @@ _DONE = object()
 async def _consume(writer: SiteWriter, run: SiteRun, iterator: Iterator[Any], allowed: Set[str]) -> None:
     """Pull items from the (blocking) runner in a thread, write them in batches."""
     it = iter(iterator)
+    raised: List[BaseException] = []
 
     def _take() -> List[Any]:
-        batch = []
-        for _ in range(_BATCH):
-            item = next(it, _DONE)
-            if item is _DONE:
-                break
-            batch.append(item)
+        batch: List[Any] = []
+        try:
+            for _ in range(_BATCH):
+                item = next(it, _DONE)
+                if item is _DONE:
+                    break
+                batch.append(item)
+        except Exception as exc:  # noqa: BLE001 - re-raised once the batch is stored
+            raised.append(exc)
         return batch
 
     while True:
         batch = await asyncio.to_thread(_take)
-        if not batch:
+        if not batch and not raised:
             return
         variable: Dict[str, List[Tuple[Optional[str], Dict[str, Any]]]] = {}
         for item in batch:
@@ -2197,6 +2321,7 @@ async def _consume(writer: SiteWriter, run: SiteRun, iterator: Iterator[Any], al
                 entity, kind, key, payload = _item_parts(item)
             except (TypeError, ValueError):
                 run.failed += 1
+                run.failed_entities.add("*")
                 continue
             if entity == "_page":
                 writer.add_pages(1)
@@ -2212,6 +2337,7 @@ async def _consume(writer: SiteWriter, run: SiteRun, iterator: Iterator[Any], al
                     await writer.record_fixed(entity, key, payload)
                 except SiteError as exc:
                     run.failed += 1
+                    run.failed_entities.add(entity)
                     run.errors.append(str(exc))
             else:
                 variable.setdefault(entity, []).append((key, payload))
@@ -2220,7 +2346,10 @@ async def _consume(writer: SiteWriter, run: SiteRun, iterator: Iterator[Any], al
                 await writer.upsert(entity, records)
             except SiteError as exc:
                 run.failed += len(records)
+                run.failed_entities.add(entity)
                 run.errors.append(str(exc))
+        if raised:
+            raise raised[0]
 
 
 def schedule_due(cron: str, base: datetime, now: Optional[datetime] = None) -> bool:

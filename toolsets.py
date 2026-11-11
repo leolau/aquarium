@@ -316,6 +316,14 @@ TOOLSETS = {
         "includes": [],
     },
 
+    # Approval-gated cross-platform send. Only hermes-api-server (agent-home)
+    # includes it; this entry lets per-platform tool resolution keep it there.
+    "send_message": {
+        "description": "Send a message or file to a connected platform chat (agent-home only, approval-gated)",
+        "tools": ["send_message"],
+        "includes": [],
+    },
+
     "discord": {
         "description": "Discord read and participate tools (fetch messages, search members, create threads)",
         "tools": ["discord"],
