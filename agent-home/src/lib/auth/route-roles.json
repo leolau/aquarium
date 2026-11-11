@@ -210,6 +210,8 @@
   "PUT /api/projects/[slug]/schedule": "signed-in",
   "POST /api/projects/[slug]/summarise": "signed-in",
   "PATCH /api/projects/[slug]/tools": "signed-in",
+  "GET /api/projects/[slug]/skills": "signed-in",
+  "POST /api/projects/[slug]/skills/candidates/[id]/dismiss": "signed-in",
   "GET /api/projects/doctor": "signed-in",
   "GET /api/security-basics": "admin",
   "POST /api/security-basics/test": "admin",

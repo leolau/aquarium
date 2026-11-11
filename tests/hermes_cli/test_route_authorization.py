@@ -341,6 +341,12 @@ SIGNED_IN = {
     "PUT /api/registry/projects/{slug}/schedule",
     "DELETE /api/registry/projects/{slug}/schedule",
     "GET /api/registry/projects/{slug}/doctor",
+    # --- B1 projects_skills_api: project read (D6 summary) per project; run
+    # details/candidate bodies need `lab` re-resolved in each profile; dismiss
+    # needs project write or host-profile `lab` ---
+    "GET /api/registry/projects/{slug}/skills",
+    "POST /api/registry/projects/{slug}/skills/candidates/{candidate_id}/dismiss",
+    # --- end B1 ---
     # projects_ask_api: project membership checked per project
     "POST /api/registry/projects/{slug}/ask",
     # projects_clarify_api: project membership checked per project

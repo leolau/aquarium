@@ -17,7 +17,7 @@ const mySkillPermissions = vi.fn(async (): Promise<MySkillPermissions> => {
   const p = await getPrincipal();
   return { role: p?.role ?? "", actions: defaultSkillPermissions(p?.role ?? "", p?.is_owner) };
 });
-const client = { skillUsage: vi.fn(), skillUsageFeedback: vi.fn() };
+const client = { skillUsage: vi.fn(), skillUsageFeedback: vi.fn(), request: vi.fn() };
 
 vi.mock("@/lib/auth/principal", () => ({
   getPrincipal: () => getPrincipal(),
@@ -96,6 +96,18 @@ describe("Skill usage BFF routes", () => {
 
     await usage(get("/api/skills/usage?days=9999"));
     expect(client.skillUsage).toHaveBeenLastCalledWith(90);
+  });
+
+  it("detail: forwards a valid project slug and rejects a bad one unproxied", async () => {
+    getPrincipal.mockResolvedValue(who("admin"));
+    client.request.mockResolvedValue({ name: "a", project: "launch", events: [] });
+    const res = await detail(get("/api/skills/usage/detail?name=a&days=30&project=launch"));
+    expect(res.status).toBe(200);
+    expect(client.request).toHaveBeenCalledWith("/api/skills/usage/detail?name=a&days=30&project=launch");
+
+    client.request.mockClear();
+    expect((await detail(get("/api/skills/usage/detail?name=a&project=..%2Fx"))).status).toBe(400);
+    expect(client.request).not.toHaveBeenCalled();
   });
 
   it("feedback: validates, trims the note and binds the profile from the body", async () => {
