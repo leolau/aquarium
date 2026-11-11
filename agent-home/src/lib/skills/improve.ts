@@ -57,6 +57,9 @@ export interface ImproveReply {
   draft?: string | null;
 }
 
+/** A project slug or short ref, as the projects API accepts it. */
+export const PROJECT_SLUG = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
 const DRAFT_RE = /```skill-draft[^\n]*\n([\s\S]*?)\n?```/g;
 
 /** The SKILL.md inside the last ```skill-draft block of an agent reply, if any. */

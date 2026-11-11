@@ -2,6 +2,7 @@ import { MobileShell } from "@/components/MobileShell";
 import { SkillPage } from "@/components/skills/SkillPage";
 
 import { apiClientForRequest } from "@/lib/auth/principal";
+import { PROJECT_SLUG } from "@/lib/skills/improve";
 import { activeVersion, toVersionList } from "@/lib/skills/versions";
 
 import { loadSkill } from "../load-skill";
@@ -14,9 +15,9 @@ export default async function Page({
   searchParams,
 }: {
   params: Promise<{ name: string }>;
-  searchParams: Promise<{ profile?: string; tab?: string }>;
+  searchParams: Promise<{ profile?: string; tab?: string; project?: string }>;
 }) {
-  const [{ name: raw }, { profile: requested, tab }] = await Promise.all([params, searchParams]);
+  const [{ name: raw }, { profile: requested, tab, project }] = await Promise.all([params, searchParams]);
   const { name, profile, content, skill, skills, details, permissions } = await loadSkill(raw, requested, true);
   // Version history is optional (older backends have none) and part of the Skills Lab.
   const client = await apiClientForRequest({ profile: profile === "default" ? undefined : profile });
@@ -42,6 +43,7 @@ export default async function Page({
         initialTab={tab}
         activeVersion={active ? { n: active.n, trial: Boolean(active.trial_of) } : null}
         permissions={permissions}
+        project={project && PROJECT_SLUG.test(project) ? { slug: project } : null}
       />
     </MobileShell>
   );
