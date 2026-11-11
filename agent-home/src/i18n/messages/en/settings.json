@@ -94,7 +94,7 @@
   "getReady.infoLabel": "About Get ready",
   "getReady.info": "Items marked “Needs you” are waiting on a step only you can do. Test re-checks an item; it never changes your setup.",
   "upgrade.infoLabel": "About upgrades",
-  "upgrade.info": "An upgrade installs a newer Aquarium release. Only the owner can start one, and you can roll back afterwards.",
+  "upgrade.info": "An upgrade installs a newer Aquarium release. Only the owner or an admin can start one, and you can roll back afterwards.",
   "tools.infoLabel": "About tools",
   "tools.info": "MCP servers and CLI toolsets give the agent extra abilities. Owners and admins choose which roles may use each one.",
   "users.subtitle": "Who can sign in to this Aquarium and what each person may do.",

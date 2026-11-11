@@ -1,9 +1,9 @@
 {
   "title": "Software upgrade",
-  "navHint": "Install a newer Aquarium release on this server, or roll back. Owner only; admins can look.",
+  "navHint": "Install a newer Aquarium release on this server, or roll back. Owner and admins only.",
   "navOpen": "Open software upgrade",
   "unavailable": "Software upgrades can't be run from here on this server yet. {detail}",
-  "readOnly": "You can see this as an admin. Only the owner can upgrade or roll back.",
+  "readOnly": "You can see this, but only the owner or an admin can upgrade or roll back.",
   "installed": "Installed release",
   "release": "Release",
   "installedWhen": "Installed",

@@ -1,10 +1,10 @@
-"""Settings → Software upgrade (agent-home). Owner upgrades; admins see it read-only.
+"""Settings → Software upgrade (agent-home). The owner and admins upgrade and roll back.
 
 The work runs as root in ``/usr/local/sbin/aquarium upgrade <verb>`` (installed from
 ``deploy/aquarium.py``; ``deploy/sudoers.d/aquarium-upgrade`` allows exactly the verbs
 status, releases, check, start and rollback). ``start``/``rollback`` hand the job to a
 transient systemd unit, so it keeps going while this dashboard restarts. This router
-checks the role, re-checks the owner's password, and shapes the helper's JSON for the
+checks the role, re-checks the caller's own password, and shapes the helper's JSON for the
 page: release notes become short highlight lists, and paths are stripped from error
 text and the technical log before they leave the server.
 """
@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from hermes_cli.route_roles import ADMIN, OWNER
+from hermes_cli.route_roles import ADMIN
 
 _log = logging.getLogger(__name__)
 
@@ -249,8 +249,8 @@ def _fail(answer: Dict[str, Any]) -> HTTPException:
 # --------------------------------------------------------------------------- password re-check
 
 
-async def _confirm_owner(request: Request, password: str) -> str:
-    """Re-check the signed-in owner's password; return the name to record for the job.
+async def _confirm_password(request: Request, password: str) -> str:
+    """Re-check the signed-in owner's or admin's own password; return the name for the history.
 
     Uses the same ``dashboard_auth`` provider the login used (Supabase's password grant
     on agent-home installs), with the login page's per-IP attempt limit. A caller with
@@ -314,20 +314,20 @@ async def upgrade_check():
     return status_view(raw, rel if rel.get("ok") else {"releases": [], "error": rel.get("error")})
 
 
-@router.post("/start", status_code=202, dependencies=OWNER)
+@router.post("/start", status_code=202, dependencies=ADMIN)
 async def upgrade_start(request: Request, body: StartBody):
     if version_key(body.version) is None:
         raise HTTPException(400, "Pick a release like v1.2.3.")
-    by = await _confirm_owner(request, body.password)
+    by = await _confirm_password(request, body.password)
     answer = await asyncio.to_thread(_call, "start", {"version": body.version, "by": by})
     if not answer.get("ok"):
         raise _fail(answer)
     return {"started": True, "status": status_view(answer.get("status") or {})}
 
 
-@router.post("/rollback", status_code=202, dependencies=OWNER)
+@router.post("/rollback", status_code=202, dependencies=ADMIN)
 async def upgrade_rollback(request: Request, body: RollbackBody):
-    by = await _confirm_owner(request, body.password)
+    by = await _confirm_password(request, body.password)
     answer = await asyncio.to_thread(_call, "rollback", {"by": by})
     if not answer.get("ok"):
         raise _fail(answer)

@@ -1,6 +1,7 @@
 """/api/software-upgrade — Settings → Software upgrade (agent-home).
 
-Owner starts and rolls back; admins read; members/viewers get 403 everywhere and the
+The owner and admins read, start and roll back (each with their own password); members
+and viewers get 403 everywhere and the
 root helper is never run for them. The status test runs the real
 ``deploy/aquarium.py upgrade status`` against an empty fake root; the others feed the
 router helper answers. Also: release selection, release-note highlights, job shaping.
@@ -87,7 +88,7 @@ def helper(monkeypatch):
 
 
 @pytest.fixture
-def password_ok(monkeypatch):
+def password_ok(monkeypatch, acting):
     seen = []
 
     async def fake(request, password):
@@ -95,9 +96,9 @@ def password_ok(monkeypatch):
         if password != "pw":
             from fastapi import HTTPException
             raise HTTPException(400, "That password is not right.")
-        return "Owner"
+        return acting["as"].display
 
-    monkeypatch.setattr(su, "_confirm_owner", fake)
+    monkeypatch.setattr(su, "_confirm_password", fake)
     return seen
 
 
@@ -118,17 +119,25 @@ def _send(client, method, path, body):
 
 @pytest.mark.parametrize("who", [MEMBER, VIEWER], ids=["member", "viewer"])
 @pytest.mark.parametrize("method,path,body", READS + WRITES, ids=[f"{m} {p}" for m, p, _ in READS + WRITES])
-def test_members_and_viewers_get_nothing(client, acting, helper, who, method, path, body):
+def test_members_and_viewers_get_nothing(client, acting, helper, password_ok, who, method, path, body):
     acting["as"] = who
     assert _send(client, method, path, body).status_code == 403
-    assert helper.calls == []
-
-
-@pytest.mark.parametrize("method,path,body", WRITES, ids=[f"{m} {p}" for m, p, _ in WRITES])
-def test_admin_cannot_upgrade_or_roll_back(client, acting, helper, password_ok, method, path, body):
-    acting["as"] = ADMIN
-    assert _send(client, method, path, body).status_code == 403
     assert helper.calls == [] and password_ok == []
+
+
+def test_admin_upgrades_and_rolls_back_with_their_password(client, acting, helper, password_ok):
+    acting["as"] = ADMIN
+    resp = client.post("/api/software-upgrade/start", json={"version": "v1.1.0", "password": "pw"})
+    assert resp.status_code == 202 and resp.json()["started"] is True
+    assert client.post("/api/software-upgrade/rollback", json={"password": "pw"}).status_code == 202
+    assert password_ok == ["pw", "pw"]
+    assert helper.calls == [("start", {"version": "v1.1.0", "by": "Ann"}), ("rollback", {"by": "Ann"})]
+
+
+def test_admin_with_a_wrong_password_starts_nothing(client, acting, helper, password_ok):
+    acting["as"] = ADMIN
+    resp = client.post("/api/software-upgrade/start", json={"version": "v1.1.0", "password": "nope"})
+    assert resp.status_code == 400 and helper.calls == []
 
 
 @pytest.mark.parametrize("method,path,body", READS, ids=[f"{m} {p}" for m, p, _ in READS])
@@ -233,41 +242,41 @@ def provider(monkeypatch, acting):
 SESSION = SimpleNamespace(user_id="root", email="owner@example.com", provider="supabase", display_name="O")
 
 
-def test_confirm_owner_checks_the_signed_in_users_password(provider):
+def test_confirm_password_checks_the_signed_in_users_password(provider):
     import asyncio
 
-    assert asyncio.run(su._confirm_owner(_request(SESSION), "right")) == "Owner"
+    assert asyncio.run(su._confirm_password(_request(SESSION), "right")) == "Owner"
     assert provider.calls == ["owner@example.com"]
     with pytest.raises(Exception) as exc:
-        asyncio.run(su._confirm_owner(_request(SESSION), "wrong"))
+        asyncio.run(su._confirm_password(_request(SESSION), "wrong"))
     assert exc.value.status_code == 400
 
 
-def test_confirm_owner_refuses_someone_elses_password(provider):
+def test_confirm_password_refuses_someone_elses_password(provider):
     import asyncio
 
     provider.user_id = "someone-else"
     with pytest.raises(Exception) as exc:
-        asyncio.run(su._confirm_owner(_request(SESSION), "right"))
+        asyncio.run(su._confirm_password(_request(SESSION), "right"))
     assert exc.value.status_code == 400
 
 
-def test_confirm_owner_needs_a_password_login(provider):
+def test_confirm_password_needs_a_password_login(provider):
     import asyncio
 
     for session in (None, SimpleNamespace(**{**vars(SESSION), "provider": "github"})):
         with pytest.raises(Exception) as exc:
-            asyncio.run(su._confirm_owner(_request(session), "right"))
+            asyncio.run(su._confirm_password(_request(session), "right"))
         assert exc.value.status_code == 403
 
 
-def test_confirm_owner_is_rate_limited(provider):
+def test_confirm_password_is_rate_limited(provider):
     import asyncio
 
     codes = []
     for _ in range(12):
         try:
-            asyncio.run(su._confirm_owner(_request(SESSION), "wrong"))
+            asyncio.run(su._confirm_password(_request(SESSION), "wrong"))
         except Exception as exc:  # noqa: BLE001
             codes.append(exc.status_code)
     assert codes[:10] == [400] * 10 and codes[10:] == [429, 429]

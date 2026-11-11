@@ -1,5 +1,5 @@
 /**
- * BFF tests for Settings → Software upgrade: owner upgrades, admin reads only,
+ * BFF tests for Settings → Software upgrade: owner and admin upgrade,
  * members/viewers/logged-out are refused before Python is called.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -85,19 +85,11 @@ describe("/api/software-upgrade", () => {
     for (const fn of allCalls()) expect(fn).not.toHaveBeenCalled();
   });
 
-  it("lets an admin read and check, read only", async () => {
-    getPrincipal.mockResolvedValue(who("admin"));
-    expect(await (await GET()).json()).toEqual({ ...STATUS, can_upgrade: false });
-    expect((await jobGET()).status).toBe(200);
-    expect((await checkPOST()).status).toBe(200);
-    expect((await startPOST(post({ version: "v1.1.0", password: "pw" }))).status).toBe(403);
-    expect((await rollbackPOST(post({ password: "pw" }))).status).toBe(403);
-    expect(startSoftwareUpgrade).not.toHaveBeenCalled();
-    expect(rollbackSoftwareUpgrade).not.toHaveBeenCalled();
-  });
-
-  it("lets the owner upgrade and roll back with a password", async () => {
+  it.each(["owner", "admin"] as const)("lets the %s upgrade and roll back with a password", async (role) => {
+    getPrincipal.mockResolvedValue(who(role));
     expect(await (await GET()).json()).toEqual({ ...STATUS, can_upgrade: true });
+    expect(await (await jobGET()).json()).toEqual({ ...STATUS, can_upgrade: true });
+    expect(await (await checkPOST()).json()).toEqual({ ...STATUS, can_upgrade: true });
     const res = await startPOST(post({ version: "v1.1.0", password: "pw" }));
     expect(res.status).toBe(202);
     expect(startSoftwareUpgrade).toHaveBeenCalledWith({ version: "v1.1.0", password: "pw" });

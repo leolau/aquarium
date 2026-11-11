@@ -94,7 +94,7 @@
   "getReady.infoLabel": "關於準備就緒",
   "getReady.info": "標示「需要你」的項目正等待只有你能完成的步驟。「測試」只會重新檢查，不會更改你的設定。",
   "upgrade.infoLabel": "關於升級",
-  "upgrade.info": "升級會安裝較新的 Aquarium 版本。只有擁有者可以開始升級，之後亦可回復舊版。",
+  "upgrade.info": "升級會安裝較新的 Aquarium 版本。只有擁有者或管理員可以開始升級，之後亦可回復舊版。",
   "tools.infoLabel": "關於工具",
   "tools.info": "MCP 伺服器和 CLI 工具組為代理提供額外能力。擁有者和管理員決定哪些角色可以使用。",
   "users.subtitle": "誰可以登入這個 Aquarium，以及每個人可以做什麼。",
