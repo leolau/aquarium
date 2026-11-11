@@ -49,7 +49,7 @@ browser either.
 
 | File | What |
 |------|------|
-| `scripts/explore_site.py` | log in with the stored credential and inventory pages after read-only steps: buttons (incl. `onclick`), forms + fields, tables (headers, row count, sample rows), pagination, text; dangerous controls flagged `forbidden` |
+| `scripts/explore_site.py` | log in with the stored credential and inventory pages after read-only steps: buttons (incl. `onclick`), forms + fields, tables (headers, row count, sample rows), DataTables, same-origin JSON requests, pagination, text; dangerous controls flagged `forbidden` |
 | `scripts/preview_recipe.py` | dry-run `recipe.json` (no DB writes): counts, sample rows, duplicate keys, failures |
 | `scripts/check_design.py` | check `design.json` + `recipe.json` shape and that they agree |
 | `references/recipe-format.md` | every recipe op and option |
@@ -88,6 +88,25 @@ Work in `~/site-study/<slug>/` (`design.json`, `recipe.json`,
      a confusing page, but log in through the scripts so the password is
      never typed by you; if you must use the browser, follow
      `auth-web-crawler` step 4 and never click a `forbidden` control.
+   - **Look for the data behind the table.** The inventory also lists
+     `datatables` (tables driven by DataTables: `total` rows held by the
+     page, `server_side`, `ajax_url`, column `data` keys) and
+     `json_requests` (same-origin XHR/fetch JSON calls the page made:
+     method, URL, query/body parameter *names*, size). Signs: "Showing 1 to
+     10 of 48,015 entries", a `dataTable` class, `$(...).DataTable(...)` in
+     the page script, XHR calls answering JSON, form posts with
+     `draw`/`start`/`length`.
+     - DataTables with `server_side: false` and a big `total` → use
+       `extract_datatable` (reads every row in one go; map by the column
+       `data` key with `field`, or by `header`/`index`).
+     - `server_side: true`, or a search button that answers JSON → use
+       `extract_json` on that endpoint (`page` block for
+       `start`/`length`; date filters inside `date_windows`). Copy the
+       parameter names from `json_requests`; check the endpoint only
+       *reads* (search/list/report — never save/update/delete).
+     - Set `max_bytes` and a recipe `delay_ms`; an unpaged endpoint can
+       return tens of MB and slow the site. Never page the DOM thousands
+       of times.
    - Keep a list: page → how reached → what data (table headers, row
      count, paging, date filter, fields).
    Skip pure action screens (data-entry forms such as Stock In, Packing):
@@ -111,7 +130,8 @@ Work in `~/site-study/<slug>/` (`design.json`, `recipe.json`,
    `goto`, `click` the menu button, `fill` the dates (`{{cursor}}` with a
    `default` for incremental, `{{date-N}}`/`{{today}}`), `submit` the
    search button, `paginate`, `extract_table` mapping columns by header
-   text. Write `design.json` (plan section 3.3 shape; see the example).
+   text — or `extract_datatable` / `extract_json` for big DataTables and
+   JSON endpoints (step 4). Write `design.json` (plan section 3.3 shape; see the example).
    Then:
    - `python scripts/check_design.py design.json recipe.json` → fix every
      problem;

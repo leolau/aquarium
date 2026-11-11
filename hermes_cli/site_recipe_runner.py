@@ -46,7 +46,10 @@ Recipe shape (``version`` 1)::
                      "fields": {"title": {"selector": "h1"}}}]}}}
 
 Ops: ``goto``, ``click``, ``fill``, ``select``, ``press``, ``submit``,
-``wait``, ``extract_table``, ``extract_fields``, ``paginate`` and
+``wait``, ``extract_table``, ``extract_fields``, ``extract_datatable`` (every
+row of a client-side DataTables table, read through the page's own
+DataTables API), ``extract_json`` (a same-origin JSON read endpoint fetched in
+the logged-in page, optionally paged by start/length), ``paginate`` and
 ``date_windows``. Value templates: ``{{today}}``, ``{{date-N}}``,
 ``{{cursor}}`` (falls back to the step's ``default`` on a full run or a first
 run), ``{{window_from}}`` / ``{{window_to}}`` inside ``date_windows``.
@@ -97,14 +100,19 @@ MODES = ("incremental", "full")
 COLUMN_TYPES = ("text", "int", "numeric", "date", "datetime", "bool")
 STEP_OPS = (
     "goto", "click", "fill", "select", "press", "submit", "wait",
-    "extract_table", "extract_fields", "paginate", "date_windows",
+    "extract_table", "extract_fields", "extract_datatable", "extract_json", "paginate", "date_windows",
 )
 _NESTING_OPS = ("paginate", "date_windows")
-_EXTRACT_OPS = ("extract_table", "extract_fields")
+_EXTRACT_OPS = ("extract_table", "extract_fields", "extract_datatable", "extract_json")
 _ALLOWED_KEYS = ("Enter", "Tab")
 DEFAULT_DATE_FORMAT = "%Y-%m-%d"
 DEFAULT_TIMEOUT_MS = 30_000
 DEFAULT_MAX_PAGES = 10_000
+DEFAULT_MAX_BYTES = 10_000_000
+DATATABLE_CHUNK = 2_000
+_HTTP_METHODS = ("GET", "POST")
+_PAGE_IN = ("params", "form", "json")
+_FIXED_HEADERS = ("cookie", "authorization", "host", "content-length", "origin", "referer")
 REDACTED = "[redacted]"
 
 
@@ -318,6 +326,12 @@ def _steps_problems(where: str, steps: Any, *, depth: int = 0, in_window: bool =
             else:
                 for name, spec in fields_.items():
                     problems.extend(_column_problems(f"{at}.fields.{name}", spec, table=False))
+        elif op == "extract_datatable":
+            if not isinstance(step.get("table"), str) or not step.get("table"):
+                problems.append(f"{at}: needs 'table' (selector of the DataTables <table>)")
+            problems.extend(_data_columns_problems(at, step.get("columns"), header_ok=True))
+        elif op == "extract_json":
+            problems.extend(_json_step_problems(at, step, in_window=in_window))
         elif op == "paginate":
             nxt = step.get("next")
             if nxt is not None:
@@ -344,6 +358,116 @@ def _steps_problems(where: str, steps: Any, *, depth: int = 0, in_window: bool =
             if "cursor" in _template_names(step.get("from")) and "default" not in step:
                 problems.append(f"{at}: uses {{{{cursor}}}} without a 'default' for full/first runs")
             problems.extend(_steps_problems(at, step.get("steps"), depth=depth + 1, in_window=True))
+    return problems
+
+
+def _strings(value: Any) -> Iterator[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, Mapping):
+        for v in value.values():
+            yield from _strings(v)
+    elif isinstance(value, list):
+        for v in value:
+            yield from _strings(v)
+
+
+def _positive_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _data_columns_problems(where: str, cols: Any, *, header_ok: bool) -> List[str]:
+    """Columns of ``extract_datatable`` / ``extract_json``: ``field`` (dotted path), ``index``, ``header``."""
+    if not isinstance(cols, dict) or not cols:
+        return [f"{where}: needs 'columns' {{name: spec}}"]
+    problems: List[str] = []
+    allowed = ("field", "index", "header") if header_ok else ("field", "index")
+    for name, spec in cols.items():
+        at = f"{where}.columns.{name}"
+        if not isinstance(spec, dict):
+            problems.append(f"{at}: must be an object")
+            continue
+        if sum(k in spec for k in allowed) != 1:
+            problems.append(f"{at}: needs exactly one of {', '.join(repr(k) for k in allowed)}")
+        if "field" in spec and not isinstance(spec["field"], str):
+            problems.append(f"{at}: 'field' must be a (dotted) key")
+        if "index" in spec and (not isinstance(spec["index"], int) or isinstance(spec["index"], bool)
+                                or spec["index"] < 0):
+            problems.append(f"{at}: 'index' must be a non-negative integer")
+        if spec.get("type", "text") not in COLUMN_TYPES:
+            problems.append(f"{at}: type must be one of {', '.join(COLUMN_TYPES)}")
+    return problems
+
+
+def _json_step_problems(at: str, step: Mapping[str, Any], *, in_window: bool) -> List[str]:
+    problems: List[str] = []
+    url = step.get("url")
+    if not isinstance(url, str) or not url:
+        problems.append(f"{at}: needs 'url' (same-origin JSON endpoint)")
+    elif _TEMPLATE.search(url):
+        problems.append(f"{at}: 'url' cannot hold templates; put them in 'params'")
+    elif is_forbidden_url(url):
+        problems.append(f"{at}: url {url!r} looks like a data-changing action")
+    method = str(step.get("method") or "GET").upper()
+    if method not in _HTTP_METHODS:
+        problems.append(f"{at}: method must be GET or POST")
+    if "form" in step and "json" in step:
+        problems.append(f"{at}: give 'form' or 'json', not both")
+    if method == "GET" and ("form" in step or "json" in step):
+        problems.append(f"{at}: a GET has no body; put the values in 'params'")
+    for name in ("params", "form"):
+        body = step.get(name)
+        if body is not None and (not isinstance(body, dict) or not all(
+                isinstance(v, (str, int, float, bool)) for v in body.values())):
+            problems.append(f"{at}: '{name}' must be an object of strings/numbers")
+    headers = step.get("headers")
+    if headers is not None:
+        if not isinstance(headers, dict) or not all(isinstance(v, str) for v in headers.values()):
+            problems.append(f"{at}: 'headers' must be an object of strings")
+        else:
+            fixed = [h for h in headers if str(h).lower() in _FIXED_HEADERS or str(h).lower().startswith("proxy-")]
+            if fixed:
+                problems.append(f"{at}: headers {fixed} are set by the browser and cannot be given")
+    values = [v for name in ("params", "form", "json") for v in _strings(step.get(name))]
+    for value in values:
+        if is_forbidden_text(_TEMPLATE.sub(" ", value)):
+            problems.append(f"{at}: request value {value!r} looks like a data-changing action")
+        names = _template_names(value)
+        if "cursor" in names and "default" not in step:
+            problems.append(f"{at}: uses {{{{cursor}}}} without a 'default' for full/first runs")
+        if any(n in ("window_from", "window_to") for n in names) and not in_window:
+            problems.append(f"{at}: {{{{window_*}}}} only works inside date_windows")
+        for name in names + _template_names(step.get("default")):
+            if name not in _TEMPLATE_VARS:
+                problems.append(f"{at}: unknown template {{{{{name}}}}}")
+    records = step.get("records", "")
+    if not isinstance(records, str):
+        problems.append(f"{at}: 'records' must be a dotted path ('' = the top-level array)")
+    for name in ("max_bytes", "delay_ms"):
+        if name in step and not (_positive_int(step[name]) or (name == "delay_ms" and step[name] == 0)):
+            problems.append(f"{at}: '{name}' must be a positive integer")
+    page = step.get("page")
+    if page is not None:
+        if not isinstance(page, dict):
+            problems.append(f"{at}: 'page' must be an object")
+        else:
+            for name in ("start_param", "length_param"):
+                if not isinstance(page.get(name), str) or not page.get(name):
+                    problems.append(f"{at}.page: needs '{name}'")
+            if not _positive_int(page.get("length")):
+                problems.append(f"{at}.page: 'length' must be a positive integer")
+            if "start" in page and (not isinstance(page["start"], int) or page["start"] < 0):
+                problems.append(f"{at}.page: 'start' must be a non-negative integer")
+            if page.get("in") is not None and page["in"] not in _PAGE_IN:
+                problems.append(f"{at}.page: 'in' must be one of {', '.join(_PAGE_IN)}")
+            if page.get("in") == "json" and not isinstance(step.get("json"), dict):
+                problems.append(f"{at}.page: paging into 'json' needs a 'json' object body")
+            if page.get("max_pages") is not None and not _positive_int(page.get("max_pages")):
+                problems.append(f"{at}.page: 'max_pages' must be a positive integer")
+            for name in ("draw_param", "total"):
+                if page.get(name) is not None and not isinstance(page.get(name), str):
+                    problems.append(f"{at}.page: '{name}' must be a string")
+    problems.extend(_data_columns_problems(at, step.get("columns"), header_ok=False))
     return problems
 
 
@@ -618,6 +742,18 @@ class Driver:
         raise NotImplementedError
     def inventory(self) -> Dict[str, Any]:
         raise NotImplementedError
+    def datatable(self, table: str, columns: Optional[Mapping[str, Any]], start: int, length: int) -> Dict[str, Any]:
+        """``{"state": ...}`` of a DataTables table; with ``columns``, ``rows[start:start+length]``."""
+        raise NotImplementedError
+    def fetch(self, url: str, *, method: str, params: Mapping[str, str], body: Optional[str],
+              content_type: Optional[str], headers: Mapping[str, str], max_bytes: int,
+              timeout_ms: int) -> Dict[str, Any]:
+        """A same-origin request from the logged-in page.
+
+        Returns ``{"status", "content_type", "text"}``, ``{"redirected": True}``,
+        ``{"too_big": bytes_read}`` or ``{"error": message}``.
+        """
+        raise NotImplementedError
     def close(self) -> None:
         raise NotImplementedError
 
@@ -761,6 +897,110 @@ _INVENTORY_JS = r"""
 """
 
 
+# DataTables 1.10+ (jQuery plugin) and 2.x (``window.DataTable``) share this
+# public API: ``isDataTable``, ``new Api(el)``, ``rows({search: 'none'})``,
+# ``column(i).dataSrc()`` / ``.header()``, ``cell(r, c).data()``, ``ajax.url()``.
+_DATATABLE_JS = r"""
+([sel, columns, start, length]) => {
+  const DT = (window.jQuery && window.jQuery.fn && window.jQuery.fn.dataTable) || window.DataTable;
+  const el = document.querySelector(sel);
+  if (!el) return {state: 'no_table'};
+  if (!DT || typeof DT.isDataTable !== 'function' || typeof DT.Api !== 'function') return {state: 'no_datatables'};
+  if (!DT.isDataTable(el)) return {state: 'not_initialised'};
+  const api = new DT.Api(el);
+  const s = api.settings()[0] || {};
+  if (s._bInitComplete === false) return {state: 'loading'};
+  const serverSide = !!(s.oFeatures && s.oFeatures.bServerSide);
+  let ajax = null;
+  try { ajax = api.ajax.url() || null; } catch (e) { ajax = null; }
+  if (typeof ajax !== 'string') ajax = null;
+  const cols = [];
+  const ncol = api.columns().count();
+  for (let i = 0; i < ncol; i++) {
+    const c = api.column(i), h = c.header(), src = c.dataSrc();
+    cols.push({header: h ? (h.textContent || '').replace(/\s+/g, ' ').trim() : '',
+               data: (typeof src === 'string' || typeof src === 'number') ? src : null});
+  }
+  const rows = api.rows({search: 'none', order: 'index'});
+  const info = {state: 'ready', server_side: serverSide, ajax_url: ajax, total: rows.count(), columns: cols};
+  if (!columns) return info;
+  const get = (row, path) => {
+    if (typeof path === 'number') return row == null ? null : row[path];
+    let v = row;
+    for (const p of String(path).split('.')) { if (v == null) return null; v = v[p]; }
+    return v;
+  };
+  const parser = new DOMParser();
+  const text = (v, col) => {
+    if (typeof v !== 'string' || col.html === false || (!col.attr && v.indexOf('<') < 0 && v.indexOf('&') < 0)) {
+      return col.attr ? null : v;
+    }
+    const doc = parser.parseFromString(v, 'text/html');
+    if (col.attr) { const n = doc.querySelector('[' + col.attr + ']'); return n ? n.getAttribute(col.attr) : null; }
+    return (doc.body.textContent || '').replace(/\s+/g, ' ').trim();
+  };
+  const idx = rows.indexes().toArray().slice(start, start + length);
+  const data = rows.data().toArray().slice(start, start + length);
+  info.rows = data.map((row, k) => {
+    const out = {};
+    for (const [name, col] of Object.entries(columns)) {
+      const v = col.cell !== undefined ? api.cell(idx[k], col.cell).data() : get(row, col.path);
+      out[name] = v === undefined ? null : text(v, col);
+    }
+    return out;
+  });
+  return info;
+}
+"""
+
+_DATATABLES_LIST_JS = "() => { const probe = " + _DATATABLE_JS.strip() + r""";
+  return Array.from(document.querySelectorAll('table[id]')).map((t) => {
+    const selector = '#' + CSS.escape(t.id);
+    return Object.assign({selector}, probe([selector, null, 0, 0]));
+  }).filter((x) => x.state === 'ready');
+}"""
+
+# A same-origin fetch in the logged-in page: the browser adds the session
+# cookies, the network guard (context.route) sees it, redirects are not
+# followed and the body is cancelled as soon as it passes max_bytes.
+_FETCH_JS = r"""
+async ([url, method, body, contentType, headers, maxBytes, timeoutMs]) => {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const h = Object.assign({'X-Requested-With': 'XMLHttpRequest',
+                             'Accept': 'application/json, text/javascript, */*; q=0.01'}, headers);
+    if (contentType) h['Content-Type'] = contentType;
+    const res = await fetch(url, {method, headers: h, body: body === null ? undefined : body,
+                                  credentials: 'same-origin', redirect: 'manual', signal: ctrl.signal,
+                                  cache: 'no-store'});
+    if (res.type === 'opaqueredirect' || (res.status >= 300 && res.status < 400)) return {redirected: true};
+    const declared = parseInt(res.headers.get('content-length') || '', 10);
+    if (declared > maxBytes) { ctrl.abort(); return {too_big: declared}; }
+    const reader = res.body ? res.body.getReader() : null;
+    const parts = [];
+    let size = 0;
+    while (reader) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maxBytes) { ctrl.abort(); return {too_big: size}; }
+      parts.push(value);
+    }
+    const all = new Uint8Array(size);
+    let at = 0;
+    for (const p of parts) { all.set(p, at); at += p.byteLength; }
+    return {status: res.status, content_type: res.headers.get('content-type') || '',
+            text: new TextDecoder().decode(all)};
+  } catch (e) {
+    return {error: ctrl.signal.aborted ? 'timed out after ' + timeoutMs + ' ms' : String(e && e.message || e)};
+  } finally {
+    clearTimeout(timer);
+  }
+}
+"""
+
+
 def _chromium_candidates() -> List[str]:
     """Browsers already on the box (system Chrome, agent-browser's Playwright builds)."""
     found: List[str] = []
@@ -837,6 +1077,8 @@ class PlaywrightDriver(Driver):
             self._page.on("requestfinished", self._on_request_finished)
             self._page.on("requestfailed", lambda req: self._nav_pending.discard(id(req)))
             self._page.on("framenavigated", self._on_frame_navigated)
+            self._json_seen: List[Dict[str, Any]] = []
+            self._page.on("response", self._on_response)
         except Exception:
             self._pw.stop()
             raise
@@ -991,7 +1233,53 @@ class PlaywrightDriver(Driver):
         return self._page.evaluate(_FIELDS_JS, dict(spec))
 
     def inventory(self) -> Dict[str, Any]:
-        return self._page.evaluate(_INVENTORY_JS)
+        inventory = self._page.evaluate(_INVENTORY_JS)
+        inventory["json_requests"], self._json_seen = self._json_seen, []
+        inventory["datatables"] = self._page.evaluate(_DATATABLES_LIST_JS)
+        return inventory
+
+    def datatable(self, table: str, columns: Optional[Mapping[str, Any]], start: int, length: int) -> Dict[str, Any]:
+        return self._page.evaluate(_DATATABLE_JS, [table, dict(columns) if columns else None, start, length])
+
+    def fetch(self, url: str, *, method: str, params: Mapping[str, str], body: Optional[str],
+              content_type: Optional[str], headers: Mapping[str, str], max_bytes: int,
+              timeout_ms: int) -> Dict[str, Any]:
+        if params:
+            parsed = urlparse(url)
+            query = parse_qsl(parsed.query, keep_blank_values=True) + list(params.items())
+            url = urlunparse(parsed._replace(query=urlencode(query)))
+        return self._page.evaluate(_FETCH_JS, [url, method, body, content_type, dict(headers), max_bytes, timeout_ms])
+
+    def _on_response(self, response: Any) -> None:
+        """Remember same-origin JSON XHR/fetch answers for :meth:`inventory` (keys only, never values)."""
+        try:
+            req = response.request
+            if req.resource_type not in ("xhr", "fetch"):
+                return
+            ctype = (response.headers.get("content-type") or "").lower()
+            if "json" not in ctype and "javascript" not in ctype:
+                return
+            here, there = urlparse(self._page.url), urlparse(req.url)
+            if (here.scheme, here.netloc) != (there.scheme, there.netloc):
+                return
+            post = req.post_data or ""
+            keys: List[str] = []
+            if post.lstrip().startswith(("{", "[")):
+                try:
+                    decoded = json.loads(post)
+                except ValueError:
+                    decoded = None
+                keys = sorted(str(k) for k in decoded) if isinstance(decoded, dict) else []
+            elif post:
+                keys = sorted({k for k, _ in parse_qsl(post, keep_blank_values=True)})
+            entry = {"method": req.method, "url": there._replace(query="").geturl(),
+                     "query_keys": sorted({k for k, _ in parse_qsl(there.query, keep_blank_values=True)}),
+                     "body_keys": keys[:80], "status": response.status, "content_type": ctype[:60],
+                     "bytes": int(response.headers.get("content-length") or 0) or None}
+            if len(self._json_seen) < 50 and entry not in self._json_seen:
+                self._json_seen.append(entry)
+        except Exception:
+            logger.debug("recording a JSON response failed", exc_info=True)
 
     def close(self) -> None:
         # Tearing the browser down can release requests still paused in the
@@ -1065,10 +1353,11 @@ class _Run:
             raise ForbiddenTarget(f"goto {raw!r} looks like a data-changing action")
         return absolute
 
-    def page_loaded(self) -> None:
+    def page_loaded(self, delay: Optional[float] = None) -> None:
         self.report.pages += 1
-        if self.delay:
-            self.sleep(self.delay)
+        pause = self.delay if delay is None else delay
+        if pause:
+            self.sleep(pause)
 
     def login(self) -> None:
         spec = self.recipe.get("login")
@@ -1189,6 +1478,10 @@ class _Run:
                 yield from self.extract_table(where, step, ctx)
             elif op == "extract_fields":
                 yield from self.extract_fields(where, step, ctx)
+            elif op == "extract_datatable":
+                yield from self.extract_datatable(where, step, ctx)
+            elif op == "extract_json":
+                yield from self.extract_json(where, step, ctx)
             elif op == "paginate":
                 yield from self.paginate(where, step, ctx)
             elif op == "date_windows":
@@ -1259,6 +1552,203 @@ class _Run:
         if item is not None:
             yield item
 
+    def emit_rows(self, where: str, columns: Mapping[str, Any], rows: Iterable[Mapping[str, Any]],
+                  ctx: Dict[str, Any], *, skip_empty: bool = True) -> Iterator[ExtractedItem]:
+        for raw in rows:
+            record = self.convert(where, columns, raw)
+            if skip_empty and all(v in (None, "") for v in record.values()):
+                continue
+            item = self.emit(where, ctx, record, build_key(record, ctx["key"]))
+            if item is not None:
+                yield item
+
+    def extract_datatable(self, where: str, step: Mapping[str, Any], ctx: Dict[str, Any]) -> Iterator[ExtractedItem]:
+        d = self.driver
+        table = str(step["table"])
+        timeout_ms = int(step.get("timeout_ms") or self.recipe.get("timeout_ms") or DEFAULT_TIMEOUT_MS)
+        deadline = time.monotonic() + timeout_ms / 1000
+        info = d.datatable(table, None, 0, 0)
+        while info.get("state") != "ready" and time.monotonic() < deadline:
+            d.wait({"ms": 200})
+            info = d.datatable(table, None, 0, 0)
+        state = info.get("state")
+        if state != "ready":
+            if state == "no_table" and step.get("optional"):
+                return
+            url = d.current_url()
+            raise RecipeError(f"{where}: " + {
+                "no_table": f"table {table!r} not found on {url}",
+                "no_datatables": f"no DataTables library (jQuery.fn.dataTable / window.DataTable) on {url}; "
+                                 "use extract_table with paginate",
+                "not_initialised": f"{table!r} on {url} is not a DataTables table; use extract_table with paginate",
+                "loading": f"the DataTables table {table!r} did not finish loading within {timeout_ms} ms",
+            }.get(str(state), f"cannot read {table!r} on {url} ({state})"))
+        if info.get("server_side"):
+            raise RecipeError(
+                f"{where}: {table!r} is a server-side DataTable (the page only holds the rows on screen); read "
+                f"its endpoint {info.get('ajax_url') or '(see the page script)'} with extract_json and a "
+                "start/length 'page' block"
+            )
+        columns = step["columns"]
+        dt_cols = info.get("columns") or []
+        resolved: Dict[str, Dict[str, Any]] = {}
+        missing: List[str] = []
+        headers = [_norm_header(c.get("header") or "") for c in dt_cols]
+        for name, spec in columns.items():
+            col: Dict[str, Any] = {k: spec[k] for k in ("attr", "html") if k in spec}
+            if "field" in spec:
+                col["path"] = spec["field"]
+            else:
+                if "index" in spec:
+                    idx: Optional[int] = int(spec["index"]) if int(spec["index"]) < len(dt_cols) else None
+                    label = f"index {spec['index']}"
+                else:
+                    want = _norm_header(str(spec["header"]))
+                    idx = next((i for i, h in enumerate(headers) if h == want), None)
+                    if idx is None:
+                        idx = next((i for i, h in enumerate(headers) if want and want in h), None)
+                    label = str(spec["header"])
+                if idx is None:
+                    missing.append(label)
+                    continue
+                src = dt_cols[idx].get("data")
+                if src is None:
+                    col["cell"] = idx
+                else:
+                    col["path"] = src
+            resolved[name] = col
+        if missing:
+            raise RecipeError(f"{where}: column(s) {missing} not found (table has "
+                              f"{[c.get('header') for c in dt_cols]})")
+        total = int(info.get("total") or 0)
+        for start in range(0, total, DATATABLE_CHUNK):
+            chunk = d.datatable(table, resolved, start, DATATABLE_CHUNK)
+            if chunk.get("state") != "ready":
+                raise RecipeError(f"{where}: the DataTables table {table!r} went away while reading it")
+            yield from self.emit_rows(where, columns, chunk.get("rows") or [], ctx,
+                                      skip_empty=step.get("skip_empty", True))
+
+    def render_value(self, value: Any, step: Mapping[str, Any], ctx: Dict[str, Any]) -> Any:
+        """Templates inside a request's params / form / json (strings only; types kept)."""
+        if isinstance(value, Mapping):
+            return {k: self.render_value(v, step, ctx) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self.render_value(v, step, ctx) for v in value]
+        if not isinstance(value, str):
+            return value
+        raw = value
+        if "cursor" in _template_names(raw) and ctx["vars"].get("cursor") is None:
+            raw = step.get("default")
+        return render_template(raw, ctx["vars"], date_format=step.get("format") or ctx["date_format"],
+                               today=self.today)
+
+    def fetch_json(self, where: str, step: Mapping[str, Any], url: str, params: Dict[str, Any],
+                   form: Optional[Dict[str, Any]], body_json: Any) -> Any:
+        method = str(step.get("method") or "GET").upper()
+        if form is not None:
+            body: Optional[str] = urlencode([(k, _scalar(v)) for k, v in form.items()])
+            ctype: Optional[str] = "application/x-www-form-urlencoded; charset=UTF-8"
+        elif body_json is not None:
+            body, ctype = json.dumps(body_json), "application/json"
+        else:
+            body = ctype = None
+        if method == "POST" and body is None:
+            body, ctype = "", "application/x-www-form-urlencoded; charset=UTF-8"
+        max_bytes = int(step.get("max_bytes") or DEFAULT_MAX_BYTES)
+        timeout_ms = int(step.get("timeout_ms") or self.recipe.get("timeout_ms") or DEFAULT_TIMEOUT_MS)
+        for attempt in (1, 2):
+            res = self.driver.fetch(url, method=method, params={k: _scalar(v) for k, v in params.items()},
+                                    body=body, content_type=ctype, headers=dict(step.get("headers") or {}),
+                                    max_bytes=max_bytes, timeout_ms=timeout_ms)
+            delay = step.get("delay_ms")
+            self.page_loaded(None if delay is None else int(delay) / 1000.0)
+            if res.get("too_big") is not None:
+                raise RecipeError(
+                    f"{where}: {method} {urlparse(url).path} answered more than max_bytes={max_bytes} "
+                    f"({res['too_big']} bytes read); add a start/length 'page' block or a narrower date_windows"
+                )
+            if res.get("error"):
+                raise RecipeError(f"{where}: {method} {urlparse(url).path} failed: {res['error']}")
+            text = str(res.get("text") or "")
+            if not res.get("redirected"):
+                status = int(res.get("status") or 0)
+                if status >= 400:
+                    raise RecipeError(f"{where}: {method} {urlparse(url).path} answered HTTP {status}")
+                try:
+                    return json.loads(text)
+                except ValueError:
+                    pass
+            expired = res.get("redirected") or _LOGIN_FORM.search(text[:200_000])
+            if attempt == 1 and expired and self.recipe.get("login") and self.logged_in:
+                self.report.warnings.append(f"session expired before {urlparse(url).path}; logged in again")
+                self.login()
+                continue
+            if res.get("redirected"):
+                raise RecipeError(f"{where}: {method} {urlparse(url).path} redirected (not followed)")
+            head = re.sub(r"\s+", " ", text)[:60]
+            raise RecipeError(f"{where}: {method} {urlparse(url).path} did not answer JSON "
+                              f"({res.get('content_type') or 'no content type'}: {head!r})")
+        raise RecipeError(f"{where}: {method} {urlparse(url).path} failed")
+
+    def extract_json(self, where: str, step: Mapping[str, Any], ctx: Dict[str, Any]) -> Iterator[ExtractedItem]:
+        url = self.url(str(step["url"]))
+        columns = step["columns"]
+        params = dict(self.render_value(step.get("params") or {}, step, ctx))
+        form = self.render_value(step["form"], step, ctx) if "form" in step else None
+        body_json = self.render_value(step["json"], step, ctx) if "json" in step else None
+        if str(step.get("method") or "GET").upper() == "POST" and form is None and body_json is None:
+            form = {}
+        for value in _strings([params, form, body_json]):
+            if is_forbidden_text(value):
+                raise ForbiddenTarget(f"{where}: request value {value!r} looks like a data-changing action")
+        page = step.get("page")
+        records_path = str(step.get("records") or "")
+        specs = {name: ({"path": spec["field"]} if "field" in spec else {"path": int(spec["index"])})
+                 for name, spec in columns.items()}
+        start = int((page or {}).get("start", 0))
+        length = int(page["length"]) if page else 0
+        max_pages = int((page or {}).get("max_pages") or DEFAULT_MAX_PAGES)
+        where_in = (page or {}).get("in") or ("json" if body_json is not None else "form" if form is not None
+                                               else "params")
+        previous: Optional[List[str]] = None
+        for number in range(1, max_pages + 1):
+            p_params, p_form, p_json = dict(params), (dict(form) if form is not None else None), body_json
+            if page:
+                extra: Dict[str, Any] = {page["start_param"]: start, page["length_param"]: length}
+                if page.get("draw_param"):
+                    extra[page["draw_param"]] = number
+                if where_in == "json":
+                    p_json = {**dict(body_json or {}), **extra}
+                elif where_in == "form":
+                    p_form = {**(p_form or {}), **extra}
+                else:
+                    p_params.update(extra)
+            data = self.fetch_json(where, step, url, p_params, p_form, p_json)
+            records = _dig(data, records_path)
+            if not isinstance(records, list):
+                found = sorted(data)[:20] if isinstance(data, dict) else type(data).__name__
+                raise RecipeError(f"{where}: records {records_path or '(top level)'!r} is not a list "
+                                  f"(response has {found})")
+            rows = [{name: _dig(rec, spec["path"]) for name, spec in specs.items()} for rec in records]
+            before = len(ctx["page_keys"])
+            yield from self.emit_rows(where, columns, rows, ctx, skip_empty=step.get("skip_empty", True))
+            this_page = ctx["page_keys"][before:]
+            if not page or len(records) < length:
+                break
+            total = _dig(data, page["total"]) if page.get("total") else None
+            if previous is not None and this_page == previous:
+                self.report.warnings.append(f"{where}: page {number} repeated the previous page; stopped")
+                break
+            previous = this_page
+            start += length
+            try:
+                if total is not None and start >= int(total):
+                    break
+            except (TypeError, ValueError):
+                pass
+            if number == max_pages:
+                self.report.warnings.append(f"{where}: stopped at max_pages={max_pages}")
+
     def paginate(self, where: str, step: Mapping[str, Any], ctx: Dict[str, Any]) -> Iterator[ExtractedItem]:
         outer_count, outer_keys = ctx["last_count"], ctx["page_keys"]
         all_keys: List[str] = []
@@ -1313,6 +1803,29 @@ class _Run:
             yield from self.steps(step["steps"], ctx)
             cursor = stop + dt.timedelta(days=1)
         ctx["vars"] = outer
+
+
+_LOGIN_FORM = re.compile(r"<input[^>]+type\s*=\s*[\"']?password", re.I)
+
+
+def _scalar(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return "" if value is None else str(value)
+
+
+def _dig(value: Any, path: Any) -> Any:
+    """``value`` at a dotted path (``""`` = itself); list items by number."""
+    if isinstance(path, int):
+        return value[path] if isinstance(value, list) and -len(value) <= path < len(value) else None
+    for part in [p for p in str(path).split(".") if p != ""]:
+        if isinstance(value, Mapping):
+            value = value.get(part)
+        elif isinstance(value, list) and re.fullmatch(r"-?\d+", part) and -len(value) <= int(part) < len(value):
+            value = value[int(part)]
+        else:
+            return None
+    return value
 
 
 def _network_guard(base_url: str, allow_private: bool) -> Callable[..., Optional[str]]:

@@ -7,6 +7,7 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
@@ -660,3 +661,218 @@ def test_e2e_browse_inventories_buttons_forms_and_tables(site):
     assert {x["name"] for x in form["fields"]} >= {"date_from", "date_to"}
     assert "error" in got["broken"]
     assert site.state.forbidden_hits == []
+
+
+# --------------------------------------------------------------------------
+# extract_datatable / extract_json
+# --------------------------------------------------------------------------
+
+CASE_COLUMNS = {"case_no": {"field": "case_no"}, "opened": {"field": "opened", "type": "date"},
+                "customer": {"field": "customer.name"}, "qty": {"field": "qty", "type": "int"}}
+
+
+def _one_entity(site, steps, key, **ent):
+    recipe = fixture_recipe(site.base_url)
+    recipe["entities"] = {"data": {"kind": "variable", "key": key, "steps": steps, **ent}}
+    return recipe
+
+
+@pytest.mark.parametrize("step, needle", [
+    ({"op": "extract_datatable", "columns": {"a": {"field": "a"}}}, "needs 'table'"),
+    ({"op": "extract_datatable", "table": "#t", "columns": {"a": {"field": "a", "index": 1}}}, "exactly one"),
+    ({"op": "extract_json", "url": "/orders/delete", "columns": {"a": {"field": "a"}}}, "data-changing"),
+    ({"op": "extract_json", "url": "/x", "method": "POST", "form": {"action": "delete"},
+      "columns": {"a": {"field": "a"}}}, "data-changing"),
+    ({"op": "extract_json", "url": "/x", "method": "PUT", "columns": {"a": {"field": "a"}}}, "GET or POST"),
+    ({"op": "extract_json", "url": "/x", "form": {"a": "1"}, "columns": {"a": {"field": "a"}}}, "GET has no body"),
+    ({"op": "extract_json", "url": "/x", "params": {"f": "{{window_from}}"}, "columns": {"a": {"field": "a"}}},
+     "only works inside date_windows"),
+    ({"op": "extract_json", "url": "/x", "params": {"f": "{{cursor}}"}, "columns": {"a": {"field": "a"}}},
+     "without a 'default'"),
+    ({"op": "extract_json", "url": "/x", "headers": {"Cookie": "sid=1"}, "columns": {"a": {"field": "a"}}},
+     "set by the browser"),
+    ({"op": "extract_json", "url": "/x", "page": {"start_param": "start"}, "columns": {"a": {"field": "a"}}},
+     "'length' must be"),
+    ({"op": "extract_json", "url": "/x", "max_bytes": 0, "columns": {"a": {"field": "a"}}}, "max_bytes"),
+])
+def test_validate_datatable_and_json_steps(step, needle):
+    recipe = fixture_recipe()
+    recipe["entities"] = {"x": {"kind": "variable", "key": ["a"], "steps": [step]}}
+    problems = srr.recipe_problems(recipe)
+    assert any(needle in p for p in problems), problems
+
+
+def test_dig_reads_dotted_paths_and_list_items():
+    data = {"data": [{"a": {"b": 1}}, {"a": None}], "n": 2}
+    assert srr._dig(data, "") is data
+    assert srr._dig(data, "data.0.a.b") == 1
+    assert srr._dig(data, "data.1.a.b") is None
+    assert srr._dig(["x", "y"], 1) == "y" and srr._dig(["x"], 3) is None
+
+
+@needs_browser
+@pytest.mark.parametrize("jquery", [True, False], ids=["jquery-plugin", "datatable-global"])
+def test_e2e_extract_datatable_reads_every_row_not_just_the_rendered_page(site, jquery):
+    url = "/devices" if jquery else "/devices?jquery=0"
+    recipe = _one_entity(site, [
+        {"op": "goto", "url": url},
+        {"op": "extract_datatable", "table": "#devices", "columns": {
+            "imei": {"field": "imei"}, "model": {"header": "Model"}, "brand": {"field": "model.brand"},
+            "grade": {"index": 3}, "link": {"header": "Action", "attr": "href"}}},
+    ], ["imei"])
+    recipe["entities"]["parts"] = {"kind": "variable", "key": ["part_no"], "steps": [
+        {"op": "goto", "url": url},
+        {"op": "extract_datatable", "table": "#parts", "columns": {
+            "part_no": {"header": "Part No"}, "name": {"index": 1}, "stock": {"header": "Stock", "type": "int"}}},
+    ]}
+    items, report = _run(site, recipe)
+    devices = [i for i in items if i.entity == "data"]
+    assert len(devices) == len({i.key for i in devices}) == len(site.state.devices) == 2500
+    assert devices[1].payload == {"imei": "35" + "1".zfill(13), "model": "Galaxy S24", "brand": "Samsung",
+                                  "grade": "B", "link": "/devices/view?id=2"}
+    parts = [i for i in items if i.entity == "parts"]
+    assert len(parts) == 1200 and parts[0].payload == {"part_no": "P-0001", "name": "Part 1", "stock": 3}
+    assert report.failed == {} and site.state.forbidden_hits == []
+
+
+@needs_browser
+def test_e2e_extract_datatable_errors_point_to_the_right_op(site):
+    def failure(table):
+        recipe = _one_entity(site, [{"op": "goto", "url": "/devices"},
+                                    {"op": "extract_datatable", "table": table, "timeout_ms": 1500,
+                                     "columns": {"a": {"index": 0}}}], ["a"])
+        report = RunReport()
+        with pytest.raises(RecipeRunError):
+            _run(site, recipe, report=report)
+        return report.failed["data"]
+
+    assert "server-side DataTable" in failure("#cases") and "/api/rma_cases" in failure("#cases")
+    assert "is not a DataTables table; use extract_table" in failure("#plain")
+    assert "not found" in failure("#nope")
+    assert "column(s) ['Nope'] not found" in _run_columns_error(site)
+
+
+def _run_columns_error(site):
+    recipe = _one_entity(site, [{"op": "goto", "url": "/devices"},
+                                {"op": "extract_datatable", "table": "#parts",
+                                 "columns": {"a": {"header": "Nope"}}}], ["a"])
+    report = RunReport()
+    with pytest.raises(RecipeRunError):
+        _run(site, recipe, report=report)
+    return report.failed["data"]
+
+
+@needs_browser
+def test_e2e_extract_json_pages_a_server_side_endpoint_with_draw_start_length(site):
+    recipe = _one_entity(site, [{"op": "extract_json", "url": "/api/rma_cases", "method": "POST",
+                                 "form": {"search[value]": ""}, "records": "data", "columns": CASE_COLUMNS,
+                                 "page": {"start_param": "start", "length_param": "length", "length": 100,
+                                          "draw_param": "draw", "total": "recordsFiltered"},
+                                 "delay_ms": 50}],
+                         ["case_no"])
+    sleeps: List[float] = []
+    report = RunReport()
+    driver = srr.PlaywrightDriver(timeout_ms=10_000, guard=srr._network_guard(site.base_url, True))
+    try:
+        run = srr._Run(recipe, driver, fx.USERNAME, fx.PASSWORD, report, sleep=sleeps.append)
+        run.login()
+        ctx = {"name": "data", "kind": "variable", "key": ["case_no"], "cursor_col": None, "date_format": "%Y-%m-%d",
+               "vars": {"cursor": None}, "last_count": 0, "page_keys": []}
+        items = list(run.steps(recipe["entities"]["data"]["steps"], ctx))
+    finally:
+        driver.close()
+    assert len(items) == len({i.key for i in items}) == 230
+    assert items[0].payload == {"case_no": "RMA-5001", "opened": site.state.today.isoformat(),
+                                "customer": "Acme Ltd", "qty": 1}
+    calls = [c for c in site.state.json_calls if c["path"] == "/api/rma_cases"]
+    assert [(c["values"]["start"], c["values"]["length"], c["values"]["draw"]) for c in calls] == [
+        ("0", "100", "1"), ("100", "100", "2"), ("200", "100", "3")]
+    assert all(c["xhr"] == "XMLHttpRequest" for c in calls)
+    assert sleeps == [0.05] * 3
+
+
+@needs_browser
+@pytest.mark.parametrize("body", ["form", "json"])
+def test_e2e_extract_json_inside_date_windows_and_incremental(site, body):
+    step = {"op": "extract_json", "url": "/search/rma_case", "method": "POST", "records": "",
+            body: {"date_from": "{{window_from}}", "date_to": "{{window_to}}"}, "columns": CASE_COLUMNS}
+    recipe = _one_entity(site, [{"op": "date_windows", "from": "{{cursor}}", "default": "{{date-60}}", "days": 10,
+                                 "steps": [step]}], ["case_no"], cursor="opened")
+    items, report = _run(site, recipe)
+    assert len(items) == 230 and report.full_entities == ["data"]
+    calls = [c for c in site.state.json_calls if c["path"] == "/search/rma_case"]
+    assert len(calls) == 7 and calls[0]["values"]["date_from"] == (site.state.today - dt.timedelta(days=60)).isoformat()
+    site.state.json_calls.clear()
+    cursor = (site.state.today - dt.timedelta(days=2)).isoformat()
+    items, report = _run(site, recipe, cursors={"data": cursor})
+    assert len(items) == 15 and report.full_entities == []
+    assert report.cursors["data"] == site.state.today.isoformat()
+
+
+@needs_browser
+@pytest.mark.parametrize("url", ["/search/rma_case", "/api/rma_stream"], ids=["content-length", "chunked"])
+def test_e2e_extract_json_stops_at_max_bytes(site, url):
+    recipe = _one_entity(site, [{"op": "extract_json", "url": url, "method": "POST", "max_bytes": 2000,
+                                 "columns": CASE_COLUMNS}], ["case_no"])
+    report = RunReport()
+    with pytest.raises(RecipeRunError):
+        _run(site, recipe, report=report)
+    assert "answered more than max_bytes=2000" in report.failed["data"]
+    assert "page" in report.failed["data"]
+
+
+@needs_browser
+def test_e2e_extract_json_is_same_origin_and_read_only(site):
+    def failure(url, **extra):
+        recipe = _one_entity(site, [{"op": "extract_json", "url": url, "columns": {"a": {"field": "a"}}, **extra}],
+                             ["a"])
+        report = RunReport()
+        with pytest.raises((RecipeRunError, RecipeError)) as err:
+            _run(site, recipe, report=report)
+        return report.failed.get("data") or str(err.value)
+
+    assert "leaves the site" in failure("http://example.com/api/x")
+    assert "data-changing" in failure("/api/rma_cases/delete")
+    assert "did not answer JSON" in failure("/about")
+    assert site.state.forbidden_hits == []
+
+
+@needs_browser
+def test_e2e_extract_json_logs_in_again_when_the_session_expired(site):
+    recipe = _one_entity(site, [{"op": "goto", "url": "/about"},
+                                {"op": "extract_json", "url": "/search/rma_case", "method": "POST",
+                                 "form": {"date_from": "", "date_to": ""}, "columns": CASE_COLUMNS}], ["case_no"])
+    report = RunReport()
+    driver = srr.PlaywrightDriver(timeout_ms=10_000, guard=srr._network_guard(site.base_url, True))
+    try:
+        original = driver.fetch
+
+        def expire_first(*args, **kwargs):
+            if not report.warnings:
+                site.state.expire_sessions()
+            return original(*args, **kwargs)
+
+        driver.fetch = expire_first  # type: ignore[method-assign]
+        items = list(run_recipe(recipe, CRED, report=report, driver=driver, allow_private=True))
+    finally:
+        driver.close()
+    assert len(items) == 230 and site.state.logins == 2
+    assert any("logged in again" in w for w in report.warnings)
+    assert site.state.forbidden_hits == []
+
+
+@needs_browser
+def test_e2e_browse_lists_datatables_and_json_requests_without_values(site):
+    probes = [{"name": "devices", "steps": [{"op": "goto", "url": "/devices"}, {"op": "wait", "ms": 800}]}]
+    got = dict(srr.browse(fixture_recipe(site.base_url), probes, CRED, allow_private=True))
+    inv = got["devices"]
+    tables = {t["selector"]: t for t in inv["datatables"]}
+    assert tables["#devices"]["total"] == 2500 and not tables["#devices"]["server_side"]
+    assert tables["#devices"]["columns"][1] == {"header": "Model", "data": "model.name"}
+    assert tables["#parts"]["total"] == 1200
+    assert tables["#cases"]["server_side"] and tables["#cases"]["ajax_url"] == "/api/rma_cases"
+    assert "#plain" not in tables
+    seen = {(r["method"], r["url"].replace(site.base_url, "")): r for r in inv["json_requests"]}
+    assert ("GET", "/api/devices") in seen
+    assert seen[("POST", "/api/rma_cases")]["body_keys"] == ["draw", "length", "start"]
+    assert "0" not in json.dumps(seen[("POST", "/api/rma_cases")]["body_keys"])

@@ -54,6 +54,8 @@ link or input button; `exact`, `nth` optional).
 | `wait` | `selector` (visible), `text`, `gone` (hidden), `ms`, `timeout_ms` |
 | `extract_table` | `table` (selector), `row` (default `tbody tr`), `header` (header cell selector), `columns` |
 | `extract_fields` | `key` (content key), `fields` |
+| `extract_datatable` | `table` (selector of a client-side DataTables `<table>`), `columns`, `timeout_ms`, `optional` |
+| `extract_json` | `url` (same site), `method` (`GET`/`POST`), `params` (query), `form` **or** `json` (body; POST only), `headers`, `records` (dotted path; `""` = top-level array), `columns`, `page`, `max_bytes` (default 10 MB), `delay_ms`, `default`, `format`, `timeout_ms` |
 | `paginate` | `steps` (run per page), `next` target **or** `page_param` (+ `start`), `max_pages`, `stop_on_empty` |
 | `date_windows` | `from` (template, e.g. `{{cursor}}`), `default`, `to` (default `{{today}}`), `days`, `steps`; inside use `{{window_from}}` / `{{window_to}}` |
 
@@ -65,6 +67,71 @@ fields also take `all: true` (list of every match).
 
 Pagination stops when the next control is missing or disabled, a page has
 no rows, a page repeats the previous one, or at `max_pages`.
+
+### Big tables: `extract_datatable` and `extract_json`
+
+Admin apps often keep thousands of rows in the browser and show ten at a
+time. Paging the DOM that way is slow and hammers the site; read the data
+directly instead (both ops are read-only).
+
+`extract_datatable` reads **every** row of a client-side DataTables table
+through the page's own DataTables API (`jQuery.fn.dataTable` or the 2.x
+`window.DataTable` global: `rows({search: "none"}).data()`, so a filter
+typed on screen does not hide rows). It waits until the table finished
+loading. Columns: `field` (dotted key of the row object, e.g.
+`model.name`; for array rows use `index`), `index` (column number) or
+`header` (column title); `attr` reads an attribute out of an HTML cell (e.g.
+`href`), and HTML cells are otherwise reduced to their text (`html: false`
+keeps the raw value). It fails clearly when the page has no DataTables
+library, the table is not a DataTable (use `extract_table` + `paginate`), or
+it is **server-side** (`serverSide: true`: the page only holds the visible
+rows) — the error names the table's endpoint so you can switch to
+`extract_json`.
+
+```json
+{"op": "extract_datatable", "table": "#device_table",
+ "columns": {"imei": {"field": "imei"}, "model": {"header": "Model"},
+             "grade": {"index": 3, "type": "text"}}}
+```
+
+`extract_json` calls a same-origin JSON read endpoint from the logged-in
+page (a `fetch` with the session cookies and `X-Requested-With:
+XMLHttpRequest`; redirects are not followed). The URL must stay on the site
+and pass the forbidden-word check, as do the request values; templates
+(`{{cursor}}`, `{{window_from}}`, `{{window_to}}`, `{{date-N}}`) work in
+`params`, `form` and `json` values, so it can sit inside `date_windows`.
+`records` is the dotted path of the row list in the answer (`""` for a
+top-level array, `data` for DataTables); columns are `field` (dotted path
+inside one record) or `index` (array records). A session that expired
+(login page or redirect instead of JSON) is logged in again once.
+
+`page` pages a start/length endpoint (DataTables server-side): `start_param`,
+`length_param`, `length`, optional `start` (default 0), `draw_param` (sent
+as 1, 2, …), `total` (path of the total count, e.g. `recordsFiltered`),
+`max_pages`, `in` (`form`/`json`/`params`; default: where the body is).
+Paging stops when a page returns fewer than `length` records, the total is
+reached, a page repeats the previous one, or at `max_pages`.
+
+Fragile sources: every answer is cut off at `max_bytes` (default 10 MB) and
+the step fails with a hint to add `page` or narrower `date_windows`; the
+recipe's `delay_ms` (or the step's own `delay_ms`) is waited after every
+call. Keep `length` modest (100–1000) and prefer `date_windows` over one
+huge request.
+
+```json
+{"op": "extract_json", "url": "/search/rma_case", "method": "POST",
+ "form": {"date_from": "{{window_from}}", "date_to": "{{window_to}}"},
+ "records": "", "max_bytes": 5000000,
+ "columns": {"case_no": {"field": "case_no"},
+             "customer": {"field": "customer.name"},
+             "opened": {"field": "opened", "type": "date"}}}
+
+{"op": "extract_json", "url": "/api/rma_cases", "method": "POST",
+ "form": {"search[value]": ""}, "records": "data",
+ "page": {"start_param": "start", "length_param": "length", "length": 500,
+          "draw_param": "draw", "total": "recordsFiltered"},
+ "columns": {"case_no": {"field": "case_no"}}}
+```
 
 ## Templates
 
