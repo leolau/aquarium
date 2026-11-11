@@ -369,6 +369,7 @@ def _card_rollup_sync(bconn, project_id: str, principal) -> dict:
         "done": 0,
         "running": 0,
         "blocked": 0,
+        "scheduled": 0,
         "total_with_archived": 0,
         "total_all_principals": 0,
     }
@@ -381,7 +382,7 @@ def _card_rollup_sync(bconn, project_id: str, principal) -> dict:
         if status == "archived":
             continue
         rollup["total"] += n
-        if status in ("done", "running", "blocked"):
+        if status in ("done", "running", "blocked", "scheduled"):
             rollup[status] += n
     return rollup
 
@@ -695,6 +696,7 @@ _SORT_DEFAULT_ORDER = {
     "status": "asc",
     "duration": "desc",
     "tokens": "desc",
+    "next_run": "asc",
 }
 
 #: The lifecycle order the ``status`` sort follows.
@@ -831,6 +833,9 @@ def _sort_values(rows: list, field: str) -> dict[str, Any]:
         }
     if field == "due":
         return {p.id: p.due_at for p in rows}
+    if field == "next_run":
+        # The ``next_run_at`` display cache — fine for an order (§3.2).
+        return {p.id: p.next_run_at for p in rows}
     if field == "name":
         return {p.id: (p.name or "").casefold() for p in rows}
     if field == "status":
@@ -866,6 +871,16 @@ def _sort_extra(project, sorted_by: Optional[tuple[str, bool]], values: dict) ->
     return {}
 
 
+def _has_active_schedule(project) -> bool:
+    """An active, unarchived project driven by a cron schedule — what the
+    Scheduled view and the landing "Scheduled N" count list."""
+    return bool(
+        project.cron_job_id
+        and project.status == "active"
+        and not getattr(project, "archived", 0)
+    )
+
+
 def _list_sync(
     principal,
     *,
@@ -882,9 +897,13 @@ def _list_sync(
     order: Optional[str] = None,
     offset: int = 0,
     rollup_only: bool = False,
+    schedule: Optional[str] = None,
 ) -> dict:
     with projects_db.connect_closing() as conn:
         rows = projects_db.list_projects(conn, include_archived=include_archived)
+    if schedule == "set" and sort is None:
+        # The Scheduled view: soonest next run first.
+        sort = "next_run"
     refs = _project_refs(rows)
     # ``q=P12`` (or ``P12-R3``) finds that project by its short ref.
     q_ref = short_refs.parse_ref(q) if q else None
@@ -959,6 +978,8 @@ def _list_sync(
                 continue
             if cadence and getattr(p, "cadence", None) != cadence:
                 continue
+            if schedule == "set" and not _has_active_schedule(p):
+                continue
             if category_set and p.category_id not in category_set:
                 continue
             if q and (
@@ -999,6 +1020,7 @@ def _list_sync(
                         "output_rollup": _output_rollup(outputs),
                         "member_count": len(members),
                         "health": item_health,
+                        "scheduled_cards": rollup["scheduled"],
                         # Task mode sorts tasks by their newest run.
                         "latest_run": (
                             {"run_no": latest[0]["run_no"], "status": latest[0]["status"]}
@@ -1040,6 +1062,11 @@ async def list_projects(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="invalid sort")
     if order is not None and order not in ("asc", "desc"):
         raise HTTPException(status_code=400, detail="invalid order")
+    schedule = params.get("schedule") or None
+    if schedule is not None and schedule != "set":
+        raise HTTPException(status_code=400, detail="invalid schedule")
+    if schedule == "set" and sort is None:
+        sort = "next_run"
     offset = 0
     cursor = None
     if _sort_spec(sort, order) is None:
@@ -1062,6 +1089,7 @@ async def list_projects(request: Request) -> dict[str, Any]:
         sort=sort,
         order=order,
         offset=offset,
+        schedule=schedule,
     )
 
 

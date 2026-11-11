@@ -347,6 +347,85 @@ def test_list_refuses_an_unknown_sort(env):
     assert client.get("/api/registry/projects?sort=name&order=up").status_code == 400
 
 
+def _set_schedule(project_id, job_id, next_run_at):
+    with projects_db.connect_closing() as conn:
+        with projects_db.write_txn(conn):
+            conn.execute(
+                "UPDATE projects SET cron_job_id = ?, next_run_at = ? WHERE id = ?",
+                (job_id, next_run_at, project_id),
+            )
+
+
+def test_schedule_set_lists_active_scheduled_projects_soonest_first(env):
+    late, soon, unknown, paused, unscheduled, hidden = _sortable_projects(
+        env, ["Late", "Soon", "Unknown", "Paused", "Unscheduled", "Hidden"]
+    )
+    for project in (late, soon, unknown, paused, unscheduled, hidden):
+        _activate(env, project)
+    _set_schedule(late["id"], "job-l", 3000)
+    _set_schedule(soon["id"], "job-s", 1000)
+    _set_schedule(unknown["id"], "job-u", None)
+    _set_schedule(paused["id"], "job-p", 500)
+    _set_schedule(hidden["id"], "job-h", 100)
+    with projects_db.connect_closing() as conn:
+        projects_db.set_project_status(conn, paused["id"], "paused")
+    with kanban_db.connect_closing() as bconn:
+        for title in ("Parked one", "Parked two"):
+            task = kanban_db.create_task(bconn, title=title, project_id=soon["id"])
+            bconn.execute("UPDATE tasks SET status = 'scheduled' WHERE id = ?", (task,))
+        bconn.commit()
+
+    client, state = env
+    body = client.get("/api/registry/projects?schedule=set").json()
+    # No next run known sorts last.
+    assert [i["slug"] for i in body["items"]] == [
+        hidden["slug"], soon["slug"], late["slug"], unknown["slug"],
+    ]
+    by_slug = {i["slug"]: i for i in body["items"]}
+    assert by_slug[soon["slug"]]["scheduled_cards"] == 2
+    assert by_slug[soon["slug"]]["next_run_at"] == 1000
+    assert by_slug[late["slug"]]["scheduled_cards"] == 0
+
+    # Read-gated like the rest of the list.
+    for project in (late, soon, unknown):
+        _member(project["id"], "ada", "member")
+    state["actor"] = MEMBER_P
+    assert _slugs(env, "schedule=set") == [soon["slug"], late["slug"], unknown["slug"]]
+
+    # Pages by position: no repeats, no gaps.
+    state["actor"] = OWNER
+    seen, cursor = [], None
+    for _ in range(10):
+        url = "/api/registry/projects?schedule=set&limit=1"
+        if cursor:
+            url += f"&cursor={cursor}"
+        page = client.get(url).json()
+        seen.extend(i["slug"] for i in page["items"])
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+    assert seen == [hidden["slug"], soon["slug"], late["slug"], unknown["slug"]]
+
+    # An explicit sort still wins, and its cursor still decodes.
+    assert _slugs(env, "schedule=set&sort=name") == [
+        hidden["slug"], late["slug"], soon["slug"], unknown["slug"],
+    ]
+    page = client.get("/api/registry/projects?schedule=set&sort=created&limit=2").json()
+    assert page["next_cursor"]
+    nxt = client.get(
+        f"/api/registry/projects?schedule=set&sort=created&limit=2&cursor={page['next_cursor']}"
+    )
+    assert nxt.status_code == 200
+    assert [i["slug"] for i in page["items"] + nxt.json()["items"]] == [
+        hidden["slug"], unknown["slug"], soon["slug"], late["slug"],
+    ]
+
+
+def test_list_refuses_an_unknown_schedule_filter(env):
+    client, _state = env
+    assert client.get("/api/registry/projects?schedule=bogus").status_code == 400
+
+
 # ---------------------------------------------------------------------------
 # §11 read gate — 404, never 403
 # ---------------------------------------------------------------------------

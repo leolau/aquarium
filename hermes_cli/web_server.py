@@ -13211,6 +13211,30 @@ async def activity_running(request: Request):
     return await asyncio.to_thread(_collect)
 
 
+@app.get("/api/activity/scheduled")
+async def activity_scheduled(request: Request):
+    """What is waiting on time, for agent-home's "Scheduled N" button.
+
+    ``{total, projects, cards, cron_jobs, next_run_at}``, scoped with the
+    same helpers as ``/api/activity/running`` (see
+    ``hermes_cli.activity_running.scheduled_summary``).
+    """
+    from hermes_cli import activity_running as act
+    from hermes_cli.projects_api import _enrolled_profiles, _instance_admin
+
+    empty = {"total": 0, "projects": 0, "cards": 0, "cron_jobs": 0, "next_run_at": None}
+    try:
+        principal = await _comms_resolve_principal(request)
+    except _CommsNotConfigured:
+        # No principal to scope by: count nothing rather than everything.
+        return empty
+    enrolled = (
+        set() if _instance_admin(principal)
+        else await _enrolled_profiles(principal.user_id)
+    )
+    return await asyncio.to_thread(act.scheduled_summary, principal, enrolled)
+
+
 _NEEDS_YOU_PUSH_TASKS: "set[asyncio.Task]" = set()
 
 
