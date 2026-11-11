@@ -171,10 +171,12 @@ SIGNED_IN = {
     # incomings_api: incomings scoped to the caller
     "GET /api/registry/incomings",
     "GET /api/registry/incomings/facets",
+    "GET /api/registry/incomings/attention-count",
     "GET /api/registry/incomings/{item_id}",
     "POST /api/registry/incomings/{item_id}/tags",
     "DELETE /api/registry/incomings/{item_id}/tags/{tag_id}",
     "POST /api/registry/incomings/{item_id}/remember",
+    "POST /api/registry/incomings/{item_id}/attention",
     # todos_api: to-dos scoped to the caller
     "GET /api/registry/todos",
     "GET /api/registry/todos/facets",

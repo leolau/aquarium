@@ -152,3 +152,127 @@ class _NullDb:
 
     def commit(self):
         return None
+
+
+def _stamped(handlers, monkeypatch, result, batch):
+    calls = []
+    module = type(sys)("shared.inbound_registration")
+    module.mark_importance = lambda **kwargs: calls.append(kwargs) or True
+    monkeypatch.setitem(sys.modules, "shared.inbound_registration", module)
+    handlers.stamp_inbox_importance(result, batch)
+    return calls
+
+
+_WA = {"_channel": "whatsapp", "source_phone": "+852", "messages": [{"msg_id": "w1"}]}
+_CAL = {"_channel": "calendar", "account_id": "leo@x", "google_event_id": "evt-1"}
+
+
+def test_an_escalation_needs_the_user_at_its_priority(handlers, monkeypatch):
+    calls = _stamped(
+        handlers, monkeypatch, {"escalate": True, "escalation_priority": "high"}, _WA
+    )
+    assert [(c["attention_reason"], c["attention_priority"]) for c in calls] == [
+        ("escalated", "high")
+    ]
+    calls = _stamped(handlers, monkeypatch, {"escalate": True}, _WA)
+    assert calls[0]["attention_priority"] == "urgent"
+
+
+def test_a_critical_calendar_event_needs_the_user(handlers, monkeypatch):
+    calls = _stamped(handlers, monkeypatch, {"importance": "critical"}, _CAL)
+    assert (calls[0]["attention_reason"], calls[0]["attention_priority"]) == (
+        "critical_event",
+        "urgent",
+    )
+    # A merely important meeting is in the Inbox, not in Incomings.
+    calls = _stamped(handlers, monkeypatch, {"importance": "important"}, _CAL)
+    assert calls[0]["attention_reason"] is None
+
+
+def test_informational_chatter_is_not_flagged(handlers, monkeypatch):
+    calls = _stamped(
+        handlers, monkeypatch, {"classification": "informational"}, dict(_WA)
+    )
+    assert calls and calls[0]["attention_reason"] is None
+    assert calls[0]["importance"] == "informational"
+
+
+def test_a_todo_for_the_arrival_flags_it_even_without_a_verdict(
+    handlers, monkeypatch
+):
+    batch = dict(_WA, _todo_arrivals=[("whatsapp", "+852", "w1", "low"),
+                                      ("whatsapp", "+852", "w1", "high")])
+    calls = _stamped(handlers, monkeypatch, {}, batch)
+    assert [(c["attention_reason"], c["attention_priority"]) for c in calls] == [
+        ("todo", "high")
+    ]
+    assert calls[0]["importance"] == ""
+
+
+def test_escalation_wins_over_a_todo(handlers, monkeypatch):
+    batch = dict(_WA, _todo_arrivals=[("whatsapp", "+852", "w1", "high")])
+    calls = _stamped(
+        handlers, monkeypatch, {"escalate": True, "escalation_priority": "low"}, batch
+    )
+    assert calls[0]["attention_reason"] == "escalated"
+
+
+def _load_registration():
+    sys.path.insert(0, str(REPO_ROOT / "custom"))
+    spec = importlib.util.spec_from_file_location(
+        "_test_inbound_registration",
+        REPO_ROOT / "custom" / "shared" / "inbound_registration.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class _StubRegistry:
+    def __init__(self):
+        self.calls = []
+
+    async def set_importance(self, principal, **kwargs):
+        self.calls.append(("importance", kwargs))
+        return True
+
+    async def flag_attention(self, principal, **kwargs):
+        self.calls.append(("attention", kwargs))
+        return True
+
+
+@pytest.fixture
+def stub_registry(monkeypatch):
+    import hermes_cli.inbound_registry as inbound_registry
+
+    registration = _load_registration()
+    registry = _StubRegistry()
+
+    async def _owner():
+        return object()
+
+    monkeypatch.setattr(registration, "_resolve_owner", _owner)
+    monkeypatch.setattr(inbound_registry, "default_registry", lambda mode: registry)
+    return registration, registry
+
+
+def test_mark_importance_flags_attention_with_its_reason(stub_registry):
+    registration, registry = stub_registry
+    assert registration.mark_importance(
+        surface="email", external_id="<a@m>", account_id="leo@x",
+        importance="high", attention_reason="escalated", attention_priority="high",
+    ) is True
+    assert [kind for kind, _ in registry.calls] == ["importance", "attention"]
+    assert registry.calls[1][1] == {
+        "surface": "email", "external_id": "<a@m>", "account_id": "leo@x",
+        "reason": "escalated", "priority": "high",
+    }
+
+
+def test_mark_importance_without_a_reason_never_flags(stub_registry):
+    registration, registry = stub_registry
+    registration.mark_importance(
+        surface="email", external_id="<a@m>", importance="informational"
+    )
+    assert [kind for kind, _ in registry.calls] == ["importance"]
+    assert registration.mark_importance(surface="email", external_id="<a@m>") is False

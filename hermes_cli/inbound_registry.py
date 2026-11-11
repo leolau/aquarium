@@ -160,6 +160,101 @@ CREATE INDEX IF NOT EXISTS {INBOUND_ITEMS_TABLE}_document_idx
     ON {INBOUND_ITEMS_TABLE} (document_id);
 CREATE INDEX IF NOT EXISTS {INBOUND_ITEMS_TABLE}_search_idx
     ON {INBOUND_ITEMS_TABLE} USING GIN (search_tsv);
+-- "Needs you" (landing Incomings): set by triage, cleared only by the user.
+-- Separate from `importance`, which mixes three channels' vocabularies and
+-- cannot say whether a person still has to look. Never written by register,
+-- so a re-poll keeps both the flag and the user's decision about it.
+ALTER TABLE {INBOUND_ITEMS_TABLE}
+    ADD COLUMN IF NOT EXISTS attention_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS attention_reason TEXT,
+    ADD COLUMN IF NOT EXISTS attention_priority TEXT,
+    ADD COLUMN IF NOT EXISTS attention_cleared_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS attention_cleared_by TEXT,
+    ADD COLUMN IF NOT EXISTS attention_outcome TEXT;
+CREATE INDEX IF NOT EXISTS {INBOUND_ITEMS_TABLE}_attention_idx
+    ON {INBOUND_ITEMS_TABLE} (occurred_at DESC, id DESC)
+    WHERE attention_at IS NOT NULL AND attention_cleared_at IS NULL;
+"""
+
+#: Why triage decided an arrival needs the user.
+ATTENTION_REASONS: tuple[str, ...] = ("escalated", "critical_event", "todo")
+#: How the user handled it. Only an explicit Done / Dismiss clears an item.
+ATTENTION_OUTCOMES: tuple[str, ...] = ("done", "dismissed")
+ATTENTION_PRIORITIES: tuple[str, ...] = ("urgent", "high", "medium", "low")
+#: Open items are filtered with `attention=open|cleared|any`.
+ATTENTION_FILTERS: tuple[str, ...] = ("open", "cleared", "any")
+#: The badge ceiling: "99" reads as "a lot", and the count stays cheap.
+ATTENTION_COUNT_CAP = 99
+
+_PRIORITY_RANK = {"urgent": 4, "high": 3, "medium": 2, "low": 1}
+_REASON_RANK = {"escalated": 3, "critical_event": 2, "todo": 1}
+
+#: The "Urgent" group of the landing tab, in SQL and in Python.
+_URGENT_SQL = (
+    "(attention_reason = 'critical_event' OR (attention_reason = 'escalated'"
+    " AND attention_priority IN ('urgent', 'high')))"
+)
+
+
+def normalize_attention_priority(value: Any) -> Optional[str]:
+    """Triage and the to-do store speak different words for the same rank."""
+    text = str(value or "").strip().lower()
+    return {
+        "urgent": "urgent",
+        "critical": "urgent",
+        "high": "high",
+        "medium": "medium",
+        "normal": "medium",
+        "low": "low",
+    }.get(text)
+
+
+def is_urgent_attention(reason: Optional[str], priority: Optional[str]) -> bool:
+    return reason == "critical_event" or (
+        reason == "escalated" and priority in ("urgent", "high")
+    )
+
+
+def attention_rank(reason: Optional[str], priority: Optional[str]) -> tuple:
+    """Total order over verdicts: the Urgent group first, then priority."""
+    return (
+        1 if is_urgent_attention(reason, priority) else 0,
+        _PRIORITY_RANK.get(priority or "", 0),
+        _REASON_RANK.get(reason or "", 0),
+    )
+
+
+#: One-off backfill, run by :meth:`InboundRegistry.initialize` only on the
+#: migration that adds the attention columns. Before them the only trace of
+#: "needs you" was `importance` (escalation priority, or calendar `critical`)
+#: and the to-dos triage linked to an arrival; without this the landing tab
+#: would start empty until new mail came in.
+ATTENTION_BACKFILL_SQL = f"""
+UPDATE {INBOUND_ITEMS_TABLE}
+   SET attention_at = updated_at,
+       attention_reason = CASE WHEN importance = 'critical'
+                               THEN 'critical_event' ELSE 'escalated' END,
+       attention_priority = CASE WHEN importance = 'critical'
+                                 THEN 'urgent' ELSE importance END
+ WHERE attention_at IS NULL
+   AND importance IN ('urgent', 'high', 'critical')
+"""
+ATTENTION_TODO_BACKFILL_SQL = f"""
+UPDATE {INBOUND_ITEMS_TABLE} AS item
+   SET attention_at = item.updated_at,
+       attention_reason = 'todo',
+       attention_priority = CASE t.priority WHEN 'critical' THEN 'urgent'
+                                            WHEN 'high' THEN 'high'
+                                            WHEN 'low' THEN 'low'
+                                            ELSE 'medium' END
+  FROM (SELECT DISTINCT ON (source_ref) source_ref, priority
+          FROM tasks
+         WHERE source_kind = 'inbound' AND source_ref IS NOT NULL
+           AND stage IN ('staged', 'open')
+      ORDER BY source_ref,
+               CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1
+                             WHEN 'normal' THEN 2 ELSE 3 END) AS t
+ WHERE item.id = t.source_ref AND item.attention_at IS NULL
 """
 
 #: The mirrored columns a re-registration may change, in ``$6``..``$18``
@@ -296,10 +391,20 @@ class InboundItem:
     document_id: Optional[str]
     remembered_at: Optional[datetime]
     remembered_by: Optional[str]
+    attention_at: Optional[datetime] = None
+    attention_reason: Optional[str] = None
+    attention_priority: Optional[str] = None
+    attention_cleared_at: Optional[datetime] = None
+    attention_cleared_by: Optional[str] = None
+    attention_outcome: Optional[str] = None
 
     @property
     def remembered(self) -> bool:
         return self.document_id is not None
+
+    @property
+    def needs_attention(self) -> bool:
+        return self.attention_at is not None and self.attention_cleared_at is None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -332,6 +437,17 @@ class InboundItem:
             ),
             "remembered_by": self.remembered_by,
             "remembered": self.remembered,
+            "attention_at": (
+                self.attention_at.isoformat() if self.attention_at else None
+            ),
+            "attention_reason": self.attention_reason,
+            "attention_priority": self.attention_priority,
+            "attention_cleared_at": (
+                self.attention_cleared_at.isoformat()
+                if self.attention_cleared_at
+                else None
+            ),
+            "attention_outcome": self.attention_outcome,
         }
 
 
@@ -383,6 +499,13 @@ def _row_to_item(row: Any) -> InboundItem:
         document_id=str(row["document_id"]) if row["document_id"] else None,
         remembered_at=row["remembered_at"],
         remembered_by=row["remembered_by"],
+        # `.get`: a row read before the attention migration ran has none.
+        attention_at=row.get("attention_at"),
+        attention_reason=row.get("attention_reason"),
+        attention_priority=row.get("attention_priority"),
+        attention_cleared_at=row.get("attention_cleared_at"),
+        attention_cleared_by=row.get("attention_cleared_by"),
+        attention_outcome=row.get("attention_outcome"),
     )
 
 
@@ -476,6 +599,7 @@ class InboundRegistry:
         own = connection is None
         conn = connection or await self._connect()
         try:
+            needs_attention_backfill = await self._attention_columns_missing(conn)
             await conn.execute(SCHEMA_SQL)
             await initialize_access(conn)
             await conn.execute(ITEM_GRANTS_SCHEMA_SQL)
@@ -494,9 +618,49 @@ class InboundRegistry:
                 await conn.execute(FILE_LINK_SQL)
             except Exception as exc:  # noqa: BLE001
                 log.debug("inbound registry: file link not applied (%s)", exc)
+            if needs_attention_backfill:
+                await self._backfill_attention(conn)
         finally:
             if own:
                 await conn.close()
+
+    @staticmethod
+    async def _attention_columns_missing(conn: "asyncpg.Connection") -> bool:
+        """True only on the run that is about to add the attention columns.
+
+        That makes the backfill one-off without a migrations ledger: once the
+        columns exist, a user's Done is never undone by a later initialize.
+        A brand-new table has nothing to backfill, so it answers False too.
+        """
+        row = await conn.fetchrow(
+            """SELECT to_regclass(current_schema() || $1) IS NOT NULL AS has_table,
+                      EXISTS (SELECT 1 FROM information_schema.columns
+                               WHERE table_schema = current_schema()
+                                 AND table_name = $2
+                                 AND column_name = 'attention_at') AS has_column""",
+            f".{INBOUND_ITEMS_TABLE}",
+            INBOUND_ITEMS_TABLE,
+        )
+        return bool(row and row["has_table"] and not row["has_column"])
+
+    async def _backfill_attention(self, conn: "asyncpg.Connection") -> None:
+        """Flag what already needed the user before the columns existed."""
+        # The table's read policy is FORCEd; the owner role sees every row.
+        migrator = Principal(user_id="hermes-migration", display="", role="owner")
+        try:
+            async with conn.transaction():
+                await bind_principal(conn, migrator)
+                await conn.execute(ATTENTION_BACKFILL_SQL)
+                has_tasks = await conn.fetchval(
+                    "SELECT to_regclass(current_schema() || '.tasks') IS NOT NULL"
+                    " AND EXISTS (SELECT 1 FROM information_schema.columns"
+                    " WHERE table_schema = current_schema()"
+                    " AND table_name = 'tasks' AND column_name = 'source_ref')"
+                )
+                if has_tasks:
+                    await conn.execute(ATTENTION_TODO_BACKFILL_SQL)
+        except Exception as exc:  # noqa: BLE001 - the columns are what matter
+            log.warning("inbound registry: attention backfill skipped (%s)", exc)
 
     async def register(
         self,
@@ -631,6 +795,7 @@ class InboundRegistry:
         until: Optional[datetime] = None,
         remembered: Optional[bool] = None,
         has_attachments: Optional[bool] = None,
+        attention: str = "any",
         include_tags: Sequence[str] = (),
         exclude_tags: Sequence[str] = (),
         tag_match: str = "any",
@@ -688,6 +853,19 @@ class InboundRegistry:
             clauses.append("document_id IS NULL")
         if has_attachments is not None:
             add("has_attachments = {0}", bool(has_attachments))
+        if attention not in ATTENTION_FILTERS:
+            raise ValueError(f"Unknown attention filter: {attention!r}")
+        if attention != "any":
+            # Incomings is the caller's own to-do list, not a view of what a
+            # role or a grant lets them read: only the owner can clear an item,
+            # so listing anybody else's would show rows they cannot act on.
+            add("owner_user_id = {0}", principal.user_id)
+            if attention == "open":
+                clauses.append(
+                    "attention_at IS NOT NULL AND attention_cleared_at IS NULL"
+                )
+            else:
+                clauses.append("attention_cleared_at IS NOT NULL")
 
         own = connection is None
         conn = connection or await self._connect()
@@ -833,6 +1011,195 @@ class InboundRegistry:
                     remembered_by,
                     principal.user_id,
                 )
+        finally:
+            if own:
+                await conn.close()
+        return _row_to_item(row) if row else None
+
+    async def attention_count(
+        self,
+        principal: Principal,
+        *,
+        connection: Optional["asyncpg.Connection"] = None,
+    ) -> dict[str, Any]:
+        """Open "needs you" items for the landing badge, capped for display.
+
+        One grouped read off the partial attention index; the caller's own
+        items only, matching ``list(attention="open")``.
+        """
+        own = connection is None
+        conn = connection or await self._connect()
+        try:
+            async with conn.transaction():
+                await bind_principal(conn, principal)
+                rows = await conn.fetch(
+                    f"""SELECT surface, COUNT(*) AS total,
+                               COUNT(*) FILTER (WHERE {_URGENT_SQL}) AS urgent
+                          FROM {INBOUND_ITEMS_TABLE}
+                         WHERE attention_at IS NOT NULL
+                           AND attention_cleared_at IS NULL
+                           AND owner_user_id = $1
+                      GROUP BY surface""",
+                    principal.user_id,
+                )
+        finally:
+            if own:
+                await conn.close()
+        cap = ATTENTION_COUNT_CAP
+        return {
+            "count": min(sum(int(r["total"]) for r in rows), cap),
+            "urgent": min(sum(int(r["urgent"]) for r in rows), cap),
+            "by_surface": {
+                str(r["surface"]): min(int(r["total"]), cap)
+                for r in sorted(rows, key=lambda r: (-int(r["total"]), r["surface"]))
+            },
+        }
+
+    async def flag_attention(
+        self,
+        principal: Principal,
+        *,
+        surface: str,
+        external_id: str,
+        account_id: str = "",
+        reason: str,
+        priority: Optional[str] = None,
+        connection: Optional["asyncpg.Connection"] = None,
+    ) -> bool:
+        """Record that triage thinks this arrival needs the user.
+
+        Addressed like :meth:`set_importance`. An open flag keeps its time and
+        is only upgraded by a verdict that ranks higher. A cleared item stays
+        cleared unless the new verdict ranks higher than the one the user
+        already handled (a dismissed meeting rescheduled into a conflict).
+        Returns whether anything changed.
+        """
+        if reason not in ATTENTION_REASONS:
+            raise ValueError(f"Unknown attention reason: {reason!r}")
+        level = normalize_attention_priority(priority)
+        own = connection is None
+        conn = connection or await self._connect()
+        try:
+            async with conn.transaction():
+                await bind_principal(conn, principal)
+                row = await conn.fetchrow(
+                    f"""SELECT id, attention_at, attention_reason,
+                               attention_priority, attention_cleared_at
+                          FROM {INBOUND_ITEMS_TABLE}
+                         WHERE owner_user_id = $1 AND surface = $2
+                           AND account_id = $3 AND external_id = $4
+                           FOR UPDATE""",
+                    principal.user_id,
+                    surface,
+                    account_id or "",
+                    str(external_id),
+                )
+                if row is None:
+                    return False
+                higher = attention_rank(reason, level) > attention_rank(
+                    row["attention_reason"], row["attention_priority"]
+                )
+                if row["attention_at"] is None:
+                    sql = """attention_at = NOW(), attention_reason = $2,
+                             attention_priority = $3"""
+                elif row["attention_cleared_at"] is not None and higher:
+                    sql = """attention_at = NOW(), attention_reason = $2,
+                             attention_priority = $3,
+                             attention_cleared_at = NULL,
+                             attention_cleared_by = NULL,
+                             attention_outcome = NULL"""
+                elif row["attention_cleared_at"] is None and higher:
+                    sql = "attention_reason = $2, attention_priority = $3"
+                else:
+                    return False
+                await conn.execute(
+                    f"""UPDATE {INBOUND_ITEMS_TABLE}
+                           SET {sql}, updated_at = NOW()
+                         WHERE id = $1""",
+                    row["id"],
+                    reason,
+                    level,
+                )
+                return True
+        finally:
+            if own:
+                await conn.close()
+
+    async def clear_attention(
+        self,
+        principal: Principal,
+        item_id: str,
+        *,
+        outcome: str,
+        connection: Optional["asyncpg.Connection"] = None,
+    ) -> Optional[InboundItem]:
+        """The user handled it (Done / Dismiss). Owner-only, like remember.
+
+        ``None`` when the id is malformed or not the caller's own item. An
+        item triage never flagged is returned unchanged: there is nothing to
+        clear, and a Done on it should not invent a flag.
+        """
+        if outcome not in ATTENTION_OUTCOMES:
+            raise ValueError(f"Unknown attention outcome: {outcome!r}")
+        return await self._write_attention(
+            principal,
+            item_id,
+            """attention_cleared_at = NOW(), attention_cleared_by = $3,
+               attention_outcome = $4""",
+            (principal.user_id, outcome),
+            connection=connection,
+        )
+
+    async def reopen_attention(
+        self,
+        principal: Principal,
+        item_id: str,
+        *,
+        connection: Optional["asyncpg.Connection"] = None,
+    ) -> Optional[InboundItem]:
+        """Undo a Done / Dismiss: the item needs the user again."""
+        return await self._write_attention(
+            principal,
+            item_id,
+            """attention_cleared_at = NULL, attention_cleared_by = NULL,
+               attention_outcome = NULL""",
+            (),
+            connection=connection,
+        )
+
+    async def _write_attention(
+        self,
+        principal: Principal,
+        item_id: str,
+        assignments: str,
+        values: tuple,
+        *,
+        connection: Optional["asyncpg.Connection"] = None,
+    ) -> Optional[InboundItem]:
+        if not is_uuid(item_id):
+            return None
+        own = connection is None
+        conn = connection or await self._connect()
+        try:
+            async with conn.transaction():
+                await bind_principal(conn, principal)
+                row = await conn.fetchrow(
+                    f"""UPDATE {INBOUND_ITEMS_TABLE}
+                           SET {assignments}, updated_at = NOW()
+                         WHERE id = $1::uuid AND owner_user_id = $2
+                           AND attention_at IS NOT NULL
+                     RETURNING *""",
+                    item_id,
+                    principal.user_id,
+                    *values,
+                )
+                if row is None:
+                    row = await conn.fetchrow(
+                        f"""SELECT * FROM {INBOUND_ITEMS_TABLE}
+                             WHERE id = $1::uuid AND owner_user_id = $2""",
+                        item_id,
+                        principal.user_id,
+                    )
         finally:
             if own:
                 await conn.close()

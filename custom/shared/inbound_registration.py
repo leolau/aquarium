@@ -98,15 +98,21 @@ def mark_importance(
     surface: str,
     external_id: str,
     account_id: Optional[str] = None,
-    importance: str,
+    importance: str = "",
+    attention_reason: Optional[str] = None,
+    attention_priority: Optional[str] = None,
 ) -> bool:
     """Stamp a triage verdict onto an arrival. Never raises.
 
     Separate from :func:`register_item` because triage runs long after the
     message landed and holds only the classification — re-registering from
     there would rewrite the body and provenance from a stale batch file.
+
+    ``attention_reason`` (``escalated`` / ``critical_event`` / ``todo``) also
+    flags the arrival for the landing Incomings tab; see
+    :meth:`InboundRegistry.flag_attention` for how a repeat verdict is kept.
     """
-    if not surface or not external_id or not importance:
+    if not surface or not external_id or not (importance or attention_reason):
         return False
     try:
         from hermes_cli.inbound_registry import default_registry
@@ -115,13 +121,27 @@ def mark_importance(
             principal = await _resolve_owner()
             if principal is None:
                 return False
-            return await default_registry("prod").set_importance(
-                principal,
-                surface=surface,
-                external_id=external_id,
-                account_id=account_id or "",
-                importance=importance,
-            )
+            registry = default_registry("prod")
+            stamped = False
+            if importance:
+                stamped = await registry.set_importance(
+                    principal,
+                    surface=surface,
+                    external_id=external_id,
+                    account_id=account_id or "",
+                    importance=importance,
+                )
+            if attention_reason:
+                flagged = await registry.flag_attention(
+                    principal,
+                    surface=surface,
+                    external_id=external_id,
+                    account_id=account_id or "",
+                    reason=attention_reason,
+                    priority=attention_priority,
+                )
+                stamped = stamped or flagged
+            return stamped
 
         return asyncio.run(_do())
     except Exception as exc:

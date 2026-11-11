@@ -145,6 +145,13 @@ def _handle_todos(todos, batch, db):
             external_id=external_id,
             actor=f'skill:{channel}-triage',
         )
+        if recorded and arrivals:
+            # Read by stamp_inbox_importance: a to-do linked to an arrival is
+            # one of the reasons it shows in the landing Incomings tab.
+            batch.setdefault('_todo_arrivals', []).append(
+                (surface, account_id, external_id,
+                 candidate.get('priority', 'medium'))
+            )
         if recorded and recorded.get('created'):
             print(f"[triage] Staged to-do ({recorded['stage']}): {title}")
 
@@ -341,6 +348,44 @@ def _triaged_arrivals(batch):
     return []
 
 
+_ATTENTION_PRIORITY = {
+    'urgent': 'urgent', 'critical': 'urgent', 'high': 'high',
+    'medium': 'medium', 'normal': 'medium', 'low': 'low',
+}
+_ATTENTION_PRIORITY_RANK = {'urgent': 4, 'high': 3, 'medium': 2, 'low': 1}
+
+
+def _attention_priority(value, default=None):
+    return _ATTENTION_PRIORITY.get(str(value or '').strip().lower(), default)
+
+
+def _triage_attention(result, batch, arrival):
+    """`(reason, priority)` when this verdict means the user must look, else None.
+
+    One rule for the landing Incomings tab: escalated, a critical calendar
+    event, or a to-do created for the arrival. Everything else (informational
+    chatter, newsletters) is in the Inbox but does not ask for the user. The
+    registry keeps the highest verdict, so returning the strongest one here
+    is enough.
+    """
+    if result.get('escalate'):
+        return 'escalated', _attention_priority(
+            result.get('escalation_priority'), 'urgent')
+    if (batch.get('_channel') == 'calendar'
+            and str(result.get('importance') or '').lower() == 'critical'):
+        return 'critical_event', 'urgent'
+    priorities = [
+        _attention_priority(priority, 'medium')
+        for surface, account_id, external_id, priority
+        in batch.get('_todo_arrivals') or []
+        if (surface, account_id, external_id) == arrival
+    ]
+    if priorities:
+        return 'todo', max(
+            priorities, key=lambda p: _ATTENTION_PRIORITY_RANK.get(p, 0))
+    return None
+
+
 def stamp_inbox_importance(result, batch):
     """Mirror the triage verdict onto the arrivals in the shared registry.
 
@@ -349,18 +394,27 @@ def stamp_inbox_importance(result, batch):
     without the urgency filter finding it.
     """
     importance = _triage_importance(result)
-    if not importance:
+    arrivals = _triaged_arrivals(batch)
+    attention = {arrival: _triage_attention(result, batch, arrival)
+                 for arrival in arrivals}
+    if not importance and not any(attention.values()):
         return
     try:
         from shared.inbound_registration import mark_importance
     except ImportError:
         return
-    for surface, account_id, external_id in _triaged_arrivals(batch):
+    for arrival in arrivals:
+        surface, account_id, external_id = arrival
+        reason, priority = attention[arrival] or (None, None)
+        if not importance and reason is None:
+            continue
         mark_importance(
             surface=surface,
             external_id=external_id,
             account_id=account_id,
             importance=importance,
+            attention_reason=reason,
+            attention_priority=priority,
         )
 
 

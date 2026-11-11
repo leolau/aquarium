@@ -40,6 +40,7 @@ from hermes_cli.access import (
     apply_item_grants_rls,
     apply_scope_rls,
     initialize_access,
+    is_uuid,
     normalize_visibility,
     scope_filter,
     ITEM_GRANTS_SCHEMA_SQL,
@@ -1200,6 +1201,47 @@ class TodoStore:
         finally:
             if own:
                 await conn.close()
+
+    async def live_counts_by_source(
+        self,
+        principal: Principal,
+        source_kind: str,
+        source_refs: Sequence[str],
+        *,
+        connection: Optional["asyncpg.Connection"] = None,
+    ) -> dict[str, int]:
+        """Live to-dos per ``source_ref``, for one page of sources at once.
+
+        One grouped read on ``tasks_source_idx`` instead of a count per row;
+        refs with no live to-do are absent from the result.
+        """
+        refs = [ref for ref in dict.fromkeys(source_refs) if is_uuid(ref)]
+        if not refs:
+            return {}
+        predicate = scope_filter(
+            principal,
+            start_index=4,
+            grant_item_kind=GRANT_ITEM_KIND,
+            id_column=GRANT_ID_COLUMN,
+        )
+        own = connection is None
+        conn = connection or await self._connect()
+        try:
+            rows = await conn.fetch(
+                f"""SELECT source_ref, COUNT(*) AS count
+                      FROM {TASKS_TABLE}
+                     WHERE source_kind = $1 AND source_ref = ANY($2::uuid[])
+                       AND stage = ANY($3::text[]) AND {predicate.sql}
+                  GROUP BY source_ref""",
+                source_kind,
+                refs,
+                list(LIVE_STAGES),
+                *predicate.params,
+            )
+        finally:
+            if own:
+                await conn.close()
+        return {str(r["source_ref"]): int(r["count"]) for r in rows}
 
     async def history(
         self,
