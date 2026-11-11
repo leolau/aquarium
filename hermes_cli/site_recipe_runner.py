@@ -2077,10 +2077,11 @@ def run_recipe(
             capped = False
             try:
                 for count, item in enumerate(extraction, 1):
-                    yield item
-                    if row_limit and count >= row_limit:
+                    if row_limit and count > row_limit:
                         capped = True
+                        report.rows[name] -= 1  # counted, not yielded
                         break
+                    yield item
             except LoginFailed:
                 raise
             except Exception as exc:

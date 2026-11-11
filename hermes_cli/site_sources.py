@@ -2781,15 +2781,61 @@ def compact_inventory(inv: Mapping[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def _scrub(data: Dict[str, Any], credential: Any) -> Dict[str, Any]:
-    """``data`` with the login's password masked wherever a page echoed it."""
+def _scrub(data: Any, credential: Any) -> Any:
+    """``data`` with the login's password masked wherever a page echoed it.
+
+    A very short password is masked as a whole word only, so it does not
+    blank out every matching letter of the page.
+    """
     payload = getattr(credential, "payload", credential)
     password = str((payload or {}).get("password") or "") if isinstance(payload, Mapping) else ""
-    if len(password) < 3:
+    if not password:
         return data
-    text = json.dumps(data, ensure_ascii=False, default=str)
-    escaped = json.dumps(password, ensure_ascii=False)[1:-1]
-    return json.loads(text.replace(escaped, "***")) if escaped in text else data
+    pattern = re.compile(re.escape(password) if len(password) >= 3 else rf"(?<!\w){re.escape(password)}(?!\w)")
+
+    def walk(value: Any) -> Any:
+        if isinstance(value, str):
+            return pattern.sub("***", value)
+        if isinstance(value, Mapping):
+            return {walk(k): walk(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [walk(v) for v in value]
+        return value
+
+    return walk(data)
+
+
+def _in_study_thread(fn: Callable[[], Dict[str, Any]]) -> "asyncio.Future[Dict[str, Any]]":
+    """Run ``fn`` on its own thread, which holds the study lock until the browser is done.
+
+    The caller may give up (cancelled tool call); the lock still guards the
+    browser that is running.
+    """
+    loop = asyncio.get_running_loop()
+    done: asyncio.Future[Dict[str, Any]] = loop.create_future()
+
+    def settle(result: Any, error: Optional[BaseException]) -> None:
+        if done.done():
+            return
+        if error is not None:
+            done.set_exception(error)
+        else:
+            done.set_result(result)
+
+    def work() -> None:
+        result: Any = None
+        error: Optional[BaseException] = None
+        try:
+            result = fn()
+        except BaseException as exc:  # noqa: BLE001 - handed to the awaiting side
+            error = exc
+        finally:
+            _study_busy.release()
+        with contextlib.suppress(RuntimeError):  # the loop is gone: nobody waits any more
+            loop.call_soon_threadsafe(settle, result, error)
+
+    threading.Thread(target=work, name="site-study", daemon=True).start()
+    return done
 
 
 async def _study(fn: Callable[[], Dict[str, Any]]) -> Dict[str, Any]:
@@ -2797,18 +2843,20 @@ async def _study(fn: Callable[[], Dict[str, Any]]) -> Dict[str, Any]:
         raise SiteError("another site explore/preview is running; try again when it has finished", 409)
     try:
         runner = _runner_module()
-        try:
-            return await asyncio.to_thread(fn)
-        except runner.LoginFailed as exc:
-            raise SiteError(
-                f"login failed: {exc}. Fix the login selectors once; ask the person before trying "
-                "again (accounts lock).", 400) from None
-        except runner.BrowserNotInstalled as exc:
-            raise SiteError(str(exc), 503) from None
-        except runner.RecipeError as exc:
-            raise SiteError(str(exc), 400) from None
-    finally:
+        future = _in_study_thread(fn)
+    except BaseException:
         _study_busy.release()
+        raise
+    try:
+        return await future
+    except runner.LoginFailed as exc:
+        raise SiteError(
+            f"login failed: {exc}. Fix the login selectors once; ask the person before trying "
+            "again (accounts lock).", 400) from None
+    except runner.BrowserNotInstalled as exc:
+        raise SiteError(str(exc), 503) from None
+    except runner.RecipeError as exc:
+        raise SiteError(str(exc), 400) from None
 
 
 async def explore_site(
@@ -2845,13 +2893,20 @@ async def explore_site(
         pages = []
         size = 0
         for name, inv in runner.browse(recipe, plan, credential, report=report, allow_private=allow_private):
-            page: Dict[str, Any] = {"name": name, "summary": runner.inventory_summary(name, inv)}
+            page: Dict[str, Any] = {"name": name}
+            summary = runner.inventory_summary(name, inv)[:4000]
             detail = compact_inventory(inv)
-            size += len(json.dumps(detail, ensure_ascii=False, default=str)) + len(page["summary"])
-            if size <= STUDY_MAX_CHARS:
-                page["inventory"] = detail
+            if size + len(summary) > STUDY_MAX_CHARS:
+                page["omitted"] = "answer size cap; explore fewer pages per call"
             else:
-                page["inventory_omitted"] = "answer size cap; explore fewer pages per call"
+                size += len(summary)
+                page["summary"] = summary
+                detail_size = len(json.dumps(detail, ensure_ascii=False, default=str))
+                if size + detail_size <= STUDY_MAX_CHARS:
+                    size += detail_size
+                    page["inventory"] = detail
+                else:
+                    page["inventory_omitted"] = "answer size cap; explore fewer pages per call"
             pages.append(page)
         return {"login": login_used, "pages": pages, "blocked_requests": report.blocked_requests[:30]}
 

@@ -259,5 +259,8 @@ def test_site_db_preview_dry_runs_with_a_row_cap(gateway_site):
                                   "duplicate_keys": 0}
     assert ents["about"]["rows"] == 1
     assert "orders" not in out["cursors"]
+    exact = _tool("alice", action="preview", site="fixture", recipe=dict(RECIPE, base_url=gateway_site.base_url),
+                  entities=["warehouses"], max_rows=3)
+    assert exact["entities"]["warehouses"]["capped"] is False and exact["entities"]["warehouses"]["full_load"] is True
     assert fx.PASSWORD not in json.dumps(out)
     assert gateway_site.state.forbidden_hits == []

@@ -245,3 +245,63 @@ def test_explore_output_is_capped_and_masks_the_password(monkeypatch):
     with pytest.raises(ss.SiteError, match="at most"):
         asyncio.run(ss.explore_site(SITE, Principal(user_id="alice", display="alice", role="member"),
                                     goto=[f"/p{i}" for i in range(21)]))
+
+
+def test_a_cancelled_study_keeps_the_lock_until_its_browser_is_done(monkeypatch):
+    import threading
+
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+
+    def browse(recipe, probes, credential, **kw):
+        started.set()
+        release.wait(5)
+        finished.set()
+        yield "home", {"url": "/"}
+
+    _with_runner(monkeypatch, browse=browse)
+
+    async def saved(site):
+        return {"username": "u", "password": "pw-secret"}
+
+    monkeypatch.setattr(ss, "load_login", saved)
+    from hermes_cli.access import Principal
+
+    me = Principal(user_id="alice", display="alice", role="member")
+
+    async def go():
+        first = asyncio.create_task(ss.explore_site(SITE, me, recipe={"login": {}}, goto=["/"]))
+        await asyncio.to_thread(started.wait, 5)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        with pytest.raises(ss.SiteError, match="another site explore/preview"):
+            await ss.explore_site(SITE, me, recipe={"login": {}}, goto=["/"])
+        release.set()
+        await asyncio.to_thread(finished.wait, 5)
+        for _ in range(100):
+            if not ss._study_busy.locked():
+                break
+            await asyncio.sleep(0.01)
+        return await ss.explore_site(SITE, me, recipe={"login": {}}, goto=["/"])
+
+    assert asyncio.run(go())["pages"]
+
+
+def test_scrub_masks_short_passwords_as_words():
+    assert ss._scrub({"a": "user ab said", "b": ["abc"]}, {"password": "ab"}) == {"a": "user *** said", "b": ["abc"]}
+    assert ss._scrub({"t": "x-secret-y"}, {"password": "secret"}) == {"t": "x-***-y"}
+    assert ss._scrub({"t": "ok"}, None) == {"t": "ok"}
+
+
+def test_page_summaries_count_towards_the_explore_cap(monkeypatch):
+    def browse(recipe, probes, credential, **kw):
+        for probe in probes:
+            yield probe["name"], {"url": "/", "title": "t" * 5000, "headings": ["h" * 5000] * 20}
+
+    _with_runner(monkeypatch, browse=browse)
+    from hermes_cli.access import Principal
+
+    out = asyncio.run(ss.explore_site(SITE, Principal(user_id="alice", display="alice", role="member"),
+                                      goto=[f"/p{i}" for i in range(20)]))
+    assert len(json.dumps(out)) < ss.STUDY_MAX_CHARS * 1.2
+    assert "omitted" in out["pages"][-1] and "summary" not in out["pages"][-1]
