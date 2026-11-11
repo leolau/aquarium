@@ -106,12 +106,7 @@
     "error": "無法載入此項目的技能。",
     "retry": "重試",
     "hiddenProfiles": "{profiles} 的技能已隱藏：你沒有該設定檔的權限。",
-    "footnote": "次數只計算此項目的卡片執行；整體數字請到「技能」頁查看。",
-    "placeholder": {
-      "createTitle": "用 AI 新增技能",
-      "createBody": "描述你需要的技能，AI 會起草一個停用的草稿，你可在「版本」分頁試用。",
-      "openSkills": "開啟技能"
-    }
+    "footnote": "次數只計算此項目的卡片執行；整體數字請到「技能」頁查看。"
   },
   "skillImprove": {
     "evidenceChip": "證據：項目 {name}",
@@ -147,5 +142,39 @@
     "changesOnly": "只顯示改動",
     "send": "傳送",
     "sending": "正在傳送…"
+  },
+  "createSkill": {
+    "title": "用 AI 建立新技能",
+    "context": "專案 {project} · 設定檔 {profile}",
+    "fromRetro": "由回顧建議",
+    "goalLabel": "這個技能要做甚麼？",
+    "goalPlaceholder": "例如：以我們的語氣撰寫週一摘要，並在結尾列出來源。",
+    "cardsLabel": "從這個專案的卡片學習",
+    "loadingCards": "正在載入卡片…",
+    "noCards": "尚未有已完成的卡片——請改為描述這個技能。",
+    "draftNote": "代理會起草一份 SKILL.md，並儲存為已停用的草稿；你可在技能的「版本」分頁試用並啟用。",
+    "draftIt": "起草",
+    "drafting": "起草中…",
+    "firstTurn": "請根據以上內容起草這個技能。",
+    "chatLabel": "與代理對話",
+    "thinking": "代理正在撰寫…",
+    "draftLabel": "建議的 SKILL.md",
+    "nameLabel": "名稱",
+    "categoryLabel": "類別",
+    "categoryPlaceholder": "選填",
+    "draftBadge": "v1 · 草稿",
+    "nameInvalid": "請使用小寫字母、數字、「-」、「.」或「_」（最多 64 個字元）。",
+    "messageLabel": "傳訊息給代理",
+    "messagePlaceholder": "提出修改…",
+    "send": "傳送",
+    "saveDraft": "儲存為草稿",
+    "saving": "儲存中…",
+    "cancel": "取消",
+    "done": "完成",
+    "savedTitle": "{name} 已儲存為停用的草稿",
+    "savedBody": "目前沒有代理使用它。開啟它的「版本」分頁試用 v1 並啟用。",
+    "enableFromVersions": "在「版本」中啟用",
+    "preload": "在這個專案的執行中預先載入",
+    "preloaded": "已在這個專案的執行中預先載入（技能啟用後才會使用）。"
   }
 }

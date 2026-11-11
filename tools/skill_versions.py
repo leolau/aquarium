@@ -541,6 +541,11 @@ def ensure_baseline(name: str, *, skill_dir: Optional[Path] = None) -> Optional[
         live = Path(skill_dir) if skill_dir else _find_live_dir(name, index)
         if live is None or not (live / "SKILL.md").is_file() or _rel_live_path(live) is None:
             return None
+        if index.get("draft_only") and not index.get("active"):
+            sha = _folder_sha256(live)
+            if any(v.get("sha256") == sha for v in index["versions"]):
+                return None
+            index.pop("draft_only", None)
         if index["versions"]:
             message, source = "Changes made outside the version history", "edit"
         else:
@@ -642,6 +647,8 @@ def create_draft(
     with _skill_lock(name):
         index = _read_index(name)
         active = _find_meta(index, index.get("active") or "")
+        if active is None and index.get("draft_only") and index["versions"]:
+            active = max(index["versions"], key=lambda v: int(v.get("n") or 0))
         if active is None:
             raise SkillVersionNotFound(f"Skill '{name}' not found.")
         parent = active
@@ -672,6 +679,55 @@ def create_draft(
         return _public_meta(meta)
 
 
+def record_initial_draft(
+    name: str,
+    *,
+    author: str,
+    message: str = "",
+    source: str = "create",
+) -> Dict[str, Any]:
+    """Record a just-created live folder as draft ``v1`` of a draft-only skill.
+
+    The skill has no active version until one is activated from the Versions
+    tab; :func:`ensure_baseline` leaves it alone meanwhile. The caller keeps
+    the skill disabled until then.
+    """
+    validate_name(name)
+    _validate_author(author)
+    if source not in SOURCES:
+        raise SkillVersionError("Invalid version source.")
+    with _skill_lock(name):
+        index = _read_index(name)
+        if index["versions"]:
+            raise SkillVersionError(f"Skill '{name}' already has a version history.")
+        live = _find_live_dir(name, index)
+        rel = _rel_live_path(live) if live is not None else None
+        if live is None or rel is None or not (live / "SKILL.md").is_file():
+            raise SkillVersionNotFound(f"Skill '{name}' not found.")
+        meta = _new_version_from_folder(
+            name, index, live,
+            author=author, message=_clean_message(message), source=source,
+            status=STATUS_DRAFT, parent=None,
+        )
+        if meta is None:
+            raise SkillVersionError("Skill folder is too large to version.")
+        index["active"] = None
+        index["live_path"] = rel
+        index["draft_only"] = True
+        _write_index(name, index)
+        return _public_meta(meta)
+
+
+def is_draft_only(name: str) -> bool:
+    """Whether ``name`` was created as a draft and never activated."""
+    try:
+        validate_name(name)
+        index = _read_index(name)
+    except Exception:
+        return False
+    return bool(index.get("draft_only")) and not index.get("active")
+
+
 def list_versions(name: str) -> List[Dict[str, Any]]:
     """Every stored version of ``name``, oldest first (ascending ``n``)."""
     validate_name(name)
@@ -686,7 +742,10 @@ def index_payload(name: str) -> Dict[str, Any]:
     """``{"name", "active", "versions"}`` — the HTTP list shape."""
     validate_name(name)
     index = _read_index(name)
-    return {"name": name, "active": index.get("active"), "versions": list_versions(name)}
+    out = {"name": name, "active": index.get("active"), "versions": list_versions(name)}
+    if index.get("draft_only") and not index.get("active"):
+        out["draft_only"] = True
+    return out
 
 
 def current_version_id(name: str) -> Optional[str]:
@@ -837,6 +896,7 @@ def activate(
         _swap_into_live(name, _version_dir(name, version_id), live)
 
         _make_active(index, target)
+        index.pop("draft_only", None)
         target["trial_of"] = previous if (trial and previous) else None
         rel = _rel_live_path(live)
         if rel:

@@ -24,7 +24,7 @@ export function Sheet({
   footer?: ReactNode;
   side?: boolean;
   wide?: boolean;
-  /** Near full-screen on desktop (e.g. a maximized panel). */
+  /** Near full-screen on desktop (e.g. a maximized panel) and full-height on phones. */
   full?: boolean;
   /** Fill the whole screen on phones instead of the bottom-sheet height. */
   mobileFull?: boolean;
@@ -51,7 +51,7 @@ export function Sheet({
     : "sm:items-center sm:p-4";
   const panel = side
     ? "sm:h-full sm:max-w-md sm:rounded-none sm:border-y-0 sm:border-r-0"
-    : `sm:rounded-2xl ${full ? "sm:h-[90vh] sm:max-w-5xl" : wide ? "sm:max-w-2xl" : "sm:max-w-lg"}`;
+    : `sm:rounded-2xl ${full ? "h-[92vh] sm:h-[90vh] sm:max-w-5xl" : wide ? "sm:max-w-2xl" : "sm:max-w-lg"}`;
 
   return (
     <div

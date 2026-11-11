@@ -131,10 +131,29 @@ async def activate_skill_version(
     body: ActivateRequest, request: Request, profile: Optional[str] = None
 ) -> dict:
     author = await acting_author(request)
-    return await _in_profile(
-        body.profile or profile,
-        lambda: skill_versions.activate(body.name, body.id, author=author, trial=body.trial),
-    )
+
+    def _work() -> dict:
+        was_draft_only = skill_versions.is_draft_only(body.name)
+        out = skill_versions.activate(body.name, body.id, author=author, trial=body.trial)
+        if was_draft_only:
+            _enable_skill(body.name)
+            out["enabled"] = True
+        return out
+
+    return await _in_profile(body.profile or profile, _work)
+
+
+def _enable_skill(name: str) -> None:
+    """Take a draft-only skill off the profile's disabled list once activated."""
+    from hermes_cli.config import load_config
+    from hermes_cli.skills_config import get_disabled_skills, save_disabled_skills
+
+    config = load_config()
+    disabled = get_disabled_skills(config)
+    if name in disabled:
+        disabled.discard(name)
+        save_disabled_skills(config, disabled)
+    skill_versions._clear_prompt_cache()
 
 
 def record_dashboard_baseline(name: str) -> None:

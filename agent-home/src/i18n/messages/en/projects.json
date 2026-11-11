@@ -106,12 +106,7 @@
     "error": "Couldn't load this project's skills.",
     "retry": "Try again",
     "hiddenProfiles": "Skills from {profiles} are hidden: you don't have access to that profile.",
-    "footnote": "Counts only include this project's card runs. Global numbers stay on the Skills page.",
-    "placeholder": {
-      "createTitle": "New skill with AI",
-      "createBody": "Describe the skill you need and AI drafts it as a disabled draft you can trial from the Versions tab.",
-      "openSkills": "Open Skills"
-    }
+    "footnote": "Counts only include this project's card runs. Global numbers stay on the Skills page."
   },
   "skillImprove": {
     "evidenceChip": "Evidence: project {name}",
@@ -147,5 +142,39 @@
     "changesOnly": "Show changes only",
     "send": "Send",
     "sending": "Sending…"
+  },
+  "createSkill": {
+    "title": "New skill with AI",
+    "context": "Project {project} · profile {profile}",
+    "fromRetro": "Suggested by a retro",
+    "goalLabel": "What should the skill do?",
+    "goalPlaceholder": "e.g. Write the Monday digest in our voice, with the sources listed at the end.",
+    "cardsLabel": "Learn from these cards in this project",
+    "loadingCards": "Loading cards…",
+    "noCards": "No finished cards yet — describe the skill instead.",
+    "draftNote": "The agent drafts a SKILL.md. It is saved as a disabled draft; you trial and enable it from the skill's Versions tab.",
+    "draftIt": "Draft it",
+    "drafting": "Drafting…",
+    "firstTurn": "Draft the skill from the context above.",
+    "chatLabel": "Chat with the agent",
+    "thinking": "The agent is writing…",
+    "draftLabel": "Proposed SKILL.md",
+    "nameLabel": "Name",
+    "categoryLabel": "Category",
+    "categoryPlaceholder": "optional",
+    "draftBadge": "v1 · draft",
+    "nameInvalid": "Use lowercase letters, digits, '-', '.' or '_' (up to 64 characters).",
+    "messageLabel": "Message the agent",
+    "messagePlaceholder": "Ask for changes…",
+    "send": "Send",
+    "saveDraft": "Save as draft",
+    "saving": "Saving…",
+    "cancel": "Cancel",
+    "done": "Done",
+    "savedTitle": "{name} saved as a disabled draft",
+    "savedBody": "No agent uses it yet. Open its Versions tab to try v1 and enable it.",
+    "enableFromVersions": "Enable from Versions",
+    "preload": "Preload in this project's runs",
+    "preloaded": "Preloaded in this project's runs (used once the skill is enabled)."
   }
 }

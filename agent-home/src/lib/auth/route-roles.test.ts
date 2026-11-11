@@ -131,7 +131,7 @@ describe("agent-home BFF route roles", () => {
     // Mirrors the Python gates (`route_roles.SKILLS_*`); browsing the hub is sign-in only.
     for (const [key, role] of Object.entries(roles)) {
       if (!key.includes(" /api/skills")) continue;
-      const lab = /\/api\/skills\/(usage|versions|improve)/.test(key);
+      const lab = /\/api\/skills\/(usage|versions|improve|create)/.test(key);
       const view = /^GET \/api\/skills(\/content)?$/.test(key);
       const browse = /^GET \/api\/skills\/hub\/(sources|search|preview|scan)$/.test(key);
       expect(role, key).toBe(browse ? "signed-in" : lab ? "skill:lab" : view ? "skill:view" : "skill:manage");

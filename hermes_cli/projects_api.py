@@ -5197,6 +5197,14 @@ async def patch_tools_route(request: Request) -> dict[str, Any]:
             with projects_db.connect_closing() as conn:
                 host = projects_run.host_profile_name(conn, project.id)
             known = projects_run._available_skill_names(host or "") or None
+            if known is not None:
+                # A disabled draft written here ("New skill with AI") can be
+                # preloaded now; the spawn drops it until it is enabled.
+                with projects_db.connect_closing() as conn:
+                    known = known + [
+                        r["name"] for r in projects_db.list_created_skills(conn, project.id)
+                        if r["profile"] == (host or "")
+                    ]
             names = [str(s).strip() for s in (body.get("skills") or []) if str(s).strip()]
             _reject_bad_names(names, "skill")
             if known is not None:
