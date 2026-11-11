@@ -19,6 +19,9 @@
     "collapseTasks": "Collapse Needs you and tasks panel",
     "expandTasks": "Expand Needs you and tasks panel",
     "chats": "Chats",
-    "tasks": "Needs you"
+    "tasks": "Needs you",
+    "chatsAndIncomings": "Chats & incomings",
+    "incomingsWaiting": "{count} incomings waiting",
+    "sidebarTabs": "Left panel"
   }
 }

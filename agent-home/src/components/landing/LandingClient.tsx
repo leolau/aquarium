@@ -2,22 +2,32 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Sheet } from "@/components/ui/Sheet";
 import { useActivityRunning } from "@/components/ui/useActivityRunning";
 import { useStatusSummary } from "@/components/ui/useStatusSummary";
 import { useIdleRedirect } from "@/lib/aquarium/useIdleRedirect";
 import { useNeedsYou } from "@/lib/landing/needsYou";
+import {
+  attentionErrorKey,
+  incomingSender,
+  incomingTitle,
+  useIncomings,
+  useIncomingsAttention,
+} from "@/lib/landing/incomings";
+import { UNDO_MS, useUndoToast } from "@/components/ui/UndoToast";
+import { useT } from "@/i18n";
 import type { ProfileRole } from "@/lib/api/my-profiles";
-import type { ProfileSummary, Role } from "@/types";
+import type { IncomingItem, ProfileSummary, Role } from "@/types";
 
-import { ChatsDrawer, ChatsSidebar } from "./chats";
+import { ChatsDrawer, ChatsSidebar, useLeftPanelTab, type LeftTabsSlot } from "./chats";
 import { chatsApi, landingChatHref } from "./chats/chatsApi";
 import { highlightTermOf, type MessageSearchHit } from "./chats/MessageSearch";
 import { displayTitle, type LandingSession } from "./chats/model";
 import { LandingChatView } from "./LandingChatView";
 import { LandingComposer } from "./LandingComposer";
+import { IncomingsPanel, LandingIncomingView } from "./incomings";
 import { LandingLayout } from "./LandingLayout";
 import { TopBarView } from "./topbar";
 import { useLandingPanels } from "./useLandingPanels";
@@ -36,6 +46,9 @@ interface OpenedChat {
  * badge, so they can never disagree. A chat picked in the sidebar, the
  * drawer or message search opens in the centre column (`/?chat=<id>`, a
  * history push, so Back returns to the composer and a reload re-opens it).
+ * The sidebar's Incomings tab (plan A.1) works the same way: a row opens in
+ * the centre (`/?incoming=<id>`); on phones the drawer's rows go to
+ * `/inbox/<id>?from=landing`. `/?panel=incomings` selects the tab.
  */
 export function LandingClient({
   profiles,
@@ -93,6 +106,8 @@ export function LandingClient({
 
   const params = useSearchParams();
   const chatId = params?.get("chat") || null;
+  const incomingId = chatId ? null : params?.get("incoming") || null;
+  const panelParam = params?.get("panel");
   const chatProfile = params?.get("profile") || currentProfile;
   const [opened, setOpened] = useState<OpenedChat | null>(null);
   const openedChat = opened?.id === chatId ? opened : null;
@@ -117,6 +132,76 @@ export function LandingClient({
     });
   // Back follows the logical parent (Home's composer), never browser history.
   const closeChat = () => window.history.pushState(null, "", "/");
+
+  const ti = useT("incomings");
+  const [storedTab, storeTab] = useLeftPanelTab();
+  // `/?panel=incomings` shows the tab until the user picks one themselves.
+  const [tabPicked, setTabPicked] = useState(false);
+  const deepLinked = panelParam === "incomings" && !tabPicked;
+  const leftTab = deepLinked ? "incomings" : storedTab;
+  const pickTab = (tab: typeof storedTab) => {
+    setTabPicked(true);
+    storeTab(tab);
+  };
+  useEffect(() => {
+    if (panelParam !== "incomings") return;
+    // Phones have no sidebar: the deep link opens the drawer on the tab.
+    const frame = window.requestAnimationFrame(() => {
+      if (!window.matchMedia("(min-width: 1024px)").matches) setDrawerOpen(true);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [panelParam]);
+  const attention = useIncomingsAttention(currentProfile);
+  const incomings = useIncomings({
+    profile: currentProfile,
+    enabled: leftTab === "incomings" || Boolean(incomingId),
+  });
+  const [openedIncoming, setOpenedIncoming] = useState<IncomingItem | null>(null);
+  const [incomingError, setIncomingError] = useState<string | null>(null);
+  const undo = useUndoToast();
+  useEffect(() => {
+    if (!incomingError) return;
+    const timer = window.setTimeout(() => setIncomingError(null), UNDO_MS);
+    return () => window.clearTimeout(timer);
+  }, [incomingError]);
+
+  const openIncoming = (item: IncomingItem) => {
+    const href = `/?incoming=${encodeURIComponent(item.id)}`;
+    if (window.location.pathname + window.location.search !== href) {
+      window.history.pushState(null, "", href);
+    }
+    setOpenedIncoming(item);
+  };
+  const markIncomingDone = async (item: IncomingItem) => {
+    setIncomingError(null);
+    if (incomingId === item.id) closeChat();
+    const res = await incomings.clear(item, "done");
+    if (!res.ok) {
+      setIncomingError(ti(attentionErrorKey(res)));
+      return;
+    }
+    const who = incomingSender(item) || incomingTitle(item) || item.ref || item.id;
+    undo.show(ti("toast.done", { who }), async () => {
+      const back = await incomings.reopen(item);
+      if (!back.ok) setIncomingError(ti(attentionErrorKey(back)));
+    });
+  };
+
+  const leftTabs: LeftTabsSlot = {
+    tab: leftTab,
+    onTabChange: pickTab,
+    count: attention.count,
+    urgent: attention.urgent,
+    renderIncomings: ({ onNavigate, inDrawer }) => (
+      <IncomingsPanel
+        incomings={incomings}
+        activeId={inDrawer ? null : incomingId}
+        onOpen={inDrawer ? undefined : openIncoming}
+        onDone={(item) => void markIncomingDone(item)}
+        onNavigate={onNavigate}
+      />
+    ),
+  };
 
   const chats = {
     profile: currentProfile,
@@ -151,7 +236,7 @@ export function LandingClient({
             currentProfile={currentProfile}
           />
         }
-        sidebar={<ChatsSidebar {...chats} />}
+        sidebar={<ChatsSidebar {...chats} leftTabs={leftTabs} />}
         main={
           chatId ? (
             <LandingChatView
@@ -165,6 +250,14 @@ export function LandingClient({
               onBusyChange={setChatBusy}
               onClose={closeChat}
             />
+          ) : incomingId ? (
+            <LandingIncomingView
+              key={incomingId}
+              id={incomingId}
+              item={openedIncoming?.id === incomingId ? openedIncoming : incomings.items.find((i) => i.id === incomingId)}
+              onClose={closeChat}
+              onDone={(item) => void markIncomingDone(item)}
+            />
           ) : (
             <LandingComposer
               profiles={profiles}
@@ -175,7 +268,12 @@ export function LandingClient({
           )
         }
         aside={<LandingWorkPanel needsYou={feed} />}
-        chats={{ collapsed: panels.chatsCollapsed, onCollapsedChange: panels.setChatsCollapsed }}
+        chats={{
+          collapsed: panels.chatsCollapsed,
+          onCollapsedChange: panels.setChatsCollapsed,
+          badge: attention.count,
+          badgeUrgent: attention.urgent > 0,
+        }}
         tasks={{ collapsed: panels.tasksCollapsed, onCollapsedChange: panels.setTasksCollapsed }}
         dock={
           <div className="flex gap-2">
@@ -183,9 +281,22 @@ export function LandingClient({
               type="button"
               data-action="open-chats"
               onClick={() => setDrawerOpen(true)}
-              className="flex h-11 flex-1 items-center justify-center rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-medium"
+              className="flex h-11 flex-1 items-center justify-center gap-1.5 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-medium"
             >
               Chats
+              {attention.count ? (
+                <span
+                  data-slot="incomings-count"
+                  aria-label={ti("tabs.countLabel", { count: attention.count })}
+                  className={`rounded-full px-1.5 text-[10px] font-bold leading-4 tabular-nums ${
+                    attention.urgent > 0
+                      ? "bg-[var(--color-danger)] text-white"
+                      : "bg-[var(--color-warn)] text-[var(--color-bg)]"
+                  }`}
+                >
+                  {attention.count >= 99 ? "99+" : attention.count}
+                </span>
+              ) : null}
             </button>
             <Link
               href="/chat?new=1"
@@ -202,7 +313,24 @@ export function LandingClient({
           <LandingWorkPanel needsYou={feed} />
         </Sheet>
       ) : null}
-      <ChatsDrawer {...chats} open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      <ChatsDrawer
+        {...chats}
+        leftTabs={leftTabs}
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+      />
+      {undo.toast}
+      {incomingError ? (
+        <div className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--coral-clearance)+var(--safe-bottom)+4rem)] z-[60] flex justify-center px-4 lg:bottom-20">
+          <p
+            role="alert"
+            data-component="IncomingsErrorToast"
+            className="pointer-events-auto w-full max-w-md rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[var(--color-surface-2)] px-4 py-2 text-sm text-[var(--color-fg)] shadow-lg"
+          >
+            {incomingError}
+          </p>
+        </div>
+      ) : null}
     </>
   );
 }

@@ -9,6 +9,10 @@ import { useT } from "@/i18n";
 export interface PanelCollapse {
   collapsed: boolean;
   onCollapsedChange: (collapsed: boolean) => void;
+  /** Shown on the collapsed rail (the left one: incomings waiting). */
+  badge?: number | null;
+  /** The badge counts something urgent: danger tone. */
+  badgeUrgent?: boolean;
 }
 
 const SIDEBAR_WIDTH = "280px";
@@ -28,19 +32,26 @@ function PanelRail({
   title,
   controls,
   onExpand,
+  badge,
+  badgeLabel,
+  badgeUrgent = false,
 }: {
   side: "left" | "right";
   label: string;
   title: string;
   controls: string;
   onExpand: () => void;
+  badge?: number | null;
+  badgeLabel?: string;
+  badgeUrgent?: boolean;
 }) {
+  const showBadge = typeof badge === "number" && badge > 0;
   const Icon = side === "left" ? PanelLeftIcon : PanelRightIcon;
   return (
     <button
       type="button"
       data-action={side === "left" ? "expand-chats" : "expand-tasks"}
-      aria-label={title}
+      aria-label={showBadge && badgeLabel ? `${title}, ${badgeLabel}` : title}
       aria-expanded={false}
       aria-controls={controls}
       title={title}
@@ -50,6 +61,19 @@ function PanelRail({
       <span className="inline-flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)]">
         <Icon size={18} />
       </span>
+      {showBadge ? (
+        <span
+          data-slot="rail-badge"
+          aria-hidden
+          className={`min-w-5 rounded-full px-1 text-center text-[10px] font-semibold leading-4 tabular-nums ${
+            badgeUrgent
+              ? "bg-[var(--color-danger)] text-white"
+              : "bg-[var(--color-warn)] text-[var(--color-bg)]"
+          }`}
+        >
+          {badge > 99 ? "99+" : badge}
+        </span>
+      ) : null}
       <span aria-hidden className="text-[11px] font-semibold uppercase tracking-[0.06em] [writing-mode:vertical-rl]">
         {label}
       </span>
@@ -109,10 +133,13 @@ export function LandingLayout({
             {chatsCollapsed ? (
               <PanelRail
                 side="left"
-                label={t("panels.chats")}
+                label={chats?.badge === undefined ? t("panels.chats") : t("panels.chatsAndIncomings")}
                 title={t("panels.expandChats")}
                 controls="landing-sidebar"
                 onExpand={() => chats?.onCollapsedChange(false)}
+                badge={chats?.badge}
+                badgeLabel={t("panels.incomingsWaiting", { count: chats?.badge ?? 0 })}
+                badgeUrgent={chats?.badgeUrgent}
               />
             ) : null}
             <aside

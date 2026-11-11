@@ -7,3 +7,4 @@ export { SessionRow } from "./SessionRow";
 export { SessionSearch } from "./SessionSearch";
 export { useLandingChats } from "./useLandingChats";
 export type { LandingSession } from "./model";
+export { LeftPanelTabs, useLeftPanelTab, type LeftPanelTab, type LeftTabsSlot } from "./LeftPanelTabs";

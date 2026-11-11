@@ -11,6 +11,11 @@ import { NextResponse } from "next/server";
 import { HermesApiError } from "@/lib/api/client";
 import { apiClientForRequest, getPrincipal } from "@/lib/auth/principal";
 
+/** Only the three values the upstream knows; anything else means "any". */
+function attentionParam(value: string | null): "open" | "cleared" | "any" | undefined {
+  return value === "open" || value === "cleared" || value === "any" ? value : undefined;
+}
+
 export async function GET(req: Request): Promise<NextResponse> {
   const principal = await getPrincipal();
   if (!principal) {
@@ -38,6 +43,7 @@ export async function GET(req: Request): Promise<NextResponse> {
         until: params.get("until") ?? undefined,
         limit: params.get("limit") ? Number(params.get("limit")) : undefined,
         cursor: params.get("cursor") ?? undefined,
+        attention: attentionParam(params.get("attention")),
       }),
     );
   } catch (err) {

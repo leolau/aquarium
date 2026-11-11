@@ -1151,7 +1151,32 @@ export interface IncomingItem {
   remembered_by: string | null;
   remembered: boolean;
   tags?: SessionTag[];
+  /** When triage flagged it as needing the user (null: never flagged). */
+  attention_at?: string | null;
+  attention_reason?: IncomingAttentionReason | null;
+  /** The triage priority behind an `escalated` flag. */
+  attention_priority?: "urgent" | "high" | "medium" | "low" | null;
+  /** When someone pressed Done / Dismiss (null: still open). */
+  attention_cleared_at?: string | null;
+  attention_outcome?: string | null;
+  /** Open to-dos triage (or the user) made from it. */
+  todo_count?: number | null;
 }
+
+/** Why triage put an arrival in the landing Incomings tab. */
+export type IncomingAttentionReason = "escalated" | "todo" | "critical_event";
+
+/** `GET /api/incomings/attention-count`: open flagged arrivals (count capped at 99). */
+export interface IncomingsAttentionCount {
+  count: number;
+  urgent?: number;
+  by_surface?: Record<string, number>;
+}
+
+/** `POST /api/incomings/:id/attention` body. */
+export type IncomingAttentionAction =
+  | { action: "clear"; outcome: "done" | "dismissed" }
+  | { action: "reopen" };
 
 /** A file that arrived with an item, as returned on the detail route. */
 export interface IncomingAttachment {

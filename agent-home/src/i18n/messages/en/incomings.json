@@ -1,0 +1,107 @@
+{
+  "tabs": {
+    "chats": "Chats",
+    "incomings": "Incomings",
+    "countLabel": "{count} need you"
+  },
+  "search": "Search incomings",
+  "filters": {
+    "label": "Filter incomings",
+    "all": "All",
+    "messages": "Messages",
+    "email": "Email",
+    "calendar": "Calendar"
+  },
+  "groups": {
+    "urgent": "Urgent",
+    "needsLook": "Needs a look"
+  },
+  "reason": {
+    "escalated": "Escalated by triage",
+    "escalatedPriority": "Escalated by triage · {priority} priority",
+    "todo": "Triage made a to-do from this",
+    "todoCount": "Triage made {count} to-dos from this",
+    "critical_event": "Critical calendar event",
+    "flagged": "Flagged by triage"
+  },
+  "priority": {
+    "urgent": "urgent",
+    "high": "high",
+    "medium": "medium",
+    "low": "low"
+  },
+  "urgentDot": "Urgent",
+  "hasAttachment": "Has an attachment",
+  "actions": {
+    "done": "Done",
+    "doneLabel": "Mark “{title}” done",
+    "askInChat": "Ask in chat",
+    "askLabel": "Ask in chat about “{title}”",
+    "more": "More actions for “{title}”",
+    "replyWithAi": "Reply with AI",
+    "makeTodo": "Make a to-do",
+    "makingTodo": "Making a to-do…",
+    "remember": "Remember",
+    "remembering": "Remembering…",
+    "seeRemembered": "In memory",
+    "addToProject": "Add to project",
+    "openInInbox": "Open in Inbox",
+    "reopen": "Reopen",
+    "back": "Back",
+    "closeDrawer": "Close chats"
+  },
+  "toast": {
+    "done": "Marked done. {who} moved out of Incomings (still in Inbox).",
+    "todo": "To-do made from {ref}.",
+    "remembered": "Saved to memory.",
+    "reopened": "Back in Incomings."
+  },
+  "errors": {
+    "write": "That didn't go through. Try again.",
+    "load": "Incomings couldn't be loaded.",
+    "detail": "This arrival couldn't be loaded. It may have been removed, or it isn't yours.",
+    "retry": "Try again",
+    "notOwner": "Only the person this arrived for can mark it done or reopen it."
+  },
+  "empty": {
+    "title": "All clear",
+    "body": "Nothing that triage flagged is waiting on you. Everything else that arrived is in Inbox.",
+    "filtered": "Nothing in this filter.",
+    "search": "No incomings match “{query}”.",
+    "noSourcesTitle": "Nothing arrives in this profile yet",
+    "noSources": "Incomings lists the messages, email and calendar events that triage flagged for you. No mailbox, WhatsApp or calendar sends arrivals to this profile, so there is nothing for triage to flag here."
+  },
+  "openInbox": "Open Inbox",
+  "detail": {
+    "label": "Incoming",
+    "why": "Why triage flagged this:",
+    "tagUrgent": "Urgent",
+    "tagNeedsLook": "Needs a look",
+    "attachments": "{count} attachments",
+    "attachment": "1 attachment",
+    "footnote": "Done takes it out of Incomings; it stays in Inbox › Arrived.",
+    "loading": "Loading…",
+    "state": "Needs you",
+    "handled": "Handled",
+    "outcome": {
+      "done": "Done",
+      "dismissed": "Dismissed",
+      "todo": "To-do made",
+      "remembered": "Remembered",
+      "replied": "Replied"
+    },
+    "markedDone": "Marked done. It's out of Incomings.",
+    "reopened": "Reopened. It's back in Incomings.",
+    "backHome": "Home"
+  },
+  "surface": {
+    "email": "Email",
+    "whatsapp": "WhatsApp",
+    "calendar": "Calendar",
+    "telegram": "Telegram",
+    "slack": "Slack",
+    "discord": "Discord",
+    "imessage": "iMessage",
+    "agent_home": "Aquarium"
+  }
+}

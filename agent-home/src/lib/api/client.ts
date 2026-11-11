@@ -53,6 +53,8 @@ import type {
   IdentityActivityResponse,
   IncomingDetail,
   IncomingItem,
+  IncomingAttentionAction,
+  IncomingsAttentionCount,
   IncomingsFacets,
   IncomingsResponse,
   MemberChannelsResponse,
@@ -1915,12 +1917,14 @@ export class HermesApiClient {
       until?: string;
       limit?: number;
       cursor?: string;
+      /** `open` = flagged and not yet handled (the landing Incomings tab). */
+      attention?: "open" | "cleared" | "any";
     } = {},
   ): Promise<IncomingsResponse> {
     const p = new URLSearchParams();
     for (const key of [
       "q", "surface", "kind", "sender", "importance", "tag", "tag_match",
-      "exclude_tag", "since", "until", "cursor",
+      "exclude_tag", "since", "until", "cursor", "attention",
     ] as const) {
       const value = opts[key];
       if (value) p.set(key, String(value));
@@ -1936,6 +1940,22 @@ export class HermesApiClient {
   /** Surfaces, importance levels and tags the caller actually has. */
   async incomingsFacets(): Promise<IncomingsFacets> {
     return this.request("/api/registry/incomings/facets");
+  }
+
+  /** How many flagged arrivals are still waiting on the caller. */
+  async incomingsAttentionCount(): Promise<IncomingsAttentionCount> {
+    return this.request("/api/registry/incomings/attention-count");
+  }
+
+  /** Done / Dismiss a flagged arrival, or put it back. Owner only. */
+  async setIncomingAttention(
+    id: string,
+    body: IncomingAttentionAction,
+  ): Promise<IncomingItem> {
+    return this.request(
+      `/api/registry/incomings/${encodeURIComponent(id)}/attention`,
+      { method: "POST", json: body },
+    );
   }
 
   /** One arrival with its attachments and tags. 404s when not visible. */
@@ -2014,6 +2034,9 @@ export class HermesApiClient {
     description?: string;
     priority?: string;
     due_at?: string | null;
+    /** `inbound` + the arrival's id links the to-do to what it came from. */
+    source_kind?: string;
+    source_ref?: string;
   }): Promise<Todo> {
     return this.request("/api/registry/todos", {
       method: "POST",
