@@ -12,6 +12,7 @@ import json
 import os
 import socket
 import time
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -133,6 +134,144 @@ def test_cron_jobs_visible_to_admins_or_through_a_readable_project(env, tmp_path
     assert row["name"] == "Project digest"
     assert row["href"] == f"/projects/{project['slug']}"
     assert row["id"] == "default:job-p" and row["profile"] == "default"
+
+
+# ---------------------------------------------------------------------------
+# Scheduled: the landing "Scheduled N" button
+# ---------------------------------------------------------------------------
+
+
+def _schedule(project_id, job_id, next_run_at=None):
+    with projects_db.connect_closing() as conn:
+        conn.execute(
+            "UPDATE projects SET cron_job_id = ?, next_run_at = ? WHERE id = ?",
+            (job_id, next_run_at, project_id),
+        )
+        conn.commit()
+
+
+def _scheduled_card(project_id, title, **kw):
+    with kanban_db.connect_closing() as bconn:
+        task = kanban_db.create_task(bconn, title=title, project_id=project_id, **kw)
+        bconn.execute("UPDATE tasks SET status = 'scheduled' WHERE id = ?", (task,))
+        bconn.commit()
+    return task
+
+
+def _counts(summary):
+    return (summary["projects"], summary["cards"], summary["cron_jobs"], summary["total"])
+
+
+def test_scheduled_projects_count_only_readable_active_schedules(env):
+    readable = _create(env, body={"goal": "Weekly report for the team", "visibility": "shared"})
+    private = _create(env, body={"goal": "Mallory's private digest", "visibility": "private"})
+    archived = _create(env, body={"goal": "An archived schedule"})
+    paused = _create(env, body={"goal": "A paused schedule"})
+    unscheduled = _create(env, body={"goal": "No schedule at all"})
+    for project in (readable, private, archived, paused, unscheduled):
+        _activate(env, project)
+    _schedule(readable["id"], "job-r", 1_800_000_500)
+    _schedule(private["id"], "job-m", 1_800_000_100)
+    _schedule(archived["id"], "job-a", 1_800_000_000)
+    _schedule(paused["id"], "job-p", 1_800_000_000)
+    with projects_db.connect_closing() as conn:
+        conn.execute("UPDATE projects SET archived = 1 WHERE id = ?", (archived["id"],))
+        conn.execute("UPDATE projects SET status = 'paused' WHERE id = ?", (paused["id"],))
+        conn.commit()
+
+    _member(readable["id"], "ada", "member")
+    member = act.scheduled_summary(MEMBER_P, set(), job_dirs=[])
+    assert _counts(member) == (1, 0, 0, 1)
+    assert member["next_run_at"] == 1_800_000_500
+
+    # Shared-read through an enrolment in the project's profile counts too;
+    # a private project never does.
+    assert act.scheduled_summary(STRANGER, set(), job_dirs=[])["projects"] == 0
+    assert act.scheduled_summary(STRANGER, {"default"}, job_dirs=[])["projects"] == 1
+
+    owner = act.scheduled_summary(OWNER, set(), job_dirs=[])
+    assert _counts(owner) == (2, 0, 0, 2)
+    assert owner["next_run_at"] == 1_800_000_100
+
+
+def test_scheduled_cards_count_on_their_own_board_and_respect_privacy(env, tmp_path, monkeypatch):
+    # Real per-board databases, so a card on a foreign board is a separate row.
+    monkeypatch.delenv("HERMES_KANBAN_DB", raising=False)
+    monkeypatch.setenv("HERMES_KANBAN_HOME", str(tmp_path / "kanban-home"))
+    project = _create(env)
+    _activate(env, project)
+    _scheduled_card(project["id"], "Parked until Friday")
+    _scheduled_card(
+        project["id"], "Mallory's parked card",
+        owner_user_id="mallory", visibility="private:mallory",
+    )
+    kanban_db.create_board("elsewhere")
+    with kanban_db.connect_closing(board="elsewhere") as bconn:
+        stray = kanban_db.create_task(bconn, title="Wrong board", project_id=project["id"])
+        bconn.execute("UPDATE tasks SET status = 'scheduled' WHERE id = ?", (stray,))
+        bconn.commit()
+
+    assert _counts(act.scheduled_summary(OWNER, set(), job_dirs=[])) == (0, 2, 0, 2)
+    _member(project["id"], "ada", "member")
+    assert _counts(act.scheduled_summary(MEMBER_P, set(), job_dirs=[])) == (0, 1, 0, 1)
+    assert act.scheduled_summary(STRANGER, set(), job_dirs=[])["cards"] == 0
+    mallory = Principal(user_id="mallory", display="M", role="member")  # type: ignore[arg-type]
+    _member(project["id"], "mallory", "member")
+    assert act.scheduled_summary(mallory, set(), job_dirs=[])["cards"] == 2
+
+
+def _jobs_file(cron_dir, jobs):
+    cron_dir.mkdir(parents=True, exist_ok=True)
+    (cron_dir / "jobs.json").write_text(json.dumps({"jobs": jobs}))
+
+
+def test_standalone_cron_jobs_count_for_admins_only(env, tmp_path):
+    project = _create(env)
+    _activate(env, project)
+    _schedule(project["id"], "job-p", 1_800_000_900)
+    default_dir, work_dir = tmp_path / "cron-default", tmp_path / "cron-work"
+    _jobs_file(default_dir, [
+        {"id": "job-p", "name": "Project digest", "enabled": True,
+         "next_run_at": "2027-02-01T08:00:00+00:00"},
+        {"id": "job-x", "name": "Nightly backup", "enabled": True,
+         "next_run_at": "2027-02-01T02:00:00+00:00"},
+        {"id": "job-off", "name": "Disabled", "enabled": False,
+         "next_run_at": "2027-01-01T00:00:00+00:00"},
+    ])
+    _jobs_file(work_dir, [{"id": "job-w", "name": "Work sync"}])
+    dirs = [("default", default_dir), ("work", work_dir)]
+
+    admin = act.scheduled_summary(ADMIN, set(), job_dirs=dirs)
+    assert _counts(admin) == (1, 0, 2, 3)
+    assert admin["next_run_at"] == 1_800_000_900  # sooner than the backup
+    _schedule(project["id"], "job-p", None)
+    assert act.scheduled_summary(OWNER, set(), job_dirs=dirs)["next_run_at"] == int(
+        datetime.fromisoformat("2027-02-01T02:00:00+00:00").timestamp()
+    )
+
+    _member(project["id"], "ada", "member")
+    assert _counts(act.scheduled_summary(MEMBER_P, set(), job_dirs=dirs)) == (1, 0, 0, 1)
+
+
+def test_cron_job_dirs_finds_every_profile_store(tmp_path, monkeypatch):
+    from hermes_cli import profiles as profiles_mod
+
+    default_home, root = tmp_path / "home", tmp_path / "home" / "profiles"
+    _jobs_file(default_home / "cron", [])
+    _jobs_file(root / "work" / "cron", [])
+    (root / "empty" / "cron").mkdir(parents=True)
+    monkeypatch.setattr(profiles_mod, "get_profile_dir", lambda name: default_home)
+    monkeypatch.setattr(profiles_mod, "_get_profiles_root", lambda: root)
+    assert act.cron_job_dirs() == [
+        ("default", default_home / "cron"), ("work", root / "work" / "cron"),
+    ]
+
+
+def test_unreadable_jobs_file_counts_nothing(tmp_path):
+    (tmp_path / "jobs.json").write_text("{not json")
+    assert act._read_jobs(tmp_path) == []
+    (tmp_path / "jobs.json").write_text(json.dumps([{"id": "a"}, "junk"]))
+    assert act._read_jobs(tmp_path) == [{"id": "a"}]
 
 
 class _FakeDB:
@@ -259,3 +398,52 @@ def test_route_lists_nothing_without_the_multi_user_datastore(route, monkeypatch
     res = client.get("/api/activity/running")
     assert res.status_code == 200
     assert res.json() == []
+
+
+def test_scheduled_route_counts_for_the_caller(route, monkeypatch):
+    from hermes_cli import projects_api
+
+    client, state = route
+    seen = []
+
+    def _summary(principal, enrolled):
+        seen.append((principal.user_id, set(enrolled)))
+        return {"total": 3, "projects": 1, "cards": 2, "cron_jobs": 0, "next_run_at": 99}
+
+    async def _enrolled(user_id):
+        return {"work"}
+
+    monkeypatch.setattr(act, "scheduled_summary", _summary)
+    monkeypatch.setattr(projects_api, "_enrolled_profiles", _enrolled)
+    res = client.get("/api/activity/scheduled")
+    assert res.status_code == 200
+    assert res.json() == {"total": 3, "projects": 1, "cards": 2, "cron_jobs": 0, "next_run_at": 99}
+
+    state["actor"] = SimpleNamespace(user_id="ada", role="member", is_owner=False,
+                                     private_visibility="private:ada")
+    client.get("/api/activity/scheduled")
+    # The owner reads box-wide; a member through their enrolments.
+    assert seen == [("leo", set()), ("ada", {"work"})]
+
+
+def test_scheduled_route_requires_the_session_token(route):
+    from starlette.testclient import TestClient
+    from hermes_cli.web_server import app
+
+    assert TestClient(app).get("/api/activity/scheduled").status_code == 401
+
+
+def test_scheduled_route_counts_nothing_without_the_multi_user_datastore(route, monkeypatch):
+    from hermes_cli import web_server
+
+    client, _state = route
+
+    async def _unconfigured(request, *, allow_as=False):
+        raise web_server._CommsNotConfigured("multi user datastore not configured")
+
+    monkeypatch.setattr(web_server, "_comms_resolve_principal", _unconfigured)
+    res = client.get("/api/activity/scheduled")
+    assert res.status_code == 200
+    assert res.json() == {
+        "total": 0, "projects": 0, "cards": 0, "cron_jobs": 0, "next_run_at": None,
+    }

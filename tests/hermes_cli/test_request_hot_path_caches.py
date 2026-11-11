@@ -234,7 +234,7 @@ def test_card_rollup_matches_list_tasks_for_every_principal(tmp_path, monkeypatc
     owner = Principal(user_id="leo", display="Leo", role="owner")  # type: ignore[arg-type]
     ada = Principal(user_id="ada", display="Ada", role="member")  # type: ignore[arg-type]
     vic = Principal(user_id="vic", display="Vic", role="member")  # type: ignore[arg-type]
-    statuses = ["running", "blocked", "done", "archived", "todo", "review"]
+    statuses = ["running", "blocked", "done", "archived", "todo", "review", "scheduled"]
     visibilities = ["shared", private("ada"), private("vic")]
     with kanban_db.connect_closing() as conn:
         for i in range(36):
@@ -243,7 +243,7 @@ def test_card_rollup_matches_list_tasks_for_every_principal(tmp_path, monkeypatc
                 conn.execute(
                     "UPDATE tasks SET status = ?, visibility = ?, project_id = ?"
                     " WHERE id = ?",
-                    (statuses[i % 6], visibilities[i % 3],
+                    (statuses[i % len(statuses)], visibilities[i % 3],
                      "p1" if i % 4 else "p2", task_id),
                 )
 
@@ -258,6 +258,7 @@ def test_card_rollup_matches_list_tasks_for_every_principal(tmp_path, monkeypatc
                 "done": sum(t.status == "done" for t in live),
                 "running": sum(t.status == "running" for t in live),
                 "blocked": sum(t.status == "blocked" for t in live),
+                "scheduled": sum(t.status == "scheduled" for t in live),
                 "total_with_archived": len(tasks),
                 "total_all_principals": len(kanban_db.list_tasks(
                     conn, project_id=project_id, include_archived=True,
