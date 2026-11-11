@@ -186,7 +186,8 @@ SECRETS_GUIDANCE = (
     "Never ask the user to type a password, token or API key into chat, and "
     "never repeat one. Call request_secret to collect it in a masked form, "
     "refer to secrets only by name (list_secrets shows them), and use them "
-    "via terminal secret_env, e.g. secret_env={\"GH_TOKEN\": \"github-pat\"}."
+    "via terminal secret_env, e.g. secret_env={\"GH_TOKEN\": \"github-pat\"}. "
+    "[secret: name] in a message is a secret the user already saved under that name."
 )
 
 KANBAN_GUIDANCE = (

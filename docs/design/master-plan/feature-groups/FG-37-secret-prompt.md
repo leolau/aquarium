@@ -140,8 +140,8 @@ W1–W4 build in parallel against this contract; W5 runs after they merge.
 
 ## Checklist
 
-- [ ] W1 backend core
-- [ ] W2 secret use in tools
-- [ ] W3 agent-home popup + volunteer
-- [ ] W4 one-time links for messaging
-- [ ] W5 cross-review + docs
+- [x] W1 backend core
+- [x] W2 secret use in tools
+- [x] W3 agent-home popup + volunteer
+- [x] W4 one-time links for messaging
+- [x] W5 cross-review + docs

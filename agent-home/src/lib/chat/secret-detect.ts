@@ -37,9 +37,12 @@ const PATTERNS: { kind: SecretMatchKind; rx: RegExp }[] = [
   { kind: "jwt", rx: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/ },
 ];
 
-/** `password: hunter22`, `pwd=…`, `api key: …`, `密碼：…` — the value is group 1. */
+/**
+ * `password: hunter22`, `pwd=…`, `api key: …`, `密碼：…` — the value is group 1.
+ * Not the composer's own `[secret: name]` reference.
+ */
 const ASSIGNMENT =
-  /(?:\b(?:password|passwd|pwd|passcode|passphrase|api[ _-]?key|access[ _-]?token|secret|token)\b|密碼|密码)\s*(?:is\s*)?[:=：]\s*["'`]?([^\s"'`]{6,})["'`]?/i;
+  /(?<!\[)(?:\b(?:password|passwd|pwd|passcode|passphrase|api[ _-]?key|access[ _-]?token|secret|token)\b|密碼|密码)\s*(?:is\s*)?[:=：]\s*["'`]?([^\s"'`]{6,})["'`]?/i;
 
 /** Shannon entropy in bits per character. */
 export function entropy(text: string): number {

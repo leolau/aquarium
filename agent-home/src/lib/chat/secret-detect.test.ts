@@ -42,6 +42,12 @@ describe("detectSecret", () => {
     },
   );
 
+  it("leaves the composer's own [secret: name] reference alone", () => {
+    expect(detectSecret("[secret: npm-token]")).toBeNull();
+    expect(detectSecret("use [secret: github-pat] to push")).toBeNull();
+    expect(detectSecret("[secret: npm-token] secret: Hunter2!x")?.value).toBe("Hunter2!x");
+  });
+
   it("reports a known token after `token:` as that token", () => {
     const m = detectSecret(`token: ghp_${rand(36)}`);
     expect(m?.kind).toBe("github");

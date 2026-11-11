@@ -33,7 +33,7 @@ from tools.registry import registry, tool_error
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TIMEOUT_SECONDS = 600
+DEFAULT_TIMEOUT_SECONDS = 900
 
 #: ``notify(event)`` gets the ``secret.request`` payload; ``resolved(request_id,
 #: status)`` the outcome. Both run in the agent thread and must not block.

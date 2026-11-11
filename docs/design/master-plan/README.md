@@ -268,7 +268,7 @@ Secrets never travel as chat text: a masked popup (agent-home) or a one-time sec
 
 | FG | Title | Wave | Primary reuse anchors |
 |----|-------|------|-----------------------|
-| [37](./feature-groups/FG-37-secret-prompt.md) | Secret prompt: `request_secret` tool, masked popup, one-time links, `secret_env` | **P11** — PLAN | `credential_store.py`, api_server approval surface, `ApprovalCard.tsx`, `gateway/run.py` approval notify |
+| [37](./feature-groups/FG-37-secret-prompt.md) | Secret prompt: `request_secret` tool, masked popup, one-time links, `secret_env` | **P11** — BUILT: W1 #853, W2 #854, W3 #855, W4 #856, W5 cross-review | `credential_store.py`, api_server approval surface, `ApprovalCard.tsx`, `gateway/run.py` approval notify |
 
 ---
 
@@ -874,3 +874,4 @@ transient, and in-place-resize to 8/32 (same-family, ~5 min, no data migration
 | 2026-11-10 | 34 | devin (for Leo) | FG-36 | **Phase 10 added: FG-36 short refs.** PR 1 builds the box-wide registry (`short_refs.db` beside `projects.db`), `P`/`T` refs, derived `P12-R3` run refs, `GET /api/refs/{ref}` (hidden = 404), `hermes ref`, `/go/[ref]` and the agent-home badge. PR 2 (chats, `C`) and PR 3 (to-dos `D`, inbox `M`) are planned in the FG doc. | Leo: short, typeable unique ids for projects, tasks and chats so they can be referenced in later prompts. |
 | 2026-11-10 | 35 | devin (for Leo) | FG-36 | **FG-36 built.** PR 1 (#818) plus its follow-up #820 (`short_refs.db` in upgrade backups; ref-shaped search also matches text), PR 2 (#822: `C` chat refs, `/go/C…`, ref mentions in agent-home chat turns) and PR 3 (#821: `D` to-do and `M` inbox refs) are merged. | Leo: update the FG-36 row once all three PRs landed. |
 | 2026-11-11 | 36 | devin (for Yan) | FG-37 | **Phase 11 added: FG-37 secret prompt, status PLAN.** Built-in `request_secret` tool, masked popup in agent-home chat, one-time secure links for WhatsApp/Telegram/email, secrets used by name via terminal `secret_env`. | Yan: secrets must not be passed as chat text; agent-home chat plus one-time links for messaging. |
+| 2026-11-11 | 37 | devin (for Yan) | FG-37 | **FG-37 built.** W1 (#853), W2 (#854), W3 (#855) and W4 (#856) merged; W5 cross-review adds end-to-end tests over the real registry, credential store, chat stream and link pages, fixes the seams (link sender rejects a bad name instead of saying "unavailable"; a password link without a username asks again instead of 404; popups and links live the 15 minutes the contract names) and adds the user guide (`website/docs/user-guide/secrets/secret-prompt.md`). | Yan: secrets must not be passed as chat text. |

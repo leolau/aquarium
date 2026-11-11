@@ -227,7 +227,7 @@ def make_link_sender(
                 ttl_seconds=int(ttl_seconds),
                 with_link=True,
             )
-        except ValueError as exc:
+        except (ValueError, secret_requests.SecretRequestError) as exc:
             # Bad name/kind from the model: tell it, the message is ours.
             return {"status": "error", "error": str(exc)}
         except Exception:
