@@ -201,7 +201,7 @@ export function CreateSkillSheet({
   );
 
   return (
-    <Sheet title={t("createSkill.title")} onClose={onClose} wide full footer={footer} component="CreateSkillSheet">
+    <Sheet title={t("createSkill.title")} onClose={onClose} wide full mobileFull footer={footer} component="CreateSkillSheet">
       <div className="flex flex-col gap-4 text-sm">
         <p className="text-xs text-[var(--color-muted)]">
           {t("createSkill.context", { project: projectName || slug, profile })}

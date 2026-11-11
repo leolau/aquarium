@@ -131,6 +131,20 @@ def parse_csv_field(value: Any) -> List[str]:
     return out
 
 
+def parse_skill_field(value: Any) -> List[str]:
+    """A project's ``skills`` list, as skill names.
+
+    Grants written before skill names were validated against the loader's
+    names may still carry its slash-command form (``/docx-editing``).
+    """
+    out: List[str] = []
+    for item in parse_csv_field(value):
+        s = item.lstrip("/").strip()
+        if s and s not in out:
+            out.append(s)
+    return out
+
+
 def resolve_toolsets(
     requested: Sequence[str], enabled: Sequence[str]
 ) -> tuple[List[str], List[str]]:
@@ -1252,7 +1266,7 @@ def start_run(
     requested = parse_csv_field(project.toolsets)
     effective, ts_dropped = resolve_toolsets(requested, enabled)
     available = _available_skill_names(host)
-    req_skills = parse_csv_field(project.skills)
+    req_skills = parse_skill_field(project.skills)
     eff_skills, sk_dropped, sk_truncated = resolve_skills(
         req_skills, available, cfg["max_skills"]
     )
