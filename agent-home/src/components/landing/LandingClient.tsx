@@ -43,7 +43,8 @@ interface OpenedChat {
 /**
  * The interactive landing page. One needs-you poll feeds the top-bar badge,
  * the mobile banner, the greeting, the panel, the tab-title count and the app
- * badge, so they can never disagree. A chat picked in the sidebar, the
+ * badge, so they can never disagree; likewise one activity poll feeds the
+ * running strip, the mobile activity strip and "Working in the background". A chat picked in the sidebar, the
  * drawer or message search opens in the centre column (`/?chat=<id>`, a
  * history push, so Back returns to the composer and a reload re-opens it).
  * The sidebar's Incomings tab (plan A.1) works the same way: a row opens in
@@ -267,7 +268,7 @@ export function LandingClient({
             />
           )
         }
-        aside={<LandingWorkPanel needsYou={feed} />}
+        aside={<LandingWorkPanel needsYou={feed} activity={activity} />}
         chats={{
           collapsed: panels.chatsCollapsed,
           onCollapsedChange: panels.setChatsCollapsed,
@@ -310,7 +311,7 @@ export function LandingClient({
       />
       {needsYouOpen ? (
         <Sheet title="Needs you" component="NeedsYouSheet" onClose={() => setNeedsYouOpen(false)}>
-          <LandingWorkPanel needsYou={feed} />
+          <LandingWorkPanel needsYou={feed} activity={activity} />
         </Sheet>
       ) : null}
       <ChatsDrawer

@@ -23,7 +23,9 @@ describe("HealthPill (desktop bar)", () => {
     expect(screen.getByText("23%")).toBeTruthy();
     expect(screen.getByText("41%")).toBeTruthy();
     expect(screen.getByText("4")).toBeTruthy(); // live: 2 chats + 2 cards
-    expect(screen.getByText("3 / 5")).toBeTruthy();
+    // Scheduled moved to the running strip's button (scoped like the feed).
+    expect(screen.queryByText("3 / 5")).toBeNull();
+    expect(screen.queryByText("Scheduled")).toBeNull();
     expect(screen.getByTestId("health-freshness").textContent).toBe("Updated 12s ago");
   });
 
@@ -35,6 +37,7 @@ describe("HealthPill (desktop bar)", () => {
     expect(within(dialog).getByText("48%")).toBeTruthy(); // memory
     expect(within(dialog).getByText("120.0 GB free of 500.0 GB")).toBeTruthy();
     expect(within(dialog).getByText("Plan the Q3 launch")).toBeTruthy();
+    expect(within(dialog).queryByText("Scheduled")).toBeNull();
     expect(within(dialog).getByTitle(/agent-home build abc1234/)).toBeTruthy();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();

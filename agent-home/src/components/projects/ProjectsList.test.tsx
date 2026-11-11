@@ -14,6 +14,7 @@ import {
   ProjectRow,
 } from "@/components/projects/ProjectRow";
 import { ProjectsHomeCard } from "@/components/projects/ProjectsHomeCard";
+import { ProjectsFilters } from "@/components/projects/ProjectsFilters";
 import { ProjectsList } from "@/components/projects/ProjectsList";
 import {
   DEFAULT_LAYOUT,
@@ -103,6 +104,7 @@ describe("projects filter URL round-trip", () => {
       ["cadence=repeatable", "repeatable"],
       ["cadence=standing", "standing"],
       ["health=attention", "attention"],
+      ["schedule=set", "scheduled"],
       ["status=paused", "paused"],
       ["status=done", "done"],
       ["archived=true", "all"],
@@ -116,6 +118,16 @@ describe("projects filter URL round-trip", () => {
         `${qs}&layout=list`,
       );
     }
+  });
+
+  it("lands the landing page's Scheduled button on the Scheduled chip", () => {
+    // `/projects?view=project&schedule=set`: `view` is the mode switch, not a filter.
+    expect(filtersFromParams(new URLSearchParams("view=project&schedule=set")).view).toBe("scheduled");
+    const html = renderToStaticMarkup(
+      <ProjectsFilters value={{ ...EMPTY_FILTERS, view: "scheduled" }} onChange={() => {}} />,
+    );
+    expect(html).toMatch(/<button type="button" data-view="scheduled" aria-pressed="true"[^>]*>.*?Scheduled<\/button>/);
+    expect(html).toContain('data-view="active" aria-pressed="false"');
   });
 
   it("carries the search and keeps the cursor out of the shareable filter", () => {
@@ -222,6 +234,20 @@ describe("projects sort URL round-trip", () => {
 });
 
 describe("ProjectRow", () => {
+  it("badges the cards parked in scheduled on its board, and nothing at zero", () => {
+    expect(renderToStaticMarkup(<ProjectRow project={{ ...ITEM, scheduled_cards: 2 }} />)).toContain(
+      "2 cards scheduled",
+    );
+    expect(renderToStaticMarkup(<ProjectRow project={{ ...ITEM, scheduled_cards: 1 }} />)).toContain(
+      "1 card scheduled",
+    );
+    for (const scheduled_cards of [0, undefined]) {
+      expect(renderToStaticMarkup(<ProjectRow project={{ ...ITEM, scheduled_cards }} />)).not.toContain(
+        "ScheduledCardsBadge",
+      );
+    }
+  });
+
   it("leads with the cadence glyph and names the health", () => {
     const html = renderToStaticMarkup(<ProjectRow project={ITEM} />);
     expect(html).toContain('data-component="ProjectRow"');

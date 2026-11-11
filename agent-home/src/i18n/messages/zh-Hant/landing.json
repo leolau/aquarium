@@ -23,5 +23,27 @@
     "chatsAndIncomings": "對話及來件",
     "incomingsWaiting": "{count} 項來件待處理",
     "sidebarTabs": "左側面板"
+  },
+  "running": {
+    "label": "執行中",
+    "waiting": "{count} 項等待中",
+    "nothing": "目前沒有執行中的工作",
+    "listLabel": "正在執行",
+    "scrollLeft": "向左捲動執行中的工作",
+    "scrollRight": "向右捲動執行中的工作",
+    "needsYou": "需要你"
+  },
+  "scheduled": {
+    "button": "已排程",
+    "aria": "已排程：{count}。開啟項目 › 已排程",
+    "projectsOne": "1 個項目",
+    "projectsMany": "{count} 個項目",
+    "cardsOne": "1 張卡片",
+    "cardsMany": "{count} 張卡片",
+    "jobsOne": "1 個排程工作",
+    "jobsMany": "{count} 個排程工作",
+    "nextIn": "{time}後下一次",
+    "none": "沒有已排程的工作",
+    "footer": "{count} 項已排程 → 項目"
   }
 }

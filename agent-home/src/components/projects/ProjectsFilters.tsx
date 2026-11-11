@@ -7,6 +7,8 @@ import {
   type ProjectsFilterState,
   type ProjectsSort,
 } from "@/components/projects/filters";
+import { ClockIcon } from "@/components/ui/icons";
+import { useT } from "@/i18n";
 
 /**
  * Search and the seven view chips (§13). The chips are single-select on
@@ -21,6 +23,7 @@ export function ProjectsFilters({
   value: ProjectsFilterState;
   onChange: (next: ProjectsFilterState) => void;
 }) {
+  const t = useT("projects");
   return (
     <div data-component="ProjectsFilters" className="flex flex-col gap-2">
       <input
@@ -36,15 +39,17 @@ export function ProjectsFilters({
           <button
             key={chip.view}
             type="button"
+            data-view={chip.view}
             onClick={() => onChange({ ...value, view: chip.view })}
             aria-pressed={value.view === chip.view}
-            className={`rounded-full border px-2 py-1 transition ${
+            className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 transition ${
               value.view === chip.view
                 ? "border-[var(--color-accent)] text-[var(--color-accent)]"
                 : "border-[var(--color-border)] text-[var(--color-muted)]"
             }`}
           >
-            {chip.label}
+            {chip.view === "scheduled" ? <ClockIcon size={12} /> : null}
+            {t.has(`filters.${chip.view}`) ? t(`filters.${chip.view}`) : chip.label}
           </button>
         ))}
       </div>

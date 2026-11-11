@@ -2,6 +2,8 @@ export { TopBar, TopBarView, type TopBarProps, type TopBarData } from "./TopBar"
 export { HealthPill, HealthReadings } from "./HealthPill";
 export { NeedsYouBadge } from "./NeedsYouBadge";
 export { MobileActivityStrip } from "./MobileActivityStrip";
+export { RunningStripView } from "./RunningStrip";
+export { ScheduledButton, SCHEDULED_HREF, scheduledTooltip } from "./ScheduledButton";
 export { AttentionBanner } from "./AttentionBanner";
 export { AccountMenu } from "./AccountMenu";
 export { useNeedsYou, sortNeedsYou, type NeedsYouState } from "./useNeedsYou";

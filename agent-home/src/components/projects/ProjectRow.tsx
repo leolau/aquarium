@@ -8,6 +8,7 @@ import {
 import { outputsLabel } from "@/components/projects/outputsLabel";
 import { projectNextStep } from "@/components/projects/projectNextStep";
 import { ProjectCategoryTag } from "@/components/projects/categories/ProjectCategoryTag";
+import { ScheduledCardsBadge } from "@/components/projects/ScheduledCardsBadge";
 import { RefBadge } from "@/components/refs/RefBadge";
 import { Pill, type Tone } from "@/components/ui/Pill";
 import type {
@@ -124,6 +125,7 @@ export function ProjectCardBody({
             <Pill tone={nextStep.tone}>{nextStep.text}</Pill>
           </span>
         ) : null}
+        <ScheduledCardsBadge count={project.scheduled_cards} />
       </div>
 
       {project.status === "needs_completion" ? (

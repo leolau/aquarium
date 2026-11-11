@@ -5,7 +5,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { resetActivityRunningCache } from "@/components/ui/useActivityRunning";
 import { resetStatusSummaryCache } from "@/components/ui/useStatusSummary";
 
-import { MOCK_ACTIVITY, MOCK_NEEDS_YOU, MOCK_SUMMARY, mockActivity, mockStatus } from "./mockData";
+import {
+  MOCK_ACTIVITY,
+  MOCK_NEEDS_YOU,
+  MOCK_SCHEDULED,
+  MOCK_SUMMARY,
+  mockActivity,
+  mockStatus,
+} from "./mockData";
 import { TopBar, TopBarView } from "./TopBar";
 import { resetNeedsYouCache } from "./useNeedsYou";
 
@@ -45,6 +52,18 @@ describe("TopBarView", () => {
     expect(document.querySelector('[data-component="AttentionBanner"][data-blocking]')).toBeTruthy();
   });
 
+  it("renders the desktop running strip under the header with the Scheduled button", () => {
+    render(
+      <TopBarView status={mockStatus()} activity={mockActivity({ scheduled: MOCK_SCHEDULED })} needsYou={needsYou} />,
+    );
+    const strip = document.querySelector('[data-component="RunningStrip"]')!;
+    expect(strip.className).toContain("hidden lg:flex");
+    expect(screen.getByRole("banner").contains(strip)).toBe(false);
+    expect(strip.querySelectorAll('[role="listitem"]')).toHaveLength(MOCK_ACTIVITY.length);
+    const buttons = document.querySelectorAll('[data-component="ScheduledButton"]');
+    expect([...buttons].map((b) => b.getAttribute("data-variant"))).toEqual(["full", "compact"]);
+  });
+
   it("uses a supplied account slot", () => {
     render(
       <TopBarView
@@ -57,6 +76,7 @@ describe("TopBarView", () => {
     expect(screen.getByText("custom account")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^Account/ })).toBeNull();
     expect(document.querySelector('[data-component="MobileActivityStrip"]')).toBeNull();
+    expect(document.querySelector('[data-component="RunningStrip"]')).toBeNull();
     expect(document.querySelector('[data-component="AttentionBanner"]')).toBeNull();
   });
 
@@ -85,7 +105,7 @@ describe("TopBar", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.startsWith("/api/status/summary")) return json(MOCK_SUMMARY);
-      if (url.startsWith("/api/activity/running")) return json({ items: MOCK_ACTIVITY });
+      if (url.startsWith("/api/activity/running")) return json({ items: MOCK_ACTIVITY, scheduled: MOCK_SCHEDULED });
       if (url.startsWith("/api/needs-you"))
         return json({ items: MOCK_NEEDS_YOU, count: 3, by_severity: { blocking: 1, approval: 1, review: 1, fyi: 0 }, collected_at: 1 });
       return new Response("nope", { status: 404 });
@@ -94,6 +114,8 @@ describe("TopBar", () => {
     expect(await screen.findByText("3 need you")).toBeTruthy();
     expect(await screen.findByText("23%")).toBeTruthy();
     expect((await screen.findByTestId("activity-count")).textContent).toContain("4 working");
+    expect((await screen.findByTestId("running-count")).textContent).toBe("4");
+    expect(screen.getAllByTestId("scheduled-count").map((n) => n.textContent)).toEqual(["6", "6"]);
     const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
     expect(urls.filter((u) => u.startsWith("/api/status/summary"))).toHaveLength(1);
     expect(urls.filter((u) => u.startsWith("/api/activity/running"))).toHaveLength(1);

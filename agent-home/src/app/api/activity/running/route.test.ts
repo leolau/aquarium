@@ -1,8 +1,9 @@
 /**
  * BFF route tests for GET /api/activity/running — the activity bar's feed.
- * Contract: unauthenticated → 401; rows are relayed as `{items}`; an
- * upstream failure is a 502 (never a silent empty bar); and the upstream
- * read is cached per session under a hashed token + role, never the raw
+ * Contract: unauthenticated → 401; rows are relayed as `{items, scheduled}`;
+ * a running-rows failure is a 502 (never a silent empty bar) while a
+ * scheduled-summary failure is `scheduled: null`; and both upstream reads are
+ * cached together per session under a hashed token + role, never the raw
  * token.
  */
 import { createHash } from "node:crypto";
@@ -10,10 +11,11 @@ import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GET } from "@/app/api/activity/running/route";
-import type { ActivityItem, Principal } from "@/types";
+import type { ActivityItem, Principal, ScheduledSummary } from "@/types";
 
 const getPrincipal = vi.fn<() => Promise<Principal | null>>();
 const activityRunning = vi.fn<() => Promise<ActivityItem[]>>();
+const activityScheduled = vi.fn<() => Promise<ScheduledSummary>>();
 const readSession = vi.fn<() => Promise<{ hermesToken?: string } | null>>();
 const unstableCache = vi.fn<
   (fn: () => Promise<unknown>, keyParts?: string[], opts?: unknown) => () => Promise<unknown>
@@ -21,7 +23,7 @@ const unstableCache = vi.fn<
 
 vi.mock("@/lib/auth/principal", () => ({
   getPrincipal: () => getPrincipal(),
-  apiClientForRequest: async () => ({ activityRunning }),
+  apiClientForRequest: async () => ({ activityRunning, activityScheduled }),
 }));
 
 vi.mock("@/lib/auth/session", () => ({
@@ -43,6 +45,14 @@ const ROW: ActivityItem = {
   status: "running",
 };
 
+const SCHEDULED: ScheduledSummary = {
+  total: 6,
+  projects: 3,
+  cards: 2,
+  cron_jobs: 1,
+  next_run_at: 1762850000,
+};
+
 function principal(role: Principal["role"]): Principal {
   return { user_id: "u", display: "U", role, channels: [], is_owner: role === "owner" };
 }
@@ -57,6 +67,7 @@ describe("GET /api/activity/running", () => {
     getPrincipal.mockResolvedValue(principal("owner"));
     readSession.mockResolvedValue({ hermesToken: "secret-token" });
     activityRunning.mockResolvedValue([ROW]);
+    activityScheduled.mockResolvedValue(SCHEDULED);
   });
 
   it("returns 401 when unauthenticated", async () => {
@@ -64,18 +75,46 @@ describe("GET /api/activity/running", () => {
     const res = await get();
     expect(res.status).toBe(401);
     expect(activityRunning).not.toHaveBeenCalled();
+    expect(activityScheduled).not.toHaveBeenCalled();
   });
 
-  it("relays the caller's running rows", async () => {
+  it("relays the caller's running rows with the scheduled summary", async () => {
     const res = await get();
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ items: [ROW] });
+    expect(await res.json()).toEqual({ items: [ROW], scheduled: SCHEDULED });
   });
 
-  it("surfaces an upstream failure as 502, not an empty bar", async () => {
+  it("reads both upstreams in parallel", async () => {
+    let releaseRunning: (rows: ActivityItem[]) => void = () => {};
+    activityRunning.mockImplementation(() => new Promise((r) => (releaseRunning = r)));
+    const pending = get();
+    await vi.waitFor(() => expect(activityScheduled).toHaveBeenCalledOnce());
+    releaseRunning([ROW]);
+    expect((await pending).status).toBe(200);
+  });
+
+  it("a failed scheduled leg is scheduled:null, not a 502", async () => {
+    activityScheduled.mockRejectedValue(new Error("404"));
+    const res = await get();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ items: [ROW], scheduled: null });
+  });
+
+  it("surfaces a running-rows failure as 502, not an empty bar", async () => {
     activityRunning.mockRejectedValue(new Error("down"));
     const res = await get();
     expect(res.status).toBe(502);
+  });
+
+  it("caches both legs in one entry under the unchanged key", async () => {
+    await get();
+    expect(unstableCache).toHaveBeenCalledOnce();
+    const [fn] = unstableCache.mock.calls[0];
+    activityRunning.mockClear();
+    activityScheduled.mockClear();
+    expect(await fn()).toEqual({ items: [ROW], scheduled: SCHEDULED });
+    expect(activityRunning).toHaveBeenCalledOnce();
+    expect(activityScheduled).toHaveBeenCalledOnce();
   });
 
   it("caches per session under a hashed token and the role", async () => {

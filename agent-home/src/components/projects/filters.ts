@@ -9,8 +9,9 @@
  */
 
 /**
- * The eight chips from the design (§13): one narrows by status, cadence or
- * health, "All" lifts every restriction including the archive, and
+ * The chips from the design (§13): one narrows by status, cadence, health or
+ * schedule ("Scheduled": active projects with a schedule, soonest next run
+ * first — where the landing page's Scheduled button lands), "All" lifts every restriction including the archive, and
  * "Archived" names the shelf — restore is only discoverable if a shelved
  * project can be found again. They are the list's only narrowing controls,
  * so each maps to exactly one query parameter — a shared
@@ -21,6 +22,7 @@ export type ProjectListView =
   | "repeatable"
   | "standing"
   | "attention"
+  | "scheduled"
   | "paused"
   | "done"
   | "all"
@@ -31,6 +33,7 @@ export const FILTER_CHIPS: { view: ProjectListView; label: string }[] = [
   { view: "repeatable", label: "Repeatable" },
   { view: "standing", label: "Standing" },
   { view: "attention", label: "Attention" },
+  { view: "scheduled", label: "Scheduled" },
   { view: "paused", label: "Paused" },
   { view: "done", label: "Done" },
   { view: "all", label: "All" },
@@ -137,6 +140,7 @@ export function filtersFromParams(
   else if (params.get("cadence") === "repeatable") view = "repeatable";
   else if (params.get("cadence") === "standing") view = "standing";
   else if (params.get("health") === "attention") view = "attention";
+  else if (params.get("schedule") === "set") view = "scheduled";
   else if (params.get("status") === "paused") view = "paused";
   else if (params.get("status") === "done") view = "done";
   // `status=active` and anything unrecognised both land on the default view.
@@ -173,6 +177,9 @@ export function filtersToParams(
       break;
     case "attention":
       params.set("health", "attention");
+      break;
+    case "scheduled":
+      params.set("schedule", "set");
       break;
     case "paused":
       params.set("status", "paused");

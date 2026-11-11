@@ -41,5 +41,18 @@
     "discardBody": "Your answers haven't been saved. Leaving now throws them away.",
     "discardConfirm": "Discard",
     "discardKeep": "Keep editing"
-  }
+  },
+  "filters": {
+    "active": "Active",
+    "repeatable": "Repeatable",
+    "standing": "Standing",
+    "attention": "Attention",
+    "scheduled": "Scheduled",
+    "paused": "Paused",
+    "done": "Done",
+    "all": "All",
+    "archived": "Archived"
+  },
+  "scheduledCardsOne": "1 card scheduled",
+  "scheduledCardsMany": "{count} cards scheduled"
 }
