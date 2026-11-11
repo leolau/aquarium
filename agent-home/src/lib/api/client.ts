@@ -184,6 +184,9 @@ import type {
   WebviewMode,
   WebviewSessionResponse,
   SeminarSurveyAnswers,
+  SecretLinkInfo,
+  SecretLinkResult,
+  SecretLinkSubmit,
   SeminarSurveyState,
   SeminarSurveySubmitResult,
   GetReadyItem,
@@ -391,7 +394,7 @@ export class HermesApiClient {
     });
     const text = await res.text();
     const elapsedMs = Date.now() - started;
-    const timingLine = `api-timing ${rest.method ?? "GET"} ${path} status=${res.status} elapsed_ms=${elapsedMs}`;
+    const timingLine = `api-timing ${rest.method ?? "GET"} ${redactPathForLog(path)} status=${res.status} elapsed_ms=${elapsedMs}`;
     if (elapsedMs >= 500) console.warn(timingLine);
     else console.log(timingLine);
     const parsed = text ? safeJson(text) : undefined;
@@ -1777,6 +1780,29 @@ export class HermesApiClient {
   // --- Seminar survey (unauthenticated) --------------------------------
   // Keyed by the personal token sent into the attendee's WhatsApp chat; the
   // Python API throttles both per IP and per token.
+
+  // FG-37 one-time secret links. Unauthenticated: the token is the credential.
+  // Unknown, used and expired links are all the same 404 upstream.
+
+  /** What a secret link asks for. 404 for any unusable link. */
+  async secretLinkInfo(token: string, clientIp = ""): Promise<SecretLinkInfo> {
+    return this.request(`/api/secret-links/${encodeURIComponent(token)}`, {
+      headers: forwardedFor(clientIp),
+    });
+  }
+
+  /** Store the secret (`values`) or decline it; the value is never echoed back. */
+  async submitSecretLink(
+    token: string,
+    body: SecretLinkSubmit,
+    clientIp = "",
+  ): Promise<SecretLinkResult> {
+    return this.request(`/api/secret-links/${encodeURIComponent(token)}`, {
+      method: "POST",
+      json: body,
+      headers: forwardedFor(clientIp),
+    });
+  }
 
   /** Whether the survey behind `token` is still open. 404 for an unknown link. */
   async seminarSurveyState(
@@ -3995,6 +4021,17 @@ export class HermesApiClient {
  * internet shares one bucket. Python only trusts the header from a loopback
  * peer, which this call is.
  */
+/** Paths whose last segment is a live credential (FG-37 one-time secret links). */
+const TOKEN_PATH_PREFIXES = ["/api/secret-links/"];
+
+/** `path` with any credential-bearing segment replaced, for log lines. */
+export function redactPathForLog(path: string): string {
+  for (const prefix of TOKEN_PATH_PREFIXES) {
+    if (path.startsWith(prefix)) return `${prefix}[redacted]`;
+  }
+  return path;
+}
+
 function forwardedFor(clientIp: string): Record<string, string> {
   return clientIp ? { "X-Forwarded-For": clientIp } : {};
 }

@@ -45,6 +45,9 @@ describe("guardAgentHomeRequest: agent-home refuses app pages", () => {
     expect(guardAgentHomeRequest("GET", "/api/tools", noReferer).ok).toBe(false);
     expect(guardAgentHomeRequest("POST", "/api/auth/invitations/redeem", noReferer).ok).toBe(true);
     expect(guardAgentHomeRequest("POST", "/api/seminar/survey/submit", noReferer).ok).toBe(true);
+    expect(guardAgentHomeRequest("GET", "/api/secret-links/tok", noReferer).ok).toBe(true);
+    expect(guardAgentHomeRequest("POST", "/api/secret-links/tok", noReferer).ok).toBe(true);
+    expect(guardAgentHomeRequest("POST", "/api/secret-links/tok/x", noReferer).ok).toBe(false);
   });
 
   it("leaves agent-home's own traffic and non-browser callers alone", () => {

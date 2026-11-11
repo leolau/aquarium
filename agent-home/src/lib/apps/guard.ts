@@ -9,7 +9,7 @@
  * - `guardAgentHomeRequest` (agent-home middleware): refuse agent-home API
  *   calls made from an app page, and same-origin API calls with no Referer
  *   at all (an app can suppress it), except the public routes agent-home's
- *   own no-referrer pages (`/activate`, `/setup`, `/survey`) call.
+ *   own no-referrer pages (`/activate`, `/setup`, `/survey`, `/secret`) call.
  * - `guardAppRequest` (`/api/apps/auth`): refuse an app's ticket for
  *   subresource requests made by another app's (or agent-home's) page, so
  *   app A cannot drive app B with the visitor's identity.

@@ -1985,6 +1985,15 @@ DEFAULT_CONFIG = {
         "config_path": "",
     },
 
+    # agent-home (the main web UI). ``public_url`` is the https origin people
+    # reach agent-home at (e.g. ``https://aquarium.example.com``). One-time
+    # secure links for secrets asked over messaging (FG-37) are built from it
+    # as ``<public_url>/secret/<token>``; while it is empty or not https the
+    # agent cannot send such links and asks the person to use Settings instead.
+    "agent_home": {
+        "public_url": "",
+    },
+
     # Web dashboard settings
     "dashboard": {
         "theme": "default",  # Dashboard visual theme: "default", "midnight", "ember", "mono", "cyberpunk", "rose"
