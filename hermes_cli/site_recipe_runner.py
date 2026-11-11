@@ -1,0 +1,1481 @@
+"""Deterministic executor for site-to-schema extraction recipes (no LLM).
+
+A recipe (``recipe.json``, plan section 3.4) says how to log into a source
+site and, per entity, which read-only steps reach its data and how to extract
+it. :func:`run_recipe` replays those steps in a headless Chromium (Playwright)
+and yields one :class:`ExtractedItem` per table row (variable entities) or per
+page (fixed entities). The backend writer stores them; no model is involved.
+
+Read-only on the source site:
+
+- ``click`` / ``submit`` / ``goto`` targets that look like save, add, new,
+  edit, delete, logout or change-password are rejected, both statically
+  (recipe text) and at run time (the element's text, value, id, class, href,
+  onclick and form action);
+- every navigation or XHR to such a URL is aborted by a network guard;
+- JavaScript ``confirm()`` dialogs are dismissed.
+
+The password comes from the credential object and is only ever typed into the
+login form; it never reaches argv, logs, the report or an exception message.
+
+Recipe shape (``version`` 1)::
+
+    {"version": 1, "site": "hsdos", "base_url": "https://hsdos.example",
+     "date_format": "%Y-%m-%d", "timeout_ms": 30000, "delay_ms": 0,
+     "login": {"url": "/", "username_field": "input[name=username]",
+               "password_field": "input[name=password]",
+               "submit": "button[type=submit]",
+               "success": {"selector": "a[href*=logout]"},
+               "failure_text": "Invalid"},
+     "entities": {
+       "orders": {"kind": "variable", "key": ["order_no"], "cursor": "created_on",
+                  "steps": [
+                    {"op": "goto", "url": "/orders"},
+                    {"op": "fill", "selector": "#date_from", "value": "{{cursor}}",
+                     "default": "{{date-3650}}"},
+                    {"op": "fill", "selector": "#date_to", "value": "{{today}}"},
+                    {"op": "submit", "selector": "#btn-search"},
+                    {"op": "paginate", "next": {"text": "Next"}, "steps": [
+                      {"op": "extract_table", "table": "#results", "columns": {
+                        "order_no": {"header": "Order No"},
+                        "created_on": {"header": "Created", "type": "date",
+                                       "format": "%d/%m/%Y"}}}]}]},
+       "about": {"kind": "fixed", "steps": [
+                    {"op": "goto", "url": "/about"},
+                    {"op": "extract_fields", "key": "about",
+                     "fields": {"title": {"selector": "h1"}}}]}}}
+
+Ops: ``goto``, ``click``, ``fill``, ``select``, ``press``, ``submit``,
+``wait``, ``extract_table``, ``extract_fields``, ``paginate`` and
+``date_windows``. Value templates: ``{{today}}``, ``{{date-N}}``,
+``{{cursor}}`` (falls back to the step's ``default`` on a full run or a first
+run), ``{{window_from}}`` / ``{{window_to}}`` inside ``date_windows``.
+
+The Playwright sync API must not run on a thread with a running asyncio loop:
+async callers use ``asyncio.to_thread``.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import glob
+import json
+import logging
+import os
+import re
+import shutil
+import sys
+import time
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, NamedTuple, Optional, Sequence, Tuple
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "RECIPE_VERSION",
+    "ExtractedItem",
+    "RunReport",
+    "RecipeError",
+    "ForbiddenTarget",
+    "LoginFailed",
+    "RecipeRunError",
+    "recipe_problems",
+    "validate_recipe",
+    "is_forbidden_text",
+    "is_forbidden_url",
+    "render_template",
+    "run_recipe",
+    "PlaywrightDriver",
+]
+
+RECIPE_VERSION = 1
+KINDS = ("variable", "fixed")
+MODES = ("incremental", "full")
+COLUMN_TYPES = ("text", "int", "numeric", "date", "datetime", "bool")
+STEP_OPS = (
+    "goto", "click", "fill", "select", "press", "submit", "wait",
+    "extract_table", "extract_fields", "paginate", "date_windows",
+)
+_NESTING_OPS = ("paginate", "date_windows")
+_EXTRACT_OPS = ("extract_table", "extract_fields")
+_ALLOWED_KEYS = ("Enter", "Tab")
+DEFAULT_DATE_FORMAT = "%Y-%m-%d"
+DEFAULT_TIMEOUT_MS = 30_000
+DEFAULT_MAX_PAGES = 10_000
+REDACTED = "[redacted]"
+
+
+class ExtractedItem(NamedTuple):
+    """One record for the writer: a table row or a fixed page."""
+
+    entity: str
+    kind: str  # "variable" | "fixed"
+    key: str
+    payload: Dict[str, Any]
+
+
+@dataclass
+class RunReport:
+    """What a run did, filled in while :func:`run_recipe` is consumed.
+
+    ``full_entities`` lists the entities that finished without error, without
+    a cursor and with ``removal_safe`` not false: only for those may the
+    writer mark unseen rows removed. ``cursors`` holds the largest value of
+    each entity's ``cursor`` column seen in this run.
+    """
+
+    pages: int = 0
+    rows: Dict[str, int] = field(default_factory=dict)
+    completed: List[str] = field(default_factory=list)
+    full_entities: List[str] = field(default_factory=list)
+    failed: Dict[str, str] = field(default_factory=dict)
+    cursors: Dict[str, Any] = field(default_factory=dict)
+    warnings: List[str] = field(default_factory=list)
+    blocked_requests: List[str] = field(default_factory=list)
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "pages": self.pages,
+            "rows": dict(self.rows),
+            "completed": list(self.completed),
+            "full_entities": list(self.full_entities),
+            "failed": dict(self.failed),
+            "cursors": dict(self.cursors),
+            "warnings": list(self.warnings),
+            "blocked_requests": list(self.blocked_requests),
+        }
+
+
+class RecipeError(ValueError):
+    """The recipe is malformed or asks for something the runner refuses."""
+
+
+class ForbiddenTarget(RecipeError):
+    """A step would click, submit or open something that changes the site."""
+
+
+class LoginFailed(RuntimeError):
+    """The site did not accept the saved login."""
+
+
+class RecipeRunError(RuntimeError):
+    """Raised after the last item when one or more entities failed."""
+
+    def __init__(self, report: RunReport):
+        self.report = report
+        detail = "; ".join(f"{name}: {err}" for name, err in report.failed.items())
+        super().__init__(f"{len(report.failed)} entit{'y' if len(report.failed) == 1 else 'ies'} failed: {detail}")
+
+
+# --------------------------------------------------------------------------
+# read-only guard
+# --------------------------------------------------------------------------
+
+_FORBIDDEN_WORDS = re.compile(
+    r"\b(?:save|add|new|create|insert|edit|modify|update|delete|del|remove|destroy|drop"
+    r"|approve|reject|void|cancel|upload|import|reset|purge"
+    r"|log\s?out|sign\s?out|log\s?off"
+    r"|change\s?pass(?:word|wd)?|passwd|set\s?password)\b",
+    re.I,
+)
+
+
+def _words(text: str) -> str:
+    """Split camelCase and punctuation so ``btnAddNew`` reads ``btn Add New``."""
+    text = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", text or "")
+    return re.sub(r"[^A-Za-z0-9]+", " ", text)
+
+
+def is_forbidden_text(text: Optional[str]) -> bool:
+    """True when a label/selector/attribute names a data-changing action."""
+    if not text:
+        return False
+    return bool(_FORBIDDEN_WORDS.search(_words(str(text))))
+
+
+def is_forbidden_url(url: Optional[str]) -> bool:
+    """True when a URL's path or query names a data-changing action."""
+    if not url:
+        return False
+    parsed = urlparse(str(url))
+    if parsed.scheme in ("javascript",):
+        return is_forbidden_text(parsed.path)
+    return is_forbidden_text(f"{parsed.path} {parsed.query}")
+
+
+def _check_static_target(where: str, step: Mapping[str, Any]) -> None:
+    for name in ("selector", "text", "url"):
+        value = step.get(name)
+        if not isinstance(value, str):
+            continue
+        bad = is_forbidden_url(value) if name == "url" else is_forbidden_text(value)
+        if bad:
+            raise ForbiddenTarget(f"{where}: {name} {value!r} looks like a data-changing action")
+
+
+def _check_element(where: str, info: Mapping[str, Any]) -> None:
+    """Run-time check of the element a click/submit would hit."""
+    for name, value in info.items():
+        if not value:
+            continue
+        if name in ("href", "action", "formaction"):
+            bad = is_forbidden_url(str(value))
+        else:
+            bad = is_forbidden_text(str(value))
+        if bad:
+            raise ForbiddenTarget(
+                f"{where}: the target element's {name} {str(value)[:80]!r} looks like a data-changing action"
+            )
+
+
+# --------------------------------------------------------------------------
+# validation
+# --------------------------------------------------------------------------
+
+
+def _target_problems(where: str, step: Mapping[str, Any], *, required: bool) -> List[str]:
+    if step.get("selector") or step.get("text"):
+        return []
+    return [f"{where}: needs 'selector' or 'text'"] if required else []
+
+
+def _template_names(value: Any) -> List[str]:
+    if not isinstance(value, str):
+        return []
+    return [m.group(1) for m in _TEMPLATE.finditer(value)]
+
+
+def _steps_problems(where: str, steps: Any, *, depth: int = 0, in_window: bool = False) -> List[str]:
+    problems: List[str] = []
+    if not isinstance(steps, list) or not steps:
+        return [f"{where}: 'steps' must be a non-empty list"]
+    if depth > 4:
+        return [f"{where}: steps nested too deep"]
+    for i, step in enumerate(steps):
+        at = f"{where}.steps[{i}]"
+        if not isinstance(step, dict):
+            problems.append(f"{at}: must be an object")
+            continue
+        op = step.get("op")
+        if op not in STEP_OPS:
+            problems.append(f"{at}: unknown op {op!r} (one of {', '.join(STEP_OPS)})")
+            continue
+        at = f"{at} ({op})"
+        try:
+            if op in ("goto", "click", "submit", "press"):
+                _check_static_target(at, step)
+        except ForbiddenTarget as exc:
+            problems.append(str(exc))
+        if op == "goto" and not isinstance(step.get("url"), str):
+            problems.append(f"{at}: needs 'url'")
+        elif op == "click":
+            problems.extend(_target_problems(at, step, required=True))
+        elif op in ("fill", "select"):
+            if not step.get("selector"):
+                problems.append(f"{at}: needs 'selector'")
+            if "value" not in step and not (op == "select" and "label" in step):
+                problems.append(f"{at}: needs 'value'")
+            names = _template_names(step.get("value"))
+            if "cursor" in names and "default" not in step:
+                problems.append(f"{at}: uses {{{{cursor}}}} without a 'default' for full/first runs")
+            if any(n in ("window_from", "window_to") for n in names) and not in_window:
+                problems.append(f"{at}: {{{{window_*}}}} only works inside date_windows")
+            for name in names + _template_names(step.get("default")):
+                if name not in _TEMPLATE_VARS:
+                    problems.append(f"{at}: unknown template {{{{{name}}}}}")
+        elif op == "press":
+            if not step.get("selector"):
+                problems.append(f"{at}: needs 'selector'")
+            if step.get("key", "Enter") not in _ALLOWED_KEYS:
+                problems.append(f"{at}: key must be one of {', '.join(_ALLOWED_KEYS)}")
+        elif op == "wait":
+            if not any(step.get(k) for k in ("selector", "text", "ms", "gone")):
+                problems.append(f"{at}: needs 'selector', 'text', 'gone' or 'ms'")
+        elif op == "extract_table":
+            cols = step.get("columns")
+            if not isinstance(cols, dict) or not cols:
+                problems.append(f"{at}: needs 'columns' {{name: spec}}")
+            else:
+                for name, spec in cols.items():
+                    problems.extend(_column_problems(f"{at}.columns.{name}", spec, table=True))
+        elif op == "extract_fields":
+            fields_ = step.get("fields")
+            if not isinstance(fields_, dict) or not fields_:
+                problems.append(f"{at}: needs 'fields' {{name: spec}}")
+            else:
+                for name, spec in fields_.items():
+                    problems.extend(_column_problems(f"{at}.fields.{name}", spec, table=False))
+        elif op == "paginate":
+            nxt = step.get("next")
+            if nxt is not None:
+                if not isinstance(nxt, dict):
+                    problems.append(f"{at}: 'next' must be {{selector|text}}")
+                else:
+                    problems.extend(_target_problems(f"{at}.next", nxt, required=True))
+                    try:
+                        _check_static_target(f"{at}.next", nxt)
+                    except ForbiddenTarget as exc:
+                        problems.append(str(exc))
+            elif not step.get("page_param"):
+                problems.append(f"{at}: needs 'next' or 'page_param'")
+            max_pages = step.get("max_pages")
+            if max_pages is not None and (not isinstance(max_pages, int) or max_pages < 1):
+                problems.append(f"{at}: 'max_pages' must be a positive integer")
+            problems.extend(_steps_problems(at, step.get("steps"), depth=depth + 1, in_window=in_window))
+        elif op == "date_windows":
+            days = step.get("days")
+            if not isinstance(days, int) or days < 1:
+                problems.append(f"{at}: 'days' must be a positive integer")
+            if not step.get("from"):
+                problems.append(f"{at}: needs 'from'")
+            if "cursor" in _template_names(step.get("from")) and "default" not in step:
+                problems.append(f"{at}: uses {{{{cursor}}}} without a 'default' for full/first runs")
+            problems.extend(_steps_problems(at, step.get("steps"), depth=depth + 1, in_window=True))
+    return problems
+
+
+def _column_problems(where: str, spec: Any, *, table: bool) -> List[str]:
+    if not isinstance(spec, dict):
+        return [f"{where}: must be an object"]
+    problems = []
+    if table:
+        if not any(k in spec for k in ("header", "index", "selector")):
+            problems.append(f"{where}: needs 'header', 'index' or 'selector'")
+    elif not spec.get("selector"):
+        problems.append(f"{where}: needs 'selector'")
+    if spec.get("type", "text") not in COLUMN_TYPES:
+        problems.append(f"{where}: type must be one of {', '.join(COLUMN_TYPES)}")
+    return problems
+
+
+def _contains_op(steps: Any, ops: Sequence[str]) -> bool:
+    for step in steps if isinstance(steps, list) else []:
+        if not isinstance(step, dict):
+            continue
+        if step.get("op") in ops or _contains_op(step.get("steps"), ops):
+            return True
+    return False
+
+
+def recipe_problems(recipe: Any) -> List[str]:
+    """Every problem in ``recipe`` (empty list = runnable)."""
+    if not isinstance(recipe, dict):
+        return ["recipe must be a JSON object"]
+    problems: List[str] = []
+    if recipe.get("version") != RECIPE_VERSION:
+        problems.append(f"version must be {RECIPE_VERSION}")
+    base = recipe.get("base_url")
+    if not isinstance(base, str) or urlparse(base).scheme not in ("http", "https") or not urlparse(base).netloc:
+        problems.append("base_url must be an absolute http(s) URL")
+    login = recipe.get("login")
+    if login is not None:
+        if not isinstance(login, dict) or not isinstance(login.get("url"), str):
+            problems.append("login: needs 'url'")
+        else:
+            success = login.get("success")
+            if success is not None and (
+                not isinstance(success, dict)
+                or not any(success.get(k) for k in ("selector", "text", "url_contains", "url_not_contains"))
+            ):
+                problems.append("login.success: needs 'selector', 'text', 'url_contains' or 'url_not_contains'")
+    entities = recipe.get("entities")
+    if not isinstance(entities, dict) or not entities:
+        problems.append("entities must be a non-empty object {name: {...}}")
+        return problems
+    for name, ent in entities.items():
+        where = f"entities.{name}"
+        if not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", str(name)):
+            problems.append(f"{where}: name must be lower_snake_case (a-z, 0-9, _), max 63 chars")
+        if not isinstance(ent, dict):
+            problems.append(f"{where}: must be an object")
+            continue
+        kind = ent.get("kind")
+        if kind not in KINDS:
+            problems.append(f"{where}: kind must be 'variable' or 'fixed'")
+        key = ent.get("key")
+        if key is not None and (not isinstance(key, list) or not all(isinstance(k, str) and k for k in key)):
+            problems.append(f"{where}: key must be a list of column names")
+        if ent.get("mode") is not None and ent.get("mode") not in MODES:
+            problems.append(f"{where}: mode must be 'incremental' or 'full'")
+        steps = ent.get("steps")
+        problems.extend(_steps_problems(where, steps))
+        if isinstance(steps, list) and not _contains_op(steps, _EXTRACT_OPS):
+            problems.append(f"{where}: has no extract_table / extract_fields step")
+        if kind == "variable" and not key:
+            problems.append(f"{where}: a variable entity needs a 'key' (the columns that identify a row)")
+    return problems
+
+
+def validate_recipe(recipe: Any) -> None:
+    """Raise :class:`RecipeError` (or :class:`ForbiddenTarget`) listing every problem."""
+    problems = recipe_problems(recipe)
+    if not problems:
+        return
+    message = "invalid recipe: " + "; ".join(problems)
+    if any("data-changing action" in p for p in problems):
+        raise ForbiddenTarget(message)
+    raise RecipeError(message)
+
+
+# --------------------------------------------------------------------------
+# templates and values
+# --------------------------------------------------------------------------
+
+_TEMPLATE = re.compile(r"\{\{\s*([a-z_]+)\s*(?:([+-])\s*(\d+)\s*)?\}\}")
+_TEMPLATE_VARS = ("today", "date", "cursor", "window_from", "window_to")
+
+
+def _as_date(value: Any) -> Optional[dt.date]:
+    if isinstance(value, dt.datetime):
+        return value.date()
+    if isinstance(value, dt.date):
+        return value
+    if isinstance(value, str):
+        try:
+            return dt.date.fromisoformat(value.strip()[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def render_template(value: Any, variables: Mapping[str, Any], *, date_format: str = DEFAULT_DATE_FORMAT,
+                    today: Optional[dt.date] = None) -> str:
+    """Fill ``{{today}}``, ``{{date-N}}``, ``{{cursor}}``, ``{{window_from}}`` ...
+
+    Dates render with ``date_format``; ``±N`` shifts a date by N days. A
+    non-date ``cursor`` (an ID) renders as-is and cannot be shifted.
+    """
+    if not isinstance(value, str):
+        return "" if value is None else str(value)
+    base_today = today or dt.date.today()
+
+    def _sub(match: "re.Match[str]") -> str:
+        name, sign, num = match.group(1), match.group(2), match.group(3)
+        if name in ("today", "date"):
+            raw: Any = base_today
+        else:
+            raw = variables.get(name)
+            if raw is None:
+                raise RecipeError(f"template {{{{{name}}}}} has no value here")
+        as_date = _as_date(raw)
+        if as_date is None:
+            if sign:
+                raise RecipeError(f"template {{{{{name}}}}} is not a date and cannot be shifted")
+            return str(raw)
+        if sign:
+            delta = dt.timedelta(days=int(num))
+            as_date = as_date + delta if sign == "+" else as_date - delta
+        return as_date.strftime(date_format)
+
+    return _TEMPLATE.sub(_sub, value)
+
+
+_DATE_GUESSES = ("%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d", "%d-%m-%Y", "%d.%m.%Y", "%d %b %Y", "%d %B %Y",
+                 "%b %d, %Y", "%B %d, %Y", "%Y%m%d")
+_DATETIME_GUESSES = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M", "%d/%m/%Y %H:%M:%S",
+                     "%d/%m/%Y %H:%M", "%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M")
+
+
+class _BadValue(ValueError):
+    pass
+
+
+def convert_value(raw: Any, spec: Mapping[str, Any]) -> Any:
+    """Turn extracted text into the column's type. Raises ``_BadValue``."""
+    if isinstance(raw, list):
+        return [convert_value(item, spec) for item in raw]
+    kind = spec.get("type", "text")
+    if raw is None:
+        return None
+    text = re.sub(r"[ \t\r\f\v\u00a0]+", " ", str(raw)).strip()
+    if kind == "text":
+        return text or None
+    if not text or text in ("-", "--", "N/A", "n/a"):
+        return None
+    fmt = spec.get("format")
+    if kind in ("int", "numeric"):
+        cleaned = re.sub(r"[,\s$€£¥]|HK\$|US\$", "", text)
+        negative = cleaned.startswith("(") and cleaned.endswith(")")
+        cleaned = cleaned.strip("()")
+        try:
+            number: Any = int(cleaned) if kind == "int" else float(cleaned)
+        except ValueError:
+            raise _BadValue(f"{text!r} is not {'an integer' if kind == 'int' else 'a number'}")
+        return -number if negative else number
+    if kind == "bool":
+        low = text.lower()
+        if low in ("yes", "y", "true", "1", "on", "✓", "✔", "active", "enabled"):
+            return True
+        if low in ("no", "n", "false", "0", "off", "✗", "✘", "inactive", "disabled"):
+            return False
+        raise _BadValue(f"{text!r} is not yes/no")
+    if kind in ("date", "datetime"):
+        formats = (fmt,) if fmt else (_DATE_GUESSES if kind == "date" else _DATETIME_GUESSES + _DATE_GUESSES)
+        for candidate in formats:
+            try:
+                parsed = dt.datetime.strptime(text, candidate)
+            except ValueError:
+                continue
+            return parsed.date().isoformat() if kind == "date" else parsed.isoformat()
+        raise _BadValue(f"{text!r} does not match {fmt or 'a known ' + kind + ' format'}")
+    return text
+
+
+def build_key(record: Mapping[str, Any], key_columns: Sequence[str]) -> Optional[str]:
+    """The writer's ``_key``: one column as-is, several joined with ``|``."""
+    parts = []
+    for col in key_columns:
+        value = record.get(col)
+        if value is None or value == "":
+            return None
+        parts.append(str(value).replace("\\", "\\\\").replace("|", "\\|"))
+    return "|".join(parts)
+
+
+def _content_key(payload: Mapping[str, Any]) -> str:
+    import hashlib
+
+    blob = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:32]
+
+
+# --------------------------------------------------------------------------
+# credential + redaction
+# --------------------------------------------------------------------------
+
+
+def _credential_parts(credential: Any) -> Tuple[Optional[str], Optional[str]]:
+    """``(username, password)`` from a credential-store ``Credential``, a dict or a pair."""
+    if credential is None:
+        return None, None
+    payload = getattr(credential, "payload", None)
+    if isinstance(payload, Mapping):
+        kind = getattr(credential, "kind", "password")
+        if kind != "password":
+            raise RecipeError(f"credential kind {kind!r} is not 'password'")
+        return payload.get("username"), payload.get("password")
+    if isinstance(credential, Mapping):
+        return credential.get("username"), credential.get("password")
+    if isinstance(credential, (tuple, list)) and len(credential) == 2:
+        return credential[0], credential[1]
+    raise RecipeError("credential must be a password credential, {username, password} or (username, password)")
+
+
+def _redact(text: str, secret: Optional[str]) -> str:
+    if secret and len(secret) >= 3:
+        text = text.replace(secret, REDACTED)
+    return text
+
+
+# --------------------------------------------------------------------------
+# driver
+# --------------------------------------------------------------------------
+
+
+class Driver:
+    """What the runner needs from a browser. :class:`PlaywrightDriver` implements it."""
+
+    def goto(self, url: str) -> None:
+        raise NotImplementedError
+    def current_url(self) -> str:
+        raise NotImplementedError
+    def click(self, target: Mapping[str, Any]) -> None:
+        raise NotImplementedError
+    def describe(self, target: Mapping[str, Any]) -> Dict[str, Any]:
+        raise NotImplementedError
+    def exists(self, target: Mapping[str, Any], *, enabled: bool = False) -> bool:
+        raise NotImplementedError
+    def fill(self, selector: str, value: str, *, secret: bool = False) -> None:
+        raise NotImplementedError
+    def select(self, selector: str, value: Optional[str], label: Optional[str]) -> None:
+        raise NotImplementedError
+    def press(self, selector: str, key: str) -> None:
+        raise NotImplementedError
+    def submit(self, selector: Optional[str]) -> None:
+        raise NotImplementedError
+    def wait(self, step: Mapping[str, Any]) -> None:
+        raise NotImplementedError
+    def text_present(self, text: str) -> bool:
+        raise NotImplementedError
+    def table_headers(self, spec: Mapping[str, Any]) -> Optional[List[str]]:
+        raise NotImplementedError
+    def table_rows(self, spec: Mapping[str, Any]) -> List[Dict[str, Any]]:
+        raise NotImplementedError
+    def fields(self, spec: Mapping[str, Any]) -> Dict[str, Any]:
+        raise NotImplementedError
+    def inventory(self) -> Dict[str, Any]:
+        raise NotImplementedError
+    def close(self) -> None:
+        raise NotImplementedError
+
+
+_DESCRIBE_JS = """
+(el) => {
+  const form = el.form || el.closest('form');
+  const label = el.getAttribute('aria-label') || '';
+  return {
+    tag: el.tagName,
+    text: (el.innerText || el.textContent || '').slice(0, 200),
+    value: el.tagName === 'INPUT' ? (el.value || '') : '',
+    title: el.getAttribute('title') || '', label: label,
+    id: el.id || '', name: el.getAttribute('name') || '',
+    class: el.getAttribute('class') || '',
+    href: el.getAttribute('href') || '', onclick: el.getAttribute('onclick') || '',
+    formaction: el.getAttribute('formaction') || '',
+    target: el.getAttribute('data-target') || el.getAttribute('data-url') || el.getAttribute('data-href') || '',
+    action: form ? (form.getAttribute('action') || '') : '',
+  };
+}
+"""
+
+_ENABLED_JS = """
+(el) => {
+  const off = (n) => n && (n.disabled || n.getAttribute('aria-disabled') === 'true'
+                           || /(^|\\s)disabled(\\s|$)/.test(n.getAttribute('class') || ''));
+  return !(off(el) || off(el.parentElement));
+}
+"""
+
+_TABLE_HEADERS_JS = """
+([tableSel, headerSel]) => {
+  const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+  const table = document.querySelector(tableSel || 'table');
+  if (!table) return null;
+  let cells = headerSel ? Array.from(table.querySelectorAll(headerSel)) : [];
+  if (!cells.length) {
+    const tr = table.querySelector('thead tr') || table.querySelector('tr');
+    cells = tr ? Array.from(tr.children) : [];
+  }
+  return cells.map((c) => norm(c.innerText || c.textContent));
+}
+"""
+
+_TABLE_ROWS_JS = """
+([tableSel, rowSel, columns]) => {
+  const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+  const table = document.querySelector(tableSel || 'table');
+  if (!table) return null;
+  let rows = Array.from(table.querySelectorAll(rowSel || 'tbody tr'));
+  if (!rowSel && !rows.length) rows = Array.from(table.querySelectorAll('tr'));
+  rows = rows.filter((r) => r.querySelector('td'));
+  return rows.map((r) => {
+    const cells = Array.from(r.children).filter((c) => c.tagName === 'TD' || c.tagName === 'TH');
+    const out = {};
+    for (const [name, col] of Object.entries(columns)) {
+      let el = null;
+      if (col.selector) el = r.querySelector(col.selector);
+      else if (col.index !== undefined && col.index !== null) el = cells[col.index] || null;
+      if (el && col.attr && !el.hasAttribute(col.attr)) el = el.querySelector('[' + col.attr + ']') || el;
+      out[name] = el ? (col.attr ? el.getAttribute(col.attr) : norm(el.innerText || el.textContent)) : null;
+    }
+    return out;
+  });
+}
+"""
+
+_FIELDS_JS = """
+(fields) => {
+  const tidy = (s) => (s || '').split('\\n').map((l) => l.replace(/[ \\t\\u00a0]+/g, ' ').trim())
+                               .filter(Boolean).join('\\n');
+  const read = (el, col) => col.attr ? el.getAttribute(col.attr) : tidy(el.innerText || el.textContent);
+  const out = {};
+  for (const [name, col] of Object.entries(fields)) {
+    if (col.all) out[name] = Array.from(document.querySelectorAll(col.selector)).map((el) => read(el, col));
+    else { const el = document.querySelector(col.selector); out[name] = el ? read(el, col) : null; }
+  }
+  return out;
+}
+"""
+
+
+_INVENTORY_JS = r"""
+() => {
+  const txt = (el) => (el.innerText || el.value || el.getAttribute('aria-label') || el.title || '')
+    .replace(/\s+/g, ' ').trim().slice(0, 120);
+  const sel = (el) => {
+    if (el.id) return '#' + CSS.escape(el.id);
+    const name = el.getAttribute('name');
+    if (name) return `${el.tagName.toLowerCase()}[name="${name}"]`;
+    const parts = [];
+    for (let n = el; n && n.nodeType === 1 && parts.length < 4 && n !== document.body; n = n.parentElement) {
+      if (n.id) { parts.unshift('#' + CSS.escape(n.id)); break; }
+      const same = Array.from(n.parentElement ? n.parentElement.children : []).filter(c => c.tagName === n.tagName);
+      parts.unshift(n.tagName.toLowerCase() + (same.length > 1 ? `:nth-of-type(${same.indexOf(n) + 1})` : ''));
+    }
+    return parts.join(' > ');
+  };
+  const visible = (el) => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+  const labelFor = (el) => {
+    if (el.labels && el.labels.length) return txt(el.labels[0]);
+    const cell = el.closest('td');
+    return cell && cell.previousElementSibling ? txt(cell.previousElementSibling) : '';
+  };
+  const links = Array.from(document.querySelectorAll('a[href]')).filter(visible).slice(0, 300).map(a => ({
+    text: txt(a), href: a.href, selector: sel(a), onclick: (a.getAttribute('onclick') || '').slice(0, 200)}));
+  const buttons = Array.from(document.querySelectorAll(
+      'button, input[type=button], input[type=submit], input[type=reset], [onclick]:not(a), [role=button]'))
+    .filter(visible).slice(0, 300).map(b => ({
+      text: txt(b), tag: b.tagName, type: b.getAttribute('type') || '', id: b.id || '',
+      name: b.getAttribute('name') || '', cls: b.className && b.className.baseVal === undefined ? b.className : '',
+      selector: sel(b), onclick: (b.getAttribute('onclick') || '').slice(0, 200),
+      form_action: b.form ? (b.form.getAttribute('action') || '') : ''}));
+  const forms = Array.from(document.forms).slice(0, 50).map(f => ({
+    selector: sel(f), id: f.id || '', name: f.getAttribute('name') || '',
+    action: f.getAttribute('action') || '', method: (f.getAttribute('method') || 'get').toLowerCase(),
+    fields: Array.from(f.elements).filter(e => e.name || e.id).slice(0, 60).map(e => ({
+      tag: e.tagName, type: e.type || '', name: e.name || '', id: e.id || '', selector: sel(e),
+      label: labelFor(e), placeholder: e.getAttribute('placeholder') || '',
+      value: e.type === 'password' ? '' : String(e.value || '').slice(0, 60),
+      options: e.tagName === 'SELECT' ? Array.from(e.options).slice(0, 40).map(o => [o.value, o.text.trim()]) : undefined,
+    }))}));
+  const tables = Array.from(document.querySelectorAll('table')).filter(visible).slice(0, 30).map(t => {
+    const rows = Array.from(t.rows);
+    const head = t.tHead && t.tHead.rows.length ? t.tHead.rows[t.tHead.rows.length - 1]
+      : rows.find(r => r.querySelector('th')) || rows[0];
+    const body = rows.filter(r => r !== head && !(t.tHead && t.tHead.contains(r)));
+    const cells = (r) => Array.from(r.cells).map(c => c.innerText.replace(/\s+/g, ' ').trim().slice(0, 80));
+    return {selector: sel(t), headers: head ? cells(head) : [], rows: body.length,
+            sample: body.slice(0, 3).map(cells), nested: !!t.querySelector('table')};
+  });
+  const pager = /^(next|prev|previous|first|last|more|load more|[0-9]{1,4}|[<>«»‹›]+)$/i;
+  const pagination = links.concat(buttons).filter(x => pager.test(x.text)).map(x => ({text: x.text, selector: x.selector}));
+  const main = document.querySelector('main') || document.body;
+  return {url: location.href, title: document.title,
+          headings: Array.from(document.querySelectorAll('h1, h2, h3')).map(txt).filter(Boolean).slice(0, 40),
+          links, buttons, forms, tables, pagination,
+          text: (main ? main.innerText : '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim().slice(0, 3000)};
+}
+"""
+
+
+def _chromium_candidates() -> List[str]:
+    """Browsers already on the box (system Chrome, agent-browser's Playwright builds)."""
+    found: List[str] = []
+    for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"):
+        path = shutil.which(name)
+        if path:
+            found.append(path)
+    roots = []
+    env_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "").strip()
+    if env_path and env_path != "0":
+        roots.append(env_path)
+    home = os.path.expanduser("~")
+    roots.append(os.path.join(home, ".cache", "ms-playwright"))
+    if sys.platform == "darwin":
+        roots.append(os.path.join(home, "Library", "Caches", "ms-playwright"))
+    for root in roots:
+        for pattern in ("chromium-*/chrome-linux/chrome", "chromium_headless_shell-*/chrome-linux/headless_shell",
+                        "chromium-*/chrome-mac/Chromium.app/Contents/MacOS/Chromium"):
+            found.extend(sorted(glob.glob(os.path.join(root, pattern)), reverse=True))
+    return found
+
+
+class PlaywrightDriver(Driver):
+    """Headless Chromium through the Playwright sync API.
+
+    ``guard(url, resource_type, method) -> Optional[str]`` returns a reason to
+    abort a request (the read-only and SSRF network guard).
+    """
+
+    def __init__(self, *, timeout_ms: int = DEFAULT_TIMEOUT_MS, guard: Optional[Callable[..., Optional[str]]] = None,
+                 on_blocked: Optional[Callable[[str], None]] = None, headless: bool = True):
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            from tools.lazy_deps import ensure
+
+            ensure("sites.playwright", prompt=False)
+            from playwright.sync_api import sync_playwright
+        from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
+        self._timeout_error = PlaywrightTimeout
+        self._timeout_ms = timeout_ms
+        self._pw = sync_playwright().start()
+        try:
+            self._browser = self._launch(headless)
+            self._context = self._browser.new_context(accept_downloads=False)
+            self._context.set_default_timeout(timeout_ms)
+            if guard is not None:
+                def _route(route: Any) -> None:
+                    req = route.request
+                    reason = guard(req.url, req.resource_type, req.method)
+                    if reason:
+                        if on_blocked:
+                            on_blocked(f"{req.method} {req.url}: {reason}")
+                        route.abort("blockedbyclient")
+                    else:
+                        route.continue_()
+
+                self._context.route("**/*", _route)
+            self._page = self._context.new_page()
+            self._page.on("dialog", lambda dialog: dialog.dismiss())
+            self._nav_pending: set = set()
+            self._nav_done = 0
+            self._commits = 0
+            self._page.on("request", self._on_request)
+            self._page.on("requestfinished", self._on_request_finished)
+            self._page.on("requestfailed", lambda req: self._nav_pending.discard(id(req)))
+            self._page.on("framenavigated", self._on_frame_navigated)
+        except Exception:
+            self._pw.stop()
+            raise
+
+    def _launch(self, headless: bool) -> Any:
+        try:
+            return self._pw.chromium.launch(headless=headless)
+        except Exception as first:
+            for exe in _chromium_candidates():
+                try:
+                    return self._pw.chromium.launch(headless=headless, executable_path=exe)
+                except Exception:
+                    continue
+            raise RuntimeError(
+                "no Chromium for the site recipe runner; install one with "
+                "`python -m playwright install chromium`"
+            ) from first
+
+    # -- helpers -------------------------------------------------------------
+
+    def _locator(self, target: Mapping[str, Any]) -> Any:
+        page = self._page
+        nth = int(target.get("nth") or 0)
+        if target.get("selector"):
+            return page.locator(target["selector"]).nth(nth)
+        text = str(target["text"])
+        exact = bool(target.get("exact", True))
+        loc = (
+            page.get_by_role("button", name=text, exact=exact)
+            .or_(page.get_by_role("link", name=text, exact=exact))
+            .or_(page.locator(f"input[type=submit][value={json.dumps(text)}], input[type=button][value={json.dumps(text)}]"))
+        )
+        return loc.nth(nth)
+
+    def _is_main_navigation(self, req: Any) -> bool:
+        try:
+            return bool(req.is_navigation_request()) and req.frame == self._page.main_frame
+        except Exception:
+            return False
+
+    def _on_request(self, req: Any) -> None:
+        if self._is_main_navigation(req):
+            self._nav_pending.add(id(req))
+
+    def _on_request_finished(self, req: Any) -> None:
+        if id(req) not in self._nav_pending:
+            return
+        self._nav_pending.discard(id(req))
+        try:
+            status = req.response().status
+        except Exception:
+            status = 200
+        if not (300 <= status < 400 or status in (204, 205)):
+            self._nav_done += 1
+
+    def _on_frame_navigated(self, frame: Any) -> None:
+        if frame == self._page.main_frame:
+            self._commits += 1
+
+    def _mark(self) -> Tuple[int, int]:
+        return self._nav_done, self._commits
+
+    def _settle(self, mark: Optional[Tuple[int, int]] = None) -> None:
+        """Wait until any navigation an action started has loaded.
+
+        ``wait_for_load_state`` alone returns at once while a click/submit
+        navigation is still in flight (the old document is already loaded),
+        so in-flight main-frame navigations are tracked through page events.
+        """
+        self._page.wait_for_timeout(30)
+        deadline = time.monotonic() + self._timeout_ms / 1000
+        while time.monotonic() < deadline:
+            waiting_commit = mark is not None and self._nav_done > mark[0] and self._commits <= mark[1]
+            if not self._nav_pending and not waiting_commit:
+                break
+            self._page.wait_for_timeout(25)
+        try:
+            self._page.wait_for_load_state("load")
+            self._page.wait_for_load_state("networkidle", timeout=min(self._timeout_ms, 10_000))
+        except self._timeout_error:
+            pass
+
+    # -- Driver --------------------------------------------------------------
+
+    def goto(self, url: str) -> None:
+        self._page.goto(url, wait_until="load")
+        self._settle()
+
+    def current_url(self) -> str:
+        return self._page.url
+
+    def click(self, target: Mapping[str, Any]) -> None:
+        mark = self._mark()
+        self._locator(target).click()
+        self._settle(mark)
+
+    def describe(self, target: Mapping[str, Any]) -> Dict[str, Any]:
+        return self._locator(target).evaluate(_DESCRIBE_JS)
+
+    def exists(self, target: Mapping[str, Any], *, enabled: bool = False) -> bool:
+        loc = self._locator(target)
+        if not loc.is_visible():
+            return False
+        return bool(loc.evaluate(_ENABLED_JS)) if enabled else True
+
+    def fill(self, selector: str, value: str, *, secret: bool = False) -> None:
+        self._page.locator(selector).first.fill(value)
+
+    def select(self, selector: str, value: Optional[str], label: Optional[str]) -> None:
+        loc = self._page.locator(selector).first
+        if label is not None:
+            loc.select_option(label=label)
+        else:
+            loc.select_option(value=value)
+
+    def press(self, selector: str, key: str) -> None:
+        mark = self._mark()
+        self._page.locator(selector).first.press(key)
+        self._settle(mark)
+
+    def submit(self, selector: Optional[str]) -> None:
+        mark = self._mark()
+        if selector:
+            loc = self._page.locator(selector).first
+            if loc.evaluate("(el) => el.tagName") == "FORM":
+                loc.evaluate("(f) => f.requestSubmit()")
+            else:
+                loc.click()
+        else:
+            self._page.locator("form").first.evaluate("(f) => f.requestSubmit()")
+        self._settle(mark)
+
+    def wait(self, step: Mapping[str, Any]) -> None:
+        timeout = step.get("timeout_ms") or self._timeout_ms
+        if step.get("selector"):
+            self._page.locator(step["selector"]).first.wait_for(state="visible", timeout=timeout)
+        if step.get("text"):
+            self._page.get_by_text(str(step["text"])).first.wait_for(state="visible", timeout=timeout)
+        if step.get("gone"):
+            self._page.locator(step["gone"]).first.wait_for(state="hidden", timeout=timeout)
+        if step.get("ms"):
+            self._page.wait_for_timeout(int(step["ms"]))
+
+    def text_present(self, text: str) -> bool:
+        return self._page.get_by_text(text).count() > 0
+
+    def table_headers(self, spec: Mapping[str, Any]) -> Optional[List[str]]:
+        return self._page.evaluate(_TABLE_HEADERS_JS, [spec.get("table"), spec.get("header")])
+
+    def table_rows(self, spec: Mapping[str, Any]) -> List[Dict[str, Any]]:
+        return self._page.evaluate(_TABLE_ROWS_JS, [spec.get("table"), spec.get("row"), spec["columns"]]) or []
+
+    def fields(self, spec: Mapping[str, Any]) -> Dict[str, Any]:
+        return self._page.evaluate(_FIELDS_JS, dict(spec))
+
+    def inventory(self) -> Dict[str, Any]:
+        return self._page.evaluate(_INVENTORY_JS)
+
+    def close(self) -> None:
+        # Tearing the browser down can release requests still paused in the
+        # network guard; cancel pending navigations and let the guard answer
+        # every intercepted request first.
+        try:
+            self._page.goto("about:blank", timeout=5000)
+            self._page.wait_for_timeout(50)
+        except Exception:
+            logger.debug("quiescing the recipe browser failed", exc_info=True)
+        try:
+            self._context.close()
+            self._browser.close()
+        finally:
+            self._pw.stop()
+
+
+# --------------------------------------------------------------------------
+# runner
+# --------------------------------------------------------------------------
+
+
+def _norm_header(text: str) -> str:
+    return re.sub(r"\s+", " ", text or "").strip().lower().rstrip(":")
+
+
+def _resolve_columns(columns: Mapping[str, Mapping[str, Any]], headers: Sequence[str]) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
+    """Header names → cell indexes. Returns (columns for the driver, missing headers)."""
+    normalized = [_norm_header(h) for h in headers]
+    out: Dict[str, Dict[str, Any]] = {}
+    missing: List[str] = []
+    for name, spec in columns.items():
+        col: Dict[str, Any] = {k: spec[k] for k in ("selector", "index", "attr") if k in spec}
+        if "header" in spec and "selector" not in spec and "index" not in spec:
+            want = _norm_header(str(spec["header"]))
+            idx = next((i for i, h in enumerate(normalized) if h == want), None)
+            if idx is None:
+                idx = next((i for i, h in enumerate(normalized) if want and want in h), None)
+            if idx is None:
+                missing.append(str(spec["header"]))
+                continue
+            col["index"] = idx
+        out[name] = col
+    return out, missing
+
+
+class _Run:
+    def __init__(self, recipe: Mapping[str, Any], driver: Driver, username: Optional[str], password: Optional[str],
+                 report: RunReport, *, today: Optional[dt.date] = None, sleep: Callable[[float], None] = time.sleep):
+        self.recipe = recipe
+        self.driver = driver
+        self.username = username
+        self.password = password
+        self.report = report
+        self.base_url = str(recipe["base_url"])
+        self.origin = urlparse(self.base_url)
+        self.date_format = recipe.get("date_format") or DEFAULT_DATE_FORMAT
+        self.delay = max(0, int(recipe.get("delay_ms") or 0)) / 1000.0
+        self.today = today
+        self.sleep = sleep
+        self.logged_in = False
+
+    # -- navigation ----------------------------------------------------------
+
+    def url(self, raw: str) -> str:
+        absolute = urljoin(self.base_url, raw)
+        parsed = urlparse(absolute)
+        if (parsed.scheme, parsed.netloc) != (self.origin.scheme, self.origin.netloc):
+            raise RecipeError(f"goto {raw!r} leaves the site ({self.origin.netloc})")
+        if is_forbidden_url(absolute):
+            raise ForbiddenTarget(f"goto {raw!r} looks like a data-changing action")
+        return absolute
+
+    def page_loaded(self) -> None:
+        self.report.pages += 1
+        if self.delay:
+            self.sleep(self.delay)
+
+    def login(self) -> None:
+        spec = self.recipe.get("login")
+        if not spec:
+            return
+        if not self.password:
+            raise LoginFailed("the credential has no password")
+        d = self.driver
+        d.goto(self.url(spec["url"]))
+        user_field = spec.get("username_field") or "input[name=username]"
+        pass_field = spec.get("password_field") or "input[type=password]"
+        if self.username:
+            d.fill(user_field, self.username)
+        if spec.get("next"):
+            d.click({"selector": spec["next"]} if isinstance(spec["next"], str) else spec["next"])
+        d.fill(pass_field, self.password, secret=True)
+        submit = spec.get("submit")
+        if submit:
+            d.click({"selector": submit} if isinstance(submit, str) else submit)
+        else:
+            d.press(pass_field, "Enter")
+        self.page_loaded()
+        failure = spec.get("failure_text")
+        if failure and d.text_present(str(failure)):
+            raise LoginFailed(f"the site answered {failure!r}")
+        success = spec.get("success") or {}
+        url = d.current_url()
+        ok = True
+        if success.get("selector"):
+            ok = ok and d.exists({"selector": success["selector"]})
+        if success.get("text"):
+            ok = ok and d.text_present(str(success["text"]))
+        if success.get("url_contains"):
+            ok = ok and str(success["url_contains"]) in url
+        if success.get("url_not_contains"):
+            ok = ok and str(success["url_not_contains"]) not in url
+        if not success:
+            ok = not d.exists({"selector": pass_field})
+        if not ok:
+            raise LoginFailed("the success check did not pass after submitting the login form")
+        self.logged_in = True
+
+    def login_form_showing(self) -> bool:
+        spec = self.recipe.get("login")
+        if not spec or not self.logged_in:
+            return False
+        return self.driver.exists({"selector": spec.get("password_field") or "input[type=password]"})
+
+    def goto(self, raw: str) -> None:
+        target = self.url(raw)
+        self.driver.goto(target)
+        self.page_loaded()
+        if self.login_form_showing():
+            self.report.warnings.append(f"session expired before {raw}; logged in again")
+            self.login()
+            self.driver.goto(target)
+            self.page_loaded()
+
+    def guarded_click(self, where: str, target: Mapping[str, Any]) -> None:
+        _check_static_target(where, target)
+        _check_element(where, self.driver.describe(target))
+        self.driver.click(target)
+        self.page_loaded()
+
+    # -- entities ------------------------------------------------------------
+
+    def entity(self, name: str, ent: Mapping[str, Any], cursor: Any) -> Iterator[ExtractedItem]:
+        ctx = {
+            "name": name,
+            "kind": ent["kind"],
+            "key": list(ent.get("key") or []),
+            "cursor_col": ent.get("cursor"),
+            "date_format": ent.get("date_format") or self.date_format,
+            "vars": {"cursor": cursor},
+            "last_count": 0,
+            "page_keys": [],
+        }
+        yield from self.steps(ent["steps"], ctx)
+
+    def render(self, step: Mapping[str, Any], field_name: str, ctx: Dict[str, Any], *,
+               date_format: Optional[str] = None) -> str:
+        fmt = date_format or step.get("format") or ctx["date_format"]
+        raw = step.get(field_name)
+        variables = ctx["vars"]
+        if "cursor" in _template_names(raw) and variables.get("cursor") is None:
+            raw = step.get("default")
+        return render_template(raw, variables, date_format=fmt, today=self.today)
+
+    def steps(self, steps: Sequence[Mapping[str, Any]], ctx: Dict[str, Any]) -> Iterator[ExtractedItem]:
+        for i, step in enumerate(steps):
+            op = step["op"]
+            where = f"{ctx['name']}: step {i + 1} ({op})"
+            d = self.driver
+            if op == "goto":
+                self.goto(step["url"])
+            elif op == "click":
+                self.guarded_click(where, step)
+            elif op == "fill":
+                d.fill(step["selector"], self.render(step, "value", ctx))
+            elif op == "select":
+                label = step.get("label")
+                d.select(step["selector"], None if label is not None else self.render(step, "value", ctx), label)
+            elif op == "press":
+                _check_static_target(where, step)
+                d.press(step["selector"], step.get("key", "Enter"))
+                self.page_loaded()
+            elif op == "submit":
+                _check_static_target(where, step)
+                info = d.describe({"selector": step.get("selector") or "form"})
+                if str(info.get("tag", "")).upper() == "FORM":
+                    info = {k: info.get(k) for k in ("id", "name", "action")}
+                _check_element(where, info)
+                d.submit(step.get("selector"))
+                self.page_loaded()
+            elif op == "wait":
+                d.wait(step)
+            elif op == "extract_table":
+                yield from self.extract_table(where, step, ctx)
+            elif op == "extract_fields":
+                yield from self.extract_fields(where, step, ctx)
+            elif op == "paginate":
+                yield from self.paginate(where, step, ctx)
+            elif op == "date_windows":
+                yield from self.date_windows(where, step, ctx)
+
+    def emit(self, where: str, ctx: Dict[str, Any], record: Dict[str, Any], key: Optional[str]) -> Optional[ExtractedItem]:
+        name = ctx["name"]
+        if key is None:
+            if ctx["key"]:
+                self.report.warnings.append(f"{where}: skipped a row with an empty key {ctx['key']}")
+                return None
+            key = _content_key(record)
+        ctx["page_keys"].append(key)
+        ctx["last_count"] += 1
+        self.report.rows[name] = self.report.rows.get(name, 0) + 1
+        col = ctx["cursor_col"]
+        if col and record.get(col) is not None:
+            best = self.report.cursors.get(name)
+            try:
+                if best is None or record[col] > best:
+                    self.report.cursors[name] = record[col]
+            except TypeError:
+                self.report.cursors[name] = record[col]
+        return ExtractedItem(name, ctx["kind"], key, record)
+
+    def convert(self, where: str, specs: Mapping[str, Mapping[str, Any]], raw: Mapping[str, Any]) -> Dict[str, Any]:
+        record: Dict[str, Any] = {}
+        for col, spec in specs.items():
+            try:
+                record[col] = convert_value(raw.get(col), spec)
+            except _BadValue as exc:
+                self.report.warnings.append(f"{where}: {col}: {exc}; stored as null")
+                record[col] = None
+        return record
+
+    def extract_table(self, where: str, step: Mapping[str, Any], ctx: Dict[str, Any]) -> Iterator[ExtractedItem]:
+        d = self.driver
+        columns = step["columns"]
+        headers = d.table_headers(step)
+        if headers is None:
+            if step.get("optional"):
+                return
+            raise RecipeError(f"{where}: table {step.get('table') or 'table'!r} not found on {d.current_url()}")
+        resolved, missing = _resolve_columns(columns, headers)
+        if missing:
+            raise RecipeError(f"{where}: column header(s) {missing} not found (page has {headers})")
+        spec = {"table": step.get("table"), "row": step.get("row"), "columns": resolved}
+        for raw in d.table_rows(spec):
+            record = self.convert(where, columns, raw)
+            if step.get("skip_empty", True) and all(v in (None, "") for v in record.values()):
+                continue
+            item = self.emit(where, ctx, record, build_key(record, ctx["key"]))
+            if item is not None:
+                yield item
+
+    def extract_fields(self, where: str, step: Mapping[str, Any], ctx: Dict[str, Any]) -> Iterator[ExtractedItem]:
+        fields_ = step["fields"]
+        raw = self.driver.fields({k: {kk: v[kk] for kk in ("selector", "attr", "all") if kk in v} for k, v in fields_.items()})
+        record = self.convert(where, fields_, raw)
+        required = [k for k, v in fields_.items() if v.get("required", True) and not v.get("all")]
+        if required and all(record.get(k) is None for k in required):
+            raise RecipeError(f"{where}: none of the fields {required} found on {self.driver.current_url()}")
+        if ctx["key"]:
+            key = build_key(record, ctx["key"])
+        else:
+            key = str(step.get("key") or ctx["name"])
+        item = self.emit(where, ctx, record, key)
+        if item is not None:
+            yield item
+
+    def paginate(self, where: str, step: Mapping[str, Any], ctx: Dict[str, Any]) -> Iterator[ExtractedItem]:
+        outer_count, outer_keys = ctx["last_count"], ctx["page_keys"]
+        all_keys: List[str] = []
+        try:
+            yield from self._pages(where, step, ctx, all_keys)
+        finally:
+            ctx["last_count"], ctx["page_keys"] = outer_count + len(all_keys), outer_keys + all_keys
+
+    def _pages(self, where: str, step: Mapping[str, Any], ctx: Dict[str, Any],
+               all_keys: List[str]) -> Iterator[ExtractedItem]:
+        max_pages = int(step.get("max_pages") or DEFAULT_MAX_PAGES)
+        nxt = step.get("next")
+        param = step.get("page_param")
+        page_no = int(step.get("start", 1))
+        previous: Optional[List[str]] = None
+        for done in range(1, max_pages + 1):
+            ctx["last_count"], ctx["page_keys"] = 0, []
+            yield from self.steps(step["steps"], ctx)
+            this_page = list(ctx["page_keys"])
+            all_keys.extend(this_page)
+            if not this_page and step.get("stop_on_empty", True):
+                break
+            if previous is not None and this_page == previous:
+                self.report.warnings.append(f"{where}: page {done} repeated the previous page; stopped")
+                break
+            previous = this_page
+            if done == max_pages:
+                self.report.warnings.append(f"{where}: stopped at max_pages={max_pages}")
+                break
+            if nxt:
+                if not self.driver.exists(nxt, enabled=True):
+                    break
+                self.guarded_click(f"{where} next", nxt)
+            else:
+                page_no += 1
+                parsed = urlparse(self.driver.current_url())
+                query = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if k != param]
+                query.append((str(param), str(page_no)))
+                self.goto(urlunparse(parsed._replace(query=urlencode(query))))
+
+    def date_windows(self, where: str, step: Mapping[str, Any], ctx: Dict[str, Any]) -> Iterator[ExtractedItem]:
+        start = _as_date(self.render(step, "from", ctx, date_format=DEFAULT_DATE_FORMAT))
+        end = _as_date(render_template(step.get("to") or "{{today}}", ctx["vars"], today=self.today))
+        if start is None or end is None:
+            raise RecipeError(f"{where}: 'from'/'to' must render to dates")
+        days = int(step["days"])
+        outer = dict(ctx["vars"])
+        cursor = start
+        while cursor <= end:
+            stop = min(end, cursor + dt.timedelta(days=days - 1))
+            ctx["vars"] = {**outer, "window_from": cursor, "window_to": stop}
+            yield from self.steps(step["steps"], ctx)
+            cursor = stop + dt.timedelta(days=1)
+        ctx["vars"] = outer
+
+
+def _network_guard(base_url: str, allow_private: bool) -> Callable[..., Optional[str]]:
+    origin = urlparse(base_url)
+    host_ok: Dict[str, bool] = {}
+
+    def _safe_host(url: str) -> bool:
+        host = urlparse(url).hostname or ""
+        if host not in host_ok:
+            try:
+                from tools.url_safety import is_safe_url
+
+                host_ok[host] = bool(is_safe_url(url))
+            except Exception:
+                host_ok[host] = False
+        return host_ok[host]
+
+    def guard(url: str, resource_type: str, method: str) -> Optional[str]:
+        parsed = urlparse(url)
+        if parsed.scheme in ("data", "blob", "about"):
+            return None
+        same_site = (parsed.scheme, parsed.netloc) == (origin.scheme, origin.netloc)
+        if resource_type in ("document", "xhr", "fetch") and is_forbidden_url(url):
+            return "looks like a data-changing action"
+        if resource_type == "document" and not same_site:
+            return "navigation off the source site"
+        if not same_site and not allow_private and not _safe_host(url):
+            return "private/internal address"
+        return None
+
+    return guard
+
+
+@contextmanager
+def _session(recipe: Mapping[str, Any], credential: Any, *, report: RunReport, driver: Optional[Driver],
+             allow_private: bool, today: Optional[dt.date] = None) -> Iterator["_Run"]:
+    """A logged-in :class:`_Run` on a guarded browser, closed afterwards."""
+    base_url = str(recipe["base_url"])
+    if not allow_private:
+        from tools.url_safety import is_safe_url
+
+        if not is_safe_url(base_url):
+            raise RecipeError(f"base_url {base_url} is a private/internal address (URL safety)")
+    username, password = _credential_parts(credential)
+    own_driver = driver is None
+    if driver is None:
+        driver = PlaywrightDriver(
+            timeout_ms=int(recipe.get("timeout_ms") or DEFAULT_TIMEOUT_MS),
+            guard=_network_guard(base_url, allow_private),
+            on_blocked=report.blocked_requests.append,
+        )
+    run = _Run(recipe, driver, username, password, report, today=today)
+    try:
+        try:
+            run.login()
+        except LoginFailed:
+            raise
+        except Exception as exc:
+            raise LoginFailed(_redact(f"{type(exc).__name__}: {exc}", password)) from None
+        yield run
+    finally:
+        if own_driver:
+            try:
+                driver.close()
+            except Exception:
+                logger.debug("closing the recipe browser failed", exc_info=True)
+
+
+def annotate_inventory(inventory: Dict[str, Any]) -> Dict[str, Any]:
+    """Flag the links, buttons and forms of a page inventory that must never be used."""
+    for link in inventory.get("links") or []:
+        link["forbidden"] = is_forbidden_text(link.get("text")) or is_forbidden_url(link.get("href")) or \
+            is_forbidden_text(link.get("onclick"))
+    for button in inventory.get("buttons") or []:
+        button["forbidden"] = any(is_forbidden_text(button.get(k)) for k in ("text", "id", "name", "cls", "onclick")) \
+            or is_forbidden_url(button.get("form_action"))
+    for form in inventory.get("forms") or []:
+        form["forbidden"] = any(is_forbidden_text(form.get(k)) for k in ("id", "name")) or \
+            is_forbidden_url(form.get("action"))
+    return inventory
+
+
+def browse(
+    recipe: Mapping[str, Any],
+    probes: Sequence[Mapping[str, Any]],
+    credential: Any,
+    *,
+    report: Optional[RunReport] = None,
+    driver: Optional[Driver] = None,
+    allow_private: bool = False,
+    today: Optional[dt.date] = None,
+) -> Iterator[Tuple[str, Dict[str, Any]]]:
+    """Log in with ``recipe["login"]`` and yield ``(probe name, page inventory)``.
+
+    Each probe is ``{"name": ..., "steps": [...]}`` with the same read-only
+    steps and guards as a recipe entity (extract steps are allowed and their
+    rows land in ``inventory["extracted"]``). The inventory lists the page's
+    links, buttons (incl. ``onclick``), forms with their fields, tables with
+    headers and sample rows, pagination controls and text, each control
+    flagged ``forbidden`` when it must never be used. Used by the
+    site-to-schema skill to study a site; a probe that fails yields
+    ``{"error": ...}`` and the others still run.
+    """
+    problems = [p for p in recipe_problems({**recipe, "entities": {}}) if not p.startswith("entities ")]
+    for i, probe in enumerate(probes):
+        problems += _steps_problems(f"probes[{i}]", probe.get("steps"))
+    if problems:
+        message = "invalid probes: " + "; ".join(problems)
+        raise (ForbiddenTarget if any("data-changing action" in p for p in problems) else RecipeError)(message)
+    report = report if report is not None else RunReport()
+    with _session(recipe, credential, report=report, driver=driver, allow_private=allow_private,
+                  today=today) as run:
+        for i, probe in enumerate(probes):
+            name = str(probe.get("name") or f"probe_{i + 1}")
+            ctx = {"name": name, "kind": "variable", "key": list(probe.get("key") or []), "cursor_col": None,
+                   "date_format": run.date_format, "vars": {"cursor": None}, "last_count": 0, "page_keys": []}
+            try:
+                extracted = [item.payload for item in run.steps(probe["steps"], ctx)]
+                inventory = annotate_inventory(run.driver.inventory())
+                if extracted:
+                    inventory["extracted"] = extracted[:50]
+                    inventory["extracted_count"] = len(extracted)
+            except Exception as exc:
+                inventory = {"error": _redact(f"{type(exc).__name__}: {exc}", run.password)}
+            yield name, inventory
+
+
+def run_recipe(
+    recipe: Mapping[str, Any],
+    credential: Any,
+    *,
+    entities: Optional[Iterable[str]] = None,
+    mode: str = "incremental",
+    cursors: Optional[Mapping[str, Any]] = None,
+    report: Optional[RunReport] = None,
+    driver: Optional[Driver] = None,
+    allow_private: bool = False,
+    today: Optional[dt.date] = None,
+) -> Iterator[ExtractedItem]:
+    """Log in and yield every record the recipe extracts.
+
+    ``entities`` limits the run to some entity names (default: all, recipe
+    order). ``mode="full"`` ignores ``cursors`` so every ``{{cursor}}`` falls
+    back to its step's ``default``; ``"incremental"`` uses ``cursors[entity]``
+    when present. Pass a :class:`RunReport` to read counts, failures,
+    ``full_entities`` and new cursors afterwards.
+
+    Raises :class:`RecipeError` / :class:`ForbiddenTarget` before touching the
+    site when the recipe is invalid, :class:`LoginFailed` when the login is
+    refused, and :class:`RecipeRunError` after the last item when any entity
+    failed (the others still ran and were yielded).
+    """
+    validate_recipe(recipe)
+    if mode not in MODES:
+        raise RecipeError(f"mode must be one of {MODES}")
+    all_entities: Mapping[str, Any] = recipe["entities"]
+    names = list(all_entities) if entities is None else list(entities)
+    unknown = [n for n in names if n not in all_entities]
+    if unknown:
+        raise RecipeError(f"unknown entities {unknown}; recipe has {list(all_entities)}")
+    report = report if report is not None else RunReport()
+    cursors = dict(cursors or {})
+    with _session(recipe, credential, report=report, driver=driver, allow_private=allow_private,
+                  today=today) as run:
+        for name in names:
+            ent = all_entities[name]
+            use_cursor = mode == "incremental" and ent.get("mode", "incremental") != "full"
+            cursor = cursors.get(name) if use_cursor else None
+            try:
+                yield from run.entity(name, ent, cursor)
+            except LoginFailed:
+                raise
+            except Exception as exc:
+                message = _redact(f"{type(exc).__name__}: {exc}", run.password or None)
+                report.failed[name] = message
+                logger.warning("site recipe %s/%s failed: %s", recipe.get("site"), name, message)
+                continue
+            report.completed.append(name)
+            report.rows.setdefault(name, 0)
+            if cursor is None and ent.get("removal_safe", True) is not False:
+                report.full_entities.append(name)
+        if report.failed:
+            raise RecipeRunError(report)

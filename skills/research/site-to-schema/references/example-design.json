@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "site": "fixture_wms",
+  "entities": [
+    {
+      "name": "orders",
+      "kind": "variable",
+      "reason": "paginated search results table (10 per page, Next link) behind the Orders button",
+      "source": {"page": "/orders", "via": "Orders menu button, then the date-range search form"},
+      "key": ["order_no"],
+      "columns": [
+        {"name": "order_no", "type": "text"},
+        {"name": "created_on", "type": "date"},
+        {"name": "customer", "type": "text"},
+        {"name": "qty", "type": "int"},
+        {"name": "status", "type": "text"}
+      ],
+      "refresh": {"mode": "incremental", "cursor": "created_on", "full_every": "P7D"},
+      "question": null
+    },
+    {
+      "name": "warehouses",
+      "kind": "variable",
+      "reason": "reference table (a table is a collection); small and has no date, so it is re-read in full",
+      "source": {"page": "/reference", "via": "Warehouse Table button (loaded by JavaScript)"},
+      "key": ["code"],
+      "columns": [
+        {"name": "code", "type": "text"},
+        {"name": "name", "type": "text"},
+        {"name": "region", "type": "text"}
+      ],
+      "refresh": {"mode": "full"},
+      "question": null
+    },
+    {
+      "name": "about",
+      "kind": "fixed",
+      "reason": "single text page (title, description, version); not a list, so changes are kept as versions",
+      "source": {"page": "/about", "via": "link"},
+      "key": [],
+      "columns": [
+        {"name": "title", "type": "text"},
+        {"name": "body", "type": "text"},
+        {"name": "version", "type": "text"}
+      ],
+      "refresh": {"mode": "full"},
+      "question": null
+    }
+  ]
+}
