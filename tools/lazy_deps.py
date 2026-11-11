@@ -277,7 +277,7 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
     # Headless Chromium driver for the site-to-schema recipe runner
     # (hermes_cli/site_recipe_runner.py). The browser binary itself comes
     # from agent-browser's Playwright cache or `python -m playwright install`.
-    "sites.playwright": ("playwright==1.55.0",),
+    "sites.playwright": ("playwright==1.62.0",),
 }
 
 

@@ -2427,7 +2427,8 @@ async def _drive(
             )
     except Exception as exc:  # noqa: BLE001 - recorded on the run
         password = str((credential or {}).get("password") or "")
-        error = f"{type(exc).__name__}: {exc}"
+        # BrowserNotInstalled already reads as a run error; others keep their class.
+        error = str(exc) if type(exc).__name__ == "BrowserNotInstalled" else f"{type(exc).__name__}: {exc}"
         if password:
             error = error.replace(password, "***")
         logger.warning("site %s refresh failed: %s", site.slug, error)

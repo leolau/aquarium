@@ -426,3 +426,31 @@ def test_non_owner_app_login_needs_migrate_and_site_admin(tmp_path, monkeypatch)
     finally:
         ss.set_database(None)
         run(teardown(site_roles))
+
+def test_refresh_without_browser_engine_records_clear_error(site, monkeypatch):
+    """The real runner on a box without playwright: the run fails with a readable error, no traceback text."""
+    import tools.lazy_deps
+
+    for name in [m for m in sys.modules if m == "playwright" or m.startswith("playwright.")]:
+        monkeypatch.delitem(sys.modules, name)
+    monkeypatch.setitem(sys.modules, "playwright", None)
+
+    def no_install(*_a, **_k):
+        raise tools.lazy_deps.FeatureUnavailable("sites.playwright", ("playwright",), "lazy installs are disabled")
+
+    monkeypatch.setattr(tools.lazy_deps, "ensure", no_install)
+    monkeypatch.setattr("tools.url_safety.is_safe_url", lambda _url: True)  # shop.example has no DNS here
+
+    async def saved_login(_site):
+        return {"username": "u", "password": "hunter2"}
+
+    monkeypatch.setattr(ss, "load_login", saved_login)
+    approve(site)
+    site = run(ss.get_site(site.id))
+    run(ss.start_refresh(site, trigger="manual", wait=True))
+
+    latest = run(ss.list_runs(site))[0]
+    assert latest["status"] == "error"
+    assert latest["error"].startswith("browser engine not installed")
+    assert "Traceback" not in latest["error"] and "ImportError" not in latest["error"]
+    assert "hunter2" not in latest["error"]

@@ -527,6 +527,25 @@ def test_build_runs_as_service_user_when_release_ships_no_venv(box, monkeypatch,
     assert all(user == aq.load_config()["SERVICE_USER"] for _, user in calls)
 
 
+def test_release_build_installs_the_site_browser_as_the_service_user(box, monkeypatch, tmp_path, capsys):
+    rel = tmp_path / "rel"
+    (rel / ".venv/bin").mkdir(parents=True)
+    (rel / ".venv/bin/python").write_text("")
+    calls = []
+
+    def fake_run(argv, **kw):
+        calls.append((list(argv), kw.get("as_service"), kw.get("env") or {}))
+        return subprocess.CompletedProcess(argv, 1, b"", b"")
+
+    monkeypatch.setattr(aq, "run", fake_run)
+    aq.build_release(aq.load_config(), rel)
+    user = aq.load_config()["SERVICE_USER"]
+    [(argv, as_user, env)] = [c for c in calls if c[0][-3:] == ["playwright", "install", "chromium"]]
+    assert argv[0] == str(rel / ".venv/bin/python") and as_user == user
+    assert env["HOME"] != str(aq.P(aq.BUILD_CACHE))  # the service's own cache, not the build cache
+    assert "browser engine not installed" in capsys.readouterr().out  # the failed install is reported
+
+
 def test_seal_release_drops_group_and_other_write(tmp_path, box):
     rel = tmp_path / "r"
     (rel / "agent-home/.next").mkdir(parents=True)
