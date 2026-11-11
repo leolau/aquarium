@@ -43,13 +43,15 @@ def _recipe_columns(ent: Mapping[str, Any]) -> Tuple[List[str], bool, bool]:
     cols: List[str] = []
     tabular = uses_cursor = False
     for step in _walk(ent.get("steps")):
-        if step.get("op") in ("extract_table", "paginate"):
+        op = step.get("op")
+        if op in ("extract_table", "extract_datatable", "extract_json", "paginate"):
             tabular = True
-        if step.get("op") == "extract_table":
+        if op in ("extract_table", "extract_datatable", "extract_json"):
             cols += list((step.get("columns") or {}).keys())
-        if step.get("op") == "extract_fields":
+        if op == "extract_fields":
             cols += list((step.get("fields") or {}).keys())
-        if any("{{" in str(v) and "cursor" in str(v) for v in step.values() if isinstance(v, str)):
+        own = {k: v for k, v in step.items() if k != "steps"}
+        if re.search(r"\{\{\s*cursor", json.dumps(own, default=str)):
             uses_cursor = True
     return cols, tabular, uses_cursor
 
