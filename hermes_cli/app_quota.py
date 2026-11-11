@@ -920,6 +920,14 @@ class QuotaStore:
         self._store = store
         self._config = dict(config or {})
 
+    async def initialize(self, *, connection: Optional["asyncpg.Connection"] = None) -> None:
+        """Create ``quota_overrides``. Idempotent; ``hermes db migrate`` runs it as the owner."""
+        if connection is not None:
+            await connection.execute(_overrides_schema_sql())
+            return
+        conn = await self._connect()
+        await conn.close()
+
     async def _connect(self) -> "asyncpg.Connection":
         connection = await self._store.connect()
         await connection.execute(f'CREATE SCHEMA IF NOT EXISTS "{self._store.schema}"')

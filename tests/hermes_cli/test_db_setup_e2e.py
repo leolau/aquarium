@@ -72,7 +72,7 @@ def test_deploy_migrates_as_owner_before_restarting() -> None:
     script = (REPO / "deploy/hermes-deploy.sh").read_text()
     migrate = script.index("hermes_cli.db_migrate --dsn-stdin")
     assert migrate < script.index('echo "== restarting services =="')
-    assert '"${migrate[@]}" < "$DB_ADMIN_ENV"' in script
+    assert '{ cat "$DB_ADMIN_ENV"; echo; agent_home_storage_env; } | "${migrate[@]}"' in script
     assert "DB_ADMIN_ENV=${DB_ADMIN_ENV:-/etc/aquarium/db-admin.env}" in script
 
 
@@ -231,6 +231,35 @@ def test_least_privilege_login_skips_setup_after_migrate(postgres_dsn: str) -> N
         return owner.user_id
 
     assert asyncio.run(run()) == "owner-1"
+
+
+def test_migrate_creates_the_tables_least_privilege_services_cannot(postgres_dsn: str) -> None:
+    """quota_overrides and the hosted-app tables were only made on first use.
+
+    As hermes_app that first use cannot create them, so a fresh install's
+    settings pages failed with ``relation "quota_overrides" does not exist``.
+    """
+    from hermes_cli.app_quota import QuotaStore
+    from hermes_cli.app_store import AppStore
+
+    asyncio.run(_drop_schemas(postgres_dsn))
+    _migrate(postgres_dsn)
+    for mode in ("app_prod", "app_dev"):
+        for table in ("quota_overrides", "app_databases", "app_deployments", "app_secret_meta"):
+            assert asyncio.run(_table_exists(postgres_dsn, f"{mode}.{table}")), (mode, table)
+    asyncio.run(_app_login(postgres_dsn))
+    db_setup._setup_allowed.clear()
+    store = get_store("supabase-app", "prod", config=_config(_app_dsn(postgres_dsn)))
+
+    async def run() -> tuple:
+        quotas = QuotaStore(store)
+        await quotas.initialize()
+        overrides = await quotas.overrides_for("owner-1")
+        apps = AppStore(store)
+        await apps.initialize()
+        return overrides, await apps.list_databases()
+
+    assert asyncio.run(run()) == ({}, [])
 
 
 def test_migrate_refuses_a_login_that_does_not_own_the_schema(postgres_dsn: str) -> None:

@@ -1,5 +1,9 @@
 """``hermes db migrate`` — create and update every app table, as the schema owner.
 
+It also creates agent-home's private media bucket in Supabase Storage (chat
+uploads, push VAPID keys and device subscriptions) when the Storage address and
+service key are known: nothing else creates it, so a fresh install had none.
+
 The services and CLI commands also set their tables up on first use, but only
 when their database login owns the schema (see :mod:`hermes_cli.db_setup`).
 A least-privilege login such as ``hermes_app`` cannot, so this command does it
@@ -20,8 +24,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import dataclasses
+import os
 import sys
-from typing import Any, Awaitable, Callable, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, List, Mapping, Optional, Tuple
 
 Step = Tuple[str, Callable[[Any], Awaitable[Any]]]
 
@@ -30,6 +35,11 @@ _DSN_KEYS = ("HERMES_DB_ADMIN_URL", "DATABASE_URL")
 APP_PASSWORD_KEY = "HERMES_APP_DB_PASSWORD"
 #: agent-home's read-only login (agent_home_app); with it migrate refreshes its grants.
 READ_PASSWORD_KEY = "HERMES_APP_READ_DB_PASSWORD"
+#: Supabase Storage settings for the media bucket (each from standard input, else the
+#: environment); without the address and the service key the bucket step is skipped.
+STORAGE_KEYS = ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "AGENT_HOME_MEDIA_BUCKET")
+#: On a fresh install Storage may still be starting when migrate first runs.
+STORAGE_WAIT_SECONDS = 120.0
 
 
 def parse_env(text: str) -> dict:
@@ -62,6 +72,8 @@ def parse_dsn(text: str) -> str:
 def _steps(store: Any, config: dict) -> List[Step]:
     """Every table setup, in dependency order; each takes the owner connection."""
     from hermes_cli.access import initialize_access
+    from hermes_cli.app_quota import QuotaStore
+    from hermes_cli.app_store import AppStore
     from hermes_cli.changes import initialize_changes
     from hermes_cli.credential_store import SupabaseCredentialStore
     from hermes_cli.datastore import initialize_supabase_app
@@ -112,6 +124,8 @@ def _steps(store: Any, config: dict) -> List[Step]:
         ("files", init(FileRegistry(store, role_reads=role_reads))),
         ("inbound items", init(InboundRegistry(store, role_reads=role_reads))),
         ("tools", init(ToolRegistry(store))),
+        ("hosted apps", init(AppStore(store))),
+        ("quota overrides", init(QuotaStore(store, config=config))),
         ("todos", init(TodoStore(store))),
         ("credentials", init(SupabaseCredentialStore(store))),
         ("OSS provenance", init(ProvenanceRegistry(store))),
@@ -179,14 +193,44 @@ async def migrate_store(
     return results
 
 
+def _storage(values: Optional[Mapping[str, str]]) -> Any:
+    """The media-bucket Storage client from ``values`` or the environment, else None."""
+    from hermes_cli.filestore import DEFAULT_BUCKET, SupabaseStorage
+
+    given = {key: (values or {}).get(key) or os.environ.get(key, "") for key in STORAGE_KEYS}
+    url = given["SUPABASE_URL"].strip().rstrip("/")
+    key = given["SUPABASE_SERVICE_ROLE_KEY"].strip()
+    if not (url and key):
+        return None
+    return SupabaseStorage(
+        url=url, service_key=key,
+        bucket=given["AGENT_HOME_MEDIA_BUCKET"].strip() or DEFAULT_BUCKET,
+    )
+
+
+def migrate_bucket(storage: Any) -> Optional[str]:
+    """Create the private media bucket if it is missing; the error, or None."""
+    try:
+        asyncio.run(storage.ensure_bucket(wait=STORAGE_WAIT_SECONDS))
+    except Exception as error:
+        return f"{type(error).__name__}: {error}"
+    return None
+
+
 def migrate(
     admin_dsn: str = "",
     *,
     config: Optional[dict] = None,
     app_password: str = "",
     read_password: str = "",
+    storage_env: Optional[Mapping[str, str]] = None,
 ) -> List[Tuple[str, str, Optional[str]]]:
-    """Migrate the prod and dev schemas; ``[(mode, step, error or None)]``."""
+    """Migrate the prod and dev schemas and the media bucket; ``[(mode, step, error or None)]``.
+
+    The bucket is box-wide, so its row's mode is ``box``. ``storage_env`` holds
+    :data:`STORAGE_KEYS` values (from standard input); each missing one comes from
+    the environment.
+    """
     from hermes_cli.config import load_config_readonly
     from hermes_cli.datastore import get_store
 
@@ -205,11 +249,15 @@ def migrate(
             )
         ):
             rows.append((mode, name, error))
+    storage = _storage(storage_env)
+    if storage is not None:
+        rows.append(("box", f"storage bucket {storage.bucket}", migrate_bucket(storage)))
     return rows
 
 
 def db_migrate_command(args: argparse.Namespace) -> int:
     admin_dsn = app_password = read_password = ""
+    storage_env: dict = {}
     if getattr(args, "dsn_stdin", False):
         text = sys.stdin.read()
         admin_dsn = parse_dsn(text)
@@ -217,12 +265,16 @@ def db_migrate_command(args: argparse.Namespace) -> int:
         values = parse_env(text)
         app_password = values.get(APP_PASSWORD_KEY, "")
         read_password = values.get(READ_PASSWORD_KEY, "")
+        storage_env = {key: values[key] for key in STORAGE_KEYS if values.get(key)}
         if not admin_dsn:
             print("No database address on standard input "
                   "(expected HERMES_DB_ADMIN_URL=postgresql://...).", file=sys.stderr)
             return 1
     try:
-        rows = migrate(admin_dsn, app_password=app_password, read_password=read_password)
+        rows = migrate(
+            admin_dsn, app_password=app_password, read_password=read_password,
+            storage_env=storage_env,
+        )
     except (RuntimeError, ValueError, OSError) as error:
         print(f"Database migration failed: {error}", file=sys.stderr)
         return 1

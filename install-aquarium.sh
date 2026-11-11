@@ -389,7 +389,7 @@ hermes_db() { run_env "$APP/.venv/bin/hermes" "$@"; }
 cd "$APP"
 # A fresh database has no app schema yet. `hermes db migrate` creates the schemas, every
 # table and row rule, pgvector and the non-BYPASSRLS hermes_app role's grants, as the
-# schema owner. That owner address lives only in root's /etc/aquarium/db-admin.env and
+# schema owner, plus agent-home's private media bucket (SUPABASE_* from $APP_ENV). That owner address lives only in root's /etc/aquarium/db-admin.env and
 # reaches the migrate process over stdin; deploy/hermes-deploy.sh re-runs it on each deploy.
 # Membership is skipped: `GRANT hermes_app TO CURRENT_USER` kills the backend on self-hosted
 # Supabase (see ensure_app_role), so agent-home reads through the agent_home_app LOGIN role.

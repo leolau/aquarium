@@ -294,17 +294,26 @@ gateway_db_env() {
     [ -r "$f" ] && grep -h '^DATABASE_URL=' "$f" || true
   done | tail -n 1
 }
+# agent-home's Supabase Storage address, service key and bucket name: migrate creates
+# its private media bucket (uploads, push keys and device subscriptions) when missing.
+# Later files win, as in systemd.
+agent_home_storage_env() {
+  local f
+  for f in $(systemctl show -P EnvironmentFiles agent-home.service 2>/dev/null | awk '{print $1}'); do
+    [ -r "$f" ] && grep -hE '^(SUPABASE_URL|SUPABASE_SERVICE_ROLE_KEY|AGENT_HOME_MEDIA_BUCKET)=' "$f" || true
+  done
+}
 for cfg in ${HERMES_HOME_GLOB:-/opt/data/hermes-home*/config.yaml}; do
   [ -f "$cfg" ] || continue
   migrate=(runuser -u hermes -- env HERMES_HOME="$(dirname "$cfg")"
            ./.venv/bin/python -I -m hermes_cli.db_migrate --dsn-stdin)
   if [ -f "$DB_ADMIN_ENV" ]; then
-    "${migrate[@]}" < "$DB_ADMIN_ENV" || {
+    { cat "$DB_ADMIN_ENV"; echo; agent_home_storage_env; } | "${migrate[@]}" || {
       echo "ABORT: hermes db migrate failed for $cfg; services were not restarted" >&2
       exit 1
     }
   elif dsn=$(gateway_db_env) && [ -n "$dsn" ]; then
-    printf '%s\n' "$dsn" | "${migrate[@]}" \
+    { printf '%s\n' "$dsn"; agent_home_storage_env; } | "${migrate[@]}" \
       || echo "WARNING: hermes db migrate failed for $cfg; services still set up their own tables" >&2
   fi
 done
