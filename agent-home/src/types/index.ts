@@ -3942,6 +3942,81 @@ export interface RefResolution {
   lineage_root?: string;
 }
 
+// ── Project › Skills tab (plan 2026-11-11-001 Part B) ──────────────────────
+// `GET /api/projects/{slug}/skills?days=`. B2 builds against the contract in
+// the plan; B1 adds the same types — if both exist at merge, B1's wins.
+// Both drafts of the contract are accepted (Part B and Appendix B §3.2);
+// `components/projects/skills/model.ts` normalises them.
+
+export interface ProjectSkillOutcomes {
+  success: number;
+  partial: number;
+  /** Part B spells it `failed`, Appendix B `failure`. */
+  failed?: number;
+  failure?: number;
+}
+
+export interface ProjectSkillUsageRow {
+  name: string;
+  profile: string;
+  category?: string | null;
+  /** e.g. `builtin`, `hub`, `local`. */
+  source?: string | null;
+  version?: string | null;
+  uses: number;
+  tasks?: number;
+  outcomes?: ProjectSkillOutcomes;
+  success?: number;
+  partial?: number;
+  failure?: number;
+  unknown?: number;
+  success_rate?: number | null;
+  /** Uses rated "not helpful". */
+  rated_down?: number;
+  /** Epoch seconds. */
+  last_used_at: number | null;
+  preloaded?: boolean;
+  created_here?: boolean;
+  trend?: Array<{ day: string; uses: number }>;
+}
+
+export interface ProjectSkillsProfile {
+  profile: string;
+  role?: string | null;
+  /** Run-level evidence, Improve and New skill need Skills `lab` here (owner always). */
+  can_lab: boolean;
+  can_manage?: boolean;
+  /** The caller can't see this profile's skills at all. */
+  hidden?: boolean;
+}
+
+export interface ProjectSkillCandidate {
+  id: string;
+  name: string;
+  /** Part B: `run`; Appendix B: `run_no`. */
+  run?: number | null;
+  run_no?: number | null;
+  preview: string | null;
+  created_at?: number | null;
+}
+
+export interface ProjectSkillsResponse {
+  window_days?: number;
+  days?: number;
+  totals?: {
+    skills: number;
+    uses: number;
+    first_time_success_rate: number | null;
+    worth_improving: number;
+  };
+  profiles?: ProjectSkillsProfile[];
+  skills: ProjectSkillUsageRow[];
+  unused_preloaded?: string[];
+  preloaded_unused?: string[];
+  candidates?: ProjectSkillCandidate[];
+}
+// ── end Project › Skills tab ───────────────────────────────────────────────
+
 /** FG-37 `GET /api/secret-links/{token}`: what a one-time secret link asks for. */
 export interface SecretLinkInfo {
   ok: true;

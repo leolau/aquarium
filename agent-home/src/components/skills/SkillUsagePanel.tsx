@@ -159,7 +159,7 @@ export function SkillUsagePanel({
       }));
       // Per-version rates can't be recomputed locally (the server sends rates,
       // not counts), so reload them from the ledger.
-      getJson<SkillUsageDetail>(`/api/skills/usage/detail?${base}&days=${days}&limit=1`)
+      getJson<SkillUsageDetail>(`/api/skills/usage/detail?${base}${pq}&days=${days}&limit=1`)
         .then((fresh) => patch((d) => ({ ...d, by_version: fresh.by_version })))
         .catch(() => undefined);
     } catch (err) {

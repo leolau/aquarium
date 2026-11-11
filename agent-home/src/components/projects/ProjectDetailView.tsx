@@ -53,6 +53,8 @@ import {
   type ProjectGroup,
 } from "@/components/projects/tabs/groups";
 import { SettingsTab } from "@/components/projects/tabs/SettingsTab";
+import { useProjectSkillCandidateCount } from "@/components/projects/skills/store";
+import { SkillsTab } from "@/components/projects/tabs/SkillsTab";
 import {
   PROJECT_TAB_LABEL,
   parseProjectTab,
@@ -88,6 +90,7 @@ const TAB_COMPONENT: Record<ProjectTab, ComponentType<ProjectTabProps>> = {
   inputs: InputsTab,
   plan: PlanTab,
   settings: SettingsTab,
+  skills: SkillsTab,
 };
 
 /**
@@ -196,8 +199,10 @@ export function ProjectDetailView({
     board?.columns
       .flatMap((column) => column.tasks)
       .filter((task) => task.status === "triage").length ?? 0;
+  const skillCandidates = useProjectSkillCandidateCount(project.slug);
   const tabBadges: Partial<Record<ProjectGroup, number>> = {
     work: blockedCount + triageCount,
+    skills: skillCandidates,
     setup: project.clarify?.open_count ?? 0,
   };
   const needsYou = blockedCount + triageCount;

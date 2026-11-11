@@ -135,6 +135,7 @@ import type {
   ProjectCategory,
   ProjectsResponse,
   ProjectToolsResolution,
+  ProjectSkillsResponse,
   ProposedAction,
   Role,
   RoleLimitsResponse,
@@ -2345,6 +2346,21 @@ export class HermesApiClient {
   async project(slug: string): Promise<ProjectDetail> {
     return this.request(`/api/registry/projects/${encodeURIComponent(slug)}`);
   }
+
+  // ── Project › Skills tab (plan 2026-11-11-001 Part B; B1 owns these, B1 wins at merge) ──
+  /** Skills this project's card runs used in the last `days` days, per profile. */
+  async projectSkills(slug: string, days: number): Promise<ProjectSkillsResponse> {
+    return this.request(`/api/registry/projects/${encodeURIComponent(slug)}/skills?days=${days}`);
+  }
+
+  /** Hide a retro-suggested skill (sets `dismissed_at`). */
+  async dismissProjectSkillCandidate(slug: string, id: string): Promise<{ ok: boolean }> {
+    return this.request(
+      `/api/registry/projects/${encodeURIComponent(slug)}/skills/candidates/${encodeURIComponent(id)}/dismiss`,
+      { method: "POST", json: {} },
+    );
+  }
+  // ── end Project › Skills tab ──
 
   /** Edit record fields. Leaving `repeatable` pauses + detaches the schedule (§3.1). */
   async updateProject(
