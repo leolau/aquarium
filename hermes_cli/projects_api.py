@@ -5205,7 +5205,9 @@ async def patch_tools_route(request: Request) -> dict[str, Any]:
                         r["name"] for r in projects_db.list_created_skills(conn, project.id)
                         if r["profile"] == (host or "")
                     ]
-            names = [str(s).strip() for s in (body.get("skills") or []) if str(s).strip()]
+            names = projects_run.parse_skill_field(
+                [str(s) for s in (body.get("skills") or [])]
+            )
             _reject_bad_names(names, "skill")
             if known is not None:
                 unknown = [s for s in names if s not in known]
@@ -5230,12 +5232,12 @@ async def patch_tools_route(request: Request) -> dict[str, Any]:
             projects_run.parse_csv_field(fresh.toolsets), enabled
         )
         eff_sk, dropped_sk, truncated = projects_run.resolve_skills(
-            projects_run.parse_csv_field(fresh.skills), available,
+            projects_run.parse_skill_field(fresh.skills), available,
             cfg["max_skills"],
         )
         return {
             "toolsets": projects_run.parse_csv_field(fresh.toolsets),
-            "skills": projects_run.parse_csv_field(fresh.skills),
+            "skills": projects_run.parse_skill_field(fresh.skills),
             "host_profile": host,
             "effective_toolsets": eff_ts,
             "dropped_toolsets": dropped_ts,
