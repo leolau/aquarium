@@ -58,14 +58,20 @@ export function AccountMenu({
           {initial ?? <UserIcon size={16} />}
         </span>
         {trimmed || roleLabel ? (
-          <span aria-hidden data-testid="account-identity" className="hidden min-w-0 flex-col items-start text-left md:flex">
+          <span
+            aria-hidden
+            data-testid="account-identity"
+            data-fit-hide="identity"
+            className="hidden min-w-0 flex-col items-start text-left md:flex">
             {trimmed ? <span className="max-w-full truncate text-[13px] font-medium leading-4">{trimmed}</span> : null}
             {roleLabel ? (
               <span className="max-w-full truncate text-[11px] leading-[14px] text-[var(--color-muted)]">{roleLabel}</span>
             ) : null}
           </span>
         ) : null}
-        <ChevronDownIcon size={14} className="hidden text-[var(--color-muted)] md:block" />
+        <span data-fit-hide="identity" className="contents">
+          <ChevronDownIcon size={14} className="hidden text-[var(--color-muted)] md:block" />
+        </span>
       </button>
       {popOpen ? (
         // Above the Coral launchers (z-60): the menu is a stacking context, so the

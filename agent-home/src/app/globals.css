@@ -368,3 +368,18 @@ body {
     }
   }
 }
+
+/* Top bar auto-fit (landing/topbar/autoFit.ts): pieces drop out, least important first, when the bar would overflow. */
+[data-fit~="updated"] [data-fit-hide="updated"],
+[data-fit~="aquarium-label"] [data-fit-hide="aquarium-label"],
+[data-fit~="health"] [data-fit-hide="health"],
+[data-fit~="needs-text"] [data-fit-hide="needs-text"],
+[data-fit~="identity"] [data-fit-hide="identity"],
+[data-fit~="brand-label"] [data-fit-hide="brand-label"] {
+  display: none;
+}
+@media (min-width: 64rem) {
+  [data-fit~="health"] [data-fit-show="health"] {
+    display: flex;
+  }
+}
