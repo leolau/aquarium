@@ -1021,14 +1021,52 @@ async def ensure_site_admin(conn: Any, *, password: Optional[str] = None) -> Non
     from hermes_cli.access import _quote_literal
 
     role = SITE_ADMIN_ROLE
-    if password:
-        _store_role_password(role, password)
-    literal = _quote_literal(_role_password(role, create=True) or "")
-    attrs = "LOGIN CREATEROLE NOSUPERUSER NOBYPASSRLS NOCREATEDB NOINHERIT"
-    if await conn.fetchval("SELECT 1 FROM pg_roles WHERE rolname = $1", role):
-        await conn.execute(f"ALTER ROLE {role} {attrs} PASSWORD {literal}")
+    secret = password or _role_password(role, create=False) or secrets.token_urlsafe(32)
+    literal = _quote_literal(secret)
+    am_super = await conn.fetchval("SELECT rolsuper FROM pg_roles WHERE rolname = current_user")
+    existing = await conn.fetchrow(
+        "SELECT rolsuper, rolbypassrls, rolcanlogin, rolcreaterole, rolcreatedb, rolinherit "
+        "FROM pg_roles WHERE rolname = $1",
+        role,
+    )
+    if existing is None:
+        await conn.execute(
+            f"CREATE ROLE {role} LOGIN CREATEROLE NOCREATEDB NOINHERIT NOSUPERUSER NOBYPASSRLS "
+            f"PASSWORD {literal}"
+        )
     else:
-        await conn.execute(f"CREATE ROLE {role} {attrs} PASSWORD {literal}")
+        # Name only attributes that differ: PostgreSQL refuses SUPERUSER,
+        # BYPASSRLS and CREATEDB options from a non-superuser even as no-ops.
+        if existing["rolsuper"] or existing["rolbypassrls"]:
+            if not am_super:
+                raise RuntimeError(
+                    f"{role} has SUPERUSER or BYPASSRLS, which a provisioning login must not; "
+                    f"a superuser must run: ALTER ROLE {role} NOSUPERUSER NOBYPASSRLS"
+                )
+            await conn.execute(f"ALTER ROLE {role} NOSUPERUSER NOBYPASSRLS")
+        if existing["rolcreatedb"] and not await conn.fetchval(
+            "SELECT rolcreatedb FROM pg_roles WHERE rolname = current_user"
+        ):
+            raise RuntimeError(
+                f"{role} has CREATEDB, which a provisioning login must not; a superuser "
+                f"must run: ALTER ROLE {role} NOCREATEDB"
+            )
+        changes = [
+            option
+            for option, wrong in (
+                ("LOGIN", not existing["rolcanlogin"]),
+                ("CREATEROLE", not existing["rolcreaterole"]),
+                ("NOCREATEDB", existing["rolcreatedb"]),
+                ("NOINHERIT", existing["rolinherit"]),
+            )
+            if wrong
+        ]
+        if changes:
+            await conn.execute(f"ALTER ROLE {role} {' '.join(changes)}")
+        await conn.execute(f"ALTER ROLE {role} PASSWORD {literal}")
+    # Saved only once the database has it, so runtime never holds a password
+    # the role does not.
+    _store_role_password(role, secret)
     current_db = await conn.fetchval("SELECT current_database()")
     await conn.execute(
         f'GRANT CONNECT ON DATABASE "{current_db}" TO {role} WITH GRANT OPTION; '
@@ -1036,27 +1074,114 @@ async def ensure_site_admin(conn: Any, *, password: Optional[str] = None) -> Non
     )
     if not await _registry_exists(conn):
         return
-    roles = await conn.fetch(
-        "SELECT r.rolname FROM public.site_sources s JOIN pg_roles r "
-        "ON r.rolname IN (s.db_role, s.db_role || '_rw', s.db_role || '_ro') "
-        "WHERE NOT pg_has_role($1, r.oid, 'USAGE WITH ADMIN OPTION')",
+    if not am_super:
+        # ALTER ... OWNER TO needs SET ROLE on the new owner (the creator only
+        # gets ADMIN OPTION on PostgreSQL 16+).
+        if await conn.fetchval("SHOW server_version_num") >= "160000":
+            if not await conn.fetchval("SELECT pg_has_role(current_user, $1, 'SET')", role):
+                await conn.execute(f"GRANT {role} TO CURRENT_USER WITH INHERIT FALSE, SET TRUE")
+        elif not await conn.fetchval("SELECT pg_has_role(current_user, $1, 'MEMBER')", role):
+            await conn.execute(f"GRANT {role} TO CURRENT_USER")
+    for row in await conn.fetch("SELECT id::text AS id, slug, schema_name FROM public.site_sources"):
+        await _adopt_site(conn, row["id"], row["slug"], row["schema_name"])
+
+
+async def _site_marker(conn: Any, schema: str, owner: str) -> Optional[str]:
+    """``_meta.site_id`` of ``schema``, read as whoever can after a partial adoption.
+
+    An adopted schema shuts the old owner out, and a ``_meta`` not yet moved is
+    unreadable to the site admin; then the old owner borrows schema USAGE from
+    the site admin for this transaction only.
+    """
+    role = SITE_ADMIN_ROLE
+    meta = await conn.fetchrow(
+        "SELECT has_table_privilege(c.oid, 'SELECT') AS me, "
+        "has_table_privilege($2, c.oid, 'SELECT') AS admin "
+        "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE n.nspname = $1 AND c.relname = '_meta' AND c.relkind = 'r'",
+        schema,
         role,
     )
-    for row in roles:
-        await conn.execute(f"GRANT {_ident(row['rolname'])} TO {role} WITH ADMIN OPTION")
-    schemas = await conn.fetch(
-        "SELECT n.nspname FROM public.site_sources s JOIN pg_namespace n ON n.nspname = s.schema_name "
-        "WHERE pg_get_userbyid(n.nspowner) <> $1",
-        role,
+    if meta is None:
+        return None
+    s = _ident(schema)
+    read = f"SELECT value #>> '{{}}' FROM {s}._meta WHERE key = 'site_id'"
+    async with conn.transaction():
+        if await conn.fetchval("SELECT has_schema_privilege($1, 'USAGE')", schema):
+            if meta["me"]:
+                return await conn.fetchval(read)
+        if owner != role:
+            return None
+        if meta["admin"]:
+            await conn.execute(f"SET LOCAL ROLE {role}")
+            marker = await conn.fetchval(read)
+            await conn.execute("RESET ROLE")
+            return marker
+        if not meta["me"]:
+            return None
+        me = _ident(await conn.fetchval("SELECT current_user"))
+        await conn.execute(f"SET LOCAL ROLE {role}; GRANT USAGE ON SCHEMA {s} TO {me}; RESET ROLE")
+        marker = await conn.fetchval(read)
+        await conn.execute(f"SET LOCAL ROLE {role}; REVOKE USAGE ON SCHEMA {s} FROM {me}; RESET ROLE")
+        return marker
+
+
+async def _adopt_site(conn: Any, site_id: str, slug: str, schema: str) -> None:
+    """Hand a site provisioned by another login to ``aquarium_site_admin``.
+
+    The registry is writable by hermes_app, so a row is trusted only when its
+    schema is ``site_<slug>`` and that schema's ``_meta`` (written by
+    provisioning, not writable by hermes_app) names the same site id.
+    Re-run on every migrate: tables are reconciled even if the schema moved.
+    """
+    role = SITE_ADMIN_ROLE
+    if not _SLUG_RE.fullmatch(slug or "") or schema != schema_name(slug):
+        logger.warning("site registry row %s: schema %r is not site_<slug>; not adopted", site_id, schema)
+        return
+    owner = await conn.fetchval(
+        "SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = $1", schema
     )
-    for row in schemas:
-        schema = _ident(row["nspname"])
-        await conn.execute(f"ALTER SCHEMA {schema} OWNER TO {role}")
+    if owner is None:
+        return
+    marker = await _site_marker(conn, schema, owner)
+    if marker != site_id:
+        logger.warning("site registry row %s does not match schema %s; not adopted", site_id, schema)
+        return
+    async with conn.transaction():
+        for site_role in (writer_role(slug), reader_role(slug)):
+            attrs = await conn.fetchrow(
+                "SELECT rolsuper, rolbypassrls, rolcreaterole, rolcreatedb, "
+                "pg_has_role($2, oid, 'USAGE WITH ADMIN OPTION') AS adopted "
+                "FROM pg_roles WHERE rolname = $1",
+                site_role,
+                role,
+            )
+            if attrs is None or attrs["adopted"]:
+                continue
+            if attrs["rolsuper"] or attrs["rolbypassrls"] or attrs["rolcreaterole"] or attrs["rolcreatedb"]:
+                logger.warning("site role %s has elevated attributes; not adopted", site_role)
+                continue
+            await conn.execute(f"GRANT {_ident(site_role)} TO {role} WITH ADMIN OPTION")
+        # The schema first: a table's new owner needs CREATE on its schema.
+        s = _ident(schema)
+        if await conn.fetchval(
+            "SELECT pg_get_userbyid(nspowner) <> $2 FROM pg_namespace WHERE nspname = $1", schema, role
+        ):
+            await conn.execute(f"ALTER SCHEMA {s} OWNER TO {role}")
         tables = await conn.fetch(
-            "SELECT tablename FROM pg_tables WHERE schemaname = $1", row["nspname"]
+            "SELECT tablename FROM pg_tables WHERE schemaname = $1 AND tableowner <> $2", schema, role
         )
+        if not tables:
+            return
+        # The schema no longer lets this login in; borrow USAGE (as its new owner).
+        me = _ident(await conn.fetchval("SELECT current_user"))
+        lent = not await conn.fetchval("SELECT has_schema_privilege($1, 'USAGE')", schema)
+        if lent:
+            await conn.execute(f"SET LOCAL ROLE {role}; GRANT USAGE ON SCHEMA {s} TO {me}; RESET ROLE")
         for table in tables:
-            await conn.execute(f"ALTER TABLE {schema}.{_ident(table['tablename'])} OWNER TO {role}")
+            await conn.execute(f"ALTER TABLE {s}.{_ident(table['tablename'])} OWNER TO {role}")
+        if lent:
+            await conn.execute(f"SET LOCAL ROLE {role}; REVOKE USAGE ON SCHEMA {s} FROM {me}; RESET ROLE")
 
 
 @contextlib.asynccontextmanager
@@ -1591,6 +1716,7 @@ class SiteRun:
     failed_entities: Set[str] = field(default_factory=set)
     #: The runner's RunReport (merged over the run's mode groups).
     report: Dict[str, Any] = field(default_factory=dict)
+    warnings: List[str] = field(default_factory=list)
 
     def view(self) -> Dict[str, Any]:
         return {
@@ -1603,6 +1729,7 @@ class SiteRun:
             "updated": self.updated,
             "removed": self.removed,
             "versions": self.versions,
+            **({"warnings": list(self.warnings)} if self.warnings else {}),
         }
 
 
@@ -1792,6 +1919,13 @@ class SiteWriter:
                 spec = self.entities.get(name)
                 if spec is None or name in run.failed_entities:
                     continue
+                if not run.seen.get(name) and await self._live_count(spec):
+                    # An empty full load of a populated entity looks like a broken
+                    # extraction (layout change, lost session), not a mass removal.
+                    run.warnings.append(
+                        f"{name}: the full refresh returned no rows; existing rows were not marked removed"
+                    )
+                    continue
                 run.removed += await self._remove_unseen(spec, run)
                 removed_for.append(name)
         if cursors and run.status != "error":
@@ -1814,6 +1948,8 @@ class SiteWriter:
             "failed_entities": sorted(run.failed_entities),
             "errors": run.errors[:20],
         }
+        if run.warnings:
+            detail["warnings"] = run.warnings
         if run.report:
             detail["report"] = run.report
         await self.conn.execute(
@@ -1830,6 +1966,15 @@ class SiteWriter:
             detail,
         )
         return run
+
+    async def _live_count(self, spec: Mapping[str, Any]) -> int:
+        if spec["kind"] == "variable":
+            return await self.conn.fetchval(
+                f"SELECT count(*) FROM {_ident(spec['name'])} WHERE _removed_at IS NULL"
+            )
+        return await self.conn.fetchval(
+            "SELECT count(*) FROM _fixed_versions WHERE entity = $1 AND valid_to IS NULL", spec["name"]
+        )
 
     async def _remove_unseen(self, spec: Mapping[str, Any], run: SiteRun) -> int:
         seen = sorted(run.seen.get(spec["name"], set()))
