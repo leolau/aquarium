@@ -426,3 +426,106 @@ def test_non_owner_app_login_needs_migrate_and_site_admin(tmp_path, monkeypatch)
     finally:
         ss.set_database(None)
         run(teardown(site_roles))
+
+
+def test_site_admin_migrate_by_non_superuser_owner_adopts_old_sites(tmp_path, monkeypatch):
+    """Re-runnable by a CREATEROLE (non-superuser) owner; adopts only genuine old sites."""
+    import asyncpg
+
+    tag = uuid.uuid4().hex[:8]
+    dbname, owner_role = f"siteadopt_{tag}", f"t_own_{tag}"
+    monkeypatch.setattr(ss, "_role_secrets_path", lambda: tmp_path / "roles.json")
+    monkeypatch.setattr(ss, "current_profile", lambda: "default")
+    monkeypatch.setattr(ss, "_registry_ready", set())
+    host = DSN.split("@", 1)[1].rsplit("/", 1)[0]
+    owner_dsn = f"postgresql://{owner_role}:pw{tag}@{host}/{dbname}"
+
+    async def as_owner(fn):
+        conn = await asyncpg.connect(owner_dsn)
+        try:
+            return await fn(conn)
+        finally:
+            await conn.close()
+
+    async def setup():
+        conn = await asyncpg.connect(DSN)
+        try:
+            await conn.execute(
+                f"CREATE ROLE {owner_role} LOGIN CREATEROLE NOSUPERUSER PASSWORD 'pw{tag}'"
+            )
+            await conn.execute(f'CREATE DATABASE "{dbname}" OWNER {owner_role}')
+        finally:
+            await conn.close()
+
+    run(setup())
+    site_roles: list = []
+    try:
+        # A site provisioned the old way, directly by the owner login.
+        ss.set_database(ss.SiteDatabase(owner_dsn))
+        site = run(ss.create_site(ALICE, {"name": f"old{tag}", "base_url": "https://shop.example"}))
+        site_roles = [site.writer_role, site.reader_role]
+        approve(site)
+
+        async def forge(conn):
+            await conn.execute("CREATE SCHEMA app_x; CREATE TABLE app_x.secrets (v text)")
+            await conn.execute(
+                "INSERT INTO public.site_sources (id, slug, name, base_url, owner_user_id, "
+                "schema_name, db_role) VALUES (gen_random_uuid(), 'evil', 'e', 'https://e.example', "
+                "'mallory', 'app_x', 'site_evil_rw'), (gen_random_uuid(), $1, 'dup', "
+                "'https://e.example', 'mallory', $2, $3)",
+                f"{site.slug}2", site.schema_name, site.writer_role,
+            )
+
+        run(as_owner(forge))
+        for _ in range(2):  # the second run alters the existing role: no superuser-only options
+            run(as_owner(lambda c: ss.ensure_site_admin(c)))
+
+        async def owners(conn):
+            return {
+                "schemas": dict(await conn.fetch(
+                    "SELECT nspname, pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = ANY($1)",
+                    [site.schema_name, "app_x"],
+                )),
+                "tables": {r["tableowner"] for r in await conn.fetch(
+                    "SELECT tableowner FROM pg_tables WHERE schemaname = $1", site.schema_name
+                )},
+                "admin_of": {r["rolname"] for r in await conn.fetch(
+                    "SELECT rolname FROM pg_roles WHERE rolname = ANY($1) "
+                    "AND pg_has_role($2, oid, 'USAGE WITH ADMIN OPTION')",
+                    site_roles, ss.SITE_ADMIN_ROLE,
+                )},
+            }
+
+        got = run(as_owner(owners))
+        assert got["schemas"] == {site.schema_name: ss.SITE_ADMIN_ROLE, "app_x": owner_role}
+        assert got["tables"] == {ss.SITE_ADMIN_ROLE}
+        assert got["admin_of"] == set(site_roles)
+
+        # A half-finished earlier adoption (schema moved, a table not) is repaired.
+        async def unadopt_table():
+            conn = await asyncpg.connect(f"{DSN.rsplit('/', 1)[0]}/{dbname}")
+            try:
+                await conn.execute(f"ALTER TABLE {site.schema_name}._designs OWNER TO {owner_role}")
+            finally:
+                await conn.close()
+
+        run(unadopt_table())
+        run(as_owner(lambda c: ss.ensure_site_admin(c)))
+        assert run(as_owner(owners))["tables"] == {ss.SITE_ADMIN_ROLE}
+
+        # The site admin now runs everything, including re-provisioning both roles.
+        run(ss.provision_schema(site))
+        assert run(ss.list_designs(site))[0]["status"] == "approved"
+    finally:
+        ss.set_database(None)
+
+        async def teardown():
+            conn = await asyncpg.connect(DSN)
+            try:
+                await conn.execute(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)')
+                for role in (*site_roles, ss.SITE_ADMIN_ROLE, owner_role):
+                    await conn.execute(f"DROP ROLE IF EXISTS {role}")
+            finally:
+                await conn.close()
+
+        run(teardown())
