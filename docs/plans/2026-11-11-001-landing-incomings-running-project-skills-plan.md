@@ -1,6 +1,6 @@
 ---
 title: "feat: landing Incomings tab + running strip (part A) and per-project Skills (part B)"
-status: part A approved — implementation in progress; part B awaiting decisions 6–8
+status: part A approved — implementation in progress; part B approved — implementation in progress
 date: 2026-11-11
 type: feature
 origin: >
@@ -36,9 +36,10 @@ Style rules for all UI work: agent-home tokens in `globals.css`, the 280 px / 32
 | 5 | What "Scheduled N" counts | active project schedules + cards parked in `scheduled` (+ standalone scheduled jobs, admins only); split in the tooltip |
 | — | Re-flag a cleared item | yes, when a new triage verdict ranks higher (e.g. a cleared meeting rescheduled into a conflict) |
 | — | Out of scope for A | Telegram/escalations write-back, triage for personal mailboxes, to-dos started in a chat shown as running, project-less kanban cards |
-| 6 | Who sees the project Skills tab | **open** — recommended: any project reader sees names + counts; Improve/Create need Skills `lab`/`manage` |
-| 7 | Saving an AI-created skill | **open** — recommended: disabled draft-only skill trialled first (+~1 day) |
-| 8 | Improve evidence scope | **open** — recommended: this project highlighted + summary of other uses |
+| 6 | Who sees the project Skills tab | any project reader sees the tab: skill names, profile chip, use counts, outcome bar, last used (no `lab` needed). Run-level evidence (card/run titles), **Improve with AI** and **New skill with AI** need Skills `lab` in that profile (owner always passes). Permissions and rows are never merged across profiles |
+| 7 | Saving an AI-created skill | saved as a **disabled draft**: the skill folder is created but the skill is disabled/not loaded and its first version is a draft; the user trials it and enables/activates it from the existing Versions tab. Creating the draft needs `lab`; enabling follows the existing activation permission |
+| 8 | Improve evidence scope | this project's runs are the primary evidence, **plus** a short summary of the skill's use elsewhere, so a fix for one project doesn't break others |
+| — | Part B defaults (open questions in Appendix B §8) | usage = card runs only (no project-chat attribution in this pass); preloaded skills are read-only pills on the tab + a link to Setup; after creating a skill, offer an optional "Preload in this project's runs" (lead only, existing `PATCH /tools`); retro candidates show **Create with AI** and **Dismiss** (new `dismissed_at` column); multi-profile projects = one list with profile chips |
 
 ---
 
@@ -96,7 +97,7 @@ Estimate ≈ 7–8 dev-days of work, ~1 day wall-clock in parallel.
 
 ---
 
-## Part B — Projects page (per-project Skills) — not started
+## Part B — Projects page (per-project Skills) — approved — implementation in progress
 
 New 5th tab group `overview | work | files | skills | setup` (`ProjectSkillsTab`): window select (30/90 days); stats
 (skills used, times used, worked first time, worth improving); retro-suggested new skills ("Turn it into a skill" /
@@ -111,7 +112,7 @@ drafts SKILL.md, refine in chat, Create (decision 7), optional "Preload in this 
 `GET /api/skills/usage/detail?...&project=<slug>`; `POST /api/skills/improve/start {..., project}`;
 `POST /api/skills/create/start {profile, project?, goal?, candidate_id?, card_ids?}` + `POST /api/skills/create/message`.
 
-### B.1 Child sessions for part B (start after decisions 6–8)
+### B.1 Child sessions for part B (decisions 6–8 approved)
 | Session | Scope | Depends on |
 |---|---|---|
 | **B1** | Backend: ledger project filter + index, `GET /api/registry/projects/{slug}/skills`, `?project=` on usage detail, candidates `dismissed_at`, permissions, tests | decision 6 |

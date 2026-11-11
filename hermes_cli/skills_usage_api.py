@@ -4,13 +4,15 @@
 lists one skill's uses with the chat / card / project each came from (titles
 resolved here, never filesystem paths), and ``POST .../feedback`` rates a use.
 Admin-only like the other skill routes: the detail rows name other people's
-sessions. ``?profile=`` scopes to that profile's ledger.
+sessions. ``?profile=`` scopes to that profile's ledger; ``?project=`` on the
+detail narrows it to one project's uses, for callers who can read that project.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any, Dict, Iterable, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -21,6 +23,9 @@ from hermes_cli.route_roles import SKILLS_LAB
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/skills/usage")
+
+# A project slug or its short ref (``P12``), as the projects routes accept.
+_PROJECT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
 
 def _profile_scope(profile: Optional[str]):
@@ -126,24 +131,34 @@ def _usage_sync(profile: Optional[str], days: int) -> Dict[str, Any]:
 
 
 def _detail_sync(
-    name: str, profile: Optional[str], days: int, limit: int, cursor: Optional[str]
+    name: str,
+    profile: Optional[str],
+    days: int,
+    limit: int,
+    cursor: Optional[str],
+    project: Optional[str] = None,
 ) -> Dict[str, Any]:
     days = skill_ledger._clamp_days(days)
     with _profile_scope(profile):
-        rows = skill_ledger.summary(days=days, name=name)
+        rows = skill_ledger.summary(days=days, name=name, project=project)
         try:
-            page = skill_ledger.events(name, days=days, limit=limit, cursor=cursor)
+            page = skill_ledger.events(
+                name, days=days, limit=limit, cursor=cursor, project=project
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         events = _decorate(page["events"])
     row = rows[0] if rows else {**skill_ledger._blank_row(name), "trend": _empty_trend(days)}
-    return {
+    out = {
         "name": name,
         "summary": row,
         "by_version": page["by_version"],
         "events": events,
         "next_cursor": page["next_cursor"],
     }
+    if project:
+        out["project"] = project
+    return out
 
 
 def _empty_trend(days: int) -> List[Dict[str, Any]]:
@@ -173,16 +188,33 @@ async def get_usage(profile: Optional[str] = None, days: int = 90) -> Dict[str, 
 
 @router.get("/detail", dependencies=SKILLS_LAB)
 async def get_usage_detail(
+    request: Request,
     name: str,
     profile: Optional[str] = None,
     days: int = 90,
     limit: int = 50,
     cursor: Optional[str] = None,
+    project: Optional[str] = None,
 ) -> Dict[str, Any]:
     name = (name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="name is required")
-    return await asyncio.to_thread(_detail_sync, name, profile, days, limit, cursor)
+    slug: Optional[str] = None
+    if project is not None:
+        project = project.strip()
+        if not _PROJECT_RE.match(project):
+            raise HTTPException(status_code=400, detail="invalid project")
+        # Skills ``lab`` alone must not let anyone probe a private project's
+        # card titles by slug: the project read gate applies too (404).
+        from hermes_cli import projects_api
+
+        record, _role, _profiles, _principal = await projects_api._require_read_slug(
+            request, project
+        )
+        slug = record.slug
+    return await asyncio.to_thread(
+        _detail_sync, name, profile, days, limit, cursor, slug
+    )
 
 
 @router.post("/feedback", dependencies=SKILLS_LAB)

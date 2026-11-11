@@ -15,6 +15,7 @@ export function Sheet({
   side = false,
   wide = false,
   full = false,
+  mobileFull = false,
   component = "Sheet",
 }: {
   title: ReactNode;
@@ -25,6 +26,8 @@ export function Sheet({
   wide?: boolean;
   /** Near full-screen on desktop (e.g. a maximized panel). */
   full?: boolean;
+  /** Fill the whole screen on phones instead of the bottom-sheet height. */
+  mobileFull?: boolean;
   component?: string;
 }) {
   useEffect(() => {
@@ -60,7 +63,7 @@ export function Sheet({
       onClick={onClose}
     >
       <div
-        className={`flex max-h-[92vh] w-full flex-col rounded-t-2xl border border-[var(--color-border)] bg-[var(--color-bg)] sm:max-h-full ${panel}`}
+        className={`flex w-full flex-col border ${mobileFull ? "h-[100dvh] max-h-[100dvh]" : "max-h-[92vh] rounded-t-2xl"} border-[var(--color-border)] bg-[var(--color-bg)] sm:max-h-full ${panel}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-3">

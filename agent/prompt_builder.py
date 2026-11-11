@@ -182,6 +182,13 @@ SKILLS_GUIDANCE = (
     "Skills that aren't maintained become liabilities."
 )
 
+SECRETS_GUIDANCE = (
+    "Never ask the user to type a password, token or API key into chat, and "
+    "never repeat one. Call request_secret to collect it in a masked form, "
+    "refer to secrets only by name (list_secrets shows them), and use them "
+    "via terminal secret_env, e.g. secret_env={\"GH_TOKEN\": \"github-pat\"}."
+)
+
 KANBAN_GUIDANCE = (
     "# Kanban task execution protocol\n"
     "You have been assigned ONE task from "

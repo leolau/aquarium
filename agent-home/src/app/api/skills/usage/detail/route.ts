@@ -1,8 +1,10 @@
-/** GET /api/skills/usage/detail — one skill's recorded runs, newest first (Skills permissions). */
+/** GET /api/skills/usage/detail — one skill's recorded runs, newest first (Skills permissions); `project=` narrows to one project. */
 import { badRequest, str, upstream } from "@/lib/api/admin-route";
 import { apiClientForRequest } from "@/lib/auth/principal";
 import { profileFromUrl } from "@/lib/chat/profile";
 import { requireSkillPermission } from "@/lib/skills/permissions-server";
+
+const PROJECT_SLUG = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
 export async function GET(request: Request) {
   const gate = await requireSkillPermission("lab", profileFromUrl(request.url));
@@ -17,6 +19,13 @@ export async function GET(request: Request) {
   }
   const cursor = str(params.get("cursor"));
   if (cursor) query.set("cursor", cursor);
+  // Only this project's runs (project Skills tab); the server also checks the
+  // caller can read the project.
+  const project = str(params.get("project"));
+  if (project) {
+    if (!PROJECT_SLUG.test(project)) return badRequest("Invalid project.");
+    query.set("project", project);
+  }
   const client = await apiClientForRequest({ profile: profileFromUrl(request.url) });
   return upstream(() => client.request<unknown>(`/api/skills/usage/detail?${query}`));
 }

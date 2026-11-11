@@ -142,6 +142,48 @@ def test_summary_rolls_up_sessions_tasks_projects_and_outcomes(stores):
     assert [e["project_slug"] for e in project_rows] == ["quarterly"]
 
 
+def test_project_filter_narrows_summary_events_and_by_version(stores):
+    here = _project("Launch", "launch")
+    there = _project("Digest", "digest")
+    t1, r1 = _kanban_task("Ship it", project_id=here, run_outcome="completed")
+    t2, r2 = _kanban_task("Mail it", project_id=there, run_outcome="crashed")
+    skill_ledger.record_use("writer", trigger="preload", kanban_task_id=t1, kanban_run_id=r1)
+    skill_ledger.record_use("writer", trigger="preload", kanban_task_id=t2, kanban_run_id=r2)
+    chat = skill_ledger.record_use("writer", trigger="skill_view", session_id="s1")
+    skill_ledger.set_feedback(chat, -1)
+
+    [row] = skill_ledger.summary(days=7, project="launch")
+    assert (row["uses"], row["success"], row["failure"], row["rated_down"]) == (1, 1, 0, 0)
+    assert skill_ledger.project_rollup("launch", 7) == [row]
+    [overall] = skill_ledger.summary(days=7)
+    assert (overall["uses"], overall["rated_down"]) == (3, 1)
+
+    page = skill_ledger.events("writer", project="digest")
+    assert [e["kanban_task_id"] for e in page["events"]] == [t2]
+    assert page["by_version"] == [{"version_id": None, "uses": 1, "success_rate": 0.0}]
+    assert skill_ledger.project_cards("launch", 7) == [
+        {"skill_name": "writer", "board": None, "task_id": t1}
+    ]
+    assert skill_ledger.summary(days=7, project="nope") == []
+
+
+def test_project_index_is_added_to_an_existing_ledger(stores):
+    path = skill_ledger.ledger_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    legacy = sqlite3.connect(str(path))
+    legacy.executescript(
+        skill_ledger._SCHEMA.replace(
+            "CREATE INDEX IF NOT EXISTS idx_skill_events_project_ts ON skill_events(project_slug, ts);", ""
+        )
+    )
+    legacy.close()
+    skill_ledger._INITIALIZED.discard(str(path.resolve()))
+    skill_ledger.summary(days=7)
+    with sqlite3.connect(str(path)) as conn:
+        names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+    assert "idx_skill_events_project_ts" in names
+
+
 def test_window_excludes_old_uses(stores):
     old = skill_ledger.record_use("writer", trigger="skill_view")
     with skill_ledger._connect() as conn:
@@ -314,7 +356,7 @@ def test_usage_route_lists_skill_rollups(client):
     assert data["days"] == 14
     [row] = data["skills"]
     assert set(row) == {"name", "uses", "sessions", "tasks", "projects", "success", "partial",
-                        "failure", "unknown", "success_rate", "last_used_at", "trend"}
+                        "failure", "unknown", "rated_down", "success_rate", "last_used_at", "trend"}
     assert (row["name"], row["uses"], row["success"], row["unknown"], row["projects"]) == ("writer", 2, 1, 1, 1)
     assert len(row["trend"]) == 14 and set(row["trend"][0]) == {"day", "uses"}
 

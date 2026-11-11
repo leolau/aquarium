@@ -135,6 +135,7 @@ import type {
   ProjectCategory,
   ProjectsResponse,
   ProjectToolsResolution,
+  ProjectSkillsResponse,
   ProposedAction,
   Role,
   RoleLimitsResponse,
@@ -184,6 +185,9 @@ import type {
   WebviewMode,
   WebviewSessionResponse,
   SeminarSurveyAnswers,
+  SecretLinkInfo,
+  SecretLinkResult,
+  SecretLinkSubmit,
   SeminarSurveyState,
   SeminarSurveySubmitResult,
   GetReadyItem,
@@ -391,7 +395,7 @@ export class HermesApiClient {
     });
     const text = await res.text();
     const elapsedMs = Date.now() - started;
-    const timingLine = `api-timing ${rest.method ?? "GET"} ${path} status=${res.status} elapsed_ms=${elapsedMs}`;
+    const timingLine = `api-timing ${rest.method ?? "GET"} ${redactPathForLog(path)} status=${res.status} elapsed_ms=${elapsedMs}`;
     if (elapsedMs >= 500) console.warn(timingLine);
     else console.log(timingLine);
     const parsed = text ? safeJson(text) : undefined;
@@ -1778,6 +1782,29 @@ export class HermesApiClient {
   // Keyed by the personal token sent into the attendee's WhatsApp chat; the
   // Python API throttles both per IP and per token.
 
+  // FG-37 one-time secret links. Unauthenticated: the token is the credential.
+  // Unknown, used and expired links are all the same 404 upstream.
+
+  /** What a secret link asks for. 404 for any unusable link. */
+  async secretLinkInfo(token: string, clientIp = ""): Promise<SecretLinkInfo> {
+    return this.request(`/api/secret-links/${encodeURIComponent(token)}`, {
+      headers: forwardedFor(clientIp),
+    });
+  }
+
+  /** Store the secret (`values`) or decline it; the value is never echoed back. */
+  async submitSecretLink(
+    token: string,
+    body: SecretLinkSubmit,
+    clientIp = "",
+  ): Promise<SecretLinkResult> {
+    return this.request(`/api/secret-links/${encodeURIComponent(token)}`, {
+      method: "POST",
+      json: body,
+      headers: forwardedFor(clientIp),
+    });
+  }
+
   /** Whether the survey behind `token` is still open. 404 for an unknown link. */
   async seminarSurveyState(
     token: string,
@@ -2319,6 +2346,21 @@ export class HermesApiClient {
   async project(slug: string): Promise<ProjectDetail> {
     return this.request(`/api/registry/projects/${encodeURIComponent(slug)}`);
   }
+
+  // ── Project › Skills tab (plan 2026-11-11-001 Part B; B1 owns these, B1 wins at merge) ──
+  /** Skills this project's card runs used in the last `days` days, per profile. */
+  async projectSkills(slug: string, days: number): Promise<ProjectSkillsResponse> {
+    return this.request(`/api/registry/projects/${encodeURIComponent(slug)}/skills?days=${days}`);
+  }
+
+  /** Hide a retro-suggested skill (sets `dismissed_at`). */
+  async dismissProjectSkillCandidate(slug: string, id: string): Promise<{ ok: boolean }> {
+    return this.request(
+      `/api/registry/projects/${encodeURIComponent(slug)}/skills/candidates/${encodeURIComponent(id)}/dismiss`,
+      { method: "POST", json: {} },
+    );
+  }
+  // ── end Project › Skills tab ──
 
   /** Edit record fields. Leaving `repeatable` pauses + detaches the schedule (§3.1). */
   async updateProject(
@@ -3995,6 +4037,17 @@ export class HermesApiClient {
  * internet shares one bucket. Python only trusts the header from a loopback
  * peer, which this call is.
  */
+/** Paths whose last segment is a live credential (FG-37 one-time secret links). */
+const TOKEN_PATH_PREFIXES = ["/api/secret-links/"];
+
+/** `path` with any credential-bearing segment replaced, for log lines. */
+export function redactPathForLog(path: string): string {
+  for (const prefix of TOKEN_PATH_PREFIXES) {
+    if (path.startsWith(prefix)) return `${prefix}[redacted]`;
+  }
+  return path;
+}
+
 function forwardedFor(clientIp: string): Record<string, string> {
   return clientIp ? { "X-Forwarded-For": clientIp } : {};
 }

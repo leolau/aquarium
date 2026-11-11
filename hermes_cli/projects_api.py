@@ -243,7 +243,11 @@ async def _require_read(request: Request):
     Anything the caller may not read is a **404** — indistinguishable from
     a project that does not exist.
     """
-    slug = request.path_params["slug"]
+    return await _require_read_slug(request, request.path_params["slug"])
+
+
+async def _require_read_slug(request: Request, slug: str):
+    """:func:`_require_read` for a slug that is not a path parameter."""
     principal = await _principal_read(request)
     ctx = await asyncio.to_thread(_load_ctx_sync, slug, principal.user_id)
     if ctx is None:

@@ -80,3 +80,25 @@ PUBLIC_API_PATHS: frozenset[str] = frozenset({
     "/api/seminar/survey/state",
     "/api/seminar/survey/submit",
 })
+
+# Token-in-path public routes: ``<prefix><token>`` with exactly one non-empty
+# segment after the prefix (no nested paths).
+#
+# FG-37 one-time secret links (hermes_cli/secret_links_api.py). The person
+# opening the link has no session by design; the boundary is a 256-bit token
+# that was only sent to their own chat, stored hashed, single use, 15 min TTL,
+# throttled per IP and per token, uniform 404 for unknown/used/expired.
+PUBLIC_API_TOKEN_PREFIXES: tuple[str, ...] = (
+    "/api/secret-links/",
+)
+
+
+def is_public_api_path(path: str) -> bool:
+    """True if ``path`` is an unauthenticated ``/api/*`` route."""
+    if path in PUBLIC_API_PATHS:
+        return True
+    for prefix in PUBLIC_API_TOKEN_PREFIXES:
+        if path.startswith(prefix):
+            rest = path[len(prefix):]
+            return bool(rest) and "/" not in rest
+    return False

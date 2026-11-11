@@ -18041,6 +18041,30 @@ class GatewayRunner(
             _approval_session_key = session_key or ""
             _approval_session_token = set_current_session_key(_approval_session_key)
             register_gateway_notify(_approval_session_key, _approval_notify_sync)
+            # FG-37: request_secret on a messaging turn sends a one-time
+            # secure link through this chat's adapter (gateway/secret_links).
+            from gateway.secret_links import (
+                make_link_sender as _make_secret_link_sender,
+                register_secret_link_sender,
+                unregister_secret_link_sender,
+            )
+            try:
+                from hermes_cli.profiles import get_active_profile_name as _active_profile
+                _secret_profile = (source.profile or "").strip() or _active_profile() or "default"
+            except Exception:
+                _secret_profile = (source.profile or "").strip() or "default"
+            register_secret_link_sender(
+                _approval_session_key,
+                _make_secret_link_sender(
+                    source=source,
+                    adapter=_status_adapter,
+                    chat_id=_status_chat_id,
+                    metadata=_status_thread_metadata,
+                    loop=_loop_for_step,
+                    session_key=_approval_session_key,
+                    profile=_secret_profile,
+                ),
+            )
             try:
                 # If _prepare_inbound_message_text buffered image paths for native
                 # attachment, wrap the user turn as an OpenAI-style multimodal
@@ -18092,6 +18116,7 @@ class GatewayRunner(
                 result = agent.run_conversation(_api_run_message, **_conversation_kwargs)
             finally:
                 unregister_gateway_notify(_approval_session_key)
+                unregister_secret_link_sender(_approval_session_key)
                 # Cancel any pending clarify entries so blocked agent
                 # threads don't hang past the end of the run (interrupt,
                 # completion, gateway shutdown).  Idempotent.

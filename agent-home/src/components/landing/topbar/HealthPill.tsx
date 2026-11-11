@@ -278,6 +278,7 @@ export function HealthPill({
           aria-label={`System health: ${VERDICT_LABEL[verdict]} — show all readings`}
           data-action="health-open"
           onClick={() => setPopOpen((v) => !v)}
+          data-fit-watch
           className="flex min-w-0 items-center gap-4 overflow-hidden"
         >
           <span aria-hidden className={`h-2 w-2 shrink-0 rounded-full ${VERDICT_DOT[verdict]}`} />
@@ -293,7 +294,9 @@ export function HealthPill({
           ) : null}
           <Metric icon={<PlayIcon size={14} />} label="Live" value={r.live} />
         </button>
-        <Freshness status={status} />
+        <span data-fit-hide="updated" className="contents">
+          <Freshness status={status} />
+        </span>
         <RefreshButton status={status} />
       </div>
       {build.buildMismatch || lowStorage ? (

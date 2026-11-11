@@ -76,6 +76,16 @@ describe("next.config headers()", () => {
     expect(activate.find((h) => h.key === "Referrer-Policy")?.value).toBe("no-referrer");
   });
 
+  it("keeps one-time /secret links out of referrers, caches and search indexes", async () => {
+    const rules = (await nextConfig.headers!()) as { source: string }[];
+    const sources = rules.map((r) => r.source);
+    expect(sources.indexOf("/:path*")).toBeLessThan(sources.indexOf("/secret/:path*"));
+    const secret = await headersFor("/secret/:path*");
+    expect(secret.find((h) => h.key === "Referrer-Policy")?.value).toBe("no-referrer");
+    expect(secret.find((h) => h.key === "Cache-Control")?.value).toContain("no-store");
+    expect(secret.find((h) => h.key === "X-Robots-Tag")?.value).toContain("noindex");
+  });
+
   it("keeps the first-run /setup page out of referrers, caches and search indexes", async () => {
     const rules = (await nextConfig.headers!()) as { source: string }[];
     const sources = rules.map((r) => r.source);
