@@ -784,10 +784,17 @@ def _role_password(role: str, *, create: bool) -> Optional[str]:
     current = _read_role_secrets()
     if role in current or not create:
         return current.get(role)
+    return _store_role_password(role, secrets.token_urlsafe(32))
+
+
+def _store_role_password(role: str, password: str) -> str:
+    current = _read_role_secrets()
+    if current.get(role) == password:
+        return password
     path = _role_secrets_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(path.parent, 0o700)
-    current[role] = secrets.token_urlsafe(32)
+    current[role] = password
     tmp = path.with_suffix(".tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as fh:
@@ -816,8 +823,12 @@ def role_dsn(dsn: str, role: str, password: str) -> str:
 class SiteDatabase:
     """Connections for the site feature.
 
-    ``privileged()`` is the app-store login (DDL, registry). ``restricted()``
-    logs in as one site's own role, pinned to its schema.
+    ``registry()`` is the app-store login: rows of ``public.site_sources`` and
+    ``public.site_source_grants`` only. ``provisioner()`` creates and changes the
+    ``site_<slug>`` schemas and roles: the ``aquarium_site_admin`` login that
+    ``hermes db migrate`` makes, or the app login itself when it may create
+    schemas and roles (an owner/superuser address). ``restricted()`` logs in as
+    one site's own role, pinned to its schema.
     """
 
     def __init__(self, dsn: Optional[str] = None) -> None:
@@ -839,7 +850,7 @@ class SiteDatabase:
         dsn = self.dsn
         return bool(dsn) and not dsn.lstrip().startswith("${")
 
-    async def privileged(self) -> Any:
+    async def registry(self) -> Any:
         if not self.configured():
             raise SiteError("the app database is not configured on this install", 503)
         if self._dsn is not None:
@@ -847,6 +858,45 @@ class SiteDatabase:
 
             return await asyncpg.connect(self._dsn)
         return await self._app_store().connect()
+
+    async def provisioner(self) -> Any:
+        """A plain connection that may create site schemas and roles, else 503.
+
+        Never the setup-skipping app-store connection: site DDL either runs or
+        fails here, it is not dropped silently.
+        """
+        import asyncpg
+
+        if not self.configured():
+            raise SiteError("the app database is not configured on this install", 503)
+        password = _role_password(SITE_ADMIN_ROLE, create=False)
+        login = SITE_ADMIN_ROLE if password else "the app database login"
+        try:
+            if password:
+                conn = await asyncpg.connect(role_dsn(self.dsn, SITE_ADMIN_ROLE, password))
+            else:
+                conn = await asyncpg.connect(self.dsn)
+        except asyncpg.InvalidPasswordError:
+            raise SiteError(
+                f"the database refused the {SITE_ADMIN_ROLE} login; run `hermes db migrate` "
+                "with the admin address (/etc/aquarium/db-admin.env) to reset it",
+                503,
+            ) from None
+        try:
+            row = await conn.fetchrow(_CAN_PROVISION_SQL)
+        except BaseException:
+            await conn.close()
+            raise
+        if not (row and (row["rolsuper"] or (row["rolcreaterole"] and row["can_create"]))):
+            user = row["current_user"] if row else "?"
+            await conn.close()
+            raise SiteError(
+                f"{login} ({user}) cannot create site schemas and roles (it needs CREATEROLE and "
+                f"CREATE on the database). Run `hermes db migrate` with the admin address "
+                f"(/etc/aquarium/db-admin.env): it creates the {SITE_ADMIN_ROLE} login for this.",
+                503,
+            )
+        return conn
 
     async def restricted(self, site: Site, *, write: bool = False) -> Any:
         import asyncpg
@@ -885,26 +935,128 @@ def set_database(db: Optional[SiteDatabase]) -> None:
     _database = db
 
 
+#: The provisioning login ``hermes db migrate`` creates (CREATEROLE, CREATE on
+#: the database, not superuser); it owns every ``site_<slug>`` schema.
+SITE_ADMIN_ROLE = "aquarium_site_admin"
+
 _registry_ready: Set[str] = set()
+
+_CAN_PROVISION_SQL = """
+SELECT current_user, r.rolsuper, r.rolcreaterole,
+       has_database_privilege(current_database(), 'CREATE') AS can_create
+FROM pg_roles r WHERE r.rolname = current_user
+"""
+
+_REGISTRY_MISSING = (
+    "the site registry (public.site_sources) is missing and this database login cannot "
+    "create it; run `hermes db migrate` with the admin address (/etc/aquarium/db-admin.env)"
+)
+
+
+async def _registry_exists(conn: Any) -> bool:
+    return bool(await conn.fetchval(
+        "SELECT to_regclass('public.site_sources') IS NOT NULL "
+        "AND to_regclass('public.site_source_grants') IS NOT NULL"
+    ))
 
 
 async def _ensure_registry(conn: Any, db: SiteDatabase) -> None:
+    """Create the registry when this login may (owner boxes); else it must exist."""
     key = db.dsn
     if key in _registry_ready:
         return
-    await conn.execute(REGISTRY_SQL)
+    if not await _registry_exists(conn):
+        may = await conn.fetchval("SELECT has_schema_privilege('public', 'CREATE')")
+        if may and not getattr(conn, "_hermes_skip_setup", False):
+            await conn.execute(REGISTRY_SQL)
+        if not await _registry_exists(conn):
+            raise SiteError(_REGISTRY_MISSING, 503)
     _registry_ready.add(key)
 
 
 @contextlib.asynccontextmanager
-async def _admin(db: Optional[SiteDatabase] = None):
+async def _registry(db: Optional[SiteDatabase] = None):
     db = db or database()
-    conn = await db.privileged()
+    conn = await db.registry()
     try:
         await _ensure_registry(conn, db)
         yield conn
     finally:
         await conn.close()
+
+
+@contextlib.asynccontextmanager
+async def _provisioner(db: Optional[SiteDatabase] = None):
+    conn = await (db or database()).provisioner()
+    try:
+        yield conn
+    finally:
+        await conn.close()
+
+
+async def migrate_registry(conn: Any, *, app_role: Optional[str] = None) -> None:
+    """``hermes db migrate`` step (schema owner): the registry and its app-role grants."""
+    from hermes_cli.access import APP_ROLE_NAME
+
+    role = app_role or APP_ROLE_NAME
+    if not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", role):
+        raise ValueError(f"invalid role name {role!r}")
+    await conn.execute(REGISTRY_SQL)
+    if await conn.fetchval("SELECT 1 FROM pg_roles WHERE rolname = $1", role):
+        await conn.execute(
+            f"GRANT USAGE ON SCHEMA public TO {role}; "
+            f"GRANT SELECT, INSERT, UPDATE, DELETE ON public.site_sources, "
+            f"public.site_source_grants TO {role}"
+        )
+
+
+async def ensure_site_admin(conn: Any, *, password: Optional[str] = None) -> None:
+    """``hermes db migrate`` step: the ``aquarium_site_admin`` provisioning login.
+
+    LOGIN CREATEROLE with CREATE on the database, never SUPERUSER or BYPASSRLS.
+    Its password (``password``, else the stored one, else a new one) goes to the
+    hermes-readable role-password file. Site schemas the registry lists that
+    another role owns are handed to it, so it can extend them.
+    """
+    from hermes_cli.access import _quote_literal
+
+    role = SITE_ADMIN_ROLE
+    if password:
+        _store_role_password(role, password)
+    literal = _quote_literal(_role_password(role, create=True) or "")
+    attrs = "LOGIN CREATEROLE NOSUPERUSER NOBYPASSRLS NOCREATEDB NOINHERIT"
+    if await conn.fetchval("SELECT 1 FROM pg_roles WHERE rolname = $1", role):
+        await conn.execute(f"ALTER ROLE {role} {attrs} PASSWORD {literal}")
+    else:
+        await conn.execute(f"CREATE ROLE {role} {attrs} PASSWORD {literal}")
+    current_db = await conn.fetchval("SELECT current_database()")
+    await conn.execute(
+        f'GRANT CONNECT ON DATABASE "{current_db}" TO {role} WITH GRANT OPTION; '
+        f'GRANT CREATE ON DATABASE "{current_db}" TO {role}'
+    )
+    if not await _registry_exists(conn):
+        return
+    roles = await conn.fetch(
+        "SELECT r.rolname FROM public.site_sources s JOIN pg_roles r "
+        "ON r.rolname IN (s.db_role, s.db_role || '_rw', s.db_role || '_ro') "
+        "WHERE NOT pg_has_role($1, r.oid, 'USAGE WITH ADMIN OPTION')",
+        role,
+    )
+    for row in roles:
+        await conn.execute(f"GRANT {_ident(row['rolname'])} TO {role} WITH ADMIN OPTION")
+    schemas = await conn.fetch(
+        "SELECT n.nspname FROM public.site_sources s JOIN pg_namespace n ON n.nspname = s.schema_name "
+        "WHERE pg_get_userbyid(n.nspowner) <> $1",
+        role,
+    )
+    for row in schemas:
+        schema = _ident(row["nspname"])
+        await conn.execute(f"ALTER SCHEMA {schema} OWNER TO {role}")
+        tables = await conn.fetch(
+            "SELECT tablename FROM pg_tables WHERE schemaname = $1", row["nspname"]
+        )
+        for table in tables:
+            await conn.execute(f"ALTER TABLE {schema}.{_ident(table['tablename'])} OWNER TO {role}")
 
 
 @contextlib.asynccontextmanager
@@ -929,7 +1081,7 @@ def current_profile() -> str:
 
 async def list_sites(*, profile: Optional[str] = None, db: Optional[SiteDatabase] = None) -> List[Site]:
     """Every site of ``profile`` (``None`` = every profile)."""
-    async with _admin(db) as conn:
+    async with _registry(db) as conn:
         if profile is None:
             rows = await conn.fetch(f"SELECT {_SITE_COLUMNS} FROM public.site_sources ORDER BY name")
         else:
@@ -945,7 +1097,7 @@ async def get_site(site_id: str, *, db: Optional[SiteDatabase] = None) -> Option
 
     if not is_uuid(site_id):
         return None
-    async with _admin(db) as conn:
+    async with _registry(db) as conn:
         row = await conn.fetchrow(
             f"SELECT {_SITE_COLUMNS} FROM public.site_sources WHERE id = $1::uuid", str(site_id)
         )
@@ -959,7 +1111,7 @@ async def find_site(ref: str, *, profile: str, db: Optional[SiteDatabase] = None
     if is_uuid(ref):
         site = await get_site(ref, db=db)
         return site if site and site.profile == profile else None
-    async with _admin(db) as conn:
+    async with _registry(db) as conn:
         row = await conn.fetchrow(
             f"SELECT {_SITE_COLUMNS} FROM public.site_sources WHERE slug = $1 AND profile = $2",
             str(ref or "").strip().lower(),
@@ -970,7 +1122,7 @@ async def find_site(ref: str, *, profile: str, db: Optional[SiteDatabase] = None
 
 async def grants_of(user_id: str, *, db: Optional[SiteDatabase] = None) -> Dict[str, str]:
     """``{site_id: grant}`` of every live grant ``user_id`` holds."""
-    async with _admin(db) as conn:
+    async with _registry(db) as conn:
         rows = await conn.fetch(
             'SELECT site_id, "grant" FROM public.site_source_grants '
             "WHERE user_id = $1 AND revoked_at IS NULL",
@@ -980,7 +1132,7 @@ async def grants_of(user_id: str, *, db: Optional[SiteDatabase] = None) -> Dict[
 
 
 async def grant_for(site_id: str, user_id: str, *, db: Optional[SiteDatabase] = None) -> Optional[str]:
-    async with _admin(db) as conn:
+    async with _registry(db) as conn:
         return await conn.fetchval(
             'SELECT "grant" FROM public.site_source_grants '
             "WHERE site_id = $1::uuid AND user_id = $2 AND revoked_at IS NULL",
@@ -990,7 +1142,7 @@ async def grant_for(site_id: str, user_id: str, *, db: Optional[SiteDatabase] = 
 
 
 async def list_grants(site_id: str, *, db: Optional[SiteDatabase] = None) -> List[Dict[str, Any]]:
-    async with _admin(db) as conn:
+    async with _registry(db) as conn:
         rows = await conn.fetch(
             'SELECT user_id, "grant", granted_by, created_at FROM public.site_source_grants '
             "WHERE site_id = $1::uuid AND revoked_at IS NULL ORDER BY created_at",
@@ -1007,7 +1159,7 @@ async def put_grant(
     user_id = str(user_id or "").strip()
     if not user_id:
         raise SiteError("user_id is required")
-    async with _admin(db) as conn:
+    async with _registry(db) as conn:
         async with conn.transaction():
             await conn.execute(
                 "UPDATE public.site_source_grants SET revoked_at = now() "
@@ -1027,7 +1179,7 @@ async def put_grant(
 
 
 async def revoke_grant(site_id: str, user_id: str, *, db: Optional[SiteDatabase] = None) -> bool:
-    async with _admin(db) as conn:
+    async with _registry(db) as conn:
         result = await conn.execute(
             "UPDATE public.site_source_grants SET revoked_at = now() "
             "WHERE site_id = $1::uuid AND user_id = $2 AND revoked_at IS NULL",
@@ -1098,7 +1250,7 @@ async def create_site(
         schema_name=schema_name(slug),
         db_role=writer_role(slug),
     )
-    async with _admin(db) as conn:
+    async with _provisioner(db) as admin, _registry(db) as conn:
         taken = await conn.fetchval(
             "SELECT 1 FROM public.site_sources WHERE slug = $1 "
             "UNION ALL SELECT 1 FROM pg_namespace WHERE nspname = $2 LIMIT 1",
@@ -1124,7 +1276,7 @@ async def create_site(
             site.default_refresh_mode,
         )
         try:
-            await provision_schema(site, connection=conn)
+            await provision_schema(site, connection=admin)
         except BaseException:
             await conn.execute("DELETE FROM public.site_sources WHERE id = $1::uuid", site.id)
             raise
@@ -1139,7 +1291,7 @@ async def update_site(
     fields = _clean_fields(body, creating=False)
     if fields:
         sets = ", ".join(f"{name} = ${i + 2}" for i, name in enumerate(fields))
-        async with _admin(db) as conn:
+        async with _registry(db) as conn:
             await conn.execute(
                 f"UPDATE public.site_sources SET {sets}, updated_at = now() WHERE id = $1::uuid",
                 site.id,
@@ -1153,7 +1305,7 @@ async def update_site(
 async def set_status(site: Site, status: str, *, db: Optional[SiteDatabase] = None) -> None:
     if status not in STATUSES:
         raise SiteError(f"unknown status {status!r}")
-    async with _admin(db) as conn:
+    async with _registry(db) as conn:
         await conn.execute(
             "UPDATE public.site_sources SET status = $2, updated_at = now() WHERE id = $1::uuid",
             site.id,
@@ -1210,7 +1362,7 @@ async def save_login(
     except CredentialError as exc:
         raise SiteError(str(exc).replace(payload["password"], "***")) from exc
     ref = f"{CREDENTIAL_PROVIDER}/{site.slug}"
-    async with _admin(db) as conn:
+    async with _registry(db) as conn:
         await conn.execute(
             "UPDATE public.site_sources SET credential_ref = $2, updated_at = now() WHERE id = $1::uuid",
             site.id,
@@ -1282,7 +1434,7 @@ async def provision_schema(site: Site, *, connection: Any = None, db: Optional[S
     if connection is not None:
         await _run(connection)
         return
-    async with _admin(db) as conn:
+    async with _provisioner(db) as conn:
         await _run(conn)
 
 
@@ -1312,7 +1464,7 @@ async def propose_design(
     design = validate_design(design)
     recipe = check_recipe(recipe) if recipe is not None else None
     s = _ident(site.schema_name)
-    async with _admin(db) as conn:
+    async with _provisioner(db) as conn:
         design_ddl(site.schema_name, design, await existing_columns(conn, site.schema_name))
         async with conn.transaction():
             version = await conn.fetchval(f"SELECT coalesce(max(version), 0) + 1 FROM {s}._designs")
@@ -1326,11 +1478,12 @@ async def propose_design(
                 json.dumps(recipe) if recipe is not None else None,
                 by,
             )
-            await conn.execute(
-                "UPDATE public.site_sources SET status = 'awaiting_approval', updated_at = now() "
-                "WHERE id = $1::uuid AND status IN ('draft', 'studying', 'awaiting_approval', 'error')",
-                site.id,
-            )
+    async with _registry(db) as conn:
+        await conn.execute(
+            "UPDATE public.site_sources SET status = 'awaiting_approval', updated_at = now() "
+            "WHERE id = $1::uuid AND status IN ('draft', 'studying', 'awaiting_approval', 'error')",
+            site.id,
+        )
     questions = [
         {"entity": e["name"], "question": e["question"]} for e in design["entities"] if e.get("question")
     ]
@@ -1339,7 +1492,7 @@ async def propose_design(
 
 async def list_designs(site: Site, *, db: Optional[SiteDatabase] = None) -> List[Dict[str, Any]]:
     s = _ident(site.schema_name)
-    async with _admin(db) as conn:
+    async with _provisioner(db) as conn:
         rows = await conn.fetch(
             f"SELECT version, design, recipe, status, proposed_by, proposed_at, approved_by, "
             f"approved_at FROM {s}._designs ORDER BY version DESC"
@@ -1357,7 +1510,7 @@ async def approved_design(
     site: Site, *, db: Optional[SiteDatabase] = None
 ) -> Optional[Tuple[int, Dict[str, Any], Optional[Dict[str, Any]]]]:
     s = _ident(site.schema_name)
-    async with _admin(db) as conn:
+    async with _provisioner(db) as conn:
         row = await conn.fetchrow(
             f"SELECT version, design, recipe FROM {s}._designs WHERE status = 'approved' "
             "ORDER BY version DESC LIMIT 1"
@@ -1372,7 +1525,7 @@ async def apply_design(
 ) -> Dict[str, Any]:
     """Approve design ``version`` and create/extend its tables (additive only)."""
     s = _ident(site.schema_name)
-    async with _admin(db) as conn:
+    async with _provisioner(db) as conn:
         async with conn.transaction():
             row = await conn.fetchrow(
                 f"SELECT design, status FROM {s}._designs WHERE version = $1 FOR UPDATE", int(version)
@@ -1403,12 +1556,13 @@ async def apply_design(
                 "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
                 int(version),
             )
-            await conn.execute(
-                "UPDATE public.site_sources SET status = 'active', updated_at = now() "
-                "WHERE id = $1::uuid AND status <> 'paused'",
-                site.id,
-            )
         await _grant_roles(conn, site)
+    async with _registry(db) as conn:
+        await conn.execute(
+            "UPDATE public.site_sources SET status = 'active', updated_at = now() "
+            "WHERE id = $1::uuid AND status <> 'paused'",
+            site.id,
+        )
     return {"version": int(version), "status": "approved", "statements": statements}
 
 
@@ -2169,7 +2323,7 @@ async def start_refresh(
     if not recipe:
         raise SiteError("the approved design has no extraction recipe", 409)
     run_recipe = _recipe_runner()
-    lock_conn = await db.privileged()
+    lock_conn = await db.provisioner()
     handed_off = False
     try:
         got = await lock_conn.fetchval("SELECT pg_try_advisory_lock($1, $2)", _LOCK_NS, _lock_key(site))

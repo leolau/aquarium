@@ -288,6 +288,12 @@ done
 # environment of a process running as hermes.
 echo "== migrating database =="
 DB_ADMIN_ENV=${DB_ADMIN_ENV:-/etc/aquarium/db-admin.env}
+# One aquarium_site_admin password for every hermes home on the box (the role is
+# database-wide): kept in db-admin.env, added once to files written before it existed.
+if [ -f "$DB_ADMIN_ENV" ] && ! grep -q '^HERMES_SITE_ADMIN_DB_PASSWORD=' "$DB_ADMIN_ENV"; then
+  ( umask 077; printf '\nHERMES_SITE_ADMIN_DB_PASSWORD=%s\n' \
+      "$(python3 -c 'import secrets; print(secrets.token_hex(24))')" >> "$DB_ADMIN_ENV" )
+fi
 gateway_db_env() {
   local f
   for f in $(systemctl show -P EnvironmentFiles hermes-gateway.service 2>/dev/null | awk '{print $1}'); do

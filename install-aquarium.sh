@@ -190,6 +190,7 @@ SESSION_SECRET=$(secret AGENT_HOME_SESSION_SECRET "$(rand 32)")
 APP_MCP_SECRET=$(secret APP_MCP_TICKET_SECRET "$(rand 32)")
 READ_DB_PASSWORD=$(secret HERMES_APP_READ_DB_PASSWORD)
 APP_DB_PASSWORD=$(secret HERMES_APP_DB_PASSWORD)
+SITE_ADMIN_DB_PASSWORD=$(secret HERMES_SITE_ADMIN_DB_PASSWORD)
 DASH_AUTH_SECRET=$(secret DASHBOARD_BASIC_AUTH_SECRET "$(rand 32)")
 TENANT=$(secret POOLER_TENANT_ID aquarium)
 jwt() {  # jwt ROLE: HS256 Supabase key, valid 10 years
@@ -397,8 +398,8 @@ cd "$APP"
 # gateway and app-mcp each run `CREATE EXTENSION IF NOT EXISTS vector` at the same moment,
 # and all but one fail with a duplicate-key error on pg_extension.
 install -d -m 700 /etc/aquarium
-( umask 077; printf 'HERMES_DB_ADMIN_URL=%s\nHERMES_APP_DB_PASSWORD=%s\nHERMES_APP_READ_DB_PASSWORD=%s\n' \
-    "$DATABASE_URL" "$APP_DB_PASSWORD" "$READ_DB_PASSWORD" > /etc/aquarium/db-admin.env )
+( umask 077; printf 'HERMES_DB_ADMIN_URL=%s\nHERMES_APP_DB_PASSWORD=%s\nHERMES_APP_READ_DB_PASSWORD=%s\nHERMES_SITE_ADMIN_DB_PASSWORD=%s\n' \
+    "$DATABASE_URL" "$APP_DB_PASSWORD" "$READ_DB_PASSWORD" "$SITE_ADMIN_DB_PASSWORD" > /etc/aquarium/db-admin.env )
 chown root:root /etc/aquarium/db-admin.env
 chmod 600 /etc/aquarium/db-admin.env
 # Also makes hermes_app and agent_home_app login roles with the passwords in that file.
