@@ -71,6 +71,8 @@ _HERMES_CORE_TOOLS = [
     "session_search",
     # Clarifying questions
     "clarify",
+    # Secure secret prompt (FG-37): the value never enters the chat
+    "request_secret",
     # Code execution + delegation
     "execute_code", "delegate_task",
     # Cronjob management
@@ -235,8 +237,8 @@ TOOLSETS = {
     },
 
     "secrets": {
-        "description": "The person's stored secrets, by name only (never values)",
-        "tools": ["list_secrets"],
+        "description": "The person's stored secrets by name (never values), and a masked prompt to ask for a new one",
+        "tools": ["list_secrets", "request_secret"],
         "includes": []
     },
 
@@ -275,7 +277,7 @@ TOOLSETS = {
         "tools": ["clarify"],
         "includes": []
     },
-    
+
     "code_execution": {
         "description": "Run Python scripts that call tools programmatically (reduces LLM round trips)",
         "tools": ["execute_code"],
@@ -478,6 +480,8 @@ TOOLSETS = {
             "site_db",
             # Session history search
             "session_search",
+            # Secure secret prompt (FG-37): agent-home renders the masked popup
+            "request_secret",
             # Code execution + delegation
             "execute_code", "delegate_task",
             # Cronjob management

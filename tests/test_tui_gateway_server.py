@@ -737,7 +737,8 @@ def test_load_enabled_toolsets_rejects_disabled_mcp_env(monkeypatch, capsys):
         config_mod, "load_config", lambda: {"platform_toolsets": {"cli": ["memory"]}}
     )
 
-    # Sorted: ["email_mailbox", "kanban", "memory", "mssql", "project", "secrets", "site_db", "winrm"]. `email_mailbox`, `kanban`, `mssql`, `secrets`, `site_db` and `winrm` are auto-recovered by
+    # Sorted: ["email_mailbox", "kanban", "memory", "mssql", "project", "secrets", "site_db", "winrm"]. `email_mailbox`,
+    # `kanban`, `mssql`, `secrets`, `site_db` and `winrm` are auto-recovered by
     # _get_platform_tools (a non-configurable platform toolset in hermes-cli's
     # universe); `project` is GUI-only, folded in by _load_enabled_toolsets.
     assert server._load_enabled_toolsets() == ["email_mailbox", "kanban", "memory", "mssql", "project", "secrets", "site_db", "winrm"]

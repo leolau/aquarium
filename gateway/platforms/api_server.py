@@ -1737,6 +1737,18 @@ class APIServerAdapter(BasePlatformAdapter):
             self._set_run_status(run_id, "waiting_for_approval", last_event="approval.request")
             _enqueue("approval.request", event)
 
+        def _secret_notify(request: Dict[str, Any]) -> None:
+            # FG-37: request_secret blocked the agent thread. Only metadata
+            # travels here; the value goes to POST /api/secret-requests/{id}.
+            event = dict(request or {})
+            event["message_id"] = message_id
+            self._set_run_status(run_id, "waiting_for_secret", last_event="secret.request")
+            _enqueue("secret.request", event)
+
+        def _secret_resolved(request_id: str, status: str) -> None:
+            self._set_run_status(run_id, "running", last_event="secret.resolved")
+            _enqueue("secret.resolved", {"request_id": request_id, "status": status})
+
         async def _run_and_signal() -> None:
             try:
                 await queue.put(_event_payload("run.started", {"user_message": {"role": "user", "content": user_message}}))
@@ -1752,6 +1764,8 @@ class APIServerAdapter(BasePlatformAdapter):
                     gateway_session_key=gateway_session_key,
                     gateway_notify_cb=_approval_notify,
                     approval_session_key=run_id,
+                    secret_notify_cb=_secret_notify,
+                    secret_resolved_cb=_secret_resolved,
                 )
                 final_response = result.get("final_response", "") if isinstance(result, dict) else ""
                 effective_session_id = result.get("session_id", session_id) if isinstance(result, dict) else session_id
@@ -3782,6 +3796,8 @@ class APIServerAdapter(BasePlatformAdapter):
         gateway_session_key: Optional[str] = None,
         gateway_notify_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
         approval_session_key: Optional[str] = None,
+        secret_notify_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
+        secret_resolved_cb: Optional[Callable[[str, str], None]] = None,
     ) -> tuple:
         """
         Create an agent and run a conversation in a thread executor.
@@ -3833,6 +3849,10 @@ class APIServerAdapter(BasePlatformAdapter):
                     # while memory/history stay keyed on session_id.
                     approval_token = set_current_session_key(approval_key)
                     register_gateway_notify(approval_key, gateway_notify_cb)
+                    if secret_notify_cb is not None:
+                        from tools.secret_request_tool import register_secret_surface
+
+                        register_secret_surface(approval_key, secret_notify_cb, secret_resolved_cb)
             try:
                 agent = self._create_agent(
                     ephemeral_system_prompt=ephemeral_system_prompt,
@@ -3870,7 +3890,10 @@ class APIServerAdapter(BasePlatformAdapter):
                         unregister_gateway_notify,
                     )
 
+                    from tools.secret_request_tool import unregister_secret_surface
+
                     try:
+                        unregister_secret_surface(approval_key)
                         unregister_gateway_notify(approval_key)
                     finally:
                         if approval_token is not None:
@@ -4109,6 +4132,35 @@ class APIServerAdapter(BasePlatformAdapter):
                     except Exception:
                         pass
 
+                def _secret_notify(request: Dict[str, Any]) -> None:
+                    # FG-37: metadata only; the value never enters this stream.
+                    event = dict(request or {})
+                    event.update({
+                        "event": "secret.request",
+                        "run_id": run_id,
+                        "timestamp": time.time(),
+                    })
+                    event.setdefault("message_id", run_id)
+                    self._set_run_status(run_id, "waiting_for_secret", last_event="secret.request")
+                    try:
+                        loop.call_soon_threadsafe(q.put_nowait, event)
+                    except Exception:
+                        pass
+
+                def _secret_resolved(request_id: str, status: str) -> None:
+                    self._set_run_status(run_id, "running", last_event="secret.resolved")
+                    event = {
+                        "event": "secret.resolved",
+                        "run_id": run_id,
+                        "request_id": request_id,
+                        "status": status,
+                        "timestamp": time.time(),
+                    }
+                    try:
+                        loop.call_soon_threadsafe(q.put_nowait, event)
+                    except Exception:
+                        pass
+
                 def _run_sync():
                     from gateway.session_context import clear_session_vars
                     from tools.approval import (
@@ -4116,6 +4168,10 @@ class APIServerAdapter(BasePlatformAdapter):
                         reset_current_session_key,
                         set_current_session_key,
                         unregister_gateway_notify,
+                    )
+                    from tools.secret_request_tool import (
+                        register_secret_surface,
+                        unregister_secret_surface,
                     )
 
                     effective_task_id = session_id or run_id
@@ -4130,6 +4186,7 @@ class APIServerAdapter(BasePlatformAdapter):
                             session_key=approval_session_key,
                         )
                         register_gateway_notify(approval_session_key, _approval_notify)
+                        register_secret_surface(approval_session_key, _secret_notify, _secret_resolved)
                         r = agent.run_conversation(
                             user_message=user_message,
                             conversation_history=conversation_history,
@@ -4137,6 +4194,7 @@ class APIServerAdapter(BasePlatformAdapter):
                         )
                     finally:
                         try:
+                            unregister_secret_surface(approval_session_key)
                             unregister_gateway_notify(approval_session_key)
                         finally:
                             if approval_token is not None:

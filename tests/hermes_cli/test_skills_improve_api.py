@@ -287,8 +287,15 @@ def test_routes_follow_the_lab_permission():
     from hermes_cli.route_roles import declared_role
     from hermes_cli.web_server import app
 
+    try:
+        from fastapi.routing import iter_route_contexts
+    except ImportError:  # older FastAPI copies included routes flat into app.routes
+        routes = list(app.routes)
+    else:  # newer FastAPI keeps included routers nested
+        routes = list(iter_route_contexts(app.routes))
+
     paths = {"/api/skills/improve/start", "/api/skills/improve/message", "/api/skills/improve/sessions"}
-    found = {r.path: r for r in app.routes if getattr(r, "path", None) in paths}
+    found = {r.path: r for r in routes if getattr(r, "path", None) in paths}
     assert set(found) == paths
     assert all(declared_role(r) == "skills:lab" for r in found.values())
 
