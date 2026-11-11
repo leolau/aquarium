@@ -81,13 +81,15 @@ export function MobileActivityStrip({
         {scheduled ? <ScheduledButton compact summary={scheduled} now={now} /> : null}
       </div>
       {open ? (
-        <div id="mobile-activity-list" className="max-h-72 overflow-y-auto px-2 pb-2">
-          <ActivityList items={items} now={now} />
+        <div id="mobile-activity-list" className="px-2 pb-2">
+          <div className="max-h-72 overflow-y-auto">
+            <ActivityList items={items} now={now} />
+          </div>
           {scheduled ? (
             <Link
               href={SCHEDULED_HREF}
               data-action="scheduled-footer"
-              className="mt-1 flex items-center rounded-[var(--radius-md)] px-2 py-2 text-[12px] font-medium text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]"
+              className="mt-1 flex items-center rounded-[var(--radius-md)] border-t border-[var(--color-border)] px-2 py-2 text-[12px] font-medium text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]"
             >
               {t("scheduled.footer", { count: scheduledTotal })}
             </Link>
