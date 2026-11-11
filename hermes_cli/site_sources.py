@@ -46,6 +46,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +185,7 @@ def validate_design(design: Any) -> Dict[str, Any]:
     entities = design.get("entities")
     if not isinstance(entities, list) or not entities:
         raise SiteError("design.entities must be a non-empty list")
+    design_zone(design)
     seen: Set[str] = set()
     out: List[Dict[str, Any]] = []
     for raw in entities:
@@ -247,6 +249,21 @@ def validate_design(design: Any) -> Dict[str, Any]:
     result = dict(design)
     result["entities"] = out
     return result
+
+
+def design_zone(design: Mapping[str, Any]) -> Any:
+    """The design's ``timezone`` (IANA name; UTC when absent) for naive site timestamps."""
+    name = design.get("timezone")
+    if name is None:
+        return timezone.utc
+    if not isinstance(name, str) or not name.strip():
+        raise SiteError("design.timezone must be an IANA time zone name such as Asia/Hong_Kong")
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise SiteError(
+            f"design.timezone {name!r} is not an IANA time zone name such as Asia/Hong_Kong"
+        ) from None
 
 
 #: Words that mark a step target as something that changes the source site.
@@ -510,8 +527,12 @@ _TRUE = {"true", "yes", "y", "1", "on", "t"}
 _FALSE = {"false", "no", "n", "0", "off", "f"}
 
 
-def coerce(value: Any, design_type: str) -> Any:
-    """``value`` as the Python type asyncpg wants for ``design_type``, or None."""
+def coerce(value: Any, design_type: str, zone: Any = timezone.utc) -> Any:
+    """``value`` as the Python type asyncpg wants for ``design_type``, or None.
+
+    A timestamp without an offset is wall-clock time in ``zone`` (the design's
+    ``timezone``); one that carries an offset keeps it.
+    """
     if value is None or (isinstance(value, str) and value.strip() == ""):
         return None
     pg = COLUMN_TYPES[design_type]
@@ -537,9 +558,9 @@ def coerce(value: Any, design_type: str) -> Any:
             return _parse_date(str(value))
         if pg == "timestamptz":
             if isinstance(value, datetime):
-                return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+                return value if value.tzinfo else value.replace(tzinfo=zone)
             parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
-            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=zone)
         if pg == "jsonb":
             return json.dumps(value, default=str)
     except (ValueError, InvalidOperation, TypeError):
@@ -1745,6 +1766,7 @@ class SiteWriter:
     def __init__(self, site: Site, design: Mapping[str, Any], connection: Any) -> None:
         self.site = site
         self.design = validate_design(design)
+        self.zone = design_zone(self.design)
         self.conn = connection
         self.entities = {e["name"]: e for e in self.design["entities"]}
         self.run: Optional[SiteRun] = None
@@ -1799,7 +1821,7 @@ class SiteWriter:
             for record in records:
                 key, payload = _split_record(spec, record)
                 new_hash = content_hash(payload)
-                values = [coerce(payload.get(n), t) for n, t in cols]
+                values = [coerce(payload.get(n), t, self.zone) for n, t in cols]
                 existing = await self.conn.fetchrow(
                     f"SELECT _hash, _payload, _removed_at FROM {table} WHERE _key = $1 FOR UPDATE", key
                 )

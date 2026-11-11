@@ -1,6 +1,7 @@
 {
   "version": 1,
   "site": "fixture_wms",
+  "timezone": "Asia/Hong_Kong",
   "entities": [
     {
       "name": "orders",

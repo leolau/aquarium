@@ -63,6 +63,8 @@ def _mutated(fn):
     (lambda d, r: r["entities"]["orders"]["steps"].insert(1, {"op": "click", "text": "Add New"}),
      "data-changing action"),
     (lambda d, r: _entity(d, "orders")["refresh"].update(full_every="weekly"), "ISO 8601"),
+    (lambda d, r: d.update(timezone="HKT"), "IANA time zone"),
+    (lambda d, r: d.update(timezone=""), "IANA time zone"),
 ])
 def test_check_design_finds_each_problem(mutate, needle):
     problems, _, _ = _mutated(mutate)

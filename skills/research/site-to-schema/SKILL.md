@@ -137,6 +137,12 @@ Work in `~/site-study/<slug>/` (`design.json`, `recipe.json`,
    search button, `paginate`, `extract_table` mapping columns by header
    text — or `extract_datatable` / `extract_json` for big DataTables and
    JSON endpoints (step 4). Write `design.json` (plan section 3.3 shape; see the example).
+   - Set the design's `timezone` to the IANA zone the site shows its
+     times in (e.g. `"Asia/Hong_Kong"`), judged from the site: its
+     region, a zone label, or times you can match to "now". Timestamps
+     without an offset are stored as wall-clock time in that zone;
+     values that carry an offset (`Z`, `+08:00`) keep it. Omit it only
+     for a site that shows UTC (the default).
    Then:
    - `python scripts/check_design.py design.json recipe.json` → fix every
      problem;
