@@ -34,9 +34,11 @@ export default async function Page() {
       ) : canCreate ? (
         <AddSiteForm people={directory} me={principal.user_id} />
       ) : (
-        <InlineAlert tone="info" title={t("add.notAllowedTitle")}>
-          {t("add.notAllowedBody")}
-        </InlineAlert>
+        <div data-component="AddSiteNotAllowed">
+          <InlineAlert tone="info" title={t("add.notAllowedTitle")}>
+            {t("add.notAllowedBody")}
+          </InlineAlert>
+        </div>
       )}
     </MobileShell>
   );
