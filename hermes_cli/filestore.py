@@ -41,9 +41,23 @@ class StorageNotConfigured(RuntimeError):
     """
 
 
+class _StorageUnavailable(RuntimeError):
+    """The Storage API answered with a 5xx: still starting, or briefly down."""
+
+
+def _bucket_missing(status: int, body: str) -> bool:
+    # Storage answers 404, or 400 with a "Bucket not found" body (older APIs).
+    return status == 404 or (status == 400 and "not found" in body.lower())
+
+
+def _bucket_exists(status: int, body: str) -> bool:
+    text = body.lower()
+    return status == 409 or (status == 400 and ("already exists" in text or "duplicate" in text))
+
+
 @dataclass(frozen=True)
 class SupabaseStorage:
-    """Minimal Storage client: upload, sign, download, remove."""
+    """Minimal Storage client: upload, sign, download, remove, ensure the bucket."""
 
     url: str
     service_key: str
@@ -190,6 +204,59 @@ class SupabaseStorage:
                 f"{response.text[:200]}"
             )
         return response.content
+
+    async def ensure_bucket(self, *, wait: float = 120.0) -> bool:
+        """Create the private bucket when it is missing; True when this call made it.
+
+        Idempotent, and an existing bucket is left exactly as it is. Nothing
+        else creates it: agent-home's uploads and push store, and this class,
+        only ever read and write objects. ``wait`` covers a Storage API that is
+        still starting (connection refused, 5xx from the gateway).
+        """
+        import asyncio
+        import time
+
+        import httpx
+
+        deadline = time.monotonic() + wait
+        while True:
+            try:
+                return await self._ensure_bucket_once()
+            except (httpx.TransportError, _StorageUnavailable) as error:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(f"Supabase Storage is not reachable: {error}") from error
+                await asyncio.sleep(2)
+
+    async def _ensure_bucket_once(self) -> bool:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            found = await client.get(
+                f"{self.url}/storage/v1/bucket/{self.bucket}", headers=self._headers
+            )
+            if found.status_code >= 500:
+                raise _StorageUnavailable(f"bucket lookup returned {found.status_code}")
+            if found.status_code < 300:
+                return False
+            if not _bucket_missing(found.status_code, found.text):
+                raise RuntimeError(
+                    f"Supabase Storage bucket lookup failed ({found.status_code}): "
+                    f"{found.text[:200]}"
+                )
+            made = await client.post(
+                f"{self.url}/storage/v1/bucket",
+                json={"id": self.bucket, "name": self.bucket, "public": False},
+                headers=self._headers,
+            )
+        if made.status_code >= 500:
+            raise _StorageUnavailable(f"bucket create returned {made.status_code}")
+        if made.status_code < 300:
+            return True
+        if _bucket_exists(made.status_code, made.text):
+            return False  # made by a concurrent caller in between
+        raise RuntimeError(
+            f"Supabase Storage bucket create failed ({made.status_code}): {made.text[:200]}"
+        )
 
     async def remove(self, path: str) -> None:
         """Delete one object. The registry row's deletion is the caller's job."""
