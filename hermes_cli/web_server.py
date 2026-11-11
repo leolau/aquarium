@@ -398,6 +398,7 @@ from hermes_cli.files_api import router as _files_router  # noqa: E402
 from hermes_cli.incomings_api import router as _incomings_router  # noqa: E402
 from hermes_cli.todos_api import router as _todos_router  # noqa: E402
 from hermes_cli.credentials_api import router as _credentials_router  # noqa: E402
+from hermes_cli.secret_requests_api import router as _secret_requests_router  # noqa: E402
 from hermes_cli.personal_mcp import router as _personal_mcp_router  # noqa: E402
 from hermes_cli.google_client_api import router as _google_client_router  # noqa: E402
 from hermes_cli.vpn_api import router as _vpn_router  # noqa: E402
@@ -439,6 +440,7 @@ app.include_router(_files_router)
 app.include_router(_incomings_router)
 app.include_router(_todos_router)
 app.include_router(_credentials_router)
+app.include_router(_secret_requests_router)
 app.include_router(_personal_mcp_router)
 app.include_router(_google_client_router)
 app.include_router(_vpn_router)
@@ -12803,6 +12805,18 @@ def _start_chat_run(run_id, run_entry, loop, principal, profile, sid, user_messa
         if _approval_push_ok:
             asyncio.run_coroutine_threadsafe(_push_chat_approval(event), loop)
 
+    def _secret_notify(request: dict) -> None:
+        # FG-37: request_secret blocked the agent thread. The browser shows a
+        # masked popup and posts the value to POST /api/secret-requests/{id};
+        # only metadata (never a value) travels on this stream.
+        event = dict(request or {})
+        event["run_id"] = run_id
+        event.setdefault("message_id", run_id)
+        _enqueue("secret.request", event)
+
+    def _secret_resolved(request_id: str, status: str) -> None:
+        _enqueue("secret.resolved", {"request_id": request_id, "status": status, "run_id": run_id})
+
     def _steer_delivered(text: str) -> None:
         # Agent thread, right after the text was written into a tool result.
         with run_entry["input_lock"]:
@@ -12837,6 +12851,7 @@ def _start_chat_run(run_id, run_entry, loop, principal, profile, sid, user_messa
             set_current_session_key,
             unregister_gateway_notify,
         )
+        from tools.secret_request_tool import register_secret_surface, unregister_secret_surface
 
         tokens = set_session_vars(
             platform="api_server",
@@ -12849,6 +12864,7 @@ def _start_chat_run(run_id, run_entry, loop, principal, profile, sid, user_messa
         )
         approval_token = set_current_session_key(run_id)
         register_gateway_notify(run_id, _approval_notify)
+        register_secret_surface(run_id, _secret_notify, _secret_resolved)
         try:
             run_db = _open_session_db_for_profile(profile)
             try:
@@ -12872,6 +12888,7 @@ def _start_chat_run(run_id, run_entry, loop, principal, profile, sid, user_messa
             finally:
                 run_db.close()
         finally:
+            unregister_secret_surface(run_id)
             unregister_gateway_notify(run_id)
             reset_current_session_key(approval_token)
             clear_session_vars(tokens)

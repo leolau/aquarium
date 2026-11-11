@@ -207,6 +207,8 @@ SIGNED_IN = {
     "PUT /api/credentials/{provider}/{name}",
     "PATCH /api/credentials/{provider}/{name}",
     "DELETE /api/credentials/{provider}/{name}",
+    # FG-37: owner check inside (403 for someone else's request)
+    "POST /api/secret-requests/{request_id}",
     # email_mailboxes_api: the caller's own IMAP/SMTP mailboxes
     "GET /api/email/mailboxes",
     "PUT /api/email/mailboxes/{address}",

@@ -325,6 +325,8 @@ CREDENTIAL_KINDS: Dict[str, KindSpec] = {
         required=("username", "password"),
         secret_fields=("password",),
     ),
+    # FG-37: a single secret (PAT, API key) a person typed into the masked
+    # secret prompt or added in Settings. Tools take it by name.
     "secret": KindSpec(
         name="secret",
         required=("value",),
