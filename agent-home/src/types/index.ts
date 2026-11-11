@@ -2896,7 +2896,11 @@ export interface UsageAnalytics {
   period_days?: number;
 }
 
-/** `GET /api/cron/jobs` row (loose — only `enabled` is consumed). */
+/**
+ * `GET /api/cron/jobs` row (loose — only `enabled` is consumed). The list is
+ * scoped to the caller: admins get every job, others only jobs driving a
+ * project they can read.
+ */
 export interface CronJob {
   id?: string;
   name?: string;

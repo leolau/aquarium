@@ -3,6 +3,19 @@
 import pytest
 from fastapi import HTTPException
 
+from hermes_cli.access import Principal
+from tests.hermes_cli.test_projects_api import (  # noqa: F401 — fixture
+    MEMBER_P,
+    OWNER,
+    STRANGER,
+    _activate,
+    _create,
+    _member,
+    env,
+)
+
+CRON_ADMIN = Principal(user_id="ann", display="Ann", role="admin")  # type: ignore[arg-type]
+
 
 @pytest.fixture()
 def isolated_profiles(tmp_path, monkeypatch):
@@ -69,7 +82,7 @@ async def test_list_cron_jobs_all_includes_default_and_named_profiles(isolated_p
         name="worker-alpha-heartbeat",
     )
 
-    jobs = web_server.list_cron_jobs(profile="all")
+    jobs = web_server._list_cron_jobs(profile="all")
     by_id = {job["id"]: job for job in jobs}
 
     assert set(by_id) >= {default_job["id"], worker_job["id"]}
@@ -100,7 +113,7 @@ async def test_list_cron_jobs_specific_profile_filters_results(isolated_profiles
         name="worker-only",
     )
 
-    jobs = web_server.list_cron_jobs(profile="worker_alpha")
+    jobs = web_server._list_cron_jobs(profile="worker_alpha")
 
     assert [job["id"] for job in jobs] == [worker_job["id"]]
     assert jobs[0]["profile"] == "worker_alpha"
@@ -150,8 +163,8 @@ async def test_cron_mutation_without_profile_finds_named_profile_job(isolated_pr
     assert paused["profile"] == "worker_alpha"
     assert paused["enabled"] is False
 
-    default_jobs = web_server.list_cron_jobs(profile="default")
-    worker_jobs = web_server.list_cron_jobs(profile="worker_alpha")
+    default_jobs = web_server._list_cron_jobs(profile="default")
+    worker_jobs = web_server._list_cron_jobs(profile="worker_alpha")
 
     assert default_jobs == []
     assert len(worker_jobs) == 1
@@ -495,7 +508,7 @@ async def test_update_cron_job_rejects_id_mutation(isolated_profiles):
 
     assert exc.value.status_code == 400
     assert "id" in exc.value.detail
-    worker_jobs = web_server.list_cron_jobs(profile="worker_alpha")
+    worker_jobs = web_server._list_cron_jobs(profile="worker_alpha")
     assert [job["id"] for job in worker_jobs] == [worker_job["id"]]
 
 
@@ -521,8 +534,8 @@ async def test_cron_delete_with_profile_deletes_only_target_profile(isolated_pro
     deleted = await web_server.delete_cron_job(worker_job["id"], profile="worker_alpha")
     assert deleted == {"ok": True}
 
-    remaining_default = web_server.list_cron_jobs(profile="default")
-    remaining_worker = web_server.list_cron_jobs(profile="worker_alpha")
+    remaining_default = web_server._list_cron_jobs(profile="default")
+    remaining_worker = web_server._list_cron_jobs(profile="worker_alpha")
     assert [job["id"] for job in remaining_default] == [default_job["id"]]
     assert remaining_worker == []
 
@@ -532,9 +545,100 @@ async def test_cron_profile_validation_errors(isolated_profiles):
     from hermes_cli import web_server
 
     with pytest.raises(HTTPException) as bad_name:
-        web_server.list_cron_jobs(profile="../bad")
+        web_server._list_cron_jobs(profile="../bad")
     assert bad_name.value.status_code == 400
 
     with pytest.raises(HTTPException) as missing:
-        web_server.list_cron_jobs(profile="missing_profile")
+        web_server._list_cron_jobs(profile="missing_profile")
     assert missing.value.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /api/cron/jobs is scoped to the caller
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def scoped_cron(isolated_profiles, env, monkeypatch):  # noqa: F811 — fixture
+    """One project-driving job in ``default`` and one standalone job in
+    ``worker_alpha``, served by the real app with a switchable actor."""
+    from starlette.testclient import TestClient
+
+    from hermes_cli import projects_db, web_server
+    from hermes_cli.web_server import _SESSION_HEADER_NAME, _SESSION_TOKEN, app
+
+    monkeypatch.setenv("HERMES_HOME", str(isolated_profiles["default"]))
+    project_job = web_server._call_cron_for_profile(
+        "default", "create_job",
+        prompt="Compile the Monday digest", schedule="every 2h", name="Project digest",
+    )
+    other_job = web_server._call_cron_for_profile(
+        "worker_alpha", "create_job",
+        prompt="Back up the operator vault", schedule="every 3h", name="Operator backup",
+    )
+    project = _create(env)
+    _activate(env, project)
+    with projects_db.connect_closing() as conn:
+        conn.execute(
+            "UPDATE projects SET cron_job_id = ? WHERE id = ?",
+            (project_job["id"], project["id"]),
+        )
+        conn.commit()
+    client = TestClient(app)
+    client.headers[_SESSION_HEADER_NAME] = _SESSION_TOKEN
+    _projects_client, state = env
+    return client, state, project, project_job, other_job
+
+
+def _ids(resp):
+    assert resp.status_code == 200, resp.text
+    return sorted(j["id"] for j in resp.json())
+
+
+def test_cron_jobs_admins_still_see_every_profile(scoped_cron):
+    client, state, _project, project_job, other_job = scoped_cron
+    everything = sorted([project_job["id"], other_job["id"]])
+    for actor in (OWNER, CRON_ADMIN):
+        state["actor"] = actor
+        assert _ids(client.get("/api/cron/jobs")) == everything
+        assert _ids(client.get("/api/cron/jobs?profile=worker_alpha")) == [other_job["id"]]
+
+
+def test_cron_jobs_member_gets_no_other_profiles_jobs_or_prompts(scoped_cron):
+    client, state, project, project_job, _other_job = scoped_cron
+    state["actor"] = MEMBER_P
+
+    resp = client.get("/api/cron/jobs")
+    assert _ids(resp) == []
+    assert "Back up the operator vault" not in resp.text
+    assert "Compile the Monday digest" not in resp.text
+    assert _ids(client.get("/api/cron/jobs?profile=worker_alpha")) == []
+
+    # Joining the project opens exactly the job that drives it.
+    _member(project["id"], "ada", "member")
+    resp = client.get("/api/cron/jobs")
+    assert _ids(resp) == [project_job["id"]]
+    assert resp.json()[0]["prompt"] == "Compile the Monday digest"
+    assert "Back up the operator vault" not in resp.text
+
+
+def test_cron_jobs_shared_read_through_an_enrolled_profile(scoped_cron):
+    client, state, _project, project_job, _other_job = scoped_cron
+    state["actor"] = STRANGER
+    assert _ids(client.get("/api/cron/jobs")) == []
+    state["enrolled"] = {"default"}
+    assert _ids(client.get("/api/cron/jobs")) == [project_job["id"]]
+
+
+def test_cron_jobs_single_user_install_lists_everything(scoped_cron, monkeypatch):
+    """No multi-user datastore → no members exist; the operator keeps the
+    full list (the web dashboard's cron page)."""
+    from hermes_cli import web_server
+
+    client, _state, _project, project_job, other_job = scoped_cron
+
+    async def _unconfigured(request, *, allow_as=False):
+        raise web_server._CommsNotConfigured("no DSN")
+
+    monkeypatch.setattr(web_server, "_comms_resolve_principal", _unconfigured)
+    assert _ids(client.get("/api/cron/jobs")) == sorted([project_job["id"], other_job["id"]])

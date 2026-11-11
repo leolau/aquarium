@@ -238,31 +238,27 @@ def cron_dirs() -> list[tuple[str, Path]]:
     return out
 
 
-def cron_items(
+def readable_cron_projects(
     principal,
     enrolled: Iterable[str],
-    dirs: Iterable[tuple[str, Path]],
-) -> list[dict]:
-    from cron.jobs import list_running_jobs
+    job_ids: Iterable[str],
+) -> dict[str, Any]:
+    """``{cron_job_id: project}`` for the jobs in ``job_ids`` that drive a
+    live project the caller can read. A job no readable project points at is
+    left out: only instance admins see standalone cron jobs."""
     from hermes_cli import projects_db
-    from hermes_cli.projects_api import _can_read, _instance_admin, _member_role_sync
+    from hermes_cli.projects_api import _can_read, _member_role_sync
 
-    running: list[tuple[str, dict]] = []
-    for profile, cron_dir in dirs:
-        for job in list_running_jobs(cron_dir):
-            running.append((profile, job))
-    if not running:
-        return []
-
-    admin = _instance_admin(principal)
+    ids = sorted({str(j) for j in job_ids if j})
+    if not ids:
+        return {}
     enrolled_set = set(enrolled)
     linked: dict[str, Any] = {}
-    job_ids = sorted({job["job_id"] for _p, job in running})
-    marks = ",".join("?" for _ in job_ids)
+    marks = ",".join("?" for _ in ids)
     with projects_db.connect_closing() as conn:
         rows = conn.execute(
             f"SELECT id FROM projects WHERE archived = 0 AND cron_job_id IN ({marks})",
-            job_ids,
+            ids,
         ).fetchall()
         for row in rows:
             project = projects_db.get_project(conn, row["id"])
@@ -272,6 +268,28 @@ def cron_items(
             profiles = projects_db.get_project_profiles(conn, project.id)
             if _can_read(project, role, principal, enrolled_set, profiles):
                 linked[project.cron_job_id] = project
+    return linked
+
+
+def cron_items(
+    principal,
+    enrolled: Iterable[str],
+    dirs: Iterable[tuple[str, Path]],
+) -> list[dict]:
+    from cron.jobs import list_running_jobs
+    from hermes_cli.projects_api import _instance_admin
+
+    running: list[tuple[str, dict]] = []
+    for profile, cron_dir in dirs:
+        for job in list_running_jobs(cron_dir):
+            running.append((profile, job))
+    if not running:
+        return []
+
+    admin = _instance_admin(principal)
+    linked = readable_cron_projects(
+        principal, enrolled, {job["job_id"] for _p, job in running}
+    )
 
     out: list[dict] = []
     for profile, job in running:
