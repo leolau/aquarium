@@ -318,3 +318,66 @@ def test_cli_without_a_datastore_does_nothing(tmp_path: Path) -> None:
     )
     assert proc.returncode == 0, proc.stderr
     assert "nothing to migrate" in proc.stdout
+
+
+def test_migrate_lets_least_privilege_app_login_create_sites(
+    postgres_dsn: str, tmp_path, monkeypatch
+) -> None:
+    """hermes_app (not owner, no CREATEROLE) creates sites via migrate's aquarium_site_admin."""
+    from hermes_cli import site_sources as ss
+    from hermes_cli.access import Principal
+
+    monkeypatch.setattr(ss, "_role_secrets_path", lambda: tmp_path / "roles.json")
+    monkeypatch.setattr(ss, "current_profile", lambda: "default")
+    monkeypatch.setattr(ss, "_registry_ready", set())
+
+    async def reset() -> None:
+        conn = await asyncpg.connect(postgres_dsn, ssl=False)
+        try:
+            for (schema,) in await conn.fetch(
+                "SELECT nspname FROM pg_namespace WHERE nspname LIKE 'site\\_%'"
+            ):
+                await conn.execute(f'DROP SCHEMA "{schema}" CASCADE')
+            await conn.execute(
+                "DROP TABLE IF EXISTS public.site_source_grants, public.site_sources"
+            )
+            roles = [r for (r,) in await conn.fetch(
+                "SELECT rolname FROM pg_roles WHERE rolname LIKE 'site\\_%' "
+                "OR rolname = 'aquarium_site_admin' ORDER BY rolname DESC"
+            )]
+            if roles:
+                await conn.execute(f"DROP OWNED BY {', '.join(roles)}")
+                for role in roles:
+                    await conn.execute(f"DROP ROLE {role}")
+        finally:
+            await conn.close()
+
+    asyncio.run(_drop_schemas(postgres_dsn))
+    asyncio.run(reset())
+    _migrate(postgres_dsn)
+    asyncio.run(_app_login(postgres_dsn))
+    assert ss._role_password(ss.SITE_ADMIN_ROLE, create=False)
+    ss.set_database(ss.SiteDatabase(_app_dsn(postgres_dsn)))
+    owner = Principal(user_id="owner-1", display="Owner", role="owner")
+
+    async def run() -> tuple:
+        site = await ss.create_site(owner, {"name": "Shop", "base_url": "https://shop.example"})
+        conn = await asyncpg.connect(_app_dsn(postgres_dsn), ssl=False)
+        try:
+            app = await conn.fetchrow(
+                "SELECT r.rolsuper, r.rolcreaterole, "
+                "has_database_privilege(current_database(), 'CREATE') AS can_create "
+                "FROM pg_roles r WHERE r.rolname = current_user"
+            )
+        finally:
+            await conn.close()
+        return site, dict(app), await ss.list_sites()
+
+    try:
+        site, app, listed = asyncio.run(run())
+    finally:
+        ss.set_database(None)
+    assert app == {"rolsuper": False, "rolcreaterole": False, "can_create": False}
+    assert [s.slug for s in listed] == [site.slug]
+    _migrate(postgres_dsn)  # idempotent once the site exists
+    asyncio.run(reset())
