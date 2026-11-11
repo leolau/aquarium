@@ -186,13 +186,28 @@ for a in "${ALLOWED_LOCAL_MODS[@]}"; do
 done
 AFTER=$(git rev-parse --short HEAD)
 echo "$BEFORE -> $AFTER"
+# The bundles are rebuilt from the diff since the last deploy that finished,
+# not since HEAD: a deploy that failed after the checkout moved HEAD would
+# otherwise make the retry see no change and keep serving the old bundles.
+LAST_DEPLOY_FILE=.git/aquarium-last-deploy
+BUILT_FROM=$BEFORE
+if [ -s "$LAST_DEPLOY_FILE" ] && \
+   last=$(git rev-parse -q --verify "$(head -c 40 "$LAST_DEPLOY_FILE")^{commit}" 2>/dev/null); then
+  BUILT_FROM=$(git rev-parse --short "$last")
+fi
+[ "$BUILT_FROM" = "$BEFORE" ] || echo "last finished deploy was $BUILT_FROM; rebuilding from there"
 [ "$BEFORE" = "$AFTER" ] && echo "(already up to date)"
 
 echo "== reinstalling package =="
 # Optional drivers whose tools are service-gated on the import (SQL Server,
 # WinRM). A subset of the installer's extras (install-aquarium.sh); the rest
 # are test/dev or channel extras this box does not run.
-./.venv/bin/python -I -m pip install -q -e ".[mssql,winrm]"
+# install-aquarium.sh builds the venv with `uv venv`, which has no pip.
+if ./.venv/bin/python -I -m pip --version >/dev/null 2>&1; then
+  ./.venv/bin/python -I -m pip install -q -e ".[mssql,winrm]"
+else
+  uv pip install -q --python ./.venv/bin/python -e ".[mssql,winrm]"
+fi
 # The services run as hermes and can't write __pycache__ in this root-owned
 # tree, so compile here; otherwise every start recompiles in memory.
 nice -n 15 ./.venv/bin/python -I -m compileall -q -j 0 \
@@ -203,8 +218,8 @@ nice -n 15 ./.venv/bin/python -I -m compileall -q -j 0 \
 # new API endpoints with the old SPA, and every frontend change is invisible
 # on the box. Only rebuild when web/ actually moved — it is minutes of CPU on
 # a box that is also serving conversations.
-if [ "$BEFORE" != "$AFTER" ] && \
-   ! git diff --quiet "$BEFORE" "$AFTER" -- web/; then
+if [ "$BUILT_FROM" != "$AFTER" ] && \
+   ! git diff --quiet "$BUILT_FROM" "$AFTER" -- web/; then
   echo "== rebuilding dashboard bundle (web/ changed) =="
   npm_ci
   (cd web && nice -n 15 npm run build)
@@ -220,8 +235,8 @@ fi
 # agent-home/ (that would create a second, unhoisted dep tree). The root
 # package-lock.json is matched explicitly because a workspace dependency change
 # lands there.
-if [ "$BEFORE" != "$AFTER" ] && \
-   git diff --name-only "$BEFORE" "$AFTER" | grep -qE '^(agent-home/|package-lock\.json$)'; then
+if [ "$BUILT_FROM" != "$AFTER" ] && \
+   git diff --name-only "$BUILT_FROM" "$AFTER" | grep -qE '^(agent-home/|package-lock\.json$)'; then
   echo "== rebuilding agent-home bundle (agent-home/ changed) =="
   npm_ci
   rm -rf agent-home/.next
@@ -312,6 +327,7 @@ for u in $VERIFY_UNITS; do
   [ "$s" = active ] || fail=1
 done
 [ "$fail" = 0 ] || { echo "DEPLOY WARNING: a unit is not active — see journalctl -u <unit>" >&2; exit 1; }
+git rev-parse HEAD > "$LAST_DEPLOY_FILE"
 echo "deploy OK ($AFTER)  backup: /opt/data/backups/deploy-$TS"
 
 # docs/deployment/README.md claims to state what is *currently* true of this box
