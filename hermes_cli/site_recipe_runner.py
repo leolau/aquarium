@@ -103,6 +103,8 @@ STEP_OPS = (
     "extract_table", "extract_fields", "extract_datatable", "extract_json", "paginate", "date_windows",
 )
 _NESTING_OPS = ("paginate", "date_windows")
+# Optional per-step ``when``: run the step only on full loads (no cursor) or only incremental ones.
+STEP_WHEN = ("full", "incremental")
 _EXTRACT_OPS = ("extract_table", "extract_fields", "extract_datatable", "extract_json")
 _ALLOWED_KEYS = ("Enter", "Tab")
 DEFAULT_DATE_FORMAT = "%Y-%m-%d"
@@ -130,8 +132,10 @@ class RunReport:
     """What a run did, filled in while :func:`run_recipe` is consumed.
 
     ``full_entities`` lists the entities that finished without error, without
-    a cursor and with ``removal_safe`` not false: only for those may the
-    writer mark unseen rows removed. ``cursors`` holds the largest value of
+    a cursor, with ``removal_safe`` not false and with every extraction step
+    having produced at least one record (unless the step sets
+    ``allow_empty: true``): only for those may the writer mark unseen rows
+    removed. ``cursors`` holds the largest value of
     each entity's ``cursor`` column seen in this run.
     """
 
@@ -266,7 +270,8 @@ def _template_names(value: Any) -> List[str]:
     return [m.group(1) for m in _TEMPLATE.finditer(value)]
 
 
-def _steps_problems(where: str, steps: Any, *, depth: int = 0, in_window: bool = False) -> List[str]:
+def _steps_problems(where: str, steps: Any, *, depth: int = 0, in_window: bool = False,
+                    incremental_only: bool = False) -> List[str]:
     problems: List[str] = []
     if not isinstance(steps, list) or not steps:
         return [f"{where}: 'steps' must be a non-empty list"]
@@ -282,11 +287,18 @@ def _steps_problems(where: str, steps: Any, *, depth: int = 0, in_window: bool =
             problems.append(f"{at}: unknown op {op!r} (one of {', '.join(STEP_OPS)})")
             continue
         at = f"{at} ({op})"
+        when = step.get("when")
+        if when is not None and when not in STEP_WHEN:
+            problems.append(f"{at}: 'when' must be one of {', '.join(STEP_WHEN)}")
+        # A step that only runs incrementally always has a cursor: no 'default' needed.
+        no_cursor = not (incremental_only or when == "incremental")
         try:
             if op in ("goto", "click", "submit", "press"):
                 _check_static_target(at, step)
         except ForbiddenTarget as exc:
             problems.append(str(exc))
+        if "allow_empty" in step and (op not in _EXTRACT_OPS or not isinstance(step["allow_empty"], bool)):
+            problems.append(f"{at}: 'allow_empty' is a true/false option of the extract_* ops")
         if op == "goto" and not isinstance(step.get("url"), str):
             problems.append(f"{at}: needs 'url'")
         elif op == "click":
@@ -297,7 +309,7 @@ def _steps_problems(where: str, steps: Any, *, depth: int = 0, in_window: bool =
             if "value" not in step and not (op == "select" and "label" in step):
                 problems.append(f"{at}: needs 'value'")
             names = _template_names(step.get("value"))
-            if "cursor" in names and "default" not in step:
+            if "cursor" in names and "default" not in step and no_cursor:
                 problems.append(f"{at}: uses {{{{cursor}}}} without a 'default' for full/first runs")
             if any(n in ("window_from", "window_to") for n in names) and not in_window:
                 problems.append(f"{at}: {{{{window_*}}}} only works inside date_windows")
@@ -331,7 +343,7 @@ def _steps_problems(where: str, steps: Any, *, depth: int = 0, in_window: bool =
                 problems.append(f"{at}: needs 'table' (selector of the DataTables <table>)")
             problems.extend(_data_columns_problems(at, step.get("columns"), header_ok=True))
         elif op == "extract_json":
-            problems.extend(_json_step_problems(at, step, in_window=in_window))
+            problems.extend(_json_step_problems(at, step, in_window=in_window, needs_default=no_cursor))
         elif op == "paginate":
             nxt = step.get("next")
             if nxt is not None:
@@ -348,16 +360,18 @@ def _steps_problems(where: str, steps: Any, *, depth: int = 0, in_window: bool =
             max_pages = step.get("max_pages")
             if max_pages is not None and (not isinstance(max_pages, int) or max_pages < 1):
                 problems.append(f"{at}: 'max_pages' must be a positive integer")
-            problems.extend(_steps_problems(at, step.get("steps"), depth=depth + 1, in_window=in_window))
+            problems.extend(_steps_problems(at, step.get("steps"), depth=depth + 1, in_window=in_window,
+                                            incremental_only=not no_cursor))
         elif op == "date_windows":
             days = step.get("days")
             if not isinstance(days, int) or days < 1:
                 problems.append(f"{at}: 'days' must be a positive integer")
             if not step.get("from"):
                 problems.append(f"{at}: needs 'from'")
-            if "cursor" in _template_names(step.get("from")) and "default" not in step:
+            if "cursor" in _template_names(step.get("from")) and "default" not in step and no_cursor:
                 problems.append(f"{at}: uses {{{{cursor}}}} without a 'default' for full/first runs")
-            problems.extend(_steps_problems(at, step.get("steps"), depth=depth + 1, in_window=True))
+            problems.extend(_steps_problems(at, step.get("steps"), depth=depth + 1, in_window=True,
+                                            incremental_only=not no_cursor))
     return problems
 
 
@@ -399,7 +413,7 @@ def _data_columns_problems(where: str, cols: Any, *, header_ok: bool) -> List[st
     return problems
 
 
-def _json_step_problems(at: str, step: Mapping[str, Any], *, in_window: bool) -> List[str]:
+def _json_step_problems(at: str, step: Mapping[str, Any], *, in_window: bool, needs_default: bool = True) -> List[str]:
     problems: List[str] = []
     url = step.get("url")
     if not isinstance(url, str) or not url:
@@ -433,7 +447,7 @@ def _json_step_problems(at: str, step: Mapping[str, Any], *, in_window: bool) ->
         if is_forbidden_text(_TEMPLATE.sub(" ", value)):
             problems.append(f"{at}: request value {value!r} looks like a data-changing action")
         names = _template_names(value)
-        if "cursor" in names and "default" not in step:
+        if "cursor" in names and "default" not in step and needs_default:
             problems.append(f"{at}: uses {{{{cursor}}}} without a 'default' for full/first runs")
         if any(n in ("window_from", "window_to") for n in names) and not in_window:
             problems.append(f"{at}: {{{{window_*}}}} only works inside date_windows")
@@ -898,15 +912,32 @@ _INVENTORY_JS = r"""
 
 
 # DataTables 1.10+ (jQuery plugin) and 2.x (``window.DataTable``) share this
-# public API: ``isDataTable``, ``new Api(el)``, ``rows({search: 'none'})``,
-# ``column(i).dataSrc()`` / ``.header()``, ``cell(r, c).data()``, ``ajax.url()``.
+# public API: ``isDataTable``, ``new Api(el)``, ``table().node()``,
+# ``rows({search: 'none'})``, ``column(i).dataSrc()`` / ``.header()``,
+# ``cell(r, c).data()``, ``ajax.url()``. With ``scrollX`` / ``scrollY`` the
+# header (and footer) are cloned <table>s for which ``isDataTable`` is also
+# true; every match is resolved to its instance's real ``table().node()``.
 _DATATABLE_JS = r"""
 ([sel, columns, start, length]) => {
   const DT = (window.jQuery && window.jQuery.fn && window.jQuery.fn.dataTable) || window.DataTable;
-  const el = document.querySelector(sel);
-  if (!el) return {state: 'no_table'};
+  const found = Array.from(document.querySelectorAll(sel));
+  if (!found.length) return {state: 'no_table'};
   if (!DT || typeof DT.isDataTable !== 'function' || typeof DT.Api !== 'function') return {state: 'no_datatables'};
-  if (!DT.isDataTable(el)) return {state: 'not_initialised'};
+  const clone = '.dataTables_scrollHead, .dataTables_scrollFoot, .dt-scroll-head, .dt-scroll-foot';
+  const nodes = [];
+  for (const el of found) {
+    if (!DT.isDataTable(el)) continue;
+    let node = null;
+    try { node = new DT.Api(el).table().node(); } catch (e) { node = null; }
+    if (!node && !el.closest(clone)) node = el;
+    if (node && !nodes.includes(node)) nodes.push(node);
+  }
+  if (!nodes.length) return {state: 'not_initialised'};
+  if (nodes.length > 1) {
+    return {state: 'ambiguous', matches: nodes.map((n) => n.id ? '#' + n.id : n.tagName.toLowerCase() +
+            (n.className ? '.' + String(n.className).trim().split(/\s+/).join('.') : ''))};
+  }
+  const el = nodes[0];
   const api = new DT.Api(el);
   const s = api.settings()[0] || {};
   if (s._bInitComplete === false) return {state: 'loading'};
@@ -954,7 +985,8 @@ _DATATABLE_JS = r"""
 """
 
 _DATATABLES_LIST_JS = "() => { const probe = " + _DATATABLE_JS.strip() + r""";
-  return Array.from(document.querySelectorAll('table[id]')).map((t) => {
+  const clone = '.dataTables_scrollHead, .dataTables_scrollFoot, .dt-scroll-head, .dt-scroll-foot';
+  return Array.from(document.querySelectorAll('table[id]')).filter((t) => !t.closest(clone)).map((t) => {
     const selector = '#' + CSS.escape(t.id);
     return Object.assign({selector}, probe([selector, null, 0, 0]));
   }).filter((x) => x.state === 'ready');
@@ -1341,6 +1373,7 @@ class _Run:
         self.today = today
         self.sleep = sleep
         self.logged_in = False
+        self.extracted: Dict[int, List[Any]] = {}
 
     # -- navigation ----------------------------------------------------------
 
@@ -1434,8 +1467,14 @@ class _Run:
             "vars": {"cursor": cursor},
             "last_count": 0,
             "page_keys": [],
+            "run_mode": "full" if cursor is None else "incremental",
         }
+        self.extracted = {}
         yield from self.steps(ent["steps"], ctx)
+
+    def empty_extractions(self) -> List[str]:
+        """Extraction steps of the last entity that produced no record and do not set ``allow_empty``."""
+        return [where for where, allow_empty, count in self.extracted.values() if count == 0 and not allow_empty]
 
     def render(self, step: Mapping[str, Any], field_name: str, ctx: Dict[str, Any], *,
                date_format: Optional[str] = None) -> str:
@@ -1449,6 +1488,8 @@ class _Run:
     def steps(self, steps: Sequence[Mapping[str, Any]], ctx: Dict[str, Any]) -> Iterator[ExtractedItem]:
         for i, step in enumerate(steps):
             op = step["op"]
+            if step.get("when") not in (None, ctx.get("run_mode", "full")):
+                continue
             where = f"{ctx['name']}: step {i + 1} ({op})"
             d = self.driver
             if op == "goto":
@@ -1474,14 +1515,13 @@ class _Run:
                 self.page_loaded()
             elif op == "wait":
                 d.wait(step)
-            elif op == "extract_table":
-                yield from self.extract_table(where, step, ctx)
-            elif op == "extract_fields":
-                yield from self.extract_fields(where, step, ctx)
-            elif op == "extract_datatable":
-                yield from self.extract_datatable(where, step, ctx)
-            elif op == "extract_json":
-                yield from self.extract_json(where, step, ctx)
+            elif op in _EXTRACT_OPS:
+                extract = {"extract_table": self.extract_table, "extract_fields": self.extract_fields,
+                           "extract_datatable": self.extract_datatable, "extract_json": self.extract_json}[op]
+                tally = self.extracted.setdefault(id(step), [where, step.get("allow_empty") is True, 0])
+                for item in extract(where, step, ctx):
+                    tally[2] += 1
+                    yield item
             elif op == "paginate":
                 yield from self.paginate(where, step, ctx)
             elif op == "date_windows":
@@ -1568,7 +1608,7 @@ class _Run:
         timeout_ms = int(step.get("timeout_ms") or self.recipe.get("timeout_ms") or DEFAULT_TIMEOUT_MS)
         deadline = time.monotonic() + timeout_ms / 1000
         info = d.datatable(table, None, 0, 0)
-        while info.get("state") != "ready" and time.monotonic() < deadline:
+        while info.get("state") not in ("ready", "ambiguous") and time.monotonic() < deadline:
             d.wait({"ms": 200})
             info = d.datatable(table, None, 0, 0)
         state = info.get("state")
@@ -1582,6 +1622,8 @@ class _Run:
                                  "use extract_table with paginate",
                 "not_initialised": f"{table!r} on {url} is not a DataTables table; use extract_table with paginate",
                 "loading": f"the DataTables table {table!r} did not finish loading within {timeout_ms} ms",
+                "ambiguous": f"ambiguous selector {table!r}: it matches {len(info.get('matches') or [])} DataTables "
+                             f"tables on {url} ({', '.join(info.get('matches') or [])}); use one table's id",
             }.get(str(state), f"cannot read {table!r} on {url} ({state})"))
         if info.get("server_side"):
             raise RecipeError(
@@ -2006,6 +2048,13 @@ def run_recipe(
             report.completed.append(name)
             report.rows.setdefault(name, 0)
             if cursor is None and ent.get("removal_safe", True) is not False:
-                report.full_entities.append(name)
+                empty = run.empty_extractions()
+                if empty:
+                    report.warnings.append(
+                        f"{name}: not a full load, so no rows are marked removed: {'; '.join(empty)} produced "
+                        "no records (set 'allow_empty': true on the step if empty is expected)"
+                    )
+                else:
+                    report.full_entities.append(name)
         if report.failed:
             raise RecipeRunError(report)

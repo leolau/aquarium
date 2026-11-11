@@ -74,10 +74,18 @@ def _default_cases(today: dt.date, count: int = 230) -> List[Dict[str, Any]]:
 _DATATABLES_SHIM = r"""
 (function () {
   const tables = new Map();
+  // Scroll header clones: isDataTable() is true for them, but new Api(clone) has no instance (0 rows).
+  const clones = new Set();
+  const none = {table: null, data: [], aoColumns: []};
   function resolve(sel) { return typeof sel === 'string' ? document.querySelector(sel) : (sel && sel.jquery ? sel[0] : sel); }
   function wrap(list) { const a = list.slice(); a.toArray = () => list.slice(); a.count = () => list.length; return a; }
-  function Api(sel) { const s = tables.get(resolve(sel)); if (!s) throw new Error('not a DataTable'); this.s = s; }
-  Api.prototype.settings = function () { return wrap([this.s]); };
+  function Api(sel) {
+    const el = resolve(sel);
+    this.s = tables.get(el) || (clones.has(el) ? none : null);
+    if (!this.s) throw new Error('not a DataTable');
+  }
+  Api.prototype.settings = function () { return wrap(this.s === none ? [] : [this.s]); };
+  Api.prototype.table = function () { const s = this.s; return {node: () => s.table}; };
   Api.prototype.columns = function () { const n = this.s.aoColumns.length; return {count: () => n}; };
   Api.prototype.column = function (i) {
     const c = this.s.aoColumns[i];
@@ -103,6 +111,24 @@ _DATATABLES_SHIM = r"""
                ajaxUrl: opts.ajax ? (opts.ajax.url || opts.ajax) : null,
                aoColumns: ths.map((th, i) => ({nTh: th, mData: opts.columns ? opts.columns[i].data : i}))};
     tables.set(el, s);
+    el.classList.add('dataTable');
+    if (opts.scrollX || opts.scrollY) {
+      // Like DataTables: the visible header is a clone (no id) in a scroll-head div, before the body table.
+      const wrapper = document.createElement('div');
+      wrapper.className = 'dataTables_scroll';
+      const head = document.createElement('div');
+      head.className = 'dataTables_scrollHead';
+      const headTable = el.cloneNode(false);
+      headTable.removeAttribute('id');
+      headTable.appendChild(el.tHead.cloneNode(true));
+      head.appendChild(headTable);
+      const body = document.createElement('div');
+      body.className = 'dataTables_scrollBody';
+      el.parentNode.insertBefore(wrapper, el);
+      body.appendChild(el);
+      wrapper.append(head, body);
+      clones.add(headTable);
+    }
     const done = () => { s._bInitComplete = true; draw(s); };
     if (opts.serverSide) {
       const body = new URLSearchParams({draw: '1', start: '0', length: '10'});
@@ -117,7 +143,7 @@ _DATATABLES_SHIM = r"""
   }
   const DataTable = function (sel, opts) { return init(resolve(sel), opts || {}); };
   DataTable.Api = Api;
-  DataTable.isDataTable = (sel) => tables.has(resolve(sel));
+  DataTable.isDataTable = (sel) => tables.has(resolve(sel)) || clones.has(resolve(sel));
   window.DataTable = DataTable;
   if (window.__withJquery) {
     const $ = (sel) => ({0: resolve(sel), jquery: '3.7.1', DataTable(opts) { return tables.has(resolve(sel)) ? new Api(sel) : init(resolve(sel), opts || {}); }});
@@ -270,6 +296,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/warehouses": self._warehouses_api,
             "/about": self._about,
             "/devices": self._devices,
+            "/devices/scroll": self._devices_scroll,
             "/api/devices": self._devices_api,
             "/api/rma_cases": self._rma_cases_api,
             "/search/rma_case": self._rma_search,
@@ -424,6 +451,19 @@ class _Handler(BaseHTTPRequestHandler):
             " columns: [{data: 'case_no'}, {data: 'opened'}]});"
             "</script>"
         )
+        self._send(200, _page("Devices", body))
+
+    def _devices_scroll(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
+        tables = int((query.get("tables") or ["1"])[0])
+        body = '<h1>Devices (scrolling)</h1><script src="/static/datatables-shim.js"></script>'
+        for n in range(1, tables + 1):
+            body += (f'<table id="scrolled{n}"><thead><tr><th>IMEI</th><th>Model</th></tr></thead>'
+                     "<tbody></tbody></table>")
+        body += "<script>" + "".join(
+            f"new DataTable('#scrolled{n}', {{ajax: '/api/devices', scrollX: true,"
+            " columns: [{data: 'imei'}, {data: 'model.name'}]});"
+            for n in range(1, tables + 1)
+        ) + "</script>"
         self._send(200, _page("Devices", body))
 
     def _devices_api(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:

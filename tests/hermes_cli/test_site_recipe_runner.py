@@ -876,3 +876,120 @@ def test_e2e_browse_lists_datatables_and_json_requests_without_values(site):
     assert ("GET", "/api/devices") in seen
     assert seen[("POST", "/api/rma_cases")]["body_keys"] == ["draw", "length", "start"]
     assert "0" not in json.dumps(seen[("POST", "/api/rma_cases")]["body_keys"])
+
+
+@needs_browser
+def test_e2e_extract_datatable_skips_the_scroll_header_clone(site):
+    def run(url, table):
+        recipe = _one_entity(site, [{"op": "goto", "url": url},
+                                    {"op": "extract_datatable", "table": table,
+                                     "columns": {"imei": {"field": "imei"}, "model": {"header": "Model"}}}],
+                             ["imei"])
+        report = RunReport()
+        try:
+            items, _ = _run(site, recipe, report=report)
+        except RecipeRunError:
+            return None, report
+        return items, report
+
+    for table in ("table.dataTable", "table", "#scrolled1"):
+        items, report = run("/devices/scroll", table)
+        assert items is not None and len(items) == 2500, (table, report.failed)
+        assert items[0].payload["model"] == "iPhone 15" and report.full_entities == ["data"]
+    items, report = run("/devices/scroll?tables=2", "table.dataTable")
+    assert items is None
+    assert "ambiguous selector 'table.dataTable'" in report.failed["data"]
+    assert "#scrolled1, #scrolled2" in report.failed["data"]
+    assert report.full_entities == []
+
+
+@needs_browser
+@pytest.mark.parametrize("allow_empty", [False, True])
+def test_e2e_full_entity_with_an_empty_extraction_is_not_a_full_load(site, allow_empty):
+    step = {"op": "extract_json", "url": "/search/rma_case", "method": "POST",
+            "form": {"date_from": "2000-01-01", "date_to": "2000-12-31"}, "columns": CASE_COLUMNS}
+    if allow_empty:
+        step["allow_empty"] = True
+    recipe = _one_entity(site, [step], ["case_no"], mode="full")
+    items, report = _run(site, recipe, mode="full")
+    assert items == [] and report.completed == ["data"] and report.rows == {"data": 0}
+    if allow_empty:
+        assert report.full_entities == ["data"]
+    else:
+        assert report.full_entities == []
+        assert any("not a full load" in w and "allow_empty" in w for w in report.warnings)
+
+
+def test_empty_extraction_counts_across_pages():
+    report = RunReport()
+    run_recipe_items = list(run_recipe(_fake_recipe(), CRED, driver=FakeDriver(_fake_site(rows_page2=[])),
+                                       report=report, today=TODAY, allow_private=True))
+    assert len([i for i in run_recipe_items if i.entity == "orders"]) == 2
+    assert report.full_entities == ["orders", "about"]
+
+    site = _fake_site()
+    site["/orders"]["rows"] = []
+    report = RunReport()
+    items = list(run_recipe(_fake_recipe(), CRED, driver=FakeDriver(site), report=report, today=TODAY,
+                            allow_private=True))
+    assert [i.entity for i in items] == ["about"]
+    assert report.completed == ["orders", "about"] and report.full_entities == ["about"]
+    assert any(w.startswith("orders: not a full load") and "(extract_table)" in w for w in report.warnings)
+
+
+def test_validate_allow_empty():
+    recipe = fixture_recipe()
+    recipe["entities"]["orders"]["steps"].insert(0, {"op": "goto", "url": "/a", "allow_empty": True})
+    assert any("allow_empty" in p for p in srr.recipe_problems(recipe))
+
+
+def test_validate_when():
+    recipe = fixture_recipe()
+    recipe["entities"]["orders"]["steps"][0]["when"] = "sometimes"
+    assert any("'when' must be one of full, incremental" in p for p in srr.recipe_problems(recipe))
+    recipe = fixture_recipe()
+    recipe["entities"]["x"] = {"kind": "variable", "key": ["a"], "steps": [
+        {"op": "date_windows", "when": "incremental", "from": "{{cursor}}", "days": 1, "steps": [
+            {"op": "extract_json", "url": "/x", "params": {"f": "{{cursor}}", "t": "{{window_to}}"},
+             "columns": {"a": {"field": "a"}}}]},
+        {"op": "extract_json", "url": "/y", "when": "full", "columns": {"a": {"field": "a"}}},
+    ]}
+    assert srr.recipe_problems(recipe) == []
+    recipe["entities"]["x"]["steps"][0]["when"] = "full"
+    assert any("without a 'default'" in p for p in srr.recipe_problems(recipe))
+
+
+@needs_browser
+def test_e2e_when_runs_full_steps_on_full_loads_and_incremental_steps_otherwise(site):
+    def search(by, **step):
+        return {"op": "extract_json", "url": "/search/rma_case", "method": "POST", "columns": CASE_COLUMNS,
+                "form": {"date_from": "{{window_from}}", "date_to": "{{window_to}}", "by": by}, **step}
+
+    recipe = _one_entity(site, [
+        {"op": "date_windows", "when": "full", "from": "{{date-60}}", "days": 30, "steps": [search(by="opened")]},
+        {"op": "date_windows", "when": "incremental", "from": "{{cursor}}", "days": 5, "steps": [
+            search(by="updated"),
+            search(by="shipped", when="incremental"),
+            search(by="never", when="full"),
+        ]},
+    ], ["case_no"], cursor="opened")
+    assert srr.recipe_problems(recipe) == []
+    today = site.state.today
+
+    items, report = _run(site, recipe, mode="full")
+    by = [c["values"]["by"] for c in site.state.json_calls]
+    assert by == ["opened"] * 3 and len({i.key for i in items}) == 230
+    assert report.full_entities == ["data"] and report.warnings == []
+
+    site.state.json_calls.clear()
+    cursor = (today - dt.timedelta(days=1)).isoformat()
+    items, report = _run(site, recipe, mode="incremental", cursors={"data": cursor})
+    calls = site.state.json_calls
+    assert [c["values"]["by"] for c in calls] == ["updated", "shipped"]
+    assert calls[0]["values"]["date_from"] == cursor and calls[0]["values"]["date_to"] == today.isoformat()
+    assert len(items) == 2 * 10 and report.full_entities == []
+
+    site.state.json_calls.clear()
+    items, report = _run(site, recipe, mode="incremental")
+    assert [c["values"]["by"] for c in site.state.json_calls] == ["opened"] * 3
+    assert report.full_entities == ["data"]

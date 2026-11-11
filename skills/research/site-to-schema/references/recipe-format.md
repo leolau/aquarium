@@ -54,8 +54,8 @@ link or input button; `exact`, `nth` optional).
 | `wait` | `selector` (visible), `text`, `gone` (hidden), `ms`, `timeout_ms` |
 | `extract_table` | `table` (selector), `row` (default `tbody tr`), `header` (header cell selector), `columns` |
 | `extract_fields` | `key` (content key), `fields` |
-| `extract_datatable` | `table` (selector of a client-side DataTables `<table>`), `columns`, `timeout_ms`, `optional` |
-| `extract_json` | `url` (same site), `method` (`GET`/`POST`), `params` (query), `form` **or** `json` (body; POST only), `headers`, `records` (dotted path; `""` = top-level array), `columns`, `page`, `max_bytes` (default 10 MB), `delay_ms`, `default`, `format`, `timeout_ms` |
+| `extract_datatable` | `table` (selector of a client-side DataTables `<table>`), `columns`, `timeout_ms`, `optional`, `allow_empty` |
+| `extract_json` | `url` (same site), `method` (`GET`/`POST`), `params` (query), `form` **or** `json` (body; POST only), `headers`, `records` (dotted path; `""` = top-level array), `columns`, `page`, `max_bytes` (default 10 MB), `delay_ms`, `default`, `format`, `timeout_ms`, `allow_empty` |
 | `paginate` | `steps` (run per page), `next` target **or** `page_param` (+ `start`), `max_pages`, `stop_on_empty` |
 | `date_windows` | `from` (template, e.g. `{{cursor}}`), `default`, `to` (default `{{today}}`), `days`, `steps`; inside use `{{window_from}}` / `{{window_to}}` |
 
@@ -67,6 +67,38 @@ fields also take `all: true` (list of every match).
 
 Pagination stops when the next control is missing or disabled, a page has
 no rows, a page repeats the previous one, or at `max_pages`.
+
+**`when`** (any step, also inside `paginate` / `date_windows`):
+`"full"` runs the step only on a full load of the entity, `"incremental"`
+only on an incremental one; without `when` it always runs. A load is full
+when the entity has no cursor (`mode: full` run, entity `mode: full`, or no
+cursor saved yet) and incremental otherwise. A step that only runs
+incrementally (or sits inside one) needs no `default` for `{{cursor}}`.
+Use it to read a big table by its fast indexed date on full loads, and
+on incremental loads to add slower filters (e.g. activity/update dates)
+for the last day so changed rows are caught:
+
+```json
+"steps": [
+  {"op": "date_windows", "when": "full", "from": "{{date-3650}}", "days": 90,
+   "steps": [{"op": "extract_json", "url": "/search/stock", "method": "POST",
+              "form": {"stock_in_from": "{{window_from}}", "stock_in_to": "{{window_to}}"},
+              "columns": {"imei": {"field": "imei"}}}]},
+  {"op": "date_windows", "when": "incremental", "from": "{{cursor-1}}", "days": 1,
+   "steps": [{"op": "extract_json", "url": "/search/stock", "method": "POST",
+              "form": {"updated_from": "{{window_from}}", "updated_to": "{{window_to}}"},
+              "columns": {"imei": {"field": "imei"}}}]}
+]
+```
+
+Skipped steps do not count as empty extractions; the entity is a full
+load only when every extraction step that ran produced records.
+
+**Empty extractions are not full loads.** If any `extract_*` step of an
+entity produced no record in a run (summed over all its pages and date
+windows), the entity is not reported as a full load, so no existing rows
+are marked removed, and the run gets a warning. Set `"allow_empty": true`
+on a step whose source can legitimately be empty.
 
 ### Big tables: `extract_datatable` and `extract_json`
 
@@ -86,7 +118,10 @@ keeps the raw value). It fails clearly when the page has no DataTables
 library, the table is not a DataTable (use `extract_table` + `paginate`), or
 it is **server-side** (`serverSide: true`: the page only holds the visible
 rows) — the error names the table's endpoint so you can switch to
-`extract_json`.
+`extract_json`. With `scrollX`/`scrollY` DataTables clones the header (and
+footer) into separate tables; every match is resolved to its instance's real
+table, so `table.dataTable` works, but a selector matching two different
+DataTables fails as an *ambiguous selector* — use the table's id.
 
 ```json
 {"op": "extract_datatable", "table": "#device_table",

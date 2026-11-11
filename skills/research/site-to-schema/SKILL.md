@@ -104,6 +104,11 @@ Work in `~/site-study/<slug>/` (`design.json`, `recipe.json`,
        `start`/`length`; date filters inside `date_windows`). Copy the
        parameter names from `json_requests`; check the endpoint only
        *reads* (search/list/report — never save/update/delete).
+     - Point `table` at the table's id (the inventory's `selector`); with
+       several DataTables on a page a class selector is ambiguous.
+     - A source that can really be empty needs `allow_empty: true`;
+       otherwise an empty result means "something broke" and the run
+       does not mark rows removed.
      - Set `max_bytes` and a recipe `delay_ms`; an unpaged endpoint can
        return tens of MB and slow the site. Never page the DOM thousands
        of times.
