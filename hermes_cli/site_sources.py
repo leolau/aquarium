@@ -1686,6 +1686,27 @@ async def apply_design(
             )
             for statement in statements:
                 await conn.execute(statement)
+            # Stored timestamps were derived in _meta.timestamp_zone (UTC before designs had one).
+            zone = design.get("timezone") or "UTC"
+            stored_zone = (
+                await conn.fetchval(f"SELECT value #>> '{{}}' FROM {s}._meta WHERE key = 'timestamp_zone'")
+                or "UTC"
+            )
+            rezoned: Dict[str, int] = {}
+            if zone != stored_zone:
+                # A refresh still writing in the old zone would undo the re-derivation.
+                if not await conn.fetchval(
+                    "SELECT pg_try_advisory_xact_lock($1, $2)", _LOCK_NS, _lock_key(site)
+                ):
+                    raise SiteError(
+                        "a refresh of this site is running; approve this design when it finishes", 409
+                    )
+                rezoned = await _rezone_timestamps(conn, site.schema_name, design_zone(design))
+                await conn.execute(
+                    f"INSERT INTO {s}._meta (key, value) VALUES ('timestamp_zone', to_jsonb($1::text)) "
+                    "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                    zone,
+                )
             await conn.execute(
                 f"UPDATE {s}._designs SET status = 'superseded' "
                 "WHERE status = 'approved' AND version <> $1",
@@ -1709,7 +1730,39 @@ async def apply_design(
             "WHERE id = $1::uuid AND status <> 'paused'",
             site.id,
         )
-    return {"version": int(version), "status": "approved", "statements": statements}
+    out: Dict[str, Any] = {"version": int(version), "status": "approved", "statements": statements}
+    if rezoned:
+        out["rezoned"] = rezoned
+    return out
+
+
+async def _rezone_timestamps(conn: Any, schema: str, zone: Any) -> Dict[str, int]:
+    """Re-derive every table's timestamp columns from ``_payload`` in ``zone``.
+
+    Unchanged rows are never rewritten by ``upsert`` (their payload hash
+    matches), so naive values stored under the old zone are fixed here — for
+    all retained tables, including ones the current design no longer names.
+    """
+    standard = {name for name, _ in STANDARD_COLUMNS}
+    out: Dict[str, int] = {}
+    for name, columns in sorted((await existing_columns(conn, schema)).items()):
+        cols = [c for c, t in columns.items() if t == "timestamptz" and c not in standard]
+        if name in META_TABLES or not cols or "_payload" not in columns:
+            continue
+        table = f"{_ident(schema)}.{_ident(name)}"
+        rows = await conn.fetch(f"SELECT _key, _payload FROM {table}")
+        if not rows:
+            continue
+        sets = ", ".join(f"{_ident(n)} = ${i}" for i, n in enumerate(cols, start=2))
+        await conn.executemany(
+            f"UPDATE {table} SET {sets} WHERE _key = $1",
+            [
+                (r["_key"], *(coerce((_json_in(r["_payload"]) or {}).get(n), "timestamptz", zone) for n in cols))
+                for r in rows
+            ],
+        )
+        out[name] = len(rows)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -2499,6 +2552,13 @@ async def start_refresh(
                 return None
             raise SiteError("a refresh of this site is already running", 409)
         try:
+            # Re-read under the lock: an approval may have changed the design meanwhile.
+            current = await approved_design(site, db=db)
+            if current is None:
+                raise SiteError("the approved design changed; refresh again", 409)
+            version, design, recipe = current
+            if not recipe:
+                raise SiteError("the approved design has no extraction recipe", 409)
             if due is not None and not await due(lock_conn):
                 return None
             modes = plan_modes(

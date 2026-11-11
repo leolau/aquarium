@@ -190,41 +190,73 @@ def test_writer_semantics_and_change_log(site):
 def test_writer_stores_naive_timestamps_in_the_design_timezone(site):
     from datetime import datetime, timezone
 
-    design = {
-        "timezone": "Asia/Hong_Kong",
-        "entities": [
-            {
-                "name": "orders",
-                "kind": "variable",
-                "columns": [{"name": "order_no", "type": "text"}, {"name": "placed_at", "type": "timestamp"}],
-                "key": ["order_no"],
-            }
-        ],
-    }
-    approve(site, design)
+    import asyncpg
 
-    async def go():
-        w = await _writer(site, design)
-        try:
-            await w.begin_run("full", "manual")
-            await w.upsert(
-                "orders",
-                [
-                    {"order_no": "L1", "placed_at": "2026-11-11T09:30:00"},
-                    {"order_no": "Z1", "placed_at": "2026-11-11T09:30:00Z"},
-                ],
-            )
-            await w.finish_run(full_entities=["orders"])
-            rows = await w.conn.fetch("SELECT _key, placed_at FROM orders ORDER BY _key")
-        finally:
-            await w.conn.close()
-        utc = timezone.utc
-        assert {r["_key"]: r["placed_at"].astimezone(utc) for r in rows} == {
-            "L1": datetime(2026, 11, 11, 1, 30, tzinfo=utc),
-            "Z1": datetime(2026, 11, 11, 9, 30, tzinfo=utc),
+    def entity(name):
+        return {
+            "name": name,
+            "kind": "variable",
+            "columns": [{"name": "no", "type": "text"}, {"name": "placed_at", "type": "timestamp"}],
+            "key": ["no"],
         }
 
-    run(go())
+    utc_design = {"entities": [entity("orders"), entity("events")]}
+    # The revision names the site's zone and (for now) drops events; its table stays.
+    hk_design = {"timezone": "Asia/Hong_Kong", "entities": [entity("orders")]}
+    approve(site, utc_design)
+
+    async def load(approved, names):
+        w = await _writer(site, approved)
+        try:
+            await w.begin_run("full", "manual")
+            for name in names:
+                await w.upsert(
+                    name,
+                    [
+                        {"no": "L1", "placed_at": "2026-11-11T09:30:00"},
+                        {"no": "Z1", "placed_at": "2026-11-11T09:30:00Z"},
+                    ],
+                )
+            await w.finish_run(full_entities=list(names))
+            return {
+                name: {
+                    r["_key"]: r["placed_at"].astimezone(timezone.utc)
+                    for r in await w.conn.fetch(f"SELECT _key, placed_at FROM {name}")
+                }
+                for name in ("orders", "events")
+            }
+        finally:
+            await w.conn.close()
+
+    utc = timezone.utc
+    local, zulu = datetime(2026, 11, 11, 1, 30, tzinfo=utc), datetime(2026, 11, 11, 9, 30, tzinfo=utc)
+    assert run(load(utc_design, ["orders", "events"]))["orders"]["L1"] == zulu
+
+    async def revise(design):
+        proposed = await ss.propose_design(site, design, RECIPE, by="alice")
+        return await ss.apply_design(site, proposed["version"], approved_by="alice")
+
+    # While a refresh holds the site's lock, a zone change is refused (it would be undone).
+    async def approve_during_refresh():
+        conn = await asyncpg.connect(DSN)
+        try:
+            await conn.execute("SELECT pg_advisory_lock($1, $2)", ss._LOCK_NS, ss._lock_key(site))
+            with pytest.raises(ss.SiteError) as err:
+                await revise(hk_design)
+            assert err.value.status == 409
+        finally:
+            await conn.close()
+
+    run(approve_during_refresh())
+    # Rows already stored are re-derived even though their payload hash is unchanged,
+    # including the retained table the revision no longer names.
+    assert run(revise(hk_design))["rezoned"] == {"events": 2, "orders": 2}
+    stored = run(load(hk_design, ["orders"]))
+    assert stored == {"orders": {"L1": local, "Z1": zulu}, "events": {"L1": local, "Z1": zulu}}
+    # Bringing events back under the same zone needs no second pass.
+    out = run(revise({"timezone": "Asia/Hong_Kong", "entities": [entity("orders"), entity("events")]}))
+    assert "rezoned" not in out
+    assert run(load(hk_design, []))["events"] == {"L1": local, "Z1": zulu}
 
 
 def test_reader_role_is_confined(site):
