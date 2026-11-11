@@ -63,11 +63,14 @@ interface Loaded {
 export function SkillUsagePanel({
   name,
   profile,
+  project,
   tabHref,
   onOpenTab,
 }: {
   name: string;
   profile: string;
+  /** Only this project's runs (the project Skills tab). */
+  project?: string;
   /** Deep link to another tab of this skill (`?tab=`). */
   tabHref: (tab: UsageLinkTab) => string;
   /** Switch tabs in place; returning false (or no handler) lets the link navigate. */
@@ -85,17 +88,18 @@ export function SkillUsagePanel({
 
   const q = profileQuery(profile);
   const base = `name=${encodeURIComponent(name)}${q ? `&${q}` : ""}`;
-  const key = `${base}&days=${days}#${reloads}`;
+  const detail = `${base}${project ? `&project=${encodeURIComponent(project)}` : ""}`;
+  const key = `${detail}&days=${days}#${reloads}`;
 
   useEffect(() => {
     let live = true;
-    getJson<SkillUsageDetail>(`/api/skills/usage/detail?${base}&days=${days}&limit=${PAGE}`)
+    getJson<SkillUsageDetail>(`/api/skills/usage/detail?${detail}&days=${days}&limit=${PAGE}`)
       .then((data) => live && setLoaded({ key, data }))
       .catch((err) => live && setLoaded({ key, error: errorText(err) }));
     return () => {
       live = false;
     };
-  }, [base, days, key]);
+  }, [detail, days, key]);
 
   // The active version comes from the version history; it only colours the chart.
   useEffect(() => {
@@ -121,7 +125,7 @@ export function SkillUsagePanel({
     setMessage(null);
     try {
       const more = await getJson<SkillUsageDetail>(
-        `/api/skills/usage/detail?${base}&days=${days}&limit=${PAGE}&cursor=${encodeURIComponent(data.next_cursor)}`,
+        `/api/skills/usage/detail?${detail}&days=${days}&limit=${PAGE}&cursor=${encodeURIComponent(data.next_cursor)}`,
       );
       patch((d) => ({ ...d, events: [...d.events, ...more.events.filter((e) => !d.events.some((x) => x.id === e.id))], next_cursor: more.next_cursor }));
     } catch (err) {
@@ -149,7 +153,7 @@ export function SkillUsagePanel({
       }));
       // Per-version rates can't be recomputed locally (the server sends rates,
       // not counts), so reload them from the ledger.
-      getJson<SkillUsageDetail>(`/api/skills/usage/detail?${base}&days=${days}&limit=1`)
+      getJson<SkillUsageDetail>(`/api/skills/usage/detail?${detail}&days=${days}&limit=1`)
         .then((fresh) => patch((d) => ({ ...d, by_version: fresh.by_version })))
         .catch(() => undefined);
     } catch (err) {
