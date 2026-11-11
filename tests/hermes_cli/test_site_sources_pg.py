@@ -7,6 +7,7 @@ Needs a disposable server: ``HERMES_TEST_SITE_PG_DSN=postgresql://postgres:pw@ho
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 import types
@@ -155,6 +156,18 @@ def test_writer_semantics_and_change_log(site):
             r5 = await w.begin_run("incremental", "manual")
             assert (await w.upsert("orders", [{"order_no": "A2", "amount": "5"}]))["restored"] == 1
             await w.finish_run(r5)
+
+            # a full load that returns nothing for a populated entity removes nothing
+            r6 = await w.begin_run("full", "schedule")
+            r6 = await w.finish_run(r6, full_entities=["orders", "about"])
+            assert (r6.status, r6.removed) == ("ok", 0)
+            assert [m.split(":")[0] for m in r6.warnings] == ["orders", "about"]
+            assert r6.view()["warnings"] == r6.warnings
+            detail = await w.conn.fetchval("SELECT detail FROM _runs WHERE id = $1::uuid", r6.id)
+            detail = json.loads(detail) if isinstance(detail, str) else detail
+            assert detail["full_entities"] == [] and len(detail["warnings"]) == 2
+            live = await w.conn.fetchval("SELECT count(*) FROM orders WHERE _removed_at IS NULL")
+            assert live == 2
         finally:
             await w.conn.close()
 
@@ -169,7 +182,7 @@ def test_writer_semantics_and_change_log(site):
         hist_a1 = await ss.history(site, "orders", "A1")
         assert [c["op"] for c in hist_a1["changes"]] == ["insert", "update"]
         runs = await ss.list_runs(site)
-        assert len(runs) == 5
+        assert len(runs) == 6
 
     run(go())
 

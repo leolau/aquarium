@@ -1716,6 +1716,7 @@ class SiteRun:
     failed_entities: Set[str] = field(default_factory=set)
     #: The runner's RunReport (merged over the run's mode groups).
     report: Dict[str, Any] = field(default_factory=dict)
+    warnings: List[str] = field(default_factory=list)
 
     def view(self) -> Dict[str, Any]:
         return {
@@ -1728,6 +1729,7 @@ class SiteRun:
             "updated": self.updated,
             "removed": self.removed,
             "versions": self.versions,
+            **({"warnings": list(self.warnings)} if self.warnings else {}),
         }
 
 
@@ -1917,6 +1919,13 @@ class SiteWriter:
                 spec = self.entities.get(name)
                 if spec is None or name in run.failed_entities:
                     continue
+                if not run.seen.get(name) and await self._live_count(spec):
+                    # An empty full load of a populated entity looks like a broken
+                    # extraction (layout change, lost session), not a mass removal.
+                    run.warnings.append(
+                        f"{name}: the full refresh returned no rows; existing rows were not marked removed"
+                    )
+                    continue
                 run.removed += await self._remove_unseen(spec, run)
                 removed_for.append(name)
         if cursors and run.status != "error":
@@ -1939,6 +1948,8 @@ class SiteWriter:
             "failed_entities": sorted(run.failed_entities),
             "errors": run.errors[:20],
         }
+        if run.warnings:
+            detail["warnings"] = run.warnings
         if run.report:
             detail["report"] = run.report
         await self.conn.execute(
@@ -1955,6 +1966,15 @@ class SiteWriter:
             detail,
         )
         return run
+
+    async def _live_count(self, spec: Mapping[str, Any]) -> int:
+        if spec["kind"] == "variable":
+            return await self.conn.fetchval(
+                f"SELECT count(*) FROM {_ident(spec['name'])} WHERE _removed_at IS NULL"
+            )
+        return await self.conn.fetchval(
+            "SELECT count(*) FROM _fixed_versions WHERE entity = $1 AND valid_to IS NULL", spec["name"]
+        )
 
     async def _remove_unseen(self, spec: Mapping[str, Any], run: SiteRun) -> int:
         seen = sorted(run.seen.get(spec["name"], set()))
