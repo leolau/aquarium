@@ -778,6 +778,8 @@ def test_terminal_websocket_without_ticket_user_keeps_access():
 # a role. This side checks the two tables agree: a BFF handler that calls an
 # API-client method hitting an owner/admin Python route must itself be
 # labelled admin/owner, so a member gets a clear 403 before anything is sent.
+# Skills routes may instead be labelled ``skill:<action>`` (Settings → Skills
+# permissions): the BFF then refuses a role without that permission up front.
 
 _REPO = __import__("pathlib").Path(__file__).resolve().parents[2]
 _AGENT_HOME = _REPO / "agent-home" / "src"
@@ -832,6 +834,8 @@ def test_bff_routes_that_proxy_admin_routes_are_admin_only():
             body = src[m.end(): found[i + 1].start() if i + 1 < len(found) else len(src)]
             key = f"{m.group(1)} {route}"
             for name, py_route in admin_methods.items():
-                if re.search(rf"\.{name}\(", body) and roles.get(key) not in ("admin", "owner"):
-                    wrong.append((key, name, py_route, roles.get(key)))
+                role = roles.get(key) or ""
+                gated = role in ("admin", "owner") or (route.startswith("/api/skills") and role.startswith("skill:"))
+                if re.search(rf"\.{name}\(", body) and not gated:
+                    wrong.append((key, name, py_route, role))
     assert not wrong, wrong
