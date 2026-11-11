@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "site": "fixture_wms",
+  "base_url": "http://127.0.0.1:8765",
+  "date_format": "%Y-%m-%d",
+  "timeout_ms": 30000,
+  "login": {
+    "url": "/login",
+    "username_field": "input[name=username]",
+    "password_field": "input[name=password]",
+    "submit": "button[type=submit]",
+    "success": {"text": "Welcome"},
+    "failure_text": "Invalid username"
+  },
+  "entities": {
+    "orders": {
+      "kind": "variable",
+      "key": ["order_no"],
+      "cursor": "created_on",
+      "steps": [
+        {"op": "goto", "url": "/dashboard"},
+        {"op": "click", "text": "Orders"},
+        {"op": "fill", "selector": "#date_from", "value": "{{cursor}}", "default": "{{date-3650}}"},
+        {"op": "fill", "selector": "#date_to", "value": "{{today}}"},
+        {"op": "submit", "selector": "#btn-search"},
+        {"op": "paginate", "next": {"text": "Next"}, "max_pages": 500, "steps": [
+          {"op": "extract_table", "table": "#results", "columns": {
+            "order_no": {"header": "Order No"},
+            "created_on": {"header": "Created", "type": "date", "format": "%d/%m/%Y"},
+            "customer": {"header": "Customer"},
+            "qty": {"header": "Qty", "type": "int"},
+            "status": {"header": "Status"}
+          }}
+        ]}
+      ]
+    },
+    "warehouses": {
+      "kind": "variable",
+      "key": ["code"],
+      "mode": "full",
+      "steps": [
+        {"op": "goto", "url": "/reference"},
+        {"op": "click", "text": "Warehouse Table"},
+        {"op": "wait", "selector": "#wh"},
+        {"op": "extract_table", "table": "#wh", "row": "tr", "columns": {
+          "code": {"header": "Code"},
+          "name": {"header": "Name"},
+          "region": {"header": "Region"}
+        }}
+      ]
+    },
+    "about": {
+      "kind": "fixed",
+      "steps": [
+        {"op": "goto", "url": "/about"},
+        {"op": "extract_fields", "key": "about", "fields": {
+          "title": {"selector": "h1"},
+          "body": {"selector": "#about"},
+          "version": {"selector": ".version"}
+        }}
+      ]
+    }
+  }
+}
