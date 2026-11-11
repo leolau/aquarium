@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { LONG_RUN_MS, fmtElapsed } from "@/components/ui/ActivityStrip";
+import { LONG_RUN_MS, fmtElapsed } from "@/components/ui/useActivityRunning";
 import type { ActivityItem } from "@/types";
 
 import { ClockIcon, FolderIcon, MessageIcon, PlayIcon } from "@/components/ui/icons";
@@ -14,14 +14,14 @@ export const KIND_LABEL: Record<ActivityItem["kind"], string> = {
   cron: "Scheduled",
 };
 
-const KIND_ICON: Record<ActivityItem["kind"], typeof FolderIcon> = {
+export const KIND_ICON: Record<ActivityItem["kind"], typeof FolderIcon> = {
   chat: MessageIcon,
   project_run: FolderIcon,
   card: PlayIcon,
   cron: ClockIcon,
 };
 
-const STATUS: Record<WorkStatus, { label: string; colour: string; dot: string }> = {
+export const WORK_STATUS_TONE: Record<WorkStatus, { label: string; colour: string; dot: string }> = {
   running: {
     label: "Running",
     colour: "text-[var(--color-accent)]",
@@ -47,7 +47,7 @@ export function workStatus(item: ActivityItem, now: number): WorkStatus {
 
 /** Figma `status-pill` (3:39) with the work panel's three tones. */
 export function WorkStatusPill({ status }: { status: WorkStatus }) {
-  const s = STATUS[status];
+  const s = WORK_STATUS_TONE[status];
   return (
     <span
       data-component="WorkStatusPill"

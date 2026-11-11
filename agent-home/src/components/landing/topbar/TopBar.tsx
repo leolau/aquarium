@@ -14,6 +14,7 @@ import { AccountMenu } from "./AccountMenu";
 import { AttentionBanner } from "./AttentionBanner";
 import { HealthPill } from "./HealthPill";
 import { MobileActivityStrip } from "./MobileActivityStrip";
+import { RunningStripView } from "./RunningStrip";
 import { NeedsYouBadge } from "./NeedsYouBadge";
 import { useNeedsYou } from "./useNeedsYou";
 
@@ -88,10 +89,18 @@ export function TopBarView({
           <AccountMenu name={accountName} role={accountRole} roles={accountRoles} currentProfile={currentProfile} />
         )}
       </header>
+      <RunningStripView
+        items={activity.items}
+        now={activity.now}
+        stale={activity.stale}
+        scheduled={activity.scheduled}
+        className="hidden lg:flex"
+      />
       <MobileActivityStrip
         items={activity.items}
         now={activity.now}
         stale={activity.stale}
+        scheduled={activity.scheduled}
         className="lg:hidden"
       />
       <AttentionBanner
@@ -108,9 +117,10 @@ export function TopBarView({
 
 /**
  * The landing top bar: Aquarium mark, health pill (every StatusStrip
- * reading), Needs-you badge, account menu; on mobile also the one-line
- * activity strip and the amber attention banner. Reuses the StatusStrip /
- * ActivityStrip data hooks, so their caches are shared across pages.
+ * reading), Needs-you badge, account menu; on desktop the running strip with
+ * the Scheduled button, on mobile the one-line activity strip and the amber
+ * attention banner. Reuses the shared status / activity hooks, so their
+ * caches are shared across pages.
  */
 export function TopBar(props: TopBarProps) {
   const status = useStatusSummary();

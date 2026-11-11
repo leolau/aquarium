@@ -20,7 +20,6 @@ import { useHydrated } from "@/lib/use-hydrated";
 import { ActivityList } from "./ActivityList";
 import { VERDICT_DOT, VERDICT_LABEL, healthVerdict } from "./health";
 import {
-  ClockIcon,
   CoinsIcon,
   CpuIcon,
   HardDriveIcon,
@@ -43,7 +42,6 @@ function readings(status: Status) {
     tokens: tokensTotal !== null ? `${fmtTokens(tokensTotal)} / mo` : null,
     cost: cost ? `$${cost.toFixed(2)} / mo` : null,
     live: s ? String((s.active_conversations ?? 0) + (s.running_cards ?? 0)) : "—",
-    scheduled: s ? `${s.cron_enabled} / ${s.cron_total}` : "—",
   };
 }
 
@@ -181,7 +179,6 @@ export function HealthReadings({ status, activity }: { status: Status; activity?
           />
         ) : null}
         <ReadingRow label="Live work" value={r.live} title={t("status.tasksTitle")} />
-        <ReadingRow label="Scheduled" value={r.scheduled} title={t("status.cronTitle")} />
       </dl>
       {activity ? (
         <section aria-label="Running now" className="flex flex-col gap-1">
@@ -206,7 +203,7 @@ export function HealthReadings({ status, activity }: { status: Status; activity?
 
 /**
  * Health in the top bar (Figma `health-bar` 5:10 desktop, `health-pill` 6:97
- * mobile). Desktop: dot + CPU/Disk/Tokens/Live/Scheduled + freshness + ↻,
+ * mobile). Desktop: dot + CPU/Disk/Tokens/Live + freshness + ↻,
  * click for a popover with every reading and what's running. Mobile: a dot
  * and verdict label that opens the same readings in a sheet. Failed reads
  * keep the last good numbers, dimmed, with "retrying".
@@ -295,12 +292,6 @@ export function HealthPill({
             />
           ) : null}
           <Metric icon={<PlayIcon size={14} />} label="Live" value={r.live} />
-          <Metric
-            icon={<ClockIcon size={14} />}
-            label="Scheduled"
-            value={r.scheduled}
-            className="hidden xl:inline-flex"
-          />
         </button>
         <Freshness status={status} />
         <RefreshButton status={status} />

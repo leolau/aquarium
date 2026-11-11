@@ -5,19 +5,27 @@ import Link from "next/link";
 import { NeedsYouPanel } from "./NeedsYouPanel";
 import { WorkPanel } from "./WorkPanel";
 import { FolderIcon } from "@/components/ui/icons";
+import type { ActivityRunningState } from "@/components/ui/useActivityRunning";
 import type { NeedsYouFeed } from "./useNeedsYouFeed";
 
 /**
  * The landing page's right panel (Figma `work-panel`, desktop `5:2`):
  * Needs you on top, Working in the background below, Open Projects at the
- * foot. Drop it into `LandingLayout`'s `aside`.
+ * foot. Drop it into `LandingLayout`'s `aside`. `activity` is the page's
+ * own `useActivityRunning()` read, shared with the top bar.
  */
-export function LandingWorkPanel({ needsYou }: { needsYou?: NeedsYouFeed }) {
+export function LandingWorkPanel({
+  needsYou,
+  activity,
+}: {
+  needsYou?: NeedsYouFeed;
+  activity?: Pick<ActivityRunningState, "items" | "loaded" | "stale">;
+}) {
   return (
     <div data-component="LandingWorkPanel" className="flex h-full min-h-0 flex-col gap-2">
       <NeedsYouPanel feed={needsYou} />
       <div aria-hidden className="h-3 shrink-0" />
-      <WorkPanel />
+      <WorkPanel activity={activity} />
       <div className="mt-auto pt-4">
         <Link
           href="/projects"

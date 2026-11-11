@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { LONG_RUN_MS } from "@/components/ui/useActivityRunning";
 
 import { MobileActivityStrip } from "./MobileActivityStrip";
-import { MOCK_ACTIVITY, MOCK_NOW } from "./mockData";
+import { MOCK_ACTIVITY, MOCK_NOW, MOCK_SCHEDULED } from "./mockData";
 
 afterEach(cleanup);
 
@@ -33,5 +33,25 @@ describe("MobileActivityStrip", () => {
     const root = container.querySelector('[data-component="MobileActivityStrip"]')!;
     expect(root.getAttribute("data-stale")).toBe("true");
     expect(root.querySelector("svg")!.getAttribute("class")).toContain("--color-warn");
+  });
+
+  it("adds a compact ◷ N Scheduled link outside the expand button, and a list footer", () => {
+    render(<MobileActivityStrip items={MOCK_ACTIVITY} now={MOCK_NOW} scheduled={MOCK_SCHEDULED} />);
+    const toggle = screen.getByRole("button");
+    const link = screen.getByRole("link", { name: /^Scheduled: 6/ });
+    expect(toggle.contains(link)).toBe(false);
+    expect(link.textContent).toBe("6");
+    expect(link.getAttribute("href")).toBe("/projects?view=project&schedule=set");
+    expect(link.className).toContain("h-11");
+    fireEvent.click(toggle);
+    const footer = screen.getByText("6 scheduled → Projects");
+    expect(footer.closest("a")?.getAttribute("href")).toBe("/projects?view=project&schedule=set");
+  });
+
+  it("keeps the Scheduled link reachable when nothing is running", () => {
+    render(<MobileActivityStrip items={[]} now={MOCK_NOW} scheduled={MOCK_SCHEDULED} />);
+    expect(screen.getByTestId("activity-empty").textContent).toBe("Nothing running right now");
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.getByRole("link", { name: /^Scheduled: 6/ })).toBeTruthy();
   });
 });

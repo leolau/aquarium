@@ -20,5 +20,27 @@
     "expandTasks": "Expand Needs you and tasks panel",
     "chats": "Chats",
     "tasks": "Needs you"
+  },
+  "running": {
+    "label": "Running",
+    "waiting": "{count} waiting",
+    "nothing": "Nothing running right now",
+    "listLabel": "Running now",
+    "scrollLeft": "Scroll running work left",
+    "scrollRight": "Scroll running work right",
+    "needsYou": "Needs you"
+  },
+  "scheduled": {
+    "button": "Scheduled",
+    "aria": "Scheduled: {count}. Open Projects › Scheduled",
+    "projectsOne": "1 project",
+    "projectsMany": "{count} projects",
+    "cardsOne": "1 card",
+    "cardsMany": "{count} cards",
+    "jobsOne": "1 job",
+    "jobsMany": "{count} jobs",
+    "nextIn": "next in {time}",
+    "none": "Nothing scheduled",
+    "footer": "{count} scheduled → Projects"
   }
 }

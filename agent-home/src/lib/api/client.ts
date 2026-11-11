@@ -178,6 +178,7 @@ import type {
   FallbackModelsResponse,
   RefreshKeysResponse,
   PinnedModelCard,
+  ScheduledSummary,
 } from "@/types";
 
 /** Per-person Telegram bot actions forwarded to Hermes `/api/telegram-bot/*`. */
@@ -2148,10 +2149,12 @@ export class HermesApiClient {
       /** created | completed | due | name | status | duration | tokens */
       sort?: string;
       order?: string;
+      /** `set`: active projects with a schedule, soonest next run first. */
+      schedule?: string;
     } = {},
   ): Promise<ProjectsResponse> {
     const p = new URLSearchParams();
-    for (const key of ["status", "cadence", "health", "q", "category", "sort", "order", "cursor"] as const) {
+    for (const key of ["status", "cadence", "health", "schedule", "q", "category", "sort", "order", "cursor"] as const) {
       const value = opts[key];
       if (value) p.set(key, String(value));
     }
@@ -2173,6 +2176,11 @@ export class HermesApiClient {
   /** Chats, project runs, cards and cron jobs running now (activity bar). */
   async activityRunning(): Promise<ActivityItem[]> {
     return this.request("/api/activity/running");
+  }
+
+  /** How much is set to start later (the landing page's Scheduled button). */
+  async activityScheduled(): Promise<ScheduledSummary> {
+    return this.request("/api/activity/scheduled");
   }
 
   /** The instance's project categories, in column order, with project counts. */

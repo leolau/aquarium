@@ -19,6 +19,20 @@ test.describe("areas", { tag: "@regression" }, () => {
     }
   });
 
+  test("landing Scheduled button lands on Projects › Scheduled", async ({ page }) => {
+    await page.goto("/");
+    // Desktop strip only; hidden when nothing runs and nothing is scheduled.
+    const button = page.locator('[data-component="RunningStrip"] [data-component="ScheduledButton"]');
+    if (await button.isVisible()) {
+      await expect(button).toHaveAttribute("href", "/projects?view=project&schedule=set");
+    }
+    await page.goto("/projects?view=project&schedule=set");
+    await expectPageReady(page, "/projects");
+    await expect(
+      page.locator('[data-component="ProjectsFilters"] [data-view="scheduled"]'),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+
   test("files: list and browse", async ({ page }) => {
     await page.goto("/files");
     await expectPageReady(page, "/files");

@@ -41,5 +41,18 @@
     "discardBody": "你的答案尚未儲存，現在離開會將它們全部捨棄。",
     "discardConfirm": "捨棄",
     "discardKeep": "繼續編輯"
-  }
+  },
+  "filters": {
+    "active": "進行中",
+    "repeatable": "可重複",
+    "standing": "常駐",
+    "attention": "需注意",
+    "scheduled": "已排程",
+    "paused": "已暫停",
+    "done": "已完成",
+    "all": "全部",
+    "archived": "已封存"
+  },
+  "scheduledCardsOne": "1 張卡片已排程",
+  "scheduledCardsMany": "{count} 張卡片已排程"
 }

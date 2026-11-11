@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 
+import type { ActivityRunningState } from "@/components/ui/useActivityRunning";
 import type { ActivityItem } from "@/types";
 
 import { SectionHeader } from "./SectionHeader";
 import { WorkRow, workStatus } from "./WorkRow";
 import { useNow } from "./usePolled";
-import { useRunningActivity } from "./useRunningActivity";
 
 const CLOCK_TICK_MS = 1_000;
 export const WORK_ROWS_MAX = 6;
@@ -94,8 +94,24 @@ export function WorkPanelView({ items, loaded, stale, max = WORK_ROWS_MAX }: Wor
   );
 }
 
-/** Self-fetching background-work panel (same feed as `ActivityStrip`). */
-export function WorkPanel({ max }: { max?: number }) {
-  const { items, loaded, stale } = useRunningActivity();
-  return <WorkPanelView items={items} loaded={loaded} stale={stale} max={max} />;
+/**
+ * The background-work panel fed by the page's one `useActivityRunning` poll
+ * (the same read the top bar's running strip renders), so the landing page
+ * never polls `/api/activity/running` twice.
+ */
+export function WorkPanel({
+  activity,
+  max,
+}: {
+  activity?: Pick<ActivityRunningState, "items" | "loaded" | "stale">;
+  max?: number;
+}) {
+  return (
+    <WorkPanelView
+      items={activity?.items ?? []}
+      loaded={activity?.loaded ?? false}
+      stale={activity?.stale ?? false}
+      max={max}
+    />
+  );
 }

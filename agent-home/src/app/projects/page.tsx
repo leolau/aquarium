@@ -68,6 +68,7 @@ export default async function Page({
         status: query.get("status") ?? undefined,
         cadence: query.get("cadence") ?? undefined,
         health: query.get("health") ?? undefined,
+        schedule: query.get("schedule") ?? undefined,
         archived: query.get("archived") === "true",
         q: state.q || undefined,
         category: query.get("category") ?? undefined,

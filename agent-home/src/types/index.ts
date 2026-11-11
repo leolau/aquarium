@@ -1837,6 +1837,8 @@ export interface ProjectOutputRollup {
 /** One row of `GET /api/registry/projects`. */
 export type ProjectListItem = Project & {
   progress: ProjectProgress;
+  /** Cards on its board parked in `scheduled`; absent on older servers. */
+  scheduled_cards?: number;
   /** Optional: older BFF/API builds omit it. */
   output_rollup?: ProjectOutputRollup;
   member_count: number;
@@ -3072,8 +3074,24 @@ export interface ActivityItem {
 }
 
 /** `GET /api/activity/running` (BFF) — the activity bar's payload. */
+/**
+ * `GET /api/activity/scheduled` — what is set to start later, scoped like the
+ * running feed: active project schedules, cards parked in `scheduled`, and
+ * (admins only, else 0) standalone cron jobs.
+ */
+export interface ScheduledSummary {
+  total: number;
+  projects: number;
+  cards: number;
+  cron_jobs: number;
+  /** Unix seconds of the soonest start, or null when nothing has one. */
+  next_run_at: number | null;
+}
+
 export interface ActivityRunning {
   items: ActivityItem[];
+  /** Null when the scheduled read failed; absent on older BFF builds. */
+  scheduled?: ScheduledSummary | null;
 }
 
 /** `GET /api/capacity/upload-storage` — free space on the disk holding uploads. */

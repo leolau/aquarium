@@ -8,6 +8,11 @@
  * key — never served cross-principal). An upstream failure is a 502, never
  * an empty list, so the bar keeps its last good rows and dims instead of
  * vanishing.
+ *
+ * The same poll also carries the Scheduled button's summary
+ * (`/api/activity/scheduled`), read in parallel under the same cache key. A
+ * failed scheduled leg is `scheduled: null`, never a 502: the running rows
+ * still render and only the button drops out.
  */
 import { createHash } from "node:crypto";
 
@@ -27,10 +32,19 @@ export async function GET(): Promise<NextResponse> {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   }
   const client = await apiClientForRequest();
-  const read = () => client.activityRunning();
+  const read = async (): Promise<ActivityRunning> => {
+    const [items, scheduled] = await Promise.all([
+      client.activityRunning(),
+      client.activityScheduled().catch(() => null),
+    ]);
+    return {
+      items: Array.isArray(items) ? items : [],
+      scheduled: scheduled && typeof scheduled === "object" ? scheduled : null,
+    };
+  };
   const token = (await readSession())?.hermesToken;
   try {
-    const items = token
+    const body = token
       ? await unstable_cache(
           read,
           [
@@ -41,7 +55,6 @@ export async function GET(): Promise<NextResponse> {
           { revalidate: CACHE_SECONDS },
         )()
       : await read();
-    const body: ActivityRunning = { items: Array.isArray(items) ? items : [] };
     return NextResponse.json(body);
   } catch {
     return NextResponse.json({ error: "upstream unavailable" }, { status: 502 });

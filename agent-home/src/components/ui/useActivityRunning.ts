@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { ActivityItem, ActivityRunning } from "@/types";
+import type { ActivityItem, ActivityRunning, ScheduledSummary } from "@/types";
 
 export const ACTIVITY_POLL_MS = 15_000;
 const CLOCK_TICK_MS = 1_000;
@@ -50,10 +50,11 @@ export function activityLabel(item: ActivityItem): string {
   }${item.status === "waiting" ? " — waiting" : ""}`;
 }
 
-// Last good read, shared across mounts and consumers (ActivityStrip, the
-// landing top bar). A read younger than the poll interval is reused instead
-// of re-fetching.
-let lastGood: { items: ActivityItem[]; at: number } | null = null;
+// Last good read, shared across mounts and consumers (the landing top bar,
+// its running strip and the work panel). A read younger than the poll
+// interval is reused instead of re-fetching.
+let lastGood: { items: ActivityItem[]; scheduled: ScheduledSummary | null; at: number } | null =
+  null;
 
 export function resetActivityRunningCache(): void {
   lastGood = null;
@@ -61,6 +62,10 @@ export function resetActivityRunningCache(): void {
 
 export interface ActivityRunningState {
   items: ActivityItem[];
+  /** What is set to start later; null until read, or when that leg failed. */
+  scheduled: ScheduledSummary | null;
+  /** At least one read has succeeded (this mount or an earlier one). */
+  loaded: boolean;
   /** The latest read failed; `items` are the last good rows. */
   stale: boolean;
   /** Local clock, ticking every second while something runs. */
@@ -75,6 +80,10 @@ export interface ActivityRunningState {
  */
 export function useActivityRunning(): ActivityRunningState {
   const [items, setItems] = useState<ActivityItem[]>(() => lastGood?.items ?? []);
+  const [scheduled, setScheduled] = useState<ScheduledSummary | null>(
+    () => lastGood?.scheduled ?? null,
+  );
+  const [loaded, setLoaded] = useState(() => lastGood !== null);
   const [stale, setStale] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const mounted = useRef(true);
@@ -89,9 +98,13 @@ export function useActivityRunning(): ActivityRunningState {
         if (!res.ok) throw new Error(String(res.status));
         const data = (await res.json()) as ActivityRunning;
         const next = Array.isArray(data.items) ? data.items : [];
-        lastGood = { items: next, at: Date.now() };
+        const nextScheduled =
+          data.scheduled && typeof data.scheduled === "object" ? data.scheduled : null;
+        lastGood = { items: next, scheduled: nextScheduled, at: Date.now() };
         if (mounted.current) {
           setItems(next);
+          setScheduled(nextScheduled);
+          setLoaded(true);
           setNow(Date.now());
           setStale(false);
         }
@@ -134,5 +147,5 @@ export function useActivityRunning(): ActivityRunningState {
     return () => clearInterval(t);
   }, [hasItems]);
 
-  return { items, stale, now };
+  return { items, scheduled, loaded, stale, now };
 }

@@ -1,19 +1,17 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { LONG_RUN_MS } from "@/components/ui/ActivityStrip";
+import { LONG_RUN_MS } from "@/components/ui/useActivityRunning";
 
 import { WorkPanel, WorkPanelView, sortWork } from "./WorkPanel";
 import { workStatus } from "./WorkRow";
 import { activityItem } from "./fixtures";
-import { resetRunningActivityCache } from "./useRunningActivity";
 
 const NOW = 1_700_000_000_000;
 
 afterEach(() => {
   cleanup();
-  resetRunningActivityCache();
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
@@ -76,22 +74,20 @@ describe("WorkPanelView", () => {
 });
 
 describe("WorkPanel", () => {
-  it("reads /api/activity/running and keeps the last good rows, dimmed, on failure", async () => {
-    const fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ items: [activityItem({ name: "Nightly inbox triage", kind: "cron" })] }), {
-          status: 200,
-        }),
-      )
-      .mockResolvedValue(new Response("err", { status: 502 }));
-    const { container } = render(<WorkPanel />);
-    await waitFor(() => expect(screen.getByText("Nightly inbox triage")).toBeTruthy());
-    expect(fetchSpy.mock.calls[0][0]).toBe("/api/activity/running");
-    window.dispatchEvent(new Event("focus"));
-    await waitFor(() =>
-      expect(container.querySelector("[data-component=WorkPanel]")?.hasAttribute("data-stale")).toBe(true),
+  it("renders the page's activity read and never fetches on its own", () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const { container } = render(
+      <WorkPanel
+        activity={{ items: [activityItem({ name: "Nightly inbox triage", kind: "cron" })], loaded: true, stale: true }}
+      />,
     );
     expect(screen.getByText("Nightly inbox triage")).toBeTruthy();
+    expect(container.querySelector("[data-component=WorkPanel]")?.hasAttribute("data-stale")).toBe(true);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("shows the skeleton until the page's first read lands", () => {
+    render(<WorkPanel activity={{ items: [], loaded: false, stale: false }} />);
+    expect(screen.getByTestId("work-skeleton")).toBeTruthy();
   });
 });

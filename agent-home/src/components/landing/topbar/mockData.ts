@@ -1,6 +1,6 @@
 import type { StatusSummaryState } from "@/components/ui/useStatusSummary";
 import type { ActivityRunningState } from "@/components/ui/useActivityRunning";
-import type { ActivityItem, StatusSummary } from "@/types";
+import type { ActivityItem, ScheduledSummary, StatusSummary } from "@/types";
 import type { NeedsYouEntry } from "@/types/landing";
 
 /** Realistic fixtures for the top bar's tests and screenshot harness. */
@@ -89,6 +89,14 @@ export function mockStatus(over: Partial<StatusSummaryState> = {}): StatusSummar
   };
 }
 
+export const MOCK_SCHEDULED: ScheduledSummary = {
+  total: 6,
+  projects: 3,
+  cards: 2,
+  cron_jobs: 1,
+  next_run_at: MOCK_NOW / 1000 + 2 * 3600,
+};
+
 export function mockActivity(over: Partial<ActivityRunningState> = {}): ActivityRunningState {
-  return { items: MOCK_ACTIVITY, stale: false, now: MOCK_NOW, ...over };
+  return { items: MOCK_ACTIVITY, scheduled: null, loaded: true, stale: false, now: MOCK_NOW, ...over };
 }
