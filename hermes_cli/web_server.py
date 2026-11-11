@@ -14003,7 +14003,31 @@ def _find_cron_job_profile(job_id: str) -> Optional[str]:
 
 
 @app.get("/api/cron/jobs")
-def list_cron_jobs(profile: str = "all"):
+async def list_cron_jobs(request: Request, profile: str = "all"):
+    """Cron jobs the caller may see: every job for an instance admin (and on a
+    single-user install with no multi-user datastore); for anyone else only
+    the jobs that drive a project they can read."""
+    from hermes_cli import activity_running as act
+    from hermes_cli.projects_api import _enrolled_profiles, _instance_admin
+
+    try:
+        principal = await _comms_resolve_principal(request)
+    except _CommsNotConfigured:
+        principal = None
+    jobs = await asyncio.to_thread(_list_cron_jobs, profile)
+    if principal is None or _instance_admin(principal):
+        return jobs
+    enrolled = await _enrolled_profiles(principal.user_id)
+    linked = await asyncio.to_thread(
+        act.readable_cron_projects,
+        principal,
+        enrolled,
+        {str(j.get("id") or "") for j in jobs},
+    )
+    return [j for j in jobs if j.get("id") in linked]
+
+
+def _list_cron_jobs(profile: str = "all") -> List[Dict[str, Any]]:
     requested = (profile or "all").strip()
     if requested.lower() != "all":
         return _call_cron_for_profile(requested, "list_jobs", True)

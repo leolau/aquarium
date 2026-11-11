@@ -1,7 +1,9 @@
 /**
  * /api/status/summary — one-shot aggregate for the shell status strip:
  * CPU/memory/disk, the bound profile's 30-day token usage, box-wide active
- * conversations, running kanban cards, and the cron job count. Each leg is
+ * conversations, running kanban cards, and the count of cron jobs the caller
+ * can see (the API scopes `/api/cron/jobs` to the caller: every job for an
+ * admin, only jobs driving a project they can read for anyone else). Each leg is
  * independent — a failed read yields a null field, never a failed strip.
  *
  * The strip is on every page and re-reads on mount, focus and a 30s poll,
