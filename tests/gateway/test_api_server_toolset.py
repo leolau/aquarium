@@ -145,5 +145,5 @@ class TestApiServerAdapterToolset:
             # email_mailbox, mssql, secrets, site_db and winrm are non-configurable toolsets of the
             # platform default, so it is recovered even with an explicit override.
             assert sorted(toolsets) == [
-                "email_mailbox", "mssql", "secrets", "site_db", "terminal", "web", "winrm",
+                "email_mailbox", "mssql", "secrets", "send_message", "site_db", "terminal", "web", "winrm",
             ]

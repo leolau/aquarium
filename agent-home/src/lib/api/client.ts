@@ -1394,6 +1394,24 @@ export class HermesApiClient {
   }
 
   /**
+   * Answer a pending FG-37 secret request: store `values` (`{value}` or
+   * `{username, password}`) or decline. Forwards to
+   * `POST /api/secret-requests/{id}`, which writes the value straight to the
+   * owner's credential store and wakes the blocked `request_secret` tool with
+   * the name only. Never log or echo `values`.
+   */
+  async resolveSecretRequest(
+    requestId: string,
+    body: { values: Record<string, string> } | { decline: true },
+  ): Promise<{ status?: string; name?: string }> {
+    return this.request(`/api/secret-requests/${encodeURIComponent(requestId)}`, {
+      method: "POST",
+      json: body,
+      cache: "no-store",
+    });
+  }
+
+  /**
    * The caller's open FG-17b webview session (C6 consent-gated), or the
    * default-deny empty state (`session: null`) when none is open. Read path.
    */

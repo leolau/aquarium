@@ -37,7 +37,26 @@ DESIGN = {
         },
     ]
 }
-RECIPE = {"entities": {"orders": {"steps": [{"action": "goto", "url": "/orders"}]}}}
+RECIPE = {
+    "version": 1,
+    "site": "shop",
+    "base_url": "https://shop.example",
+    "entities": {
+        "orders": {
+            "kind": "variable",
+            "key": ["order_no"],
+            "cursor": "amount",
+            "steps": [
+                {"op": "goto", "url": "/orders"},
+                {
+                    "op": "extract_table",
+                    "table": "#orders",
+                    "columns": {"order_no": {"header": "Order"}, "amount": {"header": "Amount", "type": "int"}},
+                },
+            ],
+        }
+    },
+}
 ALICE = Principal(user_id="alice", display="Alice", role="member")
 
 
@@ -213,3 +232,95 @@ def test_refresh_now_calls_run_recipe(site, monkeypatch):
     assert sorted(seen["calls"]) == [(("about",), "full"), (("orders",), "incremental")]
     runs = run(ss.list_runs(site))
     assert runs[0]["status"] == "ok" and runs[0]["inserted"] == 1 and runs[0]["pages"] == 1
+
+
+DESIGN3 = {
+    "entities": DESIGN["entities"]
+    + [
+        {
+            "name": "stock",
+            "kind": "variable",
+            "columns": [{"name": "sku", "type": "text"}],
+            "key": ["sku"],
+        }
+    ]
+}
+RECIPE3 = {"entities": {"about": {"steps": []}, "orders": {"steps": []}, "stock": {"steps": []}}}
+
+
+def _install_runner(monkeypatch, fn, report_cls):
+    fake = types.ModuleType("hermes_cli.site_recipe_runner")
+    fn.__module__ = "hermes_cli.site_recipe_runner"
+    fake.run_recipe = fn
+    fake.RunReport = report_cls
+    monkeypatch.setitem(sys.modules, "hermes_cli.site_recipe_runner", fake)
+    import hermes_cli
+
+    monkeypatch.setattr(hermes_cli, "site_recipe_runner", fake, raising=False)
+
+
+def test_refresh_uses_runner_report(site, monkeypatch):
+    """Removal follows report.full_entities; failed entities keep their rows; cursors are stored."""
+    from dataclasses import dataclass, field
+
+    @dataclass
+    class RunReport:
+        pages: int = 0
+        rows: dict = field(default_factory=dict)
+        completed: list = field(default_factory=list)
+        full_entities: list = field(default_factory=list)
+        failed: dict = field(default_factory=dict)
+        cursors: dict = field(default_factory=dict)
+
+        def as_dict(self):
+            return dict(vars(self))
+
+    class RecipeRunError(RuntimeError):
+        pass
+
+    plan = {"round": 1}
+
+    def run_recipe(recipe, credential, *, entities=None, mode, cursors, report=None):
+        first = plan["round"] == 1
+        plan.setdefault("seen_cursors", []).append(dict(cursors))
+        for name in entities:
+            if name == "orders":
+                rows = [("A1", 1), ("A2", 2)] if first else [("A1", 1)]
+                for key, amount in rows:
+                    yield ("orders", "variable", key, {"order_no": key, "amount": amount})
+                report.cursors["orders"] = 99
+                report.full_entities.append("orders")  # e.g. no cursor yet -> full extract
+            elif name == "stock":
+                if first:
+                    yield ("stock", "variable", "S1", {"sku": "S1"})
+                    report.full_entities.append("stock")
+                else:
+                    report.failed["stock"] = "layout changed"
+                    continue
+            elif name == "about":
+                yield ("about", "fixed", "Us", {"title": "Us", "body": "b"})
+                report.full_entities.append("about")
+            report.completed.append(name)
+            report.pages += 1
+        if report.failed:
+            raise RecipeRunError("some entities failed")
+
+    RecipeRunError.__name__ = "RecipeRunError"
+    _install_runner(monkeypatch, run_recipe, RunReport)
+    approve(site, DESIGN3)
+    site = run(ss.get_site(site.id))
+    run(ss.start_refresh(site, trigger="manual", wait=True))
+    plan["round"] = 2
+    run(ss.start_refresh(site, trigger="manual", wait=True, mode="incremental"))
+
+    runs = run(ss.list_runs(site))
+    assert runs[0]["status"] == "partial" and runs[1]["status"] == "ok"
+    detail = runs[0]["detail"]
+    detail = detail if isinstance(detail, dict) else __import__("json").loads(detail)
+    assert "stock" in detail["failed_entities"] and "stock" not in detail["full_entities"]
+    assert detail["report"]["failed"] == {"stock": "layout changed"}
+    orders = {r["_key"]: r for r in run(ss.table_rows(site, "orders", include_removed=True))["rows"]}
+    assert orders["A2"]["_removed_at"] is not None  # full per report -> removed
+    stock = run(ss.table_rows(site, "stock", include_removed=True))["rows"]
+    assert [r["_removed_at"] for r in stock] == [None]  # failed entity -> kept
+    assert any(c.get("orders") == 99 for c in plan["seen_cursors"])  # stored report cursor fed back
