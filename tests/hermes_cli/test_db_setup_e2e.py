@@ -72,7 +72,7 @@ def test_deploy_migrates_as_owner_before_restarting() -> None:
     script = (REPO / "deploy/hermes-deploy.sh").read_text()
     migrate = script.index("hermes_cli.db_migrate --dsn-stdin")
     assert migrate < script.index('echo "== restarting services =="')
-    assert '{ cat "$DB_ADMIN_ENV"; agent_home_storage_env; } | "${migrate[@]}"' in script
+    assert '{ cat "$DB_ADMIN_ENV"; echo; agent_home_storage_env; } | "${migrate[@]}"' in script
     assert "DB_ADMIN_ENV=${DB_ADMIN_ENV:-/etc/aquarium/db-admin.env}" in script
 
 

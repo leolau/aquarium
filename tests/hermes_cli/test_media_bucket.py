@@ -159,6 +159,29 @@ def test_migrate_reads_storage_from_the_environment(storage, monkeypatch) -> Non
     assert list(state.buckets) == ["agent-home-media"]
 
 
+def test_a_bucket_name_from_either_source_is_kept(storage, monkeypatch) -> None:
+    state, url = storage
+    monkeypatch.setenv("AGENT_HOME_MEDIA_BUCKET", "hsd-media")
+    assert db_migrate.migrate(config={}, storage_env=_env(url)) == [
+        ("box", "storage bucket hsd-media", None)
+    ]
+    assert list(state.buckets) == ["hsd-media"]
+
+
+def test_deploy_keeps_the_owner_address_intact_without_a_final_newline(tmp_path: Path) -> None:
+    script = (REPO / "deploy/hermes-deploy.sh").read_text()
+    assert '{ cat "$DB_ADMIN_ENV"; echo; agent_home_storage_env; }' in script
+    admin = tmp_path / "db-admin.env"
+    admin.write_text("HERMES_DB_ADMIN_URL=postgresql://owner@db/x")  # no trailing newline
+    out = subprocess.run(
+        ["bash", "-c", 'agent_home_storage_env() { echo SUPABASE_URL=http://s; }\n'
+                       f'{{ cat "{admin}"; echo; agent_home_storage_env; }}'],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    assert db_migrate.parse_dsn(out) == "postgresql://owner@db/x"
+    assert db_migrate.parse_env(out)["SUPABASE_URL"] == "http://s"
+
+
 def test_migrate_without_storage_settings_skips_the_bucket() -> None:
     assert db_migrate.migrate(config={}) == []
 

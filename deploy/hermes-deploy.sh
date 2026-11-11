@@ -308,7 +308,7 @@ for cfg in ${HERMES_HOME_GLOB:-/opt/data/hermes-home*/config.yaml}; do
   migrate=(runuser -u hermes -- env HERMES_HOME="$(dirname "$cfg")"
            ./.venv/bin/python -I -m hermes_cli.db_migrate --dsn-stdin)
   if [ -f "$DB_ADMIN_ENV" ]; then
-    { cat "$DB_ADMIN_ENV"; agent_home_storage_env; } | "${migrate[@]}" || {
+    { cat "$DB_ADMIN_ENV"; echo; agent_home_storage_env; } | "${migrate[@]}" || {
       echo "ABORT: hermes db migrate failed for $cfg; services were not restarted" >&2
       exit 1
     }

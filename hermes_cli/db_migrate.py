@@ -35,7 +35,7 @@ _DSN_KEYS = ("HERMES_DB_ADMIN_URL", "DATABASE_URL")
 APP_PASSWORD_KEY = "HERMES_APP_DB_PASSWORD"
 #: agent-home's read-only login (agent_home_app); with it migrate refreshes its grants.
 READ_PASSWORD_KEY = "HERMES_APP_READ_DB_PASSWORD"
-#: Supabase Storage settings for the media bucket (standard input first, then the
+#: Supabase Storage settings for the media bucket (each from standard input, else the
 #: environment); without the address and the service key the bucket step is skipped.
 STORAGE_KEYS = ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "AGENT_HOME_MEDIA_BUCKET")
 #: On a fresh install Storage may still be starting when migrate first runs.
@@ -197,9 +197,7 @@ def _storage(values: Optional[Mapping[str, str]]) -> Any:
     """The media-bucket Storage client from ``values`` or the environment, else None."""
     from hermes_cli.filestore import DEFAULT_BUCKET, SupabaseStorage
 
-    given = {key: (values or {}).get(key, "") for key in STORAGE_KEYS}
-    if not (given["SUPABASE_URL"] and given["SUPABASE_SERVICE_ROLE_KEY"]):
-        given = {key: os.environ.get(key, "") for key in STORAGE_KEYS}
+    given = {key: (values or {}).get(key) or os.environ.get(key, "") for key in STORAGE_KEYS}
     url = given["SUPABASE_URL"].strip().rstrip("/")
     key = given["SUPABASE_SERVICE_ROLE_KEY"].strip()
     if not (url and key):
@@ -230,7 +228,7 @@ def migrate(
     """Migrate the prod and dev schemas and the media bucket; ``[(mode, step, error or None)]``.
 
     The bucket is box-wide, so its row's mode is ``box``. ``storage_env`` holds
-    :data:`STORAGE_KEYS` values (from standard input); missing ones come from
+    :data:`STORAGE_KEYS` values (from standard input); each missing one comes from
     the environment.
     """
     from hermes_cli.config import load_config_readonly
