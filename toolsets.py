@@ -56,6 +56,8 @@ _HERMES_CORE_TOOLS = [
     "email_mailbox",
     # The person's own SQL Server databases (Settings -> In&Out; gated on the driver)
     "mssql_query",
+    # The person's stored secrets, by name only (values go via terminal secret_env)
+    "list_secrets",
     # The person's own Windows servers (Settings -> In&Out; gated on pypsrp)
     "windows_powershell",
     # Source sites stored as per-site schemas (site-to-schema; gated on the app DB)
@@ -229,6 +231,12 @@ TOOLSETS = {
     "mssql": {
         "description": "Query the person's own SQL Server databases (read-only unless allowed)",
         "tools": ["mssql_query"],
+        "includes": []
+    },
+
+    "secrets": {
+        "description": "The person's stored secrets, by name only (never values)",
+        "tools": ["list_secrets"],
         "includes": []
     },
 
@@ -462,6 +470,8 @@ TOOLSETS = {
             "email_mailbox",
             # The person's own SQL Server databases (Settings -> In&Out; gated on the driver)
             "mssql_query",
+            # The person's stored secrets, by name only
+            "list_secrets",
             # The person's own Windows servers (Settings -> In&Out; gated on pypsrp)
             "windows_powershell",
             # Source sites stored as per-site schemas (site-to-schema; gated on the app DB)

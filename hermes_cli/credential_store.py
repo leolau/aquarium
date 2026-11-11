@@ -325,6 +325,12 @@ CREDENTIAL_KINDS: Dict[str, KindSpec] = {
         required=("username", "password"),
         secret_fields=("password",),
     ),
+    "secret": KindSpec(
+        name="secret",
+        required=("value",),
+        optional=("username", "note"),
+        secret_fields=("value",),
+    ),
     "fortinet-vpn": KindSpec(
         name="fortinet-vpn",
         required=("host", "username", "password"),
@@ -482,6 +488,13 @@ def validate_services(services: Any) -> List[str]:
     return clean
 
 
+def _parse_time(value: Any) -> Optional[datetime]:
+    try:
+        return datetime.fromisoformat(value) if isinstance(value, str) else None
+    except ValueError:
+        return None
+
+
 @dataclass
 class Credential:
     """One stored credential entry (full, unredacted payload)."""
@@ -630,6 +643,8 @@ class FileCredentialStore:
             visibility=str(doc.get("visibility", "shared")),
             services=list(doc.get("services") or []),
             payload=dict(doc.get("payload") or {}),
+            created_at=_parse_time(doc.get("created_at")),
+            updated_at=_parse_time(doc.get("updated_at")),
         )
 
     # -- surface -----------------------------------------------------------
