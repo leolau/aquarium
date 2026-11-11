@@ -1097,12 +1097,14 @@ async def ensure_site_admin(conn: Any, *, password: Optional[str] = None) -> Non
         return
     if not am_super:
         # ALTER ... OWNER TO needs SET ROLE on the new owner (the creator only
-        # gets ADMIN OPTION on PostgreSQL 16+).
+        # gets ADMIN OPTION on PostgreSQL 16+). The grantee is named, never
+        # CURRENT_USER: that segfaults self-hosted Supabase's event trigger.
+        me = '"' + (await conn.fetchval("SELECT current_user")).replace('"', '""') + '"'
         if await conn.fetchval("SHOW server_version_num") >= "160000":
             if not await conn.fetchval("SELECT pg_has_role(current_user, $1, 'SET')", role):
-                await conn.execute(f"GRANT {role} TO CURRENT_USER WITH INHERIT FALSE, SET TRUE")
+                await conn.execute(f"GRANT {role} TO {me} WITH INHERIT FALSE, SET TRUE")
         elif not await conn.fetchval("SELECT pg_has_role(current_user, $1, 'MEMBER')", role):
-            await conn.execute(f"GRANT {role} TO CURRENT_USER")
+            await conn.execute(f"GRANT {role} TO {me}")
     for row in await conn.fetch("SELECT id::text AS id, slug, schema_name FROM public.site_sources"):
         await _adopt_site(conn, row["id"], row["slug"], row["schema_name"])
 
@@ -1140,7 +1142,7 @@ async def _site_marker(conn: Any, schema: str, owner: str) -> Optional[str]:
             return marker
         if not meta["me"]:
             return None
-        me = _ident(await conn.fetchval("SELECT current_user"))
+        me = '"' + (await conn.fetchval("SELECT current_user")).replace('"', '""') + '"'
         await conn.execute(f"SET LOCAL ROLE {role}; GRANT USAGE ON SCHEMA {s} TO {me}; RESET ROLE")
         marker = await conn.fetchval(read)
         await conn.execute(f"SET LOCAL ROLE {role}; REVOKE USAGE ON SCHEMA {s} FROM {me}; RESET ROLE")
@@ -1195,7 +1197,7 @@ async def _adopt_site(conn: Any, site_id: str, slug: str, schema: str) -> None:
         if not tables:
             return
         # The schema no longer lets this login in; borrow USAGE (as its new owner).
-        me = _ident(await conn.fetchval("SELECT current_user"))
+        me = '"' + (await conn.fetchval("SELECT current_user")).replace('"', '""') + '"'
         lent = not await conn.fetchval("SELECT has_schema_privilege($1, 'USAGE')", schema)
         if lent:
             await conn.execute(f"SET LOCAL ROLE {role}; GRANT USAGE ON SCHEMA {s} TO {me}; RESET ROLE")
