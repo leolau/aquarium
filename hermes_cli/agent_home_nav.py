@@ -34,6 +34,7 @@ KNOWN_APP_IDS = (
     "activity",
     "graph",
     "capacity",
+    "sites",
     "users",
     "suggestions",
     "profiles",

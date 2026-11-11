@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { accentChipClass, chipClass, toolButtonClass } from "@/components/skills/SkillPage";
@@ -8,28 +8,26 @@ import { ActionButton } from "@/components/ui/ActionButton";
 import { FolderIcon, PlusIcon, SparklesIcon } from "@/components/ui/icons";
 import { InlineAlert } from "@/components/ui/InlineAlert";
 import { Spinner } from "@/components/ui/Spinner";
+import { ProjectEvidenceChip } from "@/components/skills/ProjectEvidenceChip";
+import { useLabChat } from "@/components/skills/useLabChat";
 import { errorText, getJson, profileQuery, sendJson } from "@/lib/admin-fetch";
 import { diffLines, hunks } from "@/lib/skills/diff";
 import {
   evidenceReference,
   evidenceStatus,
   evidenceTitle,
-  extractDraft,
   matchesEvidence,
   nextVersionNumber,
   shortDate,
   stripDraft,
   versionLabel,
   type EvidenceFilter,
-  type ImproveReply,
   type ImproveSession,
   type SkillUsageDetail,
   type SkillUsageEvent,
   type SkillVersionList,
   type SkillVersionMeta,
 } from "@/lib/skills/improve";
-import { useAction } from "@/lib/use-action";
-import type { ChatMessage, ChatMessagesResponse } from "@/types";
 
 type Loaded<T> = { data: T; error: null } | { data: null; error: string } | null;
 
@@ -51,21 +49,17 @@ async function load<T>(url: string): Promise<Loaded<T>> {
   }
 }
 
-const SEED_START = "You are helping me improve the skill ";
-const SEED_MESSAGE_MARK = "\n\n## My message\n";
+export const IMPROVE_SEED_START = "You are helping me improve the skill ";
 
-/** The first user turn carries the hidden skill context; show only what the user typed. */
-function withoutSeed(content: string): string {
-  if (!content.startsWith(SEED_START)) return content;
-  const at = content.lastIndexOf(SEED_MESSAGE_MARK);
-  return at === -1 ? content : content.slice(at + SEED_MESSAGE_MARK.length);
+/** A project whose runs are the primary evidence (Projects → Skills, `?project=`). */
+export interface EvidenceProject {
+  slug: string;
+  name?: string | null;
 }
 
-/** User and assistant text turns; tool-call-only assistant rows have no text and are skipped. */
-function visibleTurns(messages: ChatMessage[]): ChatMessage[] {
-  return messages
-    .filter((m) => m.role === "user" || (m.role === "assistant" && (m.content ?? "").trim() !== ""))
-    .map((m, i) => (i === 0 && m.role === "user" ? { ...m, content: withoutSeed(m.content ?? "") } : m));
+/** `&project=<slug>` for the Skills Lab reads, or "". */
+export function projectParam(project: EvidenceProject | null | undefined): string {
+  return project ? `&project=${encodeURIComponent(project.slug)}` : "";
 }
 
 /**
@@ -78,12 +72,17 @@ export function SkillImprovePanel({
   profile,
   content,
   onOpenTab,
+  project = null,
+  onClearProject,
 }: {
   name: string;
   profile: string;
   /** The live (active) SKILL.md, the baseline a proposal is compared with. */
   content: string;
   onOpenTab: (tab: string) => void;
+  /** Scope evidence and new chats to one project's runs. */
+  project?: EvidenceProject | null;
+  onClearProject?: () => void;
 }) {
   const q = profileQuery(profile);
   const scoped = useMemo(() => (q ? { profile } : {}), [q, profile]);
@@ -95,25 +94,14 @@ export function SkillImprovePanel({
   const [sessions, setSessions] = useState<Loaded<ImproveSession[]>>(null);
   const [filter, setFilter] = useState<EvidenceFilter>("failed");
 
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  // Read by send() so a retry right after the first turn reuses the session it started.
-  const sessionRef = useRef<string | null>(null);
-  const [turns, setTurns] = useState<ChatMessage[]>([]);
-  const [transcript, setTranscript] = useState<"idle" | "loading" | string>("idle");
-  const [draft, setDraft] = useState<string | null>(null);
-  const [saved, setSaved] = useState<SkillVersionMeta | null>(null);
-  const [fullDiff, setFullDiff] = useState(false);
-  const [sendError, setSendError] = useState<{ text: string; message: string } | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [text, setText] = useState("");
   const [goalOpen, setGoalOpen] = useState(false);
   const [goal, setGoal] = useState("");
-  const composerRef = useRef<HTMLTextAreaElement>(null);
-  const keySeq = useRef(0);
+  const [fullDiffRev, setFullDiffRev] = useState<number | null>(null);
 
+  const pq = projectParam(project);
   const versionsUrl = withQ(`/api/skills/versions?name=${enc}`);
-  const evidenceUrl = withQ(`/api/skills/usage/detail?name=${enc}&days=90&limit=50`);
-  const sessionsUrl = withQ(`/api/skills/improve/sessions?name=${enc}`);
+  const evidenceUrl = withQ(`/api/skills/usage/detail?name=${enc}${pq}&days=90&limit=50`);
+  const sessionsUrl = withQ(`/api/skills/improve/sessions?name=${enc}${pq}`);
   const loadVersions = () => load<SkillVersionList>(versionsUrl).then(setVersions);
   const loadEvidence = () => load<SkillUsageDetail>(evidenceUrl).then(setEvidence);
   const loadSessions = () => load<ImproveSession[]>(sessionsUrl).then(setSessions);
@@ -131,7 +119,12 @@ export function SkillImprovePanel({
   const versionList = versions?.data ?? null;
   const activeLabel = versionLabel(versionList, versionList?.active ?? null);
   const nextN = versionList ? nextVersionNumber(versionList.versions) : null;
-  const events = useMemo(() => evidence?.data?.events ?? [], [evidence]);
+  const slug = project?.slug ?? null;
+  // Older backends ignore `?project=`; keep only this project's runs either way.
+  const events = useMemo(
+    () => (evidence?.data?.events ?? []).filter((e) => !slug || e.project?.slug === slug),
+    [evidence, slug],
+  );
   const counts = useMemo(
     () => ({
       failed: events.filter((e) => matchesEvidence(e, "failed")).length,
@@ -141,122 +134,47 @@ export function SkillImprovePanel({
     [events],
   );
   const shown = events.filter((e) => matchesEvidence(e, filter));
-  const current = sessions?.data?.find((s) => s.session_id === sessionId) ?? null;
+  const projected = useMemo(() => (slug ? { project: slug } : {}), [slug]);
+  const chat = useLabChat<SkillVersionMeta>({
+    startUrl: "/api/skills/improve/start",
+    startBody: (goalText) => ({ name, ...(goalText ? { goal: goalText } : {}), ...projected, ...scoped }),
+    messageUrl: "/api/skills/improve/message",
+    messageBody: scoped,
+    transcriptQuery: q,
+    seedStart: IMPROVE_SEED_START,
+    save: (proposal, id) =>
+      sendJson<SkillVersionMeta>("/api/skills/versions/draft", "POST", {
+        name,
+        content: proposal,
+        message: sessions?.data?.find((s) => s.session_id === id)?.title || "Improve chat proposal",
+        ...(id ? { session_id: id } : {}),
+        ...scoped,
+      }).then((meta) => {
+        void loadVersions();
+        return meta;
+      }),
+    onChanged: () => void loadSessions(),
+  });
+  const { sessionId, turns, transcript, draft, saved, sendError, notice, text, setText, composerRef, focusComposer, openTranscript, start, send, save } = chat;
+  const fullDiff = fullDiffRev === chat.draftRev;
 
   const ops = useMemo(() => (draft === null ? [] : diffLines(content.replace(/\s+$/, ""), draft.replace(/\s+$/, ""))), [content, draft]);
   const added = ops.filter((o) => o.type === "add").length;
   const removed = ops.filter((o) => o.type === "del").length;
   const changed = ops.filter((o) => o.type !== "same");
 
-  function focusComposer() {
-    composerRef.current?.focus();
-  }
-
-  async function openTranscript(id: string) {
-    sessionRef.current = id;
-    setSessionId(id);
-    setTurns([]);
-    setDraft(null);
-    setSaved(null);
-    setFullDiff(false);
-    setSendError(null);
-    setNotice(null);
-    setTranscript("loading");
-    try {
-      const res = await getJson<ChatMessagesResponse>(
-        `/api/chat/messages?sessionId=${encodeURIComponent(id)}&visible=1${q ? `&${q}` : ""}`,
-      );
-      const rows = visibleTurns(res.messages ?? []);
-      const lastDraft = [...rows].reverse().find((m) => m.role === "assistant" && extractDraft(m.content ?? "") !== null);
-      setTurns(rows);
-      setDraft(lastDraft ? extractDraft(lastDraft.content) : null);
-      setTranscript("idle");
-    } catch (err) {
-      setTranscript(errorText(err));
-    }
-  }
-
-  async function startSession(goalText: string): Promise<string> {
-    const res = await sendJson<{ session_id: string }>("/api/skills/improve/start", "POST", {
-      name,
-      ...(goalText ? { goal: goalText } : {}),
-      ...scoped,
-    });
-    void loadSessions();
-    return res.session_id;
-  }
-
-  const start = useAction(async () => {
-    setNotice(null);
-    try {
-      const id = await startSession(goal.trim());
-      setGoal("");
-      setGoalOpen(false);
-      await openTranscript(id);
-      focusComposer();
-    } catch (err) {
-      setNotice(errorText(err));
-    }
-  });
-
-  const send = useAction(async (raw: string) => {
-    const message = raw.trim();
-    if (!message) return;
-    setSendError(null);
-    setNotice(null);
-    const key = `local-${++keySeq.current}`;
-    setTurns((t) => [...t, { role: "user", content: message, clientKey: key }]);
-    setText("");
-    try {
-      let id = sessionRef.current;
-      if (!id) {
-        id = await startSession("");
-        sessionRef.current = id;
-        setSessionId(id);
-      }
-      const res = await sendJson<ImproveReply>("/api/skills/improve/message", "POST", { session_id: id, text: message, ...scoped });
-      const proposal = res.draft ?? extractDraft(res.reply ?? "");
-      setTurns((t) => [...t, { role: "assistant", content: res.reply ?? "", clientKey: `${key}-reply` }]);
-      if (proposal) {
-        setDraft(proposal);
-        setSaved(null);
-        setFullDiff(false);
-        void loadSessions();
-      }
-    } catch (err) {
-      setTurns((t) => t.filter((m) => m.clientKey !== key));
-      setSendError({ text: message, message: errorText(err) });
-    }
-  });
-
-  const save = useAction(async () => {
-    if (draft === null) return;
-    setNotice(null);
-    try {
-      const meta = await sendJson<SkillVersionMeta>("/api/skills/versions/draft", "POST", {
-        name,
-        content: draft,
-        message: current?.title || "Improve chat proposal",
-        ...(sessionId ? { session_id: sessionId } : {}),
-        ...scoped,
-      });
-      setSaved(meta);
-      void loadVersions();
-      void loadSessions();
-    } catch (err) {
-      setNotice(errorText(err));
-    }
-  });
-
   function insertEvidence(event: SkillUsageEvent) {
-    const ref = evidenceReference(event, versionList);
-    setText((t) => (t.trim() ? `${t.replace(/\s+$/, "")}\n${ref} ` : `${ref} `));
-    focusComposer();
+    chat.insert(evidenceReference(event, versionList));
   }
 
   function submitGoal(e: FormEvent) {
     e.preventDefault();
-    void start.run();
+    void start.run(goal).then((ok) => {
+      if (ok) {
+        setGoal("");
+        setGoalOpen(false);
+      }
+    });
   }
 
   const filterChip = (id: EvidenceFilter, label: string, count: number | null) => (
@@ -283,6 +201,7 @@ export function SkillImprovePanel({
               <span className="lg:hidden">below</span>
               <span className="hidden lg:inline">on the right</span> but cannot change the live skill
             </p>
+            {project ? <ProjectEvidenceChip project={project} onClear={onClearProject} className="mt-2" /> : null}
           </div>
           <button type="button" className={`${toolButtonClass} inline-flex items-center gap-1.5 self-start`} onClick={() => setGoalOpen((o) => !o)} aria-expanded={goalOpen}>
             <PlusIcon size={14} /> New improve chat
@@ -407,7 +326,7 @@ export function SkillImprovePanel({
                 type="button"
                 className={toolButtonClass}
                 aria-expanded={saved ? undefined : fullDiff}
-                onClick={() => (saved ? onOpenTab("versions") : setFullDiff((f) => !f))}
+                onClick={() => (saved ? onOpenTab("versions") : setFullDiffRev(fullDiff ? null : chat.draftRev))}
               >
                 {!saved && fullDiff ? "Show changes only" : "View full diff"}
               </button>
@@ -563,7 +482,7 @@ export function SkillImprovePanel({
   );
 }
 
-function DiffPreview({ ops, changed, full }: { ops: ReturnType<typeof diffLines>; changed: ReturnType<typeof diffLines>; full: boolean }) {
+export function DiffPreview({ ops, changed, full }: { ops: ReturnType<typeof diffLines>; changed: ReturnType<typeof diffLines>; full: boolean }) {
   const line = (op: ReturnType<typeof diffLines>[number], key: string | number) => (
     <div
       key={key}

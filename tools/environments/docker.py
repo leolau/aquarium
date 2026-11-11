@@ -577,6 +577,8 @@ class DockerEnvironment(BaseEnvironment):
     across container restarts.
     """
 
+    supports_secret_env = True
+
     def __init__(
         self,
         image: str,
@@ -1017,12 +1019,17 @@ class DockerEnvironment(BaseEnvironment):
 
     def _run_bash(self, cmd_string: str, *, login: bool = False,
                   timeout: int = 120,
-                  stdin_data: str | None = None) -> subprocess.Popen:
+                  stdin_data: str | None = None,
+                  extra_env: dict | None = None) -> subprocess.Popen:
         """Spawn a bash process inside the Docker container."""
         assert self._container_id, "Container not started"
         cmd = [self._docker_exe, "exec"]
         if stdin_data is not None:
             cmd.append("-i")
+        # ``-e NAME`` (no value) copies NAME from the docker CLI's own
+        # environment, so secret values stay off the docker command line.
+        for name in extra_env or {}:
+            cmd.extend(["-e", name])
 
         # Only inject -e env args during init_session (login=True).
         # Subsequent commands get env vars from the snapshot.
@@ -1036,6 +1043,8 @@ class DockerEnvironment(BaseEnvironment):
         else:
             cmd.extend(["bash", "-c", cmd_string])
 
+        if extra_env:
+            return _popen_bash(cmd, stdin_data, env={**os.environ, **extra_env})
         return _popen_bash(cmd, stdin_data)
 
     # ------------------------------------------------------------------

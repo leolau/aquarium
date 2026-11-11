@@ -16,6 +16,10 @@ a bare ``postgresql://`` address) from standard input, so the owner password
 never sits in this process's environment where other processes of the same
 user could read it. A ``HERMES_APP_DB_PASSWORD=...`` line in the same input
 makes ``hermes_app`` a login role with that password. Without it the configured datastore address is used.
+``HERMES_SITE_ADMIN_DB_PASSWORD=...`` is the password of ``aquarium_site_admin``,
+the login that provisions site-to-schema schemas and roles (see
+:func:`hermes_cli.site_sources.ensure_site_admin`); without it a stored or new
+one is used. It is kept where the hermes service user can read it.
 Safe to run again: every step is idempotent. Never prints the address.
 """
 
@@ -35,6 +39,8 @@ _DSN_KEYS = ("HERMES_DB_ADMIN_URL", "DATABASE_URL")
 APP_PASSWORD_KEY = "HERMES_APP_DB_PASSWORD"
 #: agent-home's read-only login (agent_home_app); with it migrate refreshes its grants.
 READ_PASSWORD_KEY = "HERMES_APP_READ_DB_PASSWORD"
+#: aquarium_site_admin's login password (site-to-schema provisioning).
+SITE_ADMIN_PASSWORD_KEY = "HERMES_SITE_ADMIN_DB_PASSWORD"
 #: Supabase Storage settings for the media bucket (each from standard input, else the
 #: environment); without the address and the service key the bucket step is skipped.
 STORAGE_KEYS = ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "AGENT_HOME_MEDIA_BUCKET")
@@ -144,9 +150,20 @@ def _steps(store: Any, config: dict) -> List[Step]:
 
 
 async def migrate_store(
-    store: Any, config: dict, *, app_password: str = "", read_password: str = ""
+    store: Any,
+    config: dict,
+    *,
+    app_password: str = "",
+    read_password: str = "",
+    site_sources: bool = False,
+    site_admin_password: str = "",
 ) -> List[Tuple[str, Optional[str]]]:
-    """Run every setup step on ``store``; ``[(step, error or None)]``."""
+    """Run every setup step on ``store``; ``[(step, error or None)]``.
+
+    ``site_sources`` adds the box-wide site-to-schema steps (registry in
+    ``public`` and the ``aquarium_site_admin`` login); they run after the
+    hermes_app grants so the registry grants find the role.
+    """
     from hermes_cli import db_setup
     from hermes_cli.access import ensure_app_role
 
@@ -188,6 +205,20 @@ async def migrate_store(
                 results.append(("agent_home_app grants", f"{type(error).__name__}: {error}"))
             else:
                 results.append(("agent_home_app grants", None))
+        if site_sources:
+            from hermes_cli import site_sources as sites
+
+            for name, site_step in (
+                ("site registry", lambda: sites.migrate_registry(connection)),
+                ("site admin login", lambda: sites.ensure_site_admin(
+                    connection, password=site_admin_password or None)),
+            ):
+                try:
+                    await site_step()
+                except Exception as error:
+                    results.append((name, f"{type(error).__name__}: {error}"))
+                else:
+                    results.append((name, None))
     finally:
         await connection.close()
     return results
@@ -223,6 +254,7 @@ def migrate(
     config: Optional[dict] = None,
     app_password: str = "",
     read_password: str = "",
+    site_admin_password: str = "",
     storage_env: Optional[Mapping[str, str]] = None,
 ) -> List[Tuple[str, str, Optional[str]]]:
     """Migrate the prod and dev schemas and the media bucket; ``[(mode, step, error or None)]``.
@@ -246,6 +278,8 @@ def migrate(
             migrate_store(
                 store, config, app_password=app_password,
                 read_password=read_password if mode == "prod" else "",
+                site_sources=mode == "prod",
+                site_admin_password=site_admin_password,
             )
         ):
             rows.append((mode, name, error))
@@ -256,7 +290,7 @@ def migrate(
 
 
 def db_migrate_command(args: argparse.Namespace) -> int:
-    admin_dsn = app_password = read_password = ""
+    admin_dsn = app_password = read_password = site_admin_password = ""
     storage_env: dict = {}
     if getattr(args, "dsn_stdin", False):
         text = sys.stdin.read()
@@ -265,6 +299,7 @@ def db_migrate_command(args: argparse.Namespace) -> int:
         values = parse_env(text)
         app_password = values.get(APP_PASSWORD_KEY, "")
         read_password = values.get(READ_PASSWORD_KEY, "")
+        site_admin_password = values.get(SITE_ADMIN_PASSWORD_KEY, "")
         storage_env = {key: values[key] for key in STORAGE_KEYS if values.get(key)}
         if not admin_dsn:
             print("No database address on standard input "
@@ -273,7 +308,7 @@ def db_migrate_command(args: argparse.Namespace) -> int:
     try:
         rows = migrate(
             admin_dsn, app_password=app_password, read_password=read_password,
-            storage_env=storage_env,
+            site_admin_password=site_admin_password, storage_env=storage_env,
         )
     except (RuntimeError, ValueError, OSError) as error:
         print(f"Database migration failed: {error}", file=sys.stderr)

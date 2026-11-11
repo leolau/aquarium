@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { CopyButton, downloadText } from "@/components/skills/CopyButton";
-import { SkillImprovePanel } from "@/components/skills/SkillImprovePanel";
+import { projectParam, SkillImprovePanel, type EvidenceProject } from "@/components/skills/SkillImprovePanel";
 import { SkillMarkdown } from "@/components/skills/SkillMarkdown";
 import { SkillVersionsPanel } from "@/components/skills/SkillVersionsPanel";
 import { SkillUsagePanel } from "@/components/skills/SkillUsagePanel";
@@ -66,6 +66,7 @@ export function SkillPage({
   initialTab,
   activeVersion,
   permissions = ALL_SKILL_PERMISSIONS,
+  project: initialProject = null,
 }: {
   name: string;
   profile: string;
@@ -80,6 +81,8 @@ export function SkillPage({
   activeVersion?: { n: number; trial: boolean } | null;
   /** Settings → Skills permissions: `manage` adds the edit controls, `lab` the Skills Lab tabs. */
   permissions?: SkillPermissions;
+  /** `?project=` — the Skills Lab tabs show this project's runs as the evidence. */
+  project?: EvidenceProject | null;
 }) {
   const { manage, lab } = permissions;
   const hasTab = (value: string | undefined): value is Tab => isTab(value) && (lab || !LAB_TABS.includes(value));
@@ -89,6 +92,7 @@ export function SkillPage({
   const body = useMemo(() => getBody(content), [content]);
   const headings = useMemo(() => extractHeadings(body), [body]);
   const [tab, setTab] = useState<Tab>(hasTab(initialTab) ? initialTab : "instructions");
+  const [project, setProject] = useState<EvidenceProject | null>(initialProject);
   const [enabled, setEnabled] = useState(skill?.enabled ?? true);
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmUninstall, setConfirmUninstall] = useState(false);
@@ -179,6 +183,14 @@ export function SkillPage({
     url.hash = "";
     history.replaceState(null, "", url);
     return true;
+  }
+
+  /** Drop the `?project=` evidence scope and show runs from everywhere. */
+  function clearProject() {
+    setProject(null);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("project");
+    history.replaceState(null, "", url);
   }
 
   function jump(id: string) {
@@ -439,8 +451,10 @@ export function SkillPage({
           <SkillUsagePanel
             name={name}
             profile={profile}
-            tabHref={(t) => skillHref(name, profile, "", `tab=${t}`)}
+            tabHref={(t) => skillHref(name, profile, "", `tab=${t}${projectParam(project)}`)}
             onOpenTab={selectTab}
+            project={project}
+            onClearProject={clearProject}
           />
         ) : tab === "versions" && lab ? (
           <SkillVersionsPanel name={name} profile={profile} />
@@ -457,7 +471,14 @@ export function SkillPage({
             )}
           </div>
         ) : tab === "improve" && lab ? (
-          <SkillImprovePanel name={name} profile={profile} content={content} onOpenTab={selectTab} />
+          <SkillImprovePanel
+            name={name}
+            profile={profile}
+            content={content}
+            onOpenTab={selectTab}
+            project={project}
+            onClearProject={clearProject}
+          />
         ) : (
           <div className="max-w-2xl">
             {details ? (

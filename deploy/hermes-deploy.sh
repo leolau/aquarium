@@ -200,14 +200,17 @@ fi
 
 echo "== reinstalling package =="
 # Optional drivers whose tools are service-gated on the import (SQL Server,
-# WinRM). A subset of the installer's extras (install-aquarium.sh); the rest
-# are test/dev or channel extras this box does not run.
+# WinRM) and the site-source browser (playwright). A subset of the installer's
+# extras (install-aquarium.sh); the rest are test/dev or channel extras this box
+# does not run.
 # install-aquarium.sh builds the venv with `uv venv`, which has no pip.
 if ./.venv/bin/python -I -m pip --version >/dev/null 2>&1; then
-  ./.venv/bin/python -I -m pip install -q -e ".[mssql,winrm]"
+  ./.venv/bin/python -I -m pip install -q -e ".[mssql,winrm,sites]"
 else
-  uv pip install -q --python ./.venv/bin/python -e ".[mssql,winrm]"
+  uv pip install -q --python ./.venv/bin/python -e ".[mssql,winrm,sites]"
 fi
+echo "== site browser (Chromium for hermes) =="
+bash deploy/install-site-browser "$REPO/.venv/bin/python" hermes
 # The services run as hermes and can't write __pycache__ in this root-owned
 # tree, so compile here; otherwise every start recompiles in memory.
 nice -n 15 ./.venv/bin/python -I -m compileall -q -j 0 \
@@ -288,6 +291,12 @@ done
 # environment of a process running as hermes.
 echo "== migrating database =="
 DB_ADMIN_ENV=${DB_ADMIN_ENV:-/etc/aquarium/db-admin.env}
+# One aquarium_site_admin password for every hermes home on the box (the role is
+# database-wide): kept in db-admin.env, added once to files written before it existed.
+if [ -f "$DB_ADMIN_ENV" ] && ! grep -q '^HERMES_SITE_ADMIN_DB_PASSWORD=' "$DB_ADMIN_ENV"; then
+  ( umask 077; printf '\nHERMES_SITE_ADMIN_DB_PASSWORD=%s\n' \
+      "$(python3 -c 'import secrets; print(secrets.token_hex(24))')" >> "$DB_ADMIN_ENV" )
+fi
 gateway_db_env() {
   local f
   for f in $(systemctl show -P EnvironmentFiles hermes-gateway.service 2>/dev/null | awk '{print $1}'); do

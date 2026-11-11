@@ -602,9 +602,9 @@ describe("ProjectDetailView", () => {
     expect(html).toContain("Where this stands");
     expect(html).toContain("Summarised");
     expect(html).toContain("Update summary");
-    // Four tabs group the eight sections; Overview (the Dashboard) leads.
+    // Five tabs group the nine sections; Overview (the Dashboard) leads.
     expect(html).toContain('data-component="ProjectTabsNav"');
-    for (const label of ["Overview", "Work", "Files", "Setup"]) {
+    for (const label of ["Overview", "Work", "Files", "Skills", "Setup"]) {
       expect(html).toContain(`>${label}`);
     }
     expect(html).toContain('data-active-tab="dashboard"');
@@ -1180,12 +1180,21 @@ describe("ProjectDetailView — four tabs", () => {
       ["scope", "setup"],
       ["plan", "setup"],
       ["settings", "setup"],
+      ["skills", "skills"],
     ];
     for (const [legacy, group] of cases) {
       const html = render(legacy);
       expect(html).toContain(`data-active-group="${group}"`);
       expect(html).toContain(`data-section="${legacy}"`);
     }
+  });
+
+  it("deep-links ?tab=skills to the project Skills tab, between Files and Setup", () => {
+    const html = render("skills");
+    expect(html).toContain('data-active-group="skills"');
+    expect(html).toContain('data-component="SkillsTab"');
+    const order = ["overview", "work", "files", "skills", "setup"].map((g) => html.indexOf(`data-tab="${g}"`));
+    expect(order.every((at, i) => at >= 0 && (i === 0 || at > order[i - 1]))).toBe(true);
   });
 
   it("opens a tab by its own name and shows all of its sections", () => {

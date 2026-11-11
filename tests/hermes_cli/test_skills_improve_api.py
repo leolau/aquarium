@@ -358,3 +358,169 @@ def test_draft_saved_from_improve_chat_is_credited_to_the_agent(client, monkeypa
     who["p"] = SimpleNamespace(user_id="u-other", display="Bo", role="admin", is_owner=False)
     r = client.post("/api/skills/versions/draft", json={"name": SKILL, "content": DRAFT, "session_id": sid})
     assert r.status_code == 404
+
+
+# ── Project-scoped improve (Part B3) ─────────────────────────────────────────
+
+PROJECT = "site-relaunch"
+FOREIGN = "secret-deal"
+
+
+@pytest.fixture
+def projects(tmp_path, monkeypatch, who):
+    """Real projects DB: one readable project, one the caller can't read."""
+    monkeypatch.setenv("HERMES_PROJECTS_DB", str(tmp_path / "projects.db"))
+    from hermes_cli import projects_api, projects_db
+
+    async def _principal(request):
+        return who["p"]
+
+    async def _enrolled(user_id):
+        return set()
+
+    monkeypatch.setattr(projects_api, "_principal_read", _principal)
+    monkeypatch.setattr(projects_api, "_enrolled_profiles", _enrolled)
+    with projects_db.connect_closing() as conn:
+        mine = projects_db.create_project(
+            conn, name="Site relaunch", slug=PROJECT, goal="Ship the new site",
+            description="Marketing site rebuild.", owner_user_id="u-admin",
+        )
+        projects_db.create_project(
+            conn, name="Secret deal", slug=FOREIGN, owner_user_id="u-someone-else",
+        )
+    return mine
+
+
+@pytest.fixture
+def project_ledger(siblings, monkeypatch):
+    """Uses in this project, in a foreign project and outside projects."""
+    from hermes_cli import skills_usage_api
+
+    def _ev(i, slug, outcome, task=None, note=None, rating=None):
+        return {"id": i, "ts": 1_700_000_000 + i * 1000, "project_slug": slug, "outcome": outcome,
+                "kanban_board": "main" if task else None, "kanban_task_id": task,
+                "session_id": f"s{i}", "trigger": "card" if task else "slash", "note": note,
+                "rating": rating}
+
+    events = [
+        _ev(9, PROJECT, "failure", "t-hero", note="hero image upload failed"),
+        _ev(8, FOREIGN, "failure", "t-merger", note="merger memo leaked"),
+        _ev(7, None, "success"),
+        _ev(6, PROJECT, "success", "t-footer"),
+        _ev(5, FOREIGN, "success", "t-board"),
+        _ev(4, None, "partial", note="chat note"),
+    ]
+    titles = {("main", "t-hero"): "Hero banner PDF", ("main", "t-footer"): "Footer legal PDF",
+              ("main", "t-merger"): "Acme merger memo", ("main", "t-board"): "Board pack"}
+    siblings.ledger.events = lambda name, *, days=90, limit=50, cursor=None: {
+        "events": events, "next_cursor": None}
+    siblings.ledger.summary = lambda *, days=90, name=None: [
+        {"name": SKILL, "uses": 6, "sessions": 6, "tasks": 4, "projects": 2, "success": 3,
+         "partial": 1, "failure": 2, "unknown": 0, "success_rate": 0.5},
+    ]
+    seen = []
+
+    def _titles(rows):
+        seen.extend(rows)
+        return {k: v for k, v in titles.items() if any(
+            (r["kanban_board"], r["kanban_task_id"]) == k for r in rows)}
+
+    monkeypatch.setattr(skills_usage_api, "_task_titles", _titles)
+    return SimpleNamespace(events=events, seen=seen)
+
+
+def _seed(sid):
+    from hermes_cli.skills_improve_api import _read_seed
+
+    return _read_seed(sid, None)
+
+
+def test_project_seed_puts_this_projects_runs_first(client, projects, project_ledger, model):
+    r = client.post("/api/skills/improve/start", json={"name": SKILL, "project": PROJECT})
+    assert r.status_code == 200, r.text
+    sid = r.json()["session_id"]
+    seed = _seed(sid)
+    assert seed["project"] == PROJECT
+    text = seed["seed"]
+
+    assert "## This project" in text and "Site relaunch" in text
+    assert "Ship the new site" in text and "Marketing site rebuild." in text
+    assert 'card "Hero banner PDF"' in text and 'card "Footer legal PDF"' in text
+    assert "hero image upload failed" in text
+    assert text.index("## This project") < text.index("## Usage in this project")
+    assert "keep every change safe" in text.lower()
+
+    # Other uses only as numbers: no foreign project's slug, titles or notes.
+    elsewhere = text[text.index("## Usage elsewhere"):]
+    assert "4 uses outside this project: 2 in 1 other projects, 2 in chats" in elsewhere
+    for leaked in (FOREIGN, "Secret deal", "Acme merger memo", "Board pack",
+                   "merger memo leaked", "chat note"):
+        assert leaked not in text
+    assert all(r["kanban_task_id"] in {"t-hero", "t-footer"} for r in project_ledger.seen)
+
+    # Seed is still the one-time first-turn prefix (cache-safe).
+    client.post("/api/skills/improve/message", json={"session_id": sid, "text": "why?"})
+    client.post("/api/skills/improve/message", json={"session_id": sid, "text": "and?"})
+    assert model["turns"][0]["user_message"].startswith(text)
+    assert "## This project" not in model["turns"][1]["user_message"]
+
+
+def test_project_seed_prefers_the_ledgers_project_rollup(client, projects, project_ledger, siblings):
+    def summary(*, days=90, name=None, project=None):
+        if project:
+            return [{"name": SKILL, "uses": 40, "success": 30, "partial": 5, "failure": 5,
+                     "unknown": 0, "sessions": 9, "tasks": 12, "projects": 1}]
+        return [{"name": SKILL, "uses": 50, "success": 35, "partial": 5, "failure": 10,
+                 "unknown": 0, "projects": 3}]
+
+    siblings.ledger.summary = summary
+    sid = client.post("/api/skills/improve/start",
+                      json={"name": SKILL, "project": PROJECT}).json()["session_id"]
+    text = _seed(sid)["seed"]
+    assert "40 uses" in text
+    assert "10 uses outside this project" in text and "in 2 other projects" in text
+
+
+def test_project_session_is_tagged_and_listed_per_project(client, projects, siblings, model):
+    plain = client.post("/api/skills/improve/start", json={"name": SKILL}).json()["session_id"]
+    scoped = client.post("/api/skills/improve/start",
+                         json={"name": SKILL, "project": PROJECT}).json()["session_id"]
+    db = _db()
+    try:
+        tags = {t["name"] for t in db.get_session_tags(scoped)}
+    finally:
+        db.close()
+    assert {f"skill-improve:{SKILL}", f"skill-improve-project:{PROJECT}"} <= tags
+
+    rows = client.get("/api/skills/improve/sessions", params={"name": SKILL, "project": PROJECT})
+    assert rows.status_code == 200
+    assert [r["session_id"] for r in rows.json()] == [scoped]
+    every = client.get("/api/skills/improve/sessions", params={"name": SKILL}).json()
+    assert {r["session_id"] for r in every} == {plain, scoped}
+
+
+@pytest.mark.parametrize("slug", [FOREIGN, "no-such-project", "../etc"])
+def test_unreadable_project_is_404(client, projects, siblings, model, who, slug):
+    who["p"] = SimpleNamespace(user_id="u-admin", display="Ada", role="member", is_owner=False)
+    r = client.post("/api/skills/improve/start", json={"name": SKILL, "project": slug})
+    assert r.status_code == 404
+    r = client.get("/api/skills/improve/sessions", params={"name": SKILL, "project": slug})
+    assert r.status_code == 404
+
+
+def test_project_improve_needs_lab_in_the_profile(client, projects, siblings, model, monkeypatch):
+    from hermes_cli import web_server
+    from tools import skills_access
+
+    viewer = SimpleNamespace(user_id="u-admin", display="Vi", role="viewer", is_owner=False)
+
+    async def _resolve(request, **kw):
+        return viewer
+
+    monkeypatch.setattr(web_server, "_comms_session_subject", lambda request: "sub-viewer")
+    monkeypatch.setattr(web_server, "_comms_resolve_principal", _resolve)
+    monkeypatch.setattr(skills_access, "allows", lambda role, action, cfg: action != "lab")
+    r = client.post("/api/skills/improve/start", json={"name": SKILL, "project": PROJECT})
+    assert r.status_code == 403
+    r = client.get("/api/skills/improve/sessions", params={"name": SKILL, "project": PROJECT})
+    assert r.status_code == 403

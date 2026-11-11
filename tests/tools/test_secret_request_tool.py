@@ -34,7 +34,6 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr(credential_store, "default_credential_store", lambda *a, **k: store)
     monkeypatch.setattr(sr, "POLL_SECONDS", 0.05)
     yield tmp_path
-    tool.set_secret_link_sender(None)
 
 
 @pytest.fixture
@@ -105,38 +104,49 @@ def test_unavailable_without_surface(home, run_key):
     assert "openai-key" in out["hint"]
 
 
-def test_messaging_turn_uses_link_sender(home, monkeypatch):
-    from gateway.session_context import clear_session_vars, set_session_vars
+def _link_sender(sent, *, deliver=True):
+    """Stand-in for gateway.secret_links.make_link_sender: opens the request with a link."""
+
+    def sender(**ask):
+        req, token = sr.open_request(
+            owner_user_id="mia", profile="default", session_key="tg:1", channel="telegram",
+            with_link=True, **ask,
+        )
+        sent.append((ask, req, token))
+        if not deliver:
+            sr.decline(req.id)
+            return {"status": "unavailable", "hint": "Secure links are not set up."}
+        threading.Thread(target=sr.fulfil_by_token, args=(token,), kwargs={"values": {"value": VALUE}}).start()
+        return {"status": "sent", "request_id": req.id, "message": "secure link sent"}
+
+    return sender
+
+
+def test_messaging_turn_uses_gateway_link_sender(home, run_key):
+    from gateway import secret_links
 
     sent = []
-
-    def sender(req, token):
-        sent.append((req, token))
-        threading.Thread(target=sr.fulfil_by_token, args=(token,), kwargs={"values": {"value": VALUE}}).start()
-        return True
-
-    tokens = set_session_vars(platform="telegram", session_key="tg:1", user_id="1")
+    secret_links.register_secret_link_sender(run_key, _link_sender(sent))
     try:
-        assert _call()["status"] == "unavailable"
-        tool.set_secret_link_sender(sender)
         out = _call()
     finally:
-        clear_session_vars(tokens)
+        secret_links.unregister_secret_link_sender(run_key)
     assert out == {"status": "stored", "secret": "openai-key", "kind": "secret"}
-    (req, token), = sent
-    assert req.channel == "telegram" and token and token not in json.dumps(out)
+    (ask, req, token), = sent
+    assert ask["name"] == "openai-key" and ask["run_id"] == run_key and ask["ttl_seconds"] == 5
+    assert sr.get_request(req.id).status == "stored"
+    assert token not in json.dumps(out) and VALUE not in json.dumps(out)
 
 
-def test_link_send_failure_is_unavailable(home):
-    from gateway.session_context import clear_session_vars, set_session_vars
+def test_link_sender_unavailable_passes_hint(home, run_key):
+    from gateway import secret_links
 
-    tool.set_secret_link_sender(lambda req, token: False)
-    tokens = set_session_vars(platform="slack", session_key="sl:1", user_id="1")
+    secret_links.register_secret_link_sender(run_key, _link_sender([], deliver=False))
     try:
         out = _call()
     finally:
-        clear_session_vars(tokens)
-    assert out["status"] == "unavailable"
+        secret_links.unregister_secret_link_sender(run_key)
+    assert out == {"status": "unavailable", "hint": "Secure links are not set up."}
 
 
 def test_bad_name_is_a_tool_error(home, run_key):

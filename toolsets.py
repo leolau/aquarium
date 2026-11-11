@@ -56,6 +56,8 @@ _HERMES_CORE_TOOLS = [
     "email_mailbox",
     # The person's own SQL Server databases (Settings -> In&Out; gated on the driver)
     "mssql_query",
+    # The person's stored secrets, by name only (values go via terminal secret_env)
+    "list_secrets",
     # The person's own Windows servers (Settings -> In&Out; gated on pypsrp)
     "windows_powershell",
     # Source sites stored as per-site schemas (site-to-schema; gated on the app DB)
@@ -234,6 +236,12 @@ TOOLSETS = {
         "includes": []
     },
 
+    "secrets": {
+        "description": "The person's stored secrets by name (never values), and a masked prompt to ask for a new one",
+        "tools": ["list_secrets", "request_secret"],
+        "includes": []
+    },
+
     "site_db": {
         "description": "Study source sites into per-site database schemas and query them",
         "tools": ["site_db"],
@@ -270,12 +278,6 @@ TOOLSETS = {
         "includes": []
     },
 
-    "secrets": {
-        "description": "Ask the person for a secret through a masked prompt; the agent only gets its name",
-        "tools": ["request_secret"],
-        "includes": []
-    },
-    
     "code_execution": {
         "description": "Run Python scripts that call tools programmatically (reduces LLM round trips)",
         "tools": ["execute_code"],
@@ -470,6 +472,8 @@ TOOLSETS = {
             "email_mailbox",
             # The person's own SQL Server databases (Settings -> In&Out; gated on the driver)
             "mssql_query",
+            # The person's stored secrets, by name only
+            "list_secrets",
             # The person's own Windows servers (Settings -> In&Out; gated on pypsrp)
             "windows_powershell",
             # Source sites stored as per-site schemas (site-to-schema; gated on the app DB)

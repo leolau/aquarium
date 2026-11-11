@@ -74,6 +74,16 @@ describe("draft helpers", () => {
     expect(stripDraft(reply)).toBe("Idea one\n\nBetter:\n\nThoughts?");
     expect(extractDraft("no draft ```python\nx\n```")).toBeNull();
   });
+
+  it("keeps code blocks nested inside a draft", () => {
+    const skill = "# Tidy\n\n```bash\nqpdf --check in.pdf\n```\n\nDone.";
+    for (const fence of ["```", "````"]) {
+      const reply = `Fixed.\n${fence}skill-draft\n${skill}\n${fence}\nTry it.`;
+      expect(extractDraft(reply)).toBe(skill);
+      expect(stripDraft(reply)).toBe("Fixed.\n\nTry it.");
+    }
+    expect(extractDraft("```skill-draft\nunterminated")).toBeNull();
+  });
 });
 
 describe("SkillImprovePanel", () => {
@@ -229,5 +239,36 @@ describe("SkillImprovePanel", () => {
     expect(screen.queryByText(/SECRET-CONTEXT/)).toBeNull();
     expect(screen.queryAllByText("Here is a proposed SKILL.md.")).toHaveLength(0);
     expect(screen.getByText("Proposal:")).toBeTruthy();
+  });
+});
+
+describe("project evidence scope (Part B3)", () => {
+  it("scopes evidence, chats and new sessions to the project and clears with the chip", async () => {
+    const onClearProject = vi.fn();
+    routes["POST /api/skills/improve/start"] = ok({ session_id: "imp-p" });
+    render(
+      <SkillImprovePanel
+        name="quotation-builder"
+        profile="default"
+        content={LIVE}
+        onOpenTab={onOpenTab}
+        project={{ slug: "q3", name: "Q3 pricing" }}
+        onClearProject={onClearProject}
+      />,
+    );
+    expect(screen.getByText("Evidence: project Q3 pricing")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "All runs" }));
+    await waitFor(() => expect(screen.getAllByText(/Q3 pricing/).length).toBeGreaterThan(1));
+    expect(screen.queryByText("Quote for ACME (USD)")).toBeNull();
+    expect(String(callsTo("GET /api/skills/usage/detail")[0][0])).toContain("&project=q3");
+    expect(String(callsTo("GET /api/skills/improve/sessions")[0][0])).toContain("&project=q3");
+
+    fireEvent.click(screen.getByRole("button", { name: "New improve chat" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start chat" }));
+    await waitFor(() => expect(callsTo("POST /api/skills/improve/start")).toHaveLength(1));
+    expect(bodyOf(callsTo("POST /api/skills/improve/start")[0])).toEqual({ name: "quotation-builder", project: "q3" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Show runs from everywhere" }));
+    expect(onClearProject).toHaveBeenCalled();
   });
 });

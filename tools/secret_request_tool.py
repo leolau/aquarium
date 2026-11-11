@@ -13,9 +13,10 @@ Surfaces:
   :func:`register_secret_surface` under the approval session key, exactly like
   ``tools.approval.register_gateway_notify``. It receives the
   ``secret.request`` event payload and, later, the final status.
-* link sender (messaging turns): one process-wide callable set by the gateway
-  with :func:`set_secret_link_sender`. It gets the request and its one-time
-  token and returns ``True`` once the link was sent.
+* link sender (messaging turns): registered per turn by ``gateway/run.py`` in
+  :mod:`gateway.secret_links`. It opens the request with a one-time link,
+  sends the link to the person and returns its ``request_id``; the tool then
+  waits on that request like any other.
 
 With neither, the tool answers ``unavailable``.
 """
@@ -38,9 +39,6 @@ DEFAULT_TIMEOUT_SECONDS = 600
 #: status)`` the outcome. Both run in the agent thread and must not block.
 SecretNotify = Callable[[Dict[str, Any]], None]
 SecretResolved = Callable[[str, str], None]
-#: ``sender(request, token) -> bool``: deliver ``/secret/{token}`` to the
-#: person on the turn's messaging channel; ``False`` when it could not.
-SecretLinkSender = Callable[[Any, str], bool]
 
 
 @dataclass(frozen=True)
@@ -51,9 +49,6 @@ class _Surface:
 
 _lock = threading.Lock()
 _surfaces: Dict[str, _Surface] = {}
-_link_sender: Optional[SecretLinkSender] = None
-
-_MESSAGING_EXCLUDED = {"", "api_server", "cli", "local", "tui", "cron", "webhook"}
 
 UNAVAILABLE_HINT = (
     "This conversation cannot show a secure secret prompt. Do not ask for the "
@@ -72,13 +67,6 @@ def register_secret_surface(
 def unregister_secret_surface(session_key: str) -> None:
     with _lock:
         _surfaces.pop(session_key, None)
-
-
-def set_secret_link_sender(sender: Optional[SecretLinkSender]) -> None:
-    """Install (or clear, with ``None``) the messaging link sender."""
-    global _link_sender
-    with _lock:
-        _link_sender = sender
 
 
 def _surface_for(session_key: str) -> Optional[_Surface]:
@@ -163,68 +151,96 @@ def request_secret_tool(
         return tool_error(f"kind must be one of {', '.join(sr.KINDS)}")
 
     session_key = _current_key()
+    label = (label or "").strip() or name
+    purpose = (purpose or "").strip()
+    username = (username or "").strip() or None
     surface = _surface_for(session_key)
-    platform = _session("HERMES_SESSION_PLATFORM")
-    with _lock:
-        sender = _link_sender
-    use_link = surface is None and sender is not None and platform not in _MESSAGING_EXCLUDED
-    if surface is None and not use_link:
-        return _unavailable(name)
+    if surface is None:
+        return _request_by_link(sr, name, label, purpose, kind, username, session_key, timeout)
 
     owner = _owner_user_id()
     if not owner:
         return _unavailable(name, "no signed-in person is bound to this conversation")
 
-    channel = "agent-home" if surface is not None else platform
     try:
-        req, token = sr.open_request(
+        req, _token = sr.open_request(
             owner_user_id=owner,
             profile=_profile(),
             session_key=_session("HERMES_SESSION_KEY") or session_key,
             run_id=session_key or None,
             name=name,
-            label=(label or "").strip() or name,
-            purpose=(purpose or "").strip(),
+            label=label,
+            purpose=purpose,
             kind=kind,
-            username=(username or "").strip() or None,
-            channel=channel,
+            username=username,
+            channel="agent-home",
             ttl_seconds=timeout,
-            with_link=use_link,
+            with_link=False,
         )
     except sr.SecretRequestError as exc:
         return tool_error(str(exc))
 
     try:
-        if surface is not None:
-            surface.notify(
-                {
-                    "request_id": req.id,
-                    "name": req.name,
-                    "label": req.label,
-                    "purpose": req.purpose,
-                    "kind": req.kind,
-                    "username": req.username,
-                    "expires_at": req.expires_at,
-                }
-            )
-        else:
-            assert sender is not None and token is not None
-            if not sender(req, token):
-                sr.expire(req.id)
-                return _unavailable(name, "the secure link could not be sent")
+        surface.notify(
+            {
+                "request_id": req.id,
+                "name": req.name,
+                "label": req.label,
+                "purpose": req.purpose,
+                "kind": req.kind,
+                "username": req.username,
+                "expires_at": req.expires_at,
+            }
+        )
     except Exception:
         logger.warning("request_secret: surface failed for %s", req.id, exc_info=True)
         sr.expire(req.id)
         return _unavailable(name, "the secure prompt could not be shown")
 
     status = sr.wait(req.id, timeout, should_stop=_interrupted)
-    if surface is not None and surface.resolved is not None:
+    if surface.resolved is not None:
         try:
             surface.resolved(req.id, status)
         except Exception:
             logger.debug("request_secret: resolved callback failed", exc_info=True)
-    if status == sr.STORED:
-        return json.dumps({"status": "stored", "secret": req.name, "kind": req.kind})
+    return _result(status, req.name, req.kind)
+
+
+def _request_by_link(sr, name, label, purpose, kind, username, session_key, timeout) -> str:
+    """Messaging turn: the gateway's link sender opens the request and sends the link."""
+    try:
+        from gateway.secret_links import get_secret_link_sender
+
+        sender = get_secret_link_sender(session_key) if session_key else None
+    except Exception:
+        sender = None
+    if sender is None:
+        return _unavailable(name)
+    try:
+        sent = sender(
+            name=name,
+            label=label,
+            purpose=purpose,
+            kind=kind,
+            username=username,
+            run_id=session_key or None,
+            ttl_seconds=int(timeout),
+        ) or {}
+    except Exception:
+        logger.warning("request_secret: link sender failed", exc_info=True)
+        return _unavailable(name, "the secure link could not be sent")
+    request_id = sent.get("request_id")
+    if sent.get("status") == "error":
+        return tool_error(str(sent.get("error") or "invalid secret request"))
+    if sent.get("status") != "sent" or not request_id:
+        hint = sent.get("hint") or UNAVAILABLE_HINT.format(name=name)
+        return json.dumps({"status": "unavailable", "hint": hint})
+    return _result(sr.wait(request_id, timeout, should_stop=_interrupted), name, kind)
+
+
+def _result(status: str, name: str, kind: str) -> str:
+    if status == "stored":
+        return json.dumps({"status": "stored", "secret": name, "kind": kind})
     return json.dumps({"status": status})
 
 

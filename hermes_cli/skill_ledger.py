@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS skill_events (
 CREATE INDEX IF NOT EXISTS idx_skill_events_name_ts ON skill_events(skill_name, ts);
 CREATE INDEX IF NOT EXISTS idx_skill_events_ts ON skill_events(ts);
 CREATE INDEX IF NOT EXISTS idx_skill_events_run ON skill_events(kanban_run_id);
+CREATE INDEX IF NOT EXISTS idx_skill_events_project_ts ON skill_events(project_slug, ts);
 """
 
 _INIT_LOCK = threading.Lock()
@@ -350,6 +351,7 @@ def _blank_row(name: str) -> Dict[str, Any]:
         "partial": 0,
         "failure": 0,
         "unknown": 0,
+        "rated_down": 0,
         "success_rate": None,
         "last_used_at": None,
     }
@@ -381,6 +383,8 @@ def _summarise(rows: List[sqlite3.Row], days: int) -> List[Dict[str, Any]]:
             entry["_projects"].add(row["project_slug"])
         outcome = row["outcome"] if row["outcome"] in OUTCOMES else "unknown"
         entry[outcome] += 1
+        if row["rating"] is not None and int(row["rating"]) < 0:
+            entry["rated_down"] += 1
         ts = float(row["ts"])
         if entry["last_used_at"] is None or ts > entry["last_used_at"]:
             entry["last_used_at"] = ts
@@ -399,27 +403,60 @@ def _summarise(rows: List[sqlite3.Row], days: int) -> List[Dict[str, Any]]:
     return out
 
 
-def summary(*, days: int = 90, name: Optional[str] = None) -> List[Dict[str, Any]]:
+def summary(
+    *, days: int = 90, name: Optional[str] = None, project: Optional[str] = None
+) -> List[Dict[str, Any]]:
     """Per-skill rollup over the last ``days`` days (busiest first).
 
     ``trend`` is dense: one ``{"day", "uses"}`` entry per UTC day in the
     window, oldest first. ``success_rate`` is success over uses with a known
-    outcome, or None when none is known.
+    outcome, or None when none is known. ``rated_down`` counts uses someone
+    rated not helpful. ``project`` keeps only uses attributed to that project
+    slug (card uses; see :func:`_resolve_pending`).
     """
     days = _clamp_days(days)
     since = _since(days)
     with _connect() as conn:
         _resolve_pending(conn, since)
         query = (
-            "SELECT skill_name, ts, session_id, kanban_task_id, project_slug, outcome"
+            "SELECT skill_name, ts, session_id, kanban_task_id, project_slug, outcome, rating"
             " FROM skill_events WHERE ts >= ?"
         )
         params: List[Any] = [since]
         if name:
             query += " AND skill_name = ?"
             params.append(name)
+        if project:
+            query += " AND project_slug = ?"
+            params.append(project)
         rows = conn.execute(query, params).fetchall()
     return _summarise(rows, days)
+
+
+def project_rollup(slug: str, days: int = 90) -> List[Dict[str, Any]]:
+    """:func:`summary` of the uses attributed to project ``slug``."""
+    return summary(days=days, project=slug)
+
+
+def project_cards(slug: str, days: int = 90) -> List[Dict[str, Any]]:
+    """Distinct (skill, card) pairs of project ``slug`` in the window.
+
+    ``[{"skill_name", "board", "task_id"}]``, so callers can count cards and
+    map them to project runs without reading every event.
+    """
+    days = _clamp_days(days)
+    since = _since(days)
+    with _connect() as conn:
+        _resolve_pending(conn, since)
+        rows = conn.execute(
+            "SELECT DISTINCT skill_name, kanban_board, kanban_task_id FROM skill_events"
+            " WHERE project_slug = ? AND ts >= ? AND kanban_task_id IS NOT NULL",
+            (slug, since),
+        ).fetchall()
+    return [
+        {"skill_name": r["skill_name"], "board": r["kanban_board"], "task_id": r["kanban_task_id"]}
+        for r in rows
+    ]
 
 
 def _event_dict(row: sqlite3.Row) -> Dict[str, Any]:
@@ -449,11 +486,13 @@ def events(
     days: int = 90,
     limit: int = 50,
     cursor: Optional[Any] = None,
+    project: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Newest-first uses of ``name``: ``{"events": [...], "next_cursor"}``.
 
     ``cursor`` is the ``next_cursor`` of the previous page (an opaque string;
     today the last event id seen). ``by_version`` rolls up the whole window.
+    ``project`` narrows both to uses attributed to that project slug.
     """
     days = _clamp_days(days)
     since = _since(days)
@@ -469,8 +508,13 @@ def events(
             raise ValueError("invalid cursor")
     with _connect() as conn:
         _resolve_pending(conn, since)
-        query = "SELECT * FROM skill_events WHERE skill_name = ? AND ts >= ?"
-        params: List[Any] = [name, since]
+        scope = "skill_name = ? AND ts >= ?"
+        scope_params: List[Any] = [name, since]
+        if project:
+            scope += " AND project_slug = ?"
+            scope_params.append(project)
+        query = f"SELECT * FROM skill_events WHERE {scope}"
+        params: List[Any] = list(scope_params)
         if before is not None:
             query += " AND id < ?"
             params.append(before)
@@ -481,9 +525,9 @@ def events(
             "SELECT version_id, COUNT(*) AS uses,"
             " SUM(outcome = 'success') AS s, SUM(outcome = 'partial') AS p,"
             " SUM(outcome = 'failure') AS f, MAX(ts) AS last_ts"
-            " FROM skill_events WHERE skill_name = ? AND ts >= ?"
+            f" FROM skill_events WHERE {scope}"
             " GROUP BY version_id ORDER BY last_ts DESC",
-            (name, since),
+            scope_params,
         ).fetchall()
     page = [_event_dict(r) for r in rows[:limit]]
     next_cursor = str(page[-1]["id"]) if len(rows) > limit and page else None

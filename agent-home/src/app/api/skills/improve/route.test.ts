@@ -89,6 +89,23 @@ describe("Skills Improve BFF routes", () => {
     expect(boundProfiles).toEqual(["coder", undefined]);
   });
 
+  it("forwards a project slug on improve/start and improve/sessions (Part B3)", async () => {
+    getPrincipal.mockResolvedValue(who("owner"));
+    client.request.mockResolvedValue({ session_id: "imp-p" });
+    await start(post({ name: "quotation-builder", project: "site-relaunch", profile: "coder" }));
+    expect(client.request).toHaveBeenLastCalledWith("/api/skills/improve/start", {
+      method: "POST",
+      json: { name: "quotation-builder", project: "site-relaunch" },
+    });
+    client.request.mockResolvedValue([]);
+    await sessions(get("/api/skills/improve/sessions?name=quotation-builder&project=site-relaunch"));
+    expect(client.request).toHaveBeenLastCalledWith("/api/skills/improve/sessions?name=quotation-builder&project=site-relaunch");
+    client.request.mockClear();
+    expect((await start(post({ name: "a", project: "../etc" }))).status).toBe(400);
+    expect((await sessions(get("/api/skills/improve/sessions?name=a&project=a%26b"))).status).toBe(400);
+    expect(client.request).not.toHaveBeenCalled();
+  });
+
   it("returns the reply and a draft only when one was proposed", async () => {
     getPrincipal.mockResolvedValue(who("admin"));
     client.request.mockResolvedValueOnce({ reply: "Here it is", draft: "---\nname: a\n---" });

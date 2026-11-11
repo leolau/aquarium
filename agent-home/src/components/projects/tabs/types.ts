@@ -15,6 +15,7 @@ export const PROJECT_TABS = [
   "outputs",
   "iterations",
   "inputs",
+  "skills",
   "plan",
   "settings",
 ] as const;
@@ -28,6 +29,7 @@ export const PROJECT_TAB_LABEL: Record<ProjectTab, string> = {
   outputs: "Outputs",
   iterations: "Iterations",
   inputs: "Inputs",
+  skills: "Skills",
   plan: "Plan",
   settings: "Settings",
 };

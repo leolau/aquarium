@@ -98,6 +98,15 @@ const nextConfig = {
         ],
       },
       {
+        // FG-37 one-time secret link: the URL is the credential until used.
+        source: "/secret/:path*",
+        headers: [
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow, noarchive" },
+          { key: "Cache-Control", value: "no-store, max-age=0" },
+        ],
+      },
+      {
         // A survey link identifies one attendee; same treatment as activation.
         source: "/survey/:path*",
         headers: [

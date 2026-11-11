@@ -100,6 +100,7 @@ export const APP_URLS: Record<string, AppUrls> = {
   activity: { pages: [{ path: "/activity" }], apis: [] },
   graph: { pages: [{ path: "/graph" }], apis: [] },
   capacity: { pages: [{ path: "/capacity" }], apis: [] },
+  sites: { pages: [{ path: "/sites" }], apis: [{ path: "/api/sites" }] },
   users: {
     pages: [{ path: "/users" }, { path: "/members" }],
     apis: [{ path: "/api/comms/directory" }],
