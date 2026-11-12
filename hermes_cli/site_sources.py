@@ -2756,7 +2756,10 @@ def _clip(value: Any, limit: int = 200) -> Any:
 
 
 _INVENTORY_CAPS = {"links": 60, "buttons": 80, "forms": 20, "tables": 15, "datatables": 10,
-                   "json_requests": 30, "pagination": 20, "headings": 20, "extracted": 5}
+                   "json_requests": 30, "pagination": 20, "headings": 20, "extracted": 5,
+                   "step_requests": 20}
+# Request body samples and JSON record-key lists are worth a longer cut.
+_INVENTORY_CLIP = {"step_requests": 320}
 
 
 def compact_inventory(inv: Mapping[str, Any]) -> Dict[str, Any]:
@@ -2765,7 +2768,7 @@ def compact_inventory(inv: Mapping[str, Any]) -> Dict[str, Any]:
     for key, value in inv.items():
         if isinstance(value, list) and key in _INVENTORY_CAPS:
             cap = _INVENTORY_CAPS[key]
-            out[key] = _clip(value[:cap], 120)
+            out[key] = _clip(value[:cap], _INVENTORY_CLIP.get(key, 120))
             if len(value) > cap:
                 out[f"{key}_omitted"] = len(value) - cap
         elif key == "text" and isinstance(value, str):

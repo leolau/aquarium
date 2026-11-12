@@ -8,6 +8,7 @@ import copy
 import datetime as dt
 import importlib.util
 import json
+import time
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
@@ -269,10 +270,10 @@ class FakeDriver(srr.Driver):
     def select(self, selector, value, label):
         pass
 
-    def press(self, selector, key):
+    def press(self, selector, key, *, timeout_ms=None):
         pass
 
-    def submit(self, selector):
+    def submit(self, selector, *, timeout_ms=None):
         pass
 
     def wait(self, step):
@@ -993,3 +994,130 @@ def test_e2e_when_runs_full_steps_on_full_loads_and_incremental_steps_otherwise(
     items, report = _run(site, recipe, mode="incremental")
     assert [c["values"]["by"] for c in site.state.json_calls] == ["opened"] * 3
     assert report.full_entities == ["data"]
+
+
+# --------------------------------------------------------------------------
+# explore: requests each step triggered
+# --------------------------------------------------------------------------
+
+
+def test_json_shape_guesses_the_records_path():
+    assert srr.json_shape([{"a": 1, "m": {"n": 2}}, {"a": 2}]) == {
+        "type": "array", "records_path": "", "records": 2, "record_keys": ["a", "m.n"]}
+    shape = srr.json_shape({"status": "ok", "recordsTotal": 9, "meta": {"tags": ["x"]},
+                            "result": {"rows": [{"id": 1}, {"id": 2}], "total": 2}})
+    assert shape["records_path"] == "result.rows" and shape["records"] == 2
+    assert shape["record_keys"] == ["id"] and shape["keys"][:2] == ["status", "recordsTotal"]
+    assert shape["totals"] == {"recordsTotal": 9}
+    assert srr.json_shape({"data": []})["records_path"] == "data"
+    assert srr.json_shape("x") == {"type": "str"}
+
+
+def test_request_sample_masks_secret_looking_values_and_truncates():
+    form = srr.request_sample("user=leo&password=hunter2&date_from=2026-01-01", "application/x-www-form-urlencoded")
+    assert "hunter2" not in form and f"password={srr.REDACTED}" in form and "date_from=2026-01-01" in form
+    body = srr.request_sample(json.dumps({"q": {"from": "2026-01-01", "csrf_token": "abc"}}), "application/json")
+    assert json.loads(body) == {"q": {"from": "2026-01-01", "csrf_token": srr.REDACTED}}
+    assert len(srr.request_sample("a=" + "x" * 2000, "")) <= srr.REQUEST_SAMPLE_CHARS + 1
+    assert srr.request_sample("\x00binary", "application/octet-stream").startswith("(7 characters")
+    assert srr.request_sample("plain words", "text/plain") == "plain words"
+    assert srr.request_sample("", "") is None
+    leaky = srr.request_sample("api_key=k1&sid=s1&apiKey=k2&q=abc&tag=" + "a1B2" * 8, "")
+    assert leaky == "api_key={r}&sid={r}&apiKey={r}&q=abc&tag={r}".format(r=srr.REDACTED)
+    nested = json.loads(srr.request_sample(json.dumps({"ids": ["Zx9" * 10], "d": "2026-01-01T00:00:00.000+08:00"})))
+    assert nested == {"ids": [srr.REDACTED], "d": "2026-01-01T00:00:00.000+08:00"}
+
+
+@pytest.mark.parametrize("value", [0, 50, "1000", True, srr.MAX_STEP_TIMEOUT_MS + 1])
+def test_validate_rejects_bad_step_timeouts(value):
+    recipe = fixture_recipe()
+    recipe["entities"]["about"]["steps"].insert(0, {"op": "click", "text": "About", "timeout_ms": value})
+    assert any("'timeout_ms'" in p for p in srr.recipe_problems(recipe))
+    recipe["entities"]["about"]["steps"][0]["timeout_ms"] = 90_000
+    assert not any("'timeout_ms'" in p for p in srr.recipe_problems(recipe))
+    recipe["entities"]["about"]["steps"][0] = {"op": "goto", "url": "/about", "timeout_ms": 5000}
+    assert any("'timeout_ms' works on" in p for p in srr.recipe_problems(recipe))
+
+
+def _query_steps(site, *extra):
+    lo = (site.state.today - dt.timedelta(days=3)).isoformat()
+    return [{"op": "goto", "url": "/query"}, {"op": "fill", "selector": "#q-from", "value": lo},
+            {"op": "fill", "selector": "#q-to", "value": site.state.today.isoformat()},
+            {"op": "click", "text": "Search"}, *extra]
+
+
+@needs_browser
+def test_e2e_browse_reports_the_endpoint_a_search_button_calls(site):
+    probes = [{"name": "query", "steps": _query_steps(site, {"op": "wait", "selector": "#q-results tbody tr"})}]
+    inv = dict(srr.browse(fixture_recipe(site.base_url), probes, CRED, allow_private=True))["query"]
+    assert "error" not in inv
+    groups = {g["step"]: g for g in inv["step_requests"]}
+    assert list(groups) == [4] and groups[4]["op"] == "click"
+    (req,) = groups[4]["requests"]
+    assert "pending" not in req
+    assert req["method"] == "POST" and req["path"] == "/query/search" and req["status"] == 200
+    assert req["request_type"].startswith("application/json") and "json" in req["content_type"]
+    sent = json.loads(req["body"])
+    assert sent["date_to"] == site.state.today.isoformat() and sent["token"] == srr.REDACTED
+    shape = req["shape"]
+    assert shape["records_path"] == "result.rows" and shape["records"] == 20
+    assert {"case_no", "opened", "customer.name"} <= set(shape["record_keys"])
+    assert req["bytes"] > 100
+    table = next(t for t in inv["tables"] if t["selector"] == "#q-results")
+    assert table["rows"] == 20
+    assert len([c for c in site.state.json_calls if c["path"] == "/query/search"]) == 1
+    summary = srr.inventory_summary("query", inv)
+    assert "after step 4 (click): POST /query/search" in summary and "'result.rows': 20" in summary
+    assert CRED["password"] not in json.dumps(inv)
+    assert site.state.forbidden_hits == []
+
+
+@needs_browser
+def test_e2e_browse_keeps_the_requests_when_a_step_times_out(site):
+    probes = [{"name": "query", "steps": _query_steps(site, {"op": "wait", "selector": "#never", "timeout_ms": 800})},
+              {"name": "slow_click", "steps": [{"op": "goto", "url": "/query"},
+                                               {"op": "click", "selector": "#missing", "timeout_ms": 600}]}]
+    started = time.monotonic()
+    got = dict(srr.browse(fixture_recipe(site.base_url), probes, CRED, allow_private=True))
+    assert time.monotonic() - started < 20
+    inv = got["query"]
+    assert "Timeout" in inv["error"] and "step_requests" in inv["hint"]
+    paths = [r["path"] for g in inv["step_requests"] for r in g["requests"]]
+    assert paths == ["/query/search"]
+    assert any(t["selector"] == "#q-results" for t in inv["tables"])
+    assert "hint:" in srr.inventory_summary("query", inv)
+    assert "Timeout" in got["slow_click"]["error"] and got["slow_click"]["hint"]
+
+
+@needs_browser
+def test_e2e_browse_labels_nested_steps_and_reports_pending_calls(site):
+    window = {"op": "date_windows", "from": "{{date-3}}", "days": 2, "steps": [
+        {"op": "fill", "selector": "#q-from", "value": "{{window_from}}"},
+        {"op": "fill", "selector": "#q-to", "value": "{{window_to}}"},
+        {"op": "click", "text": "Search"}, {"op": "wait", "ms": 300}]}
+    probes = [{"name": "windows", "steps": [{"op": "goto", "url": "/query"}, window]},
+              {"name": "slow", "steps": [{"op": "goto", "url": "/query"}, {"op": "click", "text": "Slow search"},
+                                         {"op": "wait", "selector": "#never", "timeout_ms": 500}]}]
+    recipe = fixture_recipe(site.base_url)
+    recipe["timeout_ms"] = 1000
+    got = dict(srr.browse(recipe, probes, CRED, allow_private=True))
+    groups = got["windows"]["step_requests"]
+    assert [(g["step"], g["op"]) for g in groups] == [("2.3", "click"), ("2.3", "click")]
+    assert all(g["requests"][0]["path"] == "/query/search" for g in groups)
+    slow = got["slow"]
+    assert "Timeout" in slow["error"]
+    (req,) = [r for g in slow["step_requests"] for r in g["requests"]]
+    assert req["path"] == "/query/search" and "pending" in req and "status" not in req
+    summary = srr.inventory_summary("slow", slow)
+    assert "POST /query/search" in summary and "-> PENDING" in summary
+
+
+@needs_browser
+def test_e2e_captured_search_endpoint_works_as_extract_json(site):
+    step = {"op": "extract_json", "url": "/query/search", "method": "POST", "records": "result.rows",
+            "json": {"date_from": "{{window_from}}", "date_to": "{{window_to}}"}, "columns": CASE_COLUMNS}
+    recipe = _one_entity(site, [{"op": "date_windows", "from": "{{cursor}}", "default": "{{date-60}}", "days": 10,
+                                 "steps": [step]}], ["case_no"], cursor="opened")
+    items, report = _run(site, recipe)
+    assert len(items) == 230 and report.full_entities == ["data"]
+    assert site.state.forbidden_hits == []

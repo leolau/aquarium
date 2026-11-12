@@ -43,14 +43,19 @@ and retries that page.
 Targets are `{"selector": "css"}` or `{"text": "Visible label"}` (button,
 link or input button; `exact`, `nth` optional).
 
+`timeout_ms` (100 to 600000) on a `click`, `submit`, `press`, `wait`,
+`extract_datatable` or `extract_json` step overrides the recipe's for that
+step. Without one, `click`, `submit` and `press` wait twice the recipe's
+`timeout_ms`, since a click on a heavy page can take a while.
+
 | op | keys |
 |---|---|
 | `goto` | `url` (same site only) |
-| `click` | target |
+| `click` | target, `timeout_ms` |
 | `fill` | `selector`, `value` (template), `default` (used when `{{cursor}}` has no value), `format` |
 | `select` | `selector`, `value` or `label` |
-| `press` | `selector`, `key` (`Enter` or `Tab`) |
-| `submit` | `selector` of the search button or form (default first form) |
+| `press` | `selector`, `key` (`Enter` or `Tab`), `timeout_ms` |
+| `submit` | `selector` of the search button or form (default first form), `timeout_ms` |
 | `wait` | `selector` (visible), `text`, `gone` (hidden), `ms`, `timeout_ms` |
 | `extract_table` | `table` (selector), `row` (default `tbody tr`), `header` (header cell selector), `columns` |
 | `extract_fields` | `key` (content key), `fields` |

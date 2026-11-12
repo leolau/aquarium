@@ -249,6 +249,26 @@ def test_site_db_explore_logs_in_with_the_saved_login(gateway_site):
 
 
 @needs_browser
+def test_site_db_explore_reports_the_endpoint_behind_a_search_button(gateway_site):
+    recipe = {k: v for k, v in RECIPE.items() if k != "entities"}
+    recipe["base_url"] = gateway_site.base_url
+    today = gateway_site.state.today.isoformat()
+    steps = [{"op": "goto", "url": "/query"}, {"op": "fill", "selector": "#q-from", "value": today},
+             {"op": "fill", "selector": "#q-to", "value": today}, {"op": "click", "text": "Search", "timeout_ms": 20000},
+             {"op": "wait", "selector": "#q-results tbody tr"}]
+    out = _tool("alice", action="explore", site="fixture", recipe=recipe, probes=[{"name": "query", "steps": steps}])
+    assert out["success"], out
+    (page,) = out["pages"]
+    (group,) = page["inventory"]["step_requests"]
+    assert group["step"] == 4 and group["requests"][0]["path"] == "/query/search"
+    assert group["requests"][0]["shape"]["records_path"] == "result.rows"
+    assert "after step 4 (click): POST /query/search" in page["summary"]
+    assert len([c for c in gateway_site.state.json_calls if c["path"] == "/query/search"]) == 1
+    assert fx.PASSWORD not in json.dumps(out)
+    assert gateway_site.state.forbidden_hits == []
+
+
+@needs_browser
 def test_site_db_preview_dry_runs_with_a_row_cap(gateway_site):
     out = _tool("alice", action="preview", site="fixture", recipe=dict(RECIPE, base_url=gateway_site.base_url), max_rows=20, sample=2)
     assert out["success"] and out["ok"], out

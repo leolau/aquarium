@@ -22,6 +22,9 @@ shapes the runner must handle on real back-office sites:
 - ``POST /search/rma_case``: a JSON read endpoint (top-level array) filtered
   by ``date_from`` / ``date_to``; ``/api/rma_stream`` sends it without a
   Content-Length.
+- ``/query``: a query-builder page whose results table stays empty until
+  the "Search" button posts the date filter as JSON to ``POST /query/search``
+  (``{"status", "result": {"rows": [...], "total"}}``); nothing on page load.
 - ``/logout``, ``/admin/change_passwd``, ``/orders/new``, ``/orders/edit``,
   ``/orders/delete``: traps. Every hit is recorded in ``state.forbidden_hits``.
 
@@ -36,6 +39,7 @@ import html
 import json
 import secrets
 import threading
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -301,6 +305,8 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/rma_cases": self._rma_cases_api,
             "/search/rma_case": self._rma_search,
             "/api/rma_stream": self._rma_stream,
+            "/query": self._query_page,
+            "/query/search": self._query_search,
         }.get(path)
         if handler is None:
             return self._send(404, _page("Not found", "<p>Not found</p>"))
@@ -423,6 +429,46 @@ class _Handler(BaseHTTPRequestHandler):
             "</script>"
         )
         self._send(200, _page("Reference", body))
+
+    def _query_page(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
+        body = (
+            "<h1>Case query</h1>"
+            '<div id="builder"><input type="hidden" id="qtoken" value="tok-123">'
+            '<label>From <input type="date" id="q-from"></label>'
+            '<label>To <input type="date" id="q-to"></label>'
+            '<button type="button" id="q-search">Search</button>'
+            '<button type="button" id="q-slow">Slow search</button></div>'
+            '<table id="q-results"><thead><tr><th>Case</th><th>Opened</th><th>Customer</th></tr></thead>'
+            "<tbody></tbody></table>"
+            "<script>"
+            "document.getElementById('q-search').addEventListener('click', async () => {"
+            "  const body = {date_from: document.getElementById('q-from').value,"
+            "    date_to: document.getElementById('q-to').value, token: document.getElementById('qtoken').value};"
+            "  const r = await fetch('/query/search', {method: 'POST',"
+            "    headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});"
+            "  const j = await r.json();"
+            "  document.querySelector('#q-results tbody').innerHTML = j.result.rows.map((c) =>"
+            "    `<tr><td>${c.case_no}</td><td>${c.opened}</td><td>${c.customer.name}</td></tr>`).join('');"
+            "});"
+            "document.getElementById('q-slow').addEventListener('click', () => {"
+            "  fetch('/query/search', {method: 'POST', headers: {'Content-Type': 'application/json'},"
+            "    body: JSON.stringify({slow: '1'})});"
+            "});"
+            "</script>"
+        )
+        self._send(200, _page("Case query", body))
+
+    def _query_search(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
+        if method != "POST":
+            return self._send(405, "{}", ctype="application/json")
+        raw = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode("utf-8")
+        values = {k: str(v) for k, v in json.loads(raw or "{}").items()}
+        self._note_json_call(method, values)
+        if values.get("slow"):
+            time.sleep(3)
+        rows = self._rma_rows(values)
+        self._send(200, json.dumps({"status": "ok", "result": {"rows": rows, "total": len(rows)}}),
+                   ctype="application/json")
 
     def _warehouses_api(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
         self._send(200, json.dumps(self.state.warehouses), ctype="application/json")

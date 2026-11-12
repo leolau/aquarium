@@ -56,7 +56,7 @@ browser either.
 
 | File | What |
 |------|------|
-| `site_db` `explore` | log in with the site's saved login and inventory pages after read-only steps: buttons (incl. `onclick`), forms + fields, tables (headers, row count, sample rows), DataTables, same-origin JSON requests, pagination, text; dangerous controls flagged `forbidden` |
+| `site_db` `explore` | log in with the site's saved login and inventory pages after read-only steps: buttons (incl. `onclick`), forms + fields, tables (headers, row count, sample rows), DataTables, same-origin JSON requests, the XHR/fetch calls each step triggered (`step_requests`), pagination, text; dangerous controls flagged `forbidden` |
 | `site_db` `preview` | dry-run a recipe (no DB writes, `max_rows` per entity, default 50): counts, sample rows, duplicate keys, failures |
 | `scripts/explore_site.py`, `scripts/preview_recipe.py` | the same two from a shell, for development boxes where the terminal can read the credential store; on a hardened box they stop with "use site_db explore / preview" |
 | `scripts/check_design.py` | check `design.json` + `recipe.json` shape and that they agree |
@@ -113,6 +113,28 @@ Work in `~/site-study/<slug>/` (`design.json`, `recipe.json`,
        `start`/`length`; date filters inside `date_windows`). Copy the
        parameter names from `json_requests`; check the endpoint only
        *reads* (search/list/report — never save/update/delete).
+     - **A table that stays empty until you search** (a query builder,
+       a "Search"/"Query" button, a report wizard) is filled by an
+       XHR/fetch the button fires, so nothing shows on page load. Probe
+       it: `goto` the page, `fill` a *narrow* date filter (one or two
+       days, e.g. `{{date-1}}`..`{{today}}`), `click` the search button,
+       then `wait` for a result row. The page's `step_requests` lists,
+       per step, the same-origin calls that step triggered: method,
+       path, request content type, a masked body sample, status, size
+       and, for JSON, its `shape` (`keys`, the guessed `records_path`,
+       `records` count, first `record_keys`). Turn that call into an
+       `extract_json` step: same `url`/`method`, `form` or `json` body
+       with the same fields, the date fields set to
+       `{{window_from}}`/`{{window_to}}` inside a `date_windows` (small
+       `days`, so each call is bounded; calls run one at a time with
+       `delay_ms` between them), `records` = `records_path`, columns by
+       `field` from `record_keys`. Leave out tokens the sample shows as
+       masked unless the endpoint refuses without them.
+     - A click that **times out** (a heavy page, a huge dropdown) still
+       returns `step_requests` captured so far and a `hint`; read the
+       endpoint there instead of retrying the click. Give a slow step a
+       `timeout_ms` (clicks/submits default to twice the recipe's
+       `timeout_ms`), or pick a more specific selector.
      - Point `table` at the table's id (the inventory's `selector`); with
        several DataTables on a page a class selector is ambiguous.
      - A source that can really be empty needs `allow_empty: true`;
