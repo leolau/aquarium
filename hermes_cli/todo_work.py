@@ -54,24 +54,27 @@ def draft_dir_for(todo_id: str) -> Path:
 
 
 def _shared_draft_perms(draft_dir: Path) -> None:
-    """Draft dirs are touched by three service users.
+    """Draft dirs are touched by two service users.
 
     The triage service / dashboard (``hermes``) creates them, the work
-    session's tools (``hermes-tools``) write ``DRAFT.md`` / ``REPLY.txt``,
-    and the draft PATCH route (``hermes`` again) edits them afterwards.
-    A root-created or owner-only dir deadlocks the loop — the session
-    cannot write its deliverable at all.
-
-    ``drafts/`` gets the sticky bit (any service user may create a
-    per-to-do dir but cannot remove another's); the leaf dir is plain
-    0777 so a later PATCH or revision session can replace files it does
-    not own. Best-effort: a single-user install has no cross-user
-    problem and nothing to fix.
+    session's tools (``terminal.run_as``, ``hermes-tools`` on the box) write
+    ``DRAFT.md`` / ``REPLY.txt``, and the draft PATCH route (``hermes``
+    again) edits them afterwards. Both dirs go to the terminal user's group
+    (``hermes`` is in it), never to everyone on the box: ``drafts/`` is
+    setgid + sticky so a per-to-do dir inherits the group and nobody removes
+    another's, the leaf is setgid so a later PATCH or revision session can
+    replace files it does not own. No ``run_as`` means one user, nothing to
+    share. Best-effort: a dir someone else owns keeps its mode.
     """
-    for path, mode in ((draft_dir.parent, 0o1777), (draft_dir, 0o777)):
+    from tools import terminal_user
+
+    user = terminal_user.configured_user()
+    if not user:
+        return
+    for path, mode in ((draft_dir.parent, 0o3770), (draft_dir, 0o2770)):
         try:
-            os.chmod(path, mode)
-        except OSError:
+            terminal_user.share_with(user, str(path), mode)
+        except (OSError, KeyError):
             pass
 
 
