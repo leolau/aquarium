@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import logging
+import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -50,6 +51,54 @@ def draft_dir_for(todo_id: str) -> Path:
     from hermes_constants import get_hermes_home
 
     return Path(get_hermes_home()) / "drafts" / f"todo_{todo_id}"
+
+
+def _shared_draft_perms(draft_dir: Path) -> None:
+    """Draft dirs are touched by three service users.
+
+    The triage service / dashboard (``hermes``) creates them, the work
+    session's tools (``hermes-tools``) write ``DRAFT.md`` / ``REPLY.txt``,
+    and the draft PATCH route (``hermes`` again) edits them afterwards.
+    A root-created or owner-only dir deadlocks the loop — the session
+    cannot write its deliverable at all.
+
+    ``drafts/`` gets the sticky bit (any service user may create a
+    per-to-do dir but cannot remove another's); the leaf dir is plain
+    0777 so a later PATCH or revision session can replace files it does
+    not own. Best-effort: a single-user install has no cross-user
+    problem and nothing to fix.
+    """
+    for path, mode in ((draft_dir.parent, 0o1777), (draft_dir, 0o777)):
+        try:
+            os.chmod(path, mode)
+        except OSError:
+            pass
+
+
+def prepare_draft_dir(draft_dir: Path) -> Path:
+    """Create a drafts dir the whole service split can share."""
+    draft_dir.mkdir(parents=True, exist_ok=True)
+    _shared_draft_perms(draft_dir)
+    return draft_dir
+
+
+def write_draft_file(path: Path, text: str) -> None:
+    """Write a draft file, replacing whatever is there.
+
+    The existing file may be owned by a different service user than the
+    caller (session tools run as ``hermes-tools``, the draft API as
+    ``hermes``): opening it for write needs ownership, but rename only
+    needs a writable directory — which the shared perms provide.
+    """
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _work_instructions(draft_dir: Path, *, revision: bool) -> str:
@@ -341,7 +390,7 @@ def launch_todo_work(
     """
     draft_dir = draft_dir_for(todo.id)
     try:
-        draft_dir.mkdir(parents=True, exist_ok=True)
+        prepare_draft_dir(draft_dir)
     except OSError as exc:
         log.warning("todo_work: could not create %s (%s)", draft_dir, exc)
 

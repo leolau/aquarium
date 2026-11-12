@@ -293,7 +293,11 @@ def _row_to_todo(row: Any, *, created: bool = True) -> Todo:
         snoozed_until=row["snoozed_until"],
         closed_at=row["closed_at"],
         outcome=row["outcome"],
-        work_result=row["work_result"],
+        work_result=(
+            row["work_result"]
+            if row["work_result"] is None or isinstance(row["work_result"], dict)
+            else json.loads(row["work_result"])
+        ),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         created=created,

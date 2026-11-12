@@ -739,17 +739,23 @@ async def update_todo_draft(request: Request, todo_id: str) -> dict[str, Any]:
     if todo is None:
         raise HTTPException(status_code=404, detail="No such to-do")
 
-    from hermes_cli.todo_work import DRAFT_FILENAME, REPLY_FILENAME, draft_dir_for
+    from hermes_cli.todo_work import (
+        DRAFT_FILENAME,
+        REPLY_FILENAME,
+        draft_dir_for,
+        prepare_draft_dir,
+        write_draft_file,
+    )
 
     work_result = dict(todo.work_result or {})
     draft_dir = Path(str(work_result.get("draft_dir") or draft_dir_for(todo.id)))
     try:
-        draft_dir.mkdir(parents=True, exist_ok=True)
+        prepare_draft_dir(draft_dir)
         if draft_text is not None:
-            (draft_dir / DRAFT_FILENAME).write_text(str(draft_text), encoding="utf-8")
+            write_draft_file(draft_dir / DRAFT_FILENAME, str(draft_text))
             work_result["draft_text"] = str(draft_text)[:50000]
         if reply_text is not None:
-            (draft_dir / REPLY_FILENAME).write_text(str(reply_text), encoding="utf-8")
+            write_draft_file(draft_dir / REPLY_FILENAME, str(reply_text))
             work_result["reply_text"] = str(reply_text)[:50000]
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"could not write draft: {exc}")
