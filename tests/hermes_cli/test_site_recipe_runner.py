@@ -1406,3 +1406,23 @@ def test_secret_paths_in_a_json_answer():
     assert sorted(srr.secret_paths(answer)) == ["api_key", "audit.by.pwd_hash", "session"]
     assert srr.json_shape(answer)["secret_keys"]
     assert "secret_keys" not in srr.json_shape({"data": [{"id": 1, "name": "Ann", "token_count": 3}]})
+
+
+@needs_browser
+def test_e2e_a_non_search_button_next_to_empty_filters_is_clicked_not_refused(site):
+    probes = [{"name": "next", "steps": [{"op": "goto", "url": "/wizard"}, {"op": "click", "text": "Next"},
+                                         {"op": "wait", "selector": "#wz-more"}]},
+              {"name": "search", "steps": [{"op": "goto", "url": "/wizard"}, {"op": "click", "text": "Search"}]}]
+    got = dict(srr.browse(fixture_recipe(site.base_url), probes, CRED, allow_private=True))
+    assert "refused" not in got["next"] and "error" not in got["next"], got["next"]
+    (warning,) = got["next"]["warnings"]
+    assert warning["empty_filters"] == ["#wz-from"]
+    assert got["search"]["refused"] == "empty_filters" and got["search"]["empty_filters"] == ["#wz-from"]
+
+
+@needs_browser
+def test_e2e_many_csrf_tokens_do_not_hide_a_later_password_hash(site):
+    inv = dict(srr.browse(fixture_recipe(site.base_url), [{"name": "p", "steps": [{"op": "goto", "url": "/staff/noisy"}]}],
+                          CRED, allow_private=True))["p"]
+    assert inv["inline_secrets"] == ["hidden input: password_hash"]
+    assert inv["security"] and "$2y$" not in json.dumps(inv)

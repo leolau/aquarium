@@ -1349,36 +1349,43 @@ _EMPTY_FILTERS_JS = r"""
     return false;
   };
   const dates = fields.filter(isDate);
-  const searchy = /search|query|filter|find|look ?up|apply|enquir|retriev|load|show|go\b|查|搜|搵/i.test(text)
-    || dates.length > 0;
-  if (!searchy || !fields.length) return null;
+  // The target itself starts a search (its label, or submitting a whole form that has date filters);
+  // a date field nearby only makes the form look like one, which is enough to warn but not to refuse.
+  const own = /search|query|filter|find|look ?up|apply|enquir|retriev|load|show|go\b|export|download|查|搜|搵/i
+    .test(text) || (el.tagName === 'FORM' && dates.length > 0);
+  if (!(own || dates.length > 0) || !fields.length) return null;
   // A filled non-date filter (one warehouse, one id) already narrows the search.
   if (fields.some((x) => !isDate(x) && !empty(x))) return {fields: [], all: false};
-  // all: no filter at all is set, so the search asks for everything.
-  if (fields.every(empty)) return {fields: fields.map(label).slice(0, 10), all: true};
+  // all: the target is a search and no filter at all is set, so it asks for everything.
+  if (fields.every(empty)) return {fields: fields.map(label).slice(0, 10), all: own};
   return {fields: dates.filter(empty).map(label).slice(0, 10), all: false};
 }"""
 
 # Explore: key/value pairs in the page's own data that may be secrets: inline
 # <script> data, data-* attributes, hidden inputs and DataTables row objects.
 # Values never leave the page; only the key, where it was seen, and whether the
-# value is hash/JWT-shaped, filled in or a date. Python decides what counts.
+# value is hash/JWT-shaped, filled in or a date. The page keeps only entries that
+# pass the same test as secret_data_entry (so CSRF tokens and empty fields can't
+# use up the limit); Python checks them again.
 _INLINE_SECRETS_JS = r"""
 () => {
   const out = [], seen = new Set();
   const HASH = /^\$(2[abxy]?|argon2(id|i|d)|pbkdf2[\w-]*|scrypt|sha(256|512)|[156])\$\S{8,}$|^(pbkdf2_sha\d+|bcrypt(_sha256)?|argon2|sha1|md5)\$\S{8,}$|^eyJ[\w-]{6,}\.eyJ[\w-]{6,}\.[\w-]+$/;
-  const NAME = /pass|pwd|hash|salt|secret|token|api.?key|private|access.?key|credential|otp|pin|sess/i;
+  const NAME = new RegExp(__SECRET_NAME__);
+  const CSRF = new RegExp(__CSRF_NAME__);
   const DATE = /^\d{4}-\d{2}-\d{2}|^\d{1,2}\/\d{1,2}\/\d{2,4}/;
+  const words = (k) => String(k).replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().replace(/[_.\-]+/g, ' ');
   const add = (where, key, v) => {
     if (out.length >= 60) return;
     const s = typeof v === 'string' ? v.trim() : (typeof v === 'number' ? String(v) : '');
     const hash = HASH.test(s);
-    if (!hash && !NAME.test(String(key))) return;
+    const filled = s.length >= 6 && !/^[*\u2022xX]+$/.test(s), date = DATE.test(s);
+    const last = words(String(key).split('.').pop());
+    if (!hash && !(filled && !date && NAME.test(last) && !CSRF.test(last))) return;
     const id = where + '|' + key;
     if (seen.has(id)) return;
     seen.add(id);
-    out.push({where: where.slice(0, 80), key: String(key).slice(0, 80), hash,
-              filled: s.length >= 6 && !/^[*\u2022xX]+$/.test(s), date: DATE.test(s)});
+    out.push({where: where.slice(0, 80), key: String(key).slice(0, 80), hash, filled, date});
   };
   const walk = (where, obj, path, depth) => {
     if (depth > 6 || obj == null || typeof obj !== 'object') return;
@@ -1417,7 +1424,8 @@ _INLINE_SECRETS_JS = r"""
     }
   } catch (e) { /* no readable DataTables */ }
   return out;
-}"""
+}""".replace("__SECRET_NAME__", json.dumps(_SECRET_COLUMN.pattern)).replace(
+    "__CSRF_NAME__", json.dumps(_CSRF_NAME.pattern))
 
 # A same-origin fetch in the logged-in page: the browser adds the session
 # cookies, the network guard (context.route) sees it, redirects are not
