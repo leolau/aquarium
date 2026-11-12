@@ -17625,6 +17625,81 @@ def _skill_details_sync(name: str, profile: Optional[str]) -> Dict[str, Any]:
     return details
 
 
+class SkillLibraryChange(BaseModel):
+    """One Agent Profile skills change; ``target`` names the profile."""
+
+    target: str
+    name: str
+    #: For a skill that only exists in other profiles: ``shared`` (move it
+    #: into the shared library) or ``only`` (copy it into ``target``).
+    where: Optional[str] = None
+
+
+@app.get("/api/skills/library", dependencies=_SKILLS_VIEW)
+async def get_skills_library():
+    """The box-wide skills library: every skill once, with its source
+    (builtin / hub / shared / profile), owning profiles and per-profile
+    ``used_by`` on/off state. Never returns filesystem paths."""
+    from hermes_cli import skills_library
+
+    return await asyncio.to_thread(skills_library.build_library)
+
+
+async def _skills_library_change(request: Request, event: str, fn, body: SkillLibraryChange):
+    from hermes_cli import skills_library
+    from hermes_cli.dashboard_auth.audit import AuditEvent, audit_log
+
+    try:
+        result = await asyncio.to_thread(fn, body)
+    except skills_library.LibraryError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail)
+    fields: Dict[str, Any] = {
+        "profile": body.target,
+        "skill": body.name,
+        "actor": _comms_session_subject(request) or "operator",
+    }
+    for key in ("copied", "copied_from", "moved_from"):
+        if result.get(key):
+            fields[key] = result[key]
+    audit_log(AuditEvent(event), **fields)
+    return result
+
+
+@app.post("/api/skills/library/add", dependencies=_ADMIN)
+async def add_skill_to_profile(body: SkillLibraryChange, request: Request):
+    """Turn a library skill on for one profile (copying it in when needed).
+    Applies to the profile's next new chat."""
+    from hermes_cli import skills_library
+
+    return await _skills_library_change(
+        request, "skill_profile_added",
+        lambda b: skills_library.add_to_profile(b.target, b.name, b.where), body,
+    )
+
+
+@app.post("/api/skills/library/remove", dependencies=_ADMIN)
+async def remove_skill_from_profile(body: SkillLibraryChange, request: Request):
+    """Turn a skill off for one profile (``skills.disabled``); the file stays."""
+    from hermes_cli import skills_library
+
+    return await _skills_library_change(
+        request, "skill_profile_removed",
+        lambda b: skills_library.remove_from_profile(b.target, b.name), body,
+    )
+
+
+@app.post("/api/skills/library/delete", dependencies=_ADMIN)
+async def delete_skill_from_profile(body: SkillLibraryChange, request: Request):
+    """Delete a profile's own skill files (built-in, hub and shared skills
+    can only be removed)."""
+    from hermes_cli import skills_library
+
+    return await _skills_library_change(
+        request, "skill_profile_deleted",
+        lambda b: skills_library.delete_from_profile(b.target, b.name), body,
+    )
+
+
 @app.get("/api/skills/details", dependencies=_SKILLS_MANAGE)
 async def get_skill_details(name: str, profile: Optional[str] = None):
     """Side facts for the agent-home skill page: the skill folder's files
