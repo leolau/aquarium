@@ -17470,6 +17470,7 @@ async def toggle_skill(body: SkillToggle, profile: Optional[str] = None):
         else:
             disabled.add(body.name)
         save_disabled_skills(config, disabled)
+    _clear_skills_prompt_cache()
     return {"ok": True, "name": body.name, "enabled": body.enabled}
 
 

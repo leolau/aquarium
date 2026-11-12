@@ -90,7 +90,16 @@ describe("GET /api/memory/projection", () => {
       makeReq("/api/memory/projection?limit=5000") as never,
     );
     expect(res.status).toBe(200);
-    expect(memoryProjection).toHaveBeenCalledWith(5000);
+    expect(memoryProjection).toHaveBeenCalledWith(5000, undefined);
+  });
+
+  it("forwards the owners filter", async () => {
+    memoryProjection.mockResolvedValue({ algorithm: "pca", points: [], stale: false });
+    const res = await projectionGET(
+      makeReq("/api/memory/projection?limit=5000&owners=ada,%20bob") as never,
+    );
+    expect(res.status).toBe(200);
+    expect(memoryProjection).toHaveBeenCalledWith(5000, ["ada", "bob"]);
   });
 });
 
