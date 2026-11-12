@@ -39,6 +39,7 @@ import os
 import re
 import secrets
 import sys
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -2672,6 +2673,321 @@ async def _drive(
             await lock_conn.execute("SELECT pg_advisory_unlock($1, $2)", _LOCK_NS, _lock_key(site))
         with contextlib.suppress(Exception):
             await lock_conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Study helpers: explore / preview a site in this process (site_db tool)
+# ---------------------------------------------------------------------------
+
+# The agent's terminal may run as a separate, sandboxed user without the
+# credential store or the signed-in person, so the logged-in study steps of
+# the site-to-schema skill run here, with the same runner and guards as a
+# refresh. One live study browser per process; nothing is written.
+STUDY_MAX_PROBES = 20
+STUDY_ROW_LIMIT = 50
+STUDY_MAX_ROW_LIMIT = 500
+STUDY_MAX_SAMPLE = 10
+STUDY_MAX_CHARS = 60_000
+WEB_LOGIN_PROVIDER = "web-login"
+_study_busy = threading.Lock()  # tool calls may come from different event loops
+
+
+def _origin(url: Any) -> Tuple[str, str]:
+    parts = urlsplit(str(url or ""))
+    return parts.scheme.lower(), parts.netloc.lower()
+
+
+def study_recipe(site: Site, recipe: Any) -> Dict[str, Any]:
+    """The draft recipe of a study, pinned to the site's own origin.
+
+    The site's saved password is typed into whatever ``base_url`` + ``login``
+    point at, so a study recipe may not point anywhere else.
+    """
+    if isinstance(recipe, str):
+        try:
+            recipe = json.loads(recipe)
+        except ValueError:
+            raise SiteError("recipe must be JSON") from None
+    if recipe is None:
+        recipe = {}
+    if not isinstance(recipe, Mapping):
+        raise SiteError("recipe must be an object")
+    out = dict(recipe)
+    out.setdefault("base_url", site.base_url)
+    out.setdefault("site", site.slug)
+    out.setdefault("entities", {})
+    if _origin(out["base_url"]) != _origin(site.base_url):
+        raise SiteError(f"the recipe's base_url must be on the site's own address ({site.base_url})")
+    return out
+
+
+async def study_login(site: Site, principal: Any, recipe: Mapping[str, Any]) -> Tuple[Any, Optional[str]]:
+    """``(credential, entry name)`` a study logs in with; ``(None, None)`` without a login step.
+
+    The site's saved login (what refreshes use) comes first; else the
+    caller's own ``web-login/<host>`` password entry for the same host.
+    """
+    if not recipe.get("login"):
+        return None, None
+    saved = await load_login(site)
+    if saved is not None:
+        return saved, site.credential_ref
+    from hermes_cli.credential_store import default_credential_store
+
+    host = urlsplit(site.base_url).hostname or ""
+    own = await default_credential_store().get(principal, WEB_LOGIN_PROVIDER, host) if host else None
+    if own is not None and own.owner_user_id == principal.user_id and own.kind == "password":
+        return own, f"{WEB_LOGIN_PROVIDER}/{host}"
+    raise SiteError(
+        "this site has no saved login: ask the site's owner to save it on the site's page in "
+        "Sites (refreshes use it too). Never ask for the password in chat.",
+        409,
+    )
+
+
+def _clip(value: Any, limit: int = 200) -> Any:
+    if isinstance(value, str) and len(value) > limit:
+        return value[:limit] + "…"
+    if isinstance(value, Mapping):
+        return {k: _clip(v, limit) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_clip(v, limit) for v in value]
+    return value
+
+
+_INVENTORY_CAPS = {"links": 60, "buttons": 80, "forms": 20, "tables": 15, "datatables": 10,
+                   "json_requests": 30, "pagination": 20, "headings": 20, "extracted": 5}
+
+
+def compact_inventory(inv: Mapping[str, Any]) -> Dict[str, Any]:
+    """A page inventory cut to a size the model can read."""
+    out: Dict[str, Any] = {}
+    for key, value in inv.items():
+        if isinstance(value, list) and key in _INVENTORY_CAPS:
+            cap = _INVENTORY_CAPS[key]
+            out[key] = _clip(value[:cap], 120)
+            if len(value) > cap:
+                out[f"{key}_omitted"] = len(value) - cap
+        elif key == "text" and isinstance(value, str):
+            out[key] = value[:1500]
+        else:
+            out[key] = _clip(value)
+    for form in out.get("forms") or []:
+        if isinstance(form, dict) and isinstance(form.get("fields"), list):
+            form["fields"] = form["fields"][:30]
+            for fld in form["fields"]:
+                if isinstance(fld, dict) and isinstance(fld.get("options"), list):
+                    fld["options"] = fld["options"][:15]
+    return out
+
+
+def _scrub(data: Any, credential: Any) -> Any:
+    """``data`` with the login's password masked wherever a page echoed it.
+
+    A very short password is masked as a whole word only, so it does not
+    blank out every matching letter of the page.
+    """
+    payload = getattr(credential, "payload", credential)
+    password = str((payload or {}).get("password") or "") if isinstance(payload, Mapping) else ""
+    if not password:
+        return data
+    pattern = re.compile(re.escape(password) if len(password) >= 3 else rf"(?<!\w){re.escape(password)}(?!\w)")
+
+    def walk(value: Any) -> Any:
+        if isinstance(value, str):
+            return pattern.sub("***", value)
+        if isinstance(value, Mapping):
+            return {walk(k): walk(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [walk(v) for v in value]
+        return value
+
+    return walk(data)
+
+
+def _in_study_thread(fn: Callable[[], Dict[str, Any]]) -> "asyncio.Future[Dict[str, Any]]":
+    """Run ``fn`` on its own thread, which holds the study lock until the browser is done.
+
+    The caller may give up (cancelled tool call); the lock still guards the
+    browser that is running.
+    """
+    loop = asyncio.get_running_loop()
+    done: asyncio.Future[Dict[str, Any]] = loop.create_future()
+
+    def settle(result: Any, error: Optional[BaseException]) -> None:
+        if done.done():
+            return
+        if error is not None:
+            done.set_exception(error)
+        else:
+            done.set_result(result)
+
+    def work() -> None:
+        result: Any = None
+        error: Optional[BaseException] = None
+        try:
+            result = fn()
+        except BaseException as exc:  # noqa: BLE001 - handed to the awaiting side
+            error = exc
+        finally:
+            _study_busy.release()
+        with contextlib.suppress(RuntimeError):  # the loop is gone: nobody waits any more
+            loop.call_soon_threadsafe(settle, result, error)
+
+    threading.Thread(target=work, name="site-study", daemon=True).start()
+    return done
+
+
+async def _study(fn: Callable[[], Dict[str, Any]]) -> Dict[str, Any]:
+    if not _study_busy.acquire(blocking=False):
+        raise SiteError("another site explore/preview is running; try again when it has finished", 409)
+    try:
+        runner = _runner_module()
+        future = _in_study_thread(fn)
+    except BaseException:
+        _study_busy.release()
+        raise
+    try:
+        return await future
+    except runner.LoginFailed as exc:
+        raise SiteError(
+            f"login failed: {exc}. Fix the login selectors once; ask the person before trying "
+            "again (accounts lock).", 400) from None
+    except runner.BrowserNotInstalled as exc:
+        raise SiteError(str(exc), 503) from None
+    except runner.RecipeError as exc:
+        raise SiteError(str(exc), 400) from None
+
+
+async def explore_site(
+    site: Site,
+    principal: Any,
+    *,
+    recipe: Any = None,
+    probes: Any = None,
+    goto: Any = None,
+    allow_private: bool = False,
+) -> Dict[str, Any]:
+    """Log in with the site's login and inventory pages after read-only probe steps."""
+    try:
+        runner = _runner_module()
+    except ImportError:
+        raise SiteError("the site recipe runner is not installed on this box yet", 503) from None
+    recipe = study_recipe(site, recipe)
+    plan: List[Dict[str, Any]] = []
+    for probe in probes or []:
+        if not isinstance(probe, Mapping) or not isinstance(probe.get("steps"), list):
+            raise SiteError('each probe is {"name": ..., "steps": [...]}')
+        plan.append(dict(probe))
+    for path in [goto] if isinstance(goto, str) else (goto or []):
+        name = str(path).strip("/").replace("/", "_") or "home"
+        plan.append({"name": name, "steps": [{"op": "goto", "url": str(path)}]})
+    if not plan:
+        raise SiteError("give probes or goto (page paths)")
+    if len(plan) > STUDY_MAX_PROBES:
+        raise SiteError(f"at most {STUDY_MAX_PROBES} probes per call; split the study")
+    credential, login_used = await study_login(site, principal, recipe)
+
+    def work() -> Dict[str, Any]:
+        report = runner.RunReport()
+        pages = []
+        size = 0
+        for name, inv in runner.browse(recipe, plan, credential, report=report, allow_private=allow_private):
+            page: Dict[str, Any] = {"name": name}
+            summary = runner.inventory_summary(name, inv)[:4000]
+            detail = compact_inventory(inv)
+            if size + len(summary) > STUDY_MAX_CHARS:
+                page["omitted"] = "answer size cap; explore fewer pages per call"
+            else:
+                size += len(summary)
+                page["summary"] = summary
+                detail_size = len(json.dumps(detail, ensure_ascii=False, default=str))
+                if size + detail_size <= STUDY_MAX_CHARS:
+                    size += detail_size
+                    page["inventory"] = detail
+                else:
+                    page["inventory_omitted"] = "answer size cap; explore fewer pages per call"
+            pages.append(page)
+        return {"login": login_used, "pages": pages, "blocked_requests": report.blocked_requests[:30]}
+
+    return _scrub(await _study(work), credential)
+
+
+async def preview_recipe(
+    site: Site,
+    principal: Any,
+    *,
+    recipe: Any = None,
+    entities: Optional[Sequence[str]] = None,
+    mode: Optional[str] = None,
+    cursors: Optional[Mapping[str, Any]] = None,
+    row_limit: Optional[int] = None,
+    sample: Optional[int] = None,
+    allow_private: bool = False,
+) -> Dict[str, Any]:
+    """Dry-run a recipe (default: the newest proposed one): counts, samples, duplicate keys.
+
+    Nothing is written; each entity stops after ``row_limit`` records.
+    """
+    try:
+        runner = _runner_module()
+    except ImportError:
+        raise SiteError("the site recipe runner is not installed on this box yet", 503) from None
+    if recipe is None:
+        recipe = next((d["recipe"] for d in await list_designs(site) if d.get("recipe")), None)
+        if recipe is None:
+            raise SiteError("give recipe= (no design with a recipe has been proposed yet)")
+    recipe = study_recipe(site, recipe)
+    problems = runner.recipe_problems(recipe)
+    if problems:
+        return {"ok": False, "problems": problems[:50]}
+    mode = mode or "full"
+    if mode not in REFRESH_MODES:
+        raise SiteError(f"mode must be one of {', '.join(REFRESH_MODES)}")
+    limit = max(1, min(int(row_limit or STUDY_ROW_LIMIT), STUDY_MAX_ROW_LIMIT))
+    keep = max(0, min(int(3 if sample is None else sample), STUDY_MAX_SAMPLE))
+    names = list(entities) if entities else None
+    credential, login_used = await study_login(site, principal, recipe)
+
+    def work() -> Dict[str, Any]:
+        report = runner.RunReport()
+        samples: Dict[str, List[Any]] = {}
+        seen: Dict[str, Dict[str, int]] = {}
+        try:
+            for item in runner.run_recipe(recipe, credential, entities=names, mode=mode,
+                                          cursors=dict(cursors or {}), report=report,
+                                          allow_private=allow_private, row_limit=limit):
+                counts = seen.setdefault(item.entity, {})
+                counts[item.key] = counts.get(item.key, 0) + 1
+                rows = samples.setdefault(item.entity, [])
+                if len(rows) < keep:
+                    rows.append(_clip(jsonable(item.payload)))
+        except runner.RecipeRunError:
+            pass
+        out: Dict[str, Any] = {}
+        for name in list(report.completed) + list(report.failed):
+            dupes = [k for k, n in seen.get(name, {}).items() if n > 1]
+            out[name] = {
+                "status": f"failed: {report.failed[name]}" if name in report.failed else "ok",
+                "rows": report.rows.get(name, 0),
+                "capped": name in report.capped,
+                "full_load": name in report.full_entities,
+                "sample": samples.get(name, []),
+                "duplicate_keys": len(dupes),
+                "duplicate_examples": _clip(dupes[:5], 80),
+            }
+        return {
+            "ok": not report.failed,
+            "login": login_used,
+            "mode": mode,
+            "row_limit": limit,
+            "entities": out,
+            "cursors": jsonable(report.cursors),
+            "warnings": report.warnings[:30],
+            "blocked_requests": report.blocked_requests[:30],
+        }
+
+    return _scrub(await _study(work), credential)
 
 
 _BATCH = 200

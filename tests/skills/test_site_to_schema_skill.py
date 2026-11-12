@@ -3,6 +3,7 @@ scripts against the local fixture site."""
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import importlib.util
 import json
@@ -151,3 +152,115 @@ def test_preview_counts_every_entity_without_touching_traps(site, capsys):
     assert len((tmp / "items.jsonl").read_text().splitlines()) == 49
     assert fx.PASSWORD not in out
     assert running.state.forbidden_hits == []
+
+
+def test_scripts_point_to_site_db_when_the_store_is_hidden(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("HERMES_TERMINAL_DB_CREDENTIALS_HIDDEN", "1")
+    (tmp_path / "recipe.json").write_text(json.dumps(RECIPE))
+    for module, extra in ((explore_site, ["--goto", "/"]), (preview_recipe, [])):
+        with pytest.raises(SystemExit) as stop:
+            module.main(["--recipe", str(tmp_path / "recipe.json"), "--credential", "web-login/x.example", *extra])
+        assert "use the site_db tool" in str(stop.value) and "explore / preview" in str(stop.value)
+
+
+def test_scripts_point_to_site_db_when_the_store_cannot_be_read(monkeypatch):
+    import hermes_cli.credential_store as store
+
+    def unreadable(*a, **k):
+        raise PermissionError(13, "Permission denied", "/opt/data/hermes-home/logs/curator")
+
+    monkeypatch.delenv("HERMES_TERMINAL_DB_CREDENTIALS_HIDDEN", raising=False)
+    monkeypatch.setattr(store, "default_credential_store", unreadable)
+    common = sys.modules["_common"]
+    with pytest.raises(SystemExit, match="not reachable from this terminal.*site_db") as stop:
+        common.load_credential("web-login/x.example")
+    assert "PermissionError" in str(stop.value)
+
+
+def test_skill_studies_through_site_db_and_stops_on_missing_prerequisites():
+    text = (SKILL / "SKILL.md").read_text()
+    assert "action `explore`" in text and "action `preview`" in text
+    assert "`login_saved`" in text and "`list_secrets`" in text
+    assert "## Stop and report" in text and text.index("## Stop and report") < text.index("## Pitfalls")
+    assert "no `sudo`" in text
+    assert "use the safe choice (`full`, or `incremental` with a" in text
+    assert "**ask\n     the user** before proposing" not in text
+
+
+@pytest.fixture
+def gateway_site(monkeypatch):
+    """A site row for the fixture with its login in the real (file) credential store."""
+    import tools.url_safety
+    from hermes_cli import site_sources as ss
+    from hermes_cli.access import Principal
+    from hermes_cli.credential_store import default_credential_store
+
+    monkeypatch.setattr(tools.url_safety, "is_safe_url", lambda url: True)
+    with fx.serve_fixture() as running:
+        site = ss.Site(id="22222222-2222-2222-2222-222222222222", slug="fixture", name="Fixture",
+                       base_url=running.base_url, login_url=running.base_url, owner_user_id="alice",
+                       schema_name="site_fixture", db_role="site_fixture_rw",
+                       credential_ref=f"{ss.CREDENTIAL_PROVIDER}/fixture")
+        alice = Principal(user_id="alice", display="alice", role="member")
+        asyncio.run(default_credential_store().put(
+            alice, provider=ss.CREDENTIAL_PROVIDER, name="fixture", kind=ss.CREDENTIAL_KIND,
+            payload={"username": fx.USERNAME, "password": fx.PASSWORD}))
+
+        async def find_site(ref, **_kw):
+            return site if ref == "fixture" else None
+
+        async def no_writes(*a, **k):
+            raise AssertionError("explore/preview must not touch the site database")
+
+        monkeypatch.setattr(ss, "current_profile", lambda: "default")
+        monkeypatch.setattr(ss, "find_site", find_site)
+        for name in ("propose_design", "apply_design", "start_refresh", "query", "list_runs"):
+            monkeypatch.setattr(ss, name, no_writes)
+        yield running
+
+
+def _tool(user, **args):
+    import tools.site_db_tool as tool
+    from tools.access_policy import acting_as
+
+    async def go():
+        with acting_as(user, "member"):
+            return json.loads(await tool.site_db_tool(args))
+
+    return asyncio.run(go())
+
+
+@needs_browser
+def test_site_db_explore_logs_in_with_the_saved_login(gateway_site):
+    recipe = {k: v for k, v in RECIPE.items() if k != "entities"}
+    recipe["base_url"] = gateway_site.base_url
+    out = _tool("alice", action="explore", site="fixture", recipe=recipe, goto=["/reference"],
+                probes=[{"name": "orders", "steps": [{"op": "goto", "url": "/dashboard"}, {"op": "click", "text": "Orders"},
+                                                     {"op": "submit", "selector": "#btn-search"}]}])
+    assert out["success"], out
+    assert out["login"] == "site-login/fixture"
+    pages = {p["name"]: p for p in out["pages"]}
+    assert "table #results: 10 rows" in pages["orders"]["summary"]
+    assert "never click: ['Add New']" in pages["orders"]["summary"]
+    assert any(b["text"] == "Warehouse Table" for b in pages["reference"]["inventory"]["buttons"])
+    assert fx.PASSWORD not in json.dumps(out)
+    assert gateway_site.state.forbidden_hits == []
+    assert _tool("bob", action="explore", site="fixture", goto=["/"])["success"] is False
+
+
+@needs_browser
+def test_site_db_preview_dry_runs_with_a_row_cap(gateway_site):
+    out = _tool("alice", action="preview", site="fixture", recipe=dict(RECIPE, base_url=gateway_site.base_url), max_rows=20, sample=2)
+    assert out["success"] and out["ok"], out
+    ents = out["entities"]
+    assert ents["orders"]["rows"] == 20 and ents["orders"]["capped"] is True
+    assert ents["orders"]["full_load"] is False and len(ents["orders"]["sample"]) == 2
+    assert ents["warehouses"] == {**ents["warehouses"], "rows": 3, "capped": False, "full_load": True,
+                                  "duplicate_keys": 0}
+    assert ents["about"]["rows"] == 1
+    assert "orders" not in out["cursors"]
+    exact = _tool("alice", action="preview", site="fixture", recipe=dict(RECIPE, base_url=gateway_site.base_url),
+                  entities=["warehouses"], max_rows=3)
+    assert exact["entities"]["warehouses"]["capped"] is False and exact["entities"]["warehouses"]["full_load"] is True
+    assert fx.PASSWORD not in json.dumps(out)
+    assert gateway_site.state.forbidden_hits == []

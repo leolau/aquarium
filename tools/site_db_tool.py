@@ -5,6 +5,9 @@ access to the site exactly like the Aquarium API does. Reads run as the
 site's own read-only database role, so a query can only see that site's
 schema. Designs are proposed here and approved by a site admin — in
 agent-home, or here with ``approve_design`` when the person says so.
+``explore`` / ``preview`` run the logged-in study steps of the
+site-to-schema skill here, where the credential store and the bound person
+are, because the agent's terminal may be a sandboxed user without either.
 Service-gated: it only appears when the app database is configured.
 """
 
@@ -24,6 +27,8 @@ ACTIONS = (
     "query",
     "refresh",
     "run_status",
+    "explore",
+    "preview",
 )
 
 SCHEMA = {
@@ -35,7 +40,12 @@ SCHEMA = {
         "approval, creates nothing; approve_design (site, version) — only when the person "
         "explicitly approves; query (site, sql: one SELECT over the site's tables, at most "
         "500 rows); refresh (site, entities?, mode? incremental|full) — starts a backend "
-        "refresh; run_status (site) — recent refresh runs."
+        "refresh; run_status (site) — recent refresh runs. Studying a site (logs in with the "
+        "site's saved login, read-only, writes nothing): explore (site, recipe = draft with "
+        "base_url + login, goto: page paths and/or probes: [{name, steps}]) — page inventories: "
+        "buttons, forms, tables, DataTables, JSON calls, never-click controls; preview (site, "
+        "recipe? default the newest proposed, entities?, mode? default full, cursors?, max_rows "
+        "per entity, default 50, sample) — dry run: counts, sample rows, duplicate keys, failures."
     ),
     "parameters": {
         "type": "object",
@@ -48,7 +58,15 @@ SCHEMA = {
             "username": {"type": "string"},
             "password": {"type": "string"},
             "design": {"type": "object", "description": "propose_design: design.json"},
-            "recipe": {"type": "object", "description": "propose_design: recipe.json"},
+            "recipe": {"type": "object", "description": "propose_design / explore / preview: recipe.json"},
+            "goto": {"type": "array", "items": {"type": "string"}, "description": "explore: page paths"},
+            "probes": {
+                "type": "array",
+                "items": {"type": "object"},
+                "description": 'explore: [{"name": ..., "steps": [read-only recipe steps]}]',
+            },
+            "cursors": {"type": "object", "description": "preview: {entity: cursor value} (incremental)"},
+            "sample": {"type": "integer", "description": "preview: sample rows per entity (default 3)"},
             "version": {"type": "integer", "description": "approve_design: design version"},
             "sql": {"type": "string", "description": "query: one SELECT statement"},
             "max_rows": {"type": "integer"},
@@ -129,7 +147,7 @@ async def site_db_tool(args: Mapping[str, Any], **_kw: Any) -> str:
             body = {k: args.get(k) for k in ("name", "base_url", "login_url", "username", "password") if args.get(k)}
             site = await ss.create_site(principal, body)
             return _result(site=site.view("admin"))
-        need = "admin" if action in ("propose_design", "approve_design", "refresh") else "read"
+        need = "admin" if action in ("propose_design", "approve_design", "refresh", "explore", "preview") else "read"
         site, access = await _site(principal, args.get("site"), need=need)
         if action == "get_design":
             designs = await ss.list_designs(site)
@@ -157,6 +175,14 @@ async def site_db_tool(args: Mapping[str, Any], **_kw: Any) -> str:
                 site, trigger="agent", entities=args.get("entities") or None, mode=args.get("mode")
             )
             return _result(run=run, next="Use run_status to follow it.")
+        if action == "explore":
+            return _result(site=site.slug, **(await ss.explore_site(
+                site, principal, recipe=args.get("recipe"), probes=args.get("probes"), goto=args.get("goto"))))
+        if action == "preview":
+            return _result(site=site.slug, **(await ss.preview_recipe(
+                site, principal, recipe=args.get("recipe"), entities=args.get("entities") or None,
+                mode=args.get("mode"), cursors=args.get("cursors"), row_limit=args.get("max_rows"),
+                sample=args.get("sample"))))
         return _result(runs=(await ss.list_runs(site, limit=10)))
     except ss.SiteError as exc:
         return _error(str(exc))

@@ -147,6 +147,7 @@ class RunReport:
     cursors: Dict[str, Any] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
     blocked_requests: List[str] = field(default_factory=list)
+    capped: List[str] = field(default_factory=list)
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -158,6 +159,7 @@ class RunReport:
             "cursors": dict(self.cursors),
             "warnings": list(self.warnings),
             "blocked_requests": list(self.blocked_requests),
+            "capped": list(self.capped),
         }
 
 
@@ -1950,6 +1952,38 @@ def annotate_inventory(inventory: Dict[str, Any]) -> Dict[str, Any]:
     return inventory
 
 
+def inventory_summary(name: str, inv: Mapping[str, Any]) -> str:
+    """A few readable lines about one :func:`browse` inventory (what the study reads first)."""
+    if "error" in inv:
+        return f"[{name}] ERROR {inv['error']}"
+    lines = [f"[{name}] {inv.get('title', '')} — {inv.get('url', '')}"]
+    for t in inv.get("tables") or []:
+        lines.append(f"  table {t['selector']}: {t['rows']} rows; headers {t['headers'][:12]}")
+    for t in inv.get("datatables") or []:
+        mode = "server-side" if t.get("server_side") else "client-side"
+        keys = [c.get("data") for c in t.get("columns") or []]
+        lines.append(f"  datatable {t['selector']} ({mode}, {t.get('total')} rows in the page"
+                     f"{', ajax ' + t['ajax_url'] if t.get('ajax_url') else ''}): data keys {keys[:15]}")
+    for r in inv.get("json_requests") or []:
+        lines.append(f"  json {r['method']} {r['url']} query {r['query_keys'][:10]} body {r['body_keys'][:15]}"
+                     f" -> {r['status']}{', ' + str(r['bytes']) + ' bytes' if r.get('bytes') else ''}")
+    for f in inv.get("forms") or []:
+        flag = " FORBIDDEN" if f.get("forbidden") else ""
+        fields = [x.get("name") or x.get("id") for x in f.get("fields") or [] if x.get("type") != "hidden"]
+        lines.append(f"  form {f['selector']} {f['method'].upper()} {f['action'] or '(same page)'}{flag}: {fields[:15]}")
+    safe = [b["text"] or b["selector"] for b in inv.get("buttons") or [] if not b.get("forbidden")]
+    bad = [b["text"] or b["selector"] for b in inv.get("buttons") or [] if b.get("forbidden")]
+    if safe:
+        lines.append(f"  buttons: {safe[:30]}")
+    if bad:
+        lines.append(f"  never click: {bad[:30]}")
+    if inv.get("pagination"):
+        lines.append(f"  pagination: {[p['text'] for p in inv['pagination']][:12]}")
+    if inv.get("extracted_count"):
+        lines.append(f"  extracted rows: {inv['extracted_count']}")
+    return "\n".join(lines)
+
+
 def browse(
     recipe: Mapping[str, Any],
     probes: Sequence[Mapping[str, Any]],
@@ -2006,6 +2040,7 @@ def run_recipe(
     driver: Optional[Driver] = None,
     allow_private: bool = False,
     today: Optional[dt.date] = None,
+    row_limit: Optional[int] = None,
 ) -> Iterator[ExtractedItem]:
     """Log in and yield every record the recipe extracts.
 
@@ -2013,7 +2048,9 @@ def run_recipe(
     order). ``mode="full"`` ignores ``cursors`` so every ``{{cursor}}`` falls
     back to its step's ``default``; ``"incremental"`` uses ``cursors[entity]``
     when present. Pass a :class:`RunReport` to read counts, failures,
-    ``full_entities`` and new cursors afterwards.
+    ``full_entities`` and new cursors afterwards. ``row_limit`` (previews)
+    stops each entity after that many records; such an entity is listed in
+    ``report.capped`` and is never a full load nor moves its cursor.
 
     Raises :class:`RecipeError` / :class:`ForbiddenTarget` before touching the
     site when the recipe is invalid, :class:`LoginFailed` when the login is
@@ -2036,8 +2073,15 @@ def run_recipe(
             ent = all_entities[name]
             use_cursor = mode == "incremental" and ent.get("mode", "incremental") != "full"
             cursor = cursors.get(name) if use_cursor else None
+            extraction = run.entity(name, ent, cursor)
+            capped = False
             try:
-                yield from run.entity(name, ent, cursor)
+                for count, item in enumerate(extraction, 1):
+                    if row_limit and count > row_limit:
+                        capped = True
+                        report.rows[name] -= 1  # counted, not yielded
+                        break
+                    yield item
             except LoginFailed:
                 raise
             except Exception as exc:
@@ -2045,9 +2089,15 @@ def run_recipe(
                 report.failed[name] = message
                 logger.warning("site recipe %s/%s failed: %s", recipe.get("site"), name, message)
                 continue
+            finally:
+                extraction.close()
             report.completed.append(name)
             report.rows.setdefault(name, 0)
-            if cursor is None and ent.get("removal_safe", True) is not False:
+            if capped:
+                report.capped.append(name)
+                report.cursors.pop(name, None)
+                report.warnings.append(f"{name}: stopped after {row_limit} records (row limit)")
+            elif cursor is None and ent.get("removal_safe", True) is not False:
                 empty = run.empty_extractions()
                 if empty:
                     report.warnings.append(
