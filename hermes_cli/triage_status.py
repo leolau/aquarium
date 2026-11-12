@@ -295,12 +295,44 @@ def _wa_number(session: Optional[Path], configured: Any) -> Optional[str]:
     return wa_bridge_owners.mask_number(digits) if digits else None
 
 
+def _bridges_elsewhere() -> tuple[set[str], set[int]]:
+    """Bridge names and ports recorded by *other* profiles on this box.
+
+    The phone list is box-wide but each profile records its own bridges, so a
+    phone whose owner record lives in another profile is that profile's, never
+    an unowned legacy phone of this one.
+    """
+    from hermes_cli.profile_registry import get_profile_registry
+    from hermes_cli.wa_bridge_owners import OWNERS_FILE, whatsapp_dir
+
+    here = whatsapp_dir().resolve()
+    names: set[str] = set()
+    ports: set[int] = set()
+    try:
+        entries = get_profile_registry()
+    except Exception:
+        return names, ports
+    for entry in entries:
+        folder = Path(entry.hermes_home) / "whatsapp"
+        if folder.resolve() == here:
+            continue
+        doc = _read_json(folder / OWNERS_FILE)
+        for name, rec in (doc or {}).items():
+            if not isinstance(rec, dict) or not rec.get("user_id"):
+                continue
+            names.add(str(name))
+            if isinstance(rec.get("port"), int):
+                ports.add(rec["port"])
+    return names, ports
+
+
 async def _whatsapp(principal: Any) -> Dict[str, Any]:
     from hermes_cli import wa_bridge_owners as owners
 
     path = whatsapp_config_path()
     config = _read_json(path)
     by_port = {port: name for name, port in owners.bridge_ports().items()}
+    elsewhere_names, elsewhere_ports = _bridges_elsewhere()
     accounts: List[Dict[str, Any]] = []
     on_triage: set[str] = set()
     for phone in (config or {}).get("phones") or []:
@@ -310,7 +342,10 @@ async def _whatsapp(principal: Any) -> Dict[str, Any]:
         name = by_port.get(phone.get("bridge_port")) or (
             owners.bridge_name_for_session_path(session) if session else None
         )
-        if not _owns(principal, owners.bridge_person(name) if name else None):
+        person = owners.bridge_person(name) if name else None
+        if person is None and (name in elsewhere_names or phone.get("bridge_port") in elsewhere_ports):
+            continue
+        if not _owns(principal, person):
             continue
         if name:
             on_triage.add(name)
@@ -450,7 +485,29 @@ def unit_states(units: Sequence[str]) -> Dict[str, str]:
     return dict(zip(units, lines)) if len(lines) == len(units) else {}
 
 
-async def triage_status(principal: Any) -> Dict[str, Any]:
+class _InScope:
+    """``principal`` without the install-owner claim on unowned legacy setups.
+
+    Legacy box-wide accounts belong to the install owner, i.e. the acting
+    profile's owner; another profile's owner (``?profile=``) never gets them.
+    """
+
+    def __init__(self, principal: Any) -> None:
+        self.user_id = getattr(principal, "user_id", None)
+        self.role = getattr(principal, "role", None)
+        self.is_owner = False
+
+
+def can_edit(principal: Any) -> bool:
+    """Triage skill files are box-wide: owner/admin edit, members view."""
+    from hermes_cli.route_roles import ADMIN_ROLES
+
+    return bool(getattr(principal, "is_owner", False)) or getattr(principal, "role", None) in ADMIN_ROLES
+
+
+async def triage_status(principal: Any, *, install_owner: bool = True) -> Dict[str, Any]:
+    if not install_owner:
+        principal = _InScope(principal)
     kinds = [await _email(principal), await _whatsapp(principal), await _calendar(principal)]
     units = [s["unit"] for k in kinds for s in k["services"]]
     states = unit_states(units)
@@ -458,3 +515,114 @@ async def triage_status(principal: Any) -> Dict[str, Any]:
         for s in k["services"]:
             s["state"] = states.get(s["unit"])
     return {"kinds": kinds}
+
+
+# -- triage skill files (view / edit / history) --------------------------------
+
+MAX_SKILL_FILE_BYTES = 256 * 1024
+VERSIONS_DIR = ".versions"
+
+
+class SkillFileError(Exception):
+    """A triage skill file request that can't be served (``status`` = HTTP)."""
+
+    def __init__(self, status: int, detail: str) -> None:
+        super().__init__(detail)
+        self.status = status
+        self.detail = detail
+
+
+def kind_config(kind: str) -> tuple[Path, Optional[Dict[str, Any]]]:
+    path = {"email": email_config_path, "whatsapp": whatsapp_config_path, "calendar": calendar_config_path}[kind]()
+    return path, _read_json(path)
+
+
+def triage_file(kind: str, path: str) -> Path:
+    """``path`` if it is one of the ``*.md`` files ``kind``'s pipeline reads.
+
+    Only files listed by :func:`skill_sources` are addressable, so a request
+    can never reach another file (no traversal, no symlink out of the folder).
+    """
+    if kind not in KINDS:
+        raise SkillFileError(404, f"unknown triage kind: {kind!r}")
+    _, config = kind_config(kind)
+    for source in skill_sources(kind, config):
+        for f in source["files"]:
+            if f["path"] == path:
+                file = Path(path)
+                if file.resolve().parent != Path(source["path"]).resolve():
+                    break
+                return file
+    raise SkillFileError(404, f"{path!r} is not a {kind} triage skill file")
+
+
+def _history_path(file: Path) -> Path:
+    return file.parent / VERSIONS_DIR / f"{file.name}.jsonl"
+
+
+def file_history(file: Path) -> List[Dict[str, Any]]:
+    """Saved versions of ``file``, newest first."""
+    try:
+        lines = _history_path(file).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    out = []
+    for line in lines:
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(rec, dict) and isinstance(rec.get("content"), str):
+            out.append(rec)
+    return list(reversed(out))
+
+
+def _append_version(file: Path, content: str, *, author: str, message: str) -> Dict[str, Any]:
+    import time
+
+    hist = _history_path(file)
+    hist.parent.mkdir(parents=True, exist_ok=True)
+    now = time.time()
+    rec = {
+        "id": f"{int(now * 1000)}-{len(file_history(file)) + 1}",
+        "at": now,
+        "author": author,
+        "message": message,
+        "content": content,
+    }
+    with hist.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec) + "\n")
+    return rec
+
+
+def write_triage_file(file: Path, content: str, *, author: str) -> Dict[str, Any]:
+    """Replace ``file`` (atomically) and record the new version.
+
+    The first edit also stores the file as it was, so History always holds
+    the pre-edit text. The pipelines read the file on the next message.
+    """
+    import tempfile
+
+    if len(content.encode("utf-8")) > MAX_SKILL_FILE_BYTES:
+        raise SkillFileError(413, "triage skill file is too large")
+    try:
+        before = file.read_text(encoding="utf-8")
+        if not file_history(file):
+            _append_version(file, before, author="system", message="Before the first edit")
+        mode = file.stat().st_mode & 0o777
+        fd, tmp = tempfile.mkstemp(dir=str(file.parent), prefix=f".{file.name}.")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(content)
+            os.chmod(tmp, mode)
+            os.replace(tmp, file)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+        return _append_version(file, content, author=author, message="Edited in Agent Profiles")
+    except OSError as exc:
+        raise SkillFileError(500, f"could not save {file.name}: {exc.strerror or exc}") from exc
+

@@ -202,6 +202,8 @@ import type {
   RefreshKeysResponse,
   PinnedModelCard,
   ScheduledSummary,
+  TriageSkillFileContent,
+  TriageSkillFileHistory,
   TriageStatus,
 } from "@/types";
 
@@ -3353,6 +3355,20 @@ export class HermesApiClient {
   /** The caller's own triage setup (email, WhatsApp, calendar); no secrets. */
   async triageStatus(): Promise<TriageStatus> {
     return this.request("/api/triage/status");
+  }
+
+  /** One triage skill file a pipeline reads (any signed-in person may view). */
+  async triageSkillFile(kind: string, path: string): Promise<TriageSkillFileContent> {
+    return this.request(`/api/triage/skill-file?${new URLSearchParams({ kind, path })}`);
+  }
+
+  async triageSkillFileHistory(kind: string, path: string): Promise<TriageSkillFileHistory> {
+    return this.request(`/api/triage/skill-file/history?${new URLSearchParams({ kind, path })}`);
+  }
+
+  /** Owner/admin only (Hermes enforces it in the addressed profile). */
+  async saveTriageSkillFile(kind: string, path: string, content: string): Promise<{ ok: boolean; path: string }> {
+    return this.request("/api/triage/skill-file", { method: "PUT", json: { kind, path, content } });
   }
 
   /** The caller's own IMAP/SMTP mailboxes (never any password). */

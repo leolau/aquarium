@@ -95,9 +95,21 @@ export function profileSkills(library: SkillLibrary, profile: string): { on: Ski
   return { on, off };
 }
 
+/** The triage pipelines' skill folders, excluded even when triage status is unknown. */
+export const TRIAGE_SKILL_NAMES: ReadonlySet<string> = new Set(["email-triage", "whatsapp-triage", "calendar-triage"]);
+
 /** The Add picker: library skills the profile doesn't have on (never triage skills). */
-export function addCandidates(library: SkillLibrary, profile: string): SkillLibraryEntry[] {
-  return library.skills.filter((s) => !s.used_by.some((u) => u.profile === profile && u.enabled));
+export function addCandidates(
+  library: SkillLibrary,
+  profile: string,
+  triage: ReadonlySet<string> = TRIAGE_SKILL_NAMES,
+): SkillLibraryEntry[] {
+  return library.skills.filter(
+    (s) =>
+      !TRIAGE_SKILL_NAMES.has(s.name) &&
+      !triage.has(s.name) &&
+      !s.used_by.some((u) => u.profile === profile && u.enabled),
+  );
 }
 
 /** A profile-only skill this profile has no copy of: ask shared vs only-here. */

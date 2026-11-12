@@ -392,12 +392,12 @@ def test_whatsapp_reads_the_target_profiles_bridges(box, client, monkeypatch, tm
     assert k["status"] == ts.SET_UP
     assert "root1" not in resp.text and "1111" not in resp.text
 
-    # In the acting profile hr1's port has no bridge, so it is an unowned
-    # legacy phone (the install owner's, Leo here); hr's session isn't read.
+    # hr1 is recorded by hr, so the acting profile never treats it as its own
+    # unowned legacy phone.
     resp, k = wa("")
     assert [(a["id"], a["number"], a["credential"]) for a in k["accounts"]] == [
-        ("root1", "+852****0000", True), ("hr1", None, False)]
-    assert "2222" not in resp.text
+        ("root1", "+852****0000", True)]
+    assert "hr1" not in resp.text and "2222" not in resp.text
 
     # Dan is hr's admin but owns no bridge there: nothing of Leo's leaks.
     resp, k = wa("?profile=hr", subject="dan")
@@ -413,3 +413,87 @@ def test_naming_the_acting_profile_returns_its_name(box, client, monkeypatch, tm
     assert resp.status_code == 200, resp.text
     assert resp.json()["profile"] == acting
     assert client.get("/api/triage/status", headers={SUBJECT_HEADER: "leo"}).json()["profile"] is None
+
+
+def test_another_profiles_phone_never_shows_as_legacy(box, client, monkeypatch, tmp_path):
+    """hr's owner sees neither default's recorded phone nor box-wide legacy ones."""
+    paths = _box_paths(monkeypatch, tmp_path)
+    monkeypatch.setattr(owners, "_installed_bridge_ports", lambda: {"root1": 3002, "spare": 3009})
+    _skill(paths, "whatsapp")
+    _write(paths.wa_cfg, {"triage": _triage("whatsapp", paths), "phones": [
+        {"id": "root1", "name": "Leo phone", "number": "85211110000", "bridge_port": 3002, "enabled": True},
+        {"id": "spare", "name": "Front desk", "number": "85299990000", "bridge_port": 3009, "enabled": True}]})
+    _write(box["root"] / "whatsapp" / "bridge-owners.json", {"root1": {"user_id": "leo", "port": 3002}})
+    _wa_session(SimpleNamespace(home=box["root"]), "root1", number="85211110000")
+
+    resp = client.get("/api/triage/status?profile=hr", headers={SUBJECT_HEADER: "hana"})
+    assert resp.status_code == 200, resp.text
+    assert kinds(resp.json())["whatsapp"]["accounts"] == []
+    for leaked in ("Leo phone", "1111", "Front desk", "9999"):
+        assert leaked not in resp.text
+
+    # The acting profile's owner still owns the unrecorded legacy phone.
+    resp = client.get("/api/triage/status", headers={SUBJECT_HEADER: "leo"})
+    got = [a["id"] for a in kinds(resp.json())["whatsapp"]["accounts"]]
+    assert got == ["root1", "spare"]
+
+
+def test_can_edit_follows_the_role_in_the_addressed_profile(box, client, monkeypatch, tmp_path):
+    _box_paths(monkeypatch, tmp_path)
+    who = {
+        ("leo", ""): True,         # owner of default
+        ("bob", ""): False,        # member of default
+        ("leo", "?profile=hr"): False,  # member in hr
+        ("dan", "?profile=hr"): True,   # admin in hr
+    }
+    for (subject, query), expected in who.items():
+        resp = client.get(f"/api/triage/status{query}", headers={SUBJECT_HEADER: subject})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["can_edit"] is expected, (subject, query)
+
+
+def test_triage_skill_files_view_edit_history(box, client, monkeypatch, tmp_path):
+    paths = _box_paths(monkeypatch, tmp_path)
+    skill = _skill(paths, "email")
+    (skill.parent / "escalation-rules.md").write_text("# rules v1\n")
+    _write(paths.data / "email-messages" / "config.json", {"triage": _triage("email", paths)})
+    target = str(skill.parent / "escalation-rules.md")
+    q = {"kind": "email", "path": target}
+
+    def get(subject, url="/api/triage/skill-file", **params):
+        return client.get(url, params={**q, **params}, headers={SUBJECT_HEADER: subject})
+
+    def put(subject, content, query=""):
+        return client.put(f"/api/triage/skill-file{query}", json={**q, "content": content},
+                          headers={SUBJECT_HEADER: subject})
+
+    # Members view.
+    r = get("bob")
+    assert r.status_code == 200 and r.json()["content"] == "# rules v1\n" and r.json()["can_edit"] is False
+    # Only listed triage files are addressable.
+    outside = tmp_path / "secret.md"
+    outside.write_text("nope")
+    for bad in ({"path": str(outside)}, {"path": str(skill.parent / ".." / "secret.md")}, {"kind": "sms"}):
+        assert get("leo", **bad).status_code == 404
+    assert client.put("/api/triage/skill-file", json={**q, "path": str(outside), "content": "x"},
+                      headers={SUBJECT_HEADER: "leo"}).status_code == 404
+    assert outside.read_text() == "nope"
+
+    # The server refuses members and viewers, in the addressed profile.
+    assert put("bob", "member edit").status_code == 403
+    assert put("leo", "hr member edit", "?profile=hr").status_code == 403
+    assert (skill.parent / "escalation-rules.md").read_text() == "# rules v1\n"
+
+    # Owners and admins edit; History keeps the pre-edit text and each save.
+    r = put("leo", "# rules v2\n")
+    assert r.status_code == 200, r.text
+    assert put("dan", "# rules v3\n", "?profile=hr").status_code == 200
+    assert (skill.parent / "escalation-rules.md").read_text() == "# rules v3\n"
+    versions = get("bob", url="/api/triage/skill-file/history").json()["versions"]
+    assert [v["content"] for v in versions] == ["# rules v3\n", "# rules v2\n", "# rules v1\n"]
+    assert [v["author"] for v in versions] == ["user:dan", "user:leo", "system"]
+    # History lives beside the file but is never loaded as a skill file.
+    status = client.get("/api/triage/status", headers={SUBJECT_HEADER: "leo"}).json()
+    files = [f["name"] for s in kinds(status)["email"]["skills"] for f in s["files"]]
+    assert sorted(files) == ["SKILL.md", "escalation-rules.md"]
+
