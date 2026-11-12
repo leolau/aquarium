@@ -81,6 +81,11 @@ describe("coral Phase 1 registrations", () => {
     expect(ids.sort()).toEqual(getApps().map((a) => a.id).sort());
   });
 
+  it("names the profiles app Agent Profiles but keeps its id and /profiles route", () => {
+    const profiles = getApps().find((a) => a.id === "profiles");
+    expect(profiles).toMatchObject({ name: "Agent Profiles", route: "/profiles" });
+  });
+
   it("keeps the badge-slot contract: exactly one todos-open slot", () => {
     const slots = getApps().filter((a) => a.badgeSlot === "todos-open");
     expect(slots.map((a) => a.id)).toEqual(["todos"]);

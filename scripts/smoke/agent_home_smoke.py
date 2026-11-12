@@ -91,6 +91,8 @@ class PageSpec:
     admin_not_found: bool = False
     admin_markers: Tuple[str, ...] = ()
     member_markers: Tuple[str, ...] = ()
+    # Admin page must show one of these names (any locale), e.g. its title.
+    admin_names: Tuple[str, ...] = ()
     # Members/viewers are redirected here instead (a server-side redirect).
     member_redirect: Optional[str] = None
     # Public pages render outside the signed-in shell even for a session.
@@ -155,7 +157,11 @@ PAGES: Tuple[PageSpec, ...] = (
     ),
     PageSpec("/profiles/suggestions", ("ProfileSuggestionsView",)),
     # Owner/admin only: members and viewers get the not-available page.
-    PageSpec("/profiles", admin_markers=("ProfilesView",), member_markers=("NotAvailableForRole",)),
+    PageSpec(
+        "/profiles",
+        admin_markers=("ProfilesView",),
+        admin_names=("Agent Profiles", "代理設定檔"),
+        member_markers=("NotAvailableForRole",)),
     PageSpec("/skills", admin_markers=("SkillsView",), member_markers=("NotAvailableForRole",)),
     PageSpec("/skills/zz-smoke-missing", admin_not_found=True, member_markers=("NotAvailableForRole",)),
     PageSpec("/skills/zz-smoke-missing/edit", admin_not_found=True, member_markers=("NotAvailableForRole",)),
@@ -423,6 +429,8 @@ def page_verdict(spec: PageSpec, role: str, status: int, html: str) -> Tuple[boo
             problems.append("rendered " + ",".join(errors))
     if leaked:
         problems.append("admin-only markers leaked: " + ",".join(leaked))
+    if role == ADMIN and spec.admin_names and not any(n in html for n in spec.admin_names):
+        problems.append("missing name " + " / ".join(spec.admin_names))
     return (not problems, "; ".join(problems) or f"{len(found)} markers")
 
 

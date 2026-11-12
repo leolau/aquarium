@@ -19,6 +19,7 @@
     "capacity": { "name": "Capacity", "hint": "Headroom on this box" },
     "sites": { "name": "Sites", "hint": "Websites kept as tables" },
     "users": { "name": "Users", "hint": "Directory + enrolment" },
+    "profiles": { "name": "Agent Profiles", "hint": "Agents on this box" },
     "suggestions": { "name": "Suggestions", "hint": "Proposed sub-goals" },
     "tools": { "name": "Tools", "hint": "Apps the agent built" },
     "models": { "name": "Models", "hint": "Brains per slot" },

@@ -121,7 +121,7 @@ export function MenuSection() {
           locked out.
         </li>
         <li>
-          <strong>Admins only</strong>: Profiles and Skills stay off for members and viewers,
+          <strong>Admins only</strong>: Agent Profiles and Skills stay off for members and viewers,
           because only owners and admins can make changes there.
         </li>
         <li>

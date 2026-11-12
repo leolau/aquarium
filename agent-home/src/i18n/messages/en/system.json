@@ -16,7 +16,7 @@
   "settingsLink": "Open Settings",
   "cards": {
     "profiles": {
-      "name": "Profiles",
+      "name": "Agent Profiles",
       "desc": "Agents on this box — each with its own model, skills and memory.",
       "meta": "{profiles} profiles · {suggestions} suggestions"
     },
