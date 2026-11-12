@@ -360,7 +360,7 @@ def _resolve_whatsapp_bridge_port(account: str) -> "int | None":
         "WHATSAPP_CONFIG_PATH", "/opt/data/whatsapp-messages/config.json"
     )
     try:
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             cfg = _json.load(f)
     except Exception:
         return None
@@ -385,7 +385,7 @@ def _resolve_email_account(account: str) -> "dict | None":
         "EMAIL_CONFIG_PATH", "/opt/data/email-messages/config.json"
     )
     try:
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             cfg = _json.load(f)
     except Exception:
         return None
