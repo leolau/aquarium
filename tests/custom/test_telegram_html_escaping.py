@@ -200,15 +200,21 @@ def test_merge_suggestion_escapes_names_handles_and_reason(cm_rel, monkeypatch):
 # --- hourly digest (LLM summary of untrusted messages) --------------------
 
 _DIGEST_SCHEMA = """
-CREATE TABLE messages (received_at TEXT, sender_phone TEXT, sender_name TEXT, text TEXT, timestamp TEXT);
-CREATE TABLE email_messages (received_at TEXT, from_addr TEXT, from_name TEXT, subject TEXT);
-CREATE TABLE wa_tasks (description TEXT, priority TEXT, due_date TEXT, status TEXT, created_at TEXT);
-CREATE TABLE email_tasks (description TEXT, priority TEXT, due_date TEXT, status TEXT, created_at TEXT);
-CREATE TABLE escalations (channel TEXT, sender_phone TEXT, sender_email TEXT, reason TEXT,
-    summary TEXT, status TEXT, created_at TEXT);
+CREATE TABLE messages (id TEXT, source_phone TEXT, received_at TEXT, sender_phone TEXT,
+    sender_name TEXT, text TEXT, timestamp TEXT);
+CREATE TABLE email_messages (id TEXT, account_id TEXT, message_id TEXT, received_at TEXT,
+    from_addr TEXT, from_name TEXT, subject TEXT);
+CREATE TABLE wa_tasks (source_phone TEXT, source_msg_id TEXT, description TEXT,
+    priority TEXT, due_date TEXT, status TEXT, created_at TEXT);
+CREATE TABLE email_tasks (account_id TEXT, source_email_id TEXT, description TEXT,
+    priority TEXT, due_date TEXT, status TEXT, created_at TEXT);
+CREATE TABLE escalations (channel TEXT, source_phone TEXT, source_msg_id TEXT,
+    sender_phone TEXT, sender_email TEXT, reason TEXT, summary TEXT, status TEXT,
+    created_at TEXT);
 CREATE TABLE unified_contacts (id TEXT);
 CREATE TABLE contact_merge_suggestions (status TEXT);
-INSERT INTO messages VALUES ('9999-01-01', '+85200000000', 'Mallory', 'hello', '9999-01-01');
+INSERT INTO messages (id, source_phone, received_at, sender_phone, sender_name, text, timestamp)
+    VALUES ('m1', 'phone1', '9999-01-01', '+85200000000', 'Mallory', 'hello', '9999-01-01');
 """
 
 
