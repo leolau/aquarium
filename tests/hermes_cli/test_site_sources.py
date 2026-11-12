@@ -384,3 +384,38 @@ def test_merge_report_sums_over_groups():
     ss._merge_report(into, {"pages": 1, "rows": {"a": 1, "b": 2}, "failed": {"b": "x"}})
     assert into["pages"] == 3 and into["rows"] == {"a": 4, "b": 2}
     assert into["full_entities"] == ["a"] and into["failed"] == {"b": "x"} and into["cursors"] == {"a": 1}
+
+
+def test_consume_keeps_the_runner_on_one_thread():
+    """Sync Playwright breaks if a later batch is pulled on another thread."""
+    import asyncio
+    import threading
+
+    threads: list = []
+
+    def runner():
+        try:
+            for i in range(ss._BATCH * 3 + 7):
+                threads.append(threading.get_ident())
+                yield ("orders", "variable", str(i), {"order_no": str(i)})
+        finally:
+            threads.append(threading.get_ident())
+
+    stored: list = []
+
+    class Writer:
+        entities = {"orders": {"kind": "variable"}}
+
+        async def upsert(self, entity, records):
+            stored.extend(records)
+
+    run = ss.SiteRun(id="r", mode="full", trigger="schedule")
+
+    async def main():
+        # A busy default pool would hand later batches to other threads.
+        busy = [asyncio.to_thread(threading.Event().wait, 0.05) for _ in range(8)]
+        await asyncio.gather(ss._consume(Writer(), run, runner(), {"orders"}), *busy)
+
+    asyncio.run(main())
+    assert len(stored) == ss._BATCH * 3 + 7
+    assert len(set(threads)) == 1 and threads[0] != threading.get_ident()
