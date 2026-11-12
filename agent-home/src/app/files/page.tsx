@@ -6,6 +6,7 @@ import { FilesTabs } from "@/components/files/FilesTabs";
 import { FilesView } from "@/components/files/FilesView";
 import { HermesApiError } from "@/lib/api/client";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
+import { loadWhoseData, NO_WHOSE_DATA, type WhoseData } from "@/lib/whose-data";
 import type { FileAssetsResponse, FileSurfacesResponse } from "@/types";
 
 // Per-principal HTML — never cached.
@@ -22,17 +23,19 @@ export const dynamic = "force-dynamic";
  * paging are client-side refetches through `src/app/api/files/*`.
  */
 export default async function Page() {
-  await requirePrincipal();
+  const principal = await requirePrincipal();
 
   let first: FileAssetsResponse | null = null;
   let surfaces: FileSurfacesResponse = { surfaces: [] };
   let error: string | null = null;
   let noPrincipal = false;
+  let whose: WhoseData = NO_WHOSE_DATA;
 
   try {
     const client = await apiClientForRequest();
+    whose = await loadWhoseData(client, principal.user_id);
     [first, surfaces] = await Promise.all([
-      client.files({ limit: 50 }),
+      client.files({ limit: 50, owners: whose.owners }),
       client.fileSurfaces(),
     ]);
   } catch (err) {
@@ -71,7 +74,7 @@ export default async function Page() {
           Couldn&apos;t load your files ({error}).
         </div>
       ) : (
-        <FilesView initial={first} surfaces={surfaces.surfaces} />
+        <FilesView initial={first} surfaces={surfaces.surfaces} whose={whose} />
       )}
     </MobileShell>
   );

@@ -16,6 +16,8 @@ import {
 import { BusyRegion } from "@/components/ui/BusyRegion";
 import { Spinner } from "@/components/ui/Spinner";
 import type { IncomingItem, IncomingsFacets, IncomingsResponse } from "@/types";
+import { WhoseDataPicker } from "@/components/access/WhoseDataPicker";
+import { NO_WHOSE_DATA, type WhoseData } from "@/lib/whose-data";
 
 const PAGE_SIZE = 50;
 
@@ -31,9 +33,12 @@ const PAGE_SIZE = 50;
 export function IncomingsList({
   initial,
   facets,
+  whose = NO_WHOSE_DATA,
 }: {
   initial: IncomingsResponse;
   facets: IncomingsFacets;
+  /** Whom "Whose data" offers and whose arrivals `initial` already is. */
+  whose?: WhoseData;
 }) {
   const t = useT("inbox");
   const [items, setItems] = useState<IncomingItem[]>(initial.items);
@@ -54,6 +59,8 @@ export function IncomingsList({
   // the end of the list instead of an overlay over rows the user is reading.
   const [replacing, setReplacing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [owners, setOwners] = useState<string[]>(whose.owners);
+  const ownersRef = useRef<string[]>(whose.owners);
 
   // The observer fires again before `loading` re-renders, so the next-page
   // fetch is locked synchronously: one request per page, however many hits.
@@ -70,6 +77,7 @@ export function IncomingsList({
       try {
         const params = filtersToParams(value, after);
         params.set("limit", String(PAGE_SIZE));
+        if (ownersRef.current.length) params.set("owners", ownersRef.current.join(","));
         const res = await fetch(`/api/incomings?${params.toString()}`, {
           cache: "no-store",
         });
@@ -143,6 +151,15 @@ export function IncomingsList({
   const fromQuery = fromParams ? `?tab=incomings&${fromParams}` : "";
   return (
     <div data-component="IncomingsList" className="flex flex-col gap-3">
+      <WhoseDataPicker
+        people={whose.roster}
+        value={owners}
+        onChange={(next) => {
+          ownersRef.current = next;
+          setOwners(next);
+          void fetchPage(filters, null);
+        }}
+      />
       <IncomingsFilters facets={facets} value={filters} onChange={setFilters} />
       <RefJump query={filters.q} kind="M" label={(ref) => t("openRef", { ref })} />
 

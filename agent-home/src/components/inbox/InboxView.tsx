@@ -1,5 +1,6 @@
 "use client";
 
+import type { WhoseData } from "@/lib/whose-data";
 import { useState } from "react";
 import { useAction } from "@/lib/use-action";
 
@@ -27,6 +28,8 @@ export interface InboxViewProps {
   initialNotifications: Notification[];
   initialChanges: Change[];
   initialIncomings: IncomingsResponse;
+  /** Whom "Whose data" offers and whose arrivals the first page is. */
+  whose?: WhoseData;
   incomingsFacets: IncomingsFacets;
   initialTab?: Tab;
 }
@@ -77,6 +80,7 @@ export function InboxView({
   initialChanges,
   initialIncomings,
   incomingsFacets,
+  whose,
   initialTab = "incomings",
 }: InboxViewProps) {
   const [configured] = useState(initialConfigured);
@@ -250,7 +254,7 @@ export function InboxView({
       {error ? <InlineAlert tone="danger">{error}</InlineAlert> : null}
 
       {tab === "incomings" ? (
-        <IncomingsList initial={initialIncomings} facets={incomingsFacets} />
+        <IncomingsList initial={initialIncomings} facets={incomingsFacets} whose={whose} />
       ) : (
         // Answering an approval or replaying a change is a write followed by a
         // re-read of the authoritative list, so the whole list is covered: the

@@ -1001,6 +1001,14 @@ class TestOwnersFilter:
             "/api/memory/explorer/projection?owners=bob"
         ).json()["points"]
         assert points and {p["owner_user_id"] for p in points} == {"bob"}
+        # Placing a query looks for nearest points among the same people as the map.
+        placed = owner.post(
+            "/api/memory/explorer/projection/query",
+            json={"text": "alice private memory", "owners": ["bob"]},
+        )
+        assert placed.status_code == 200
+        nearest = {n["id"] for n in placed.json()["nearest"]}
+        assert nearest and nearest <= {p["id"] for p in points}
 
         # Naming somebody never widens a member's read.
         alice = _make_client(monkeypatch, ALICE)
@@ -1008,5 +1016,10 @@ class TestOwnersFilter:
         assert alice.get(
             "/api/memory/explorer/projection?owners=bob"
         ).json()["points"] == []
+        placed = alice.post(
+            "/api/memory/explorer/projection/query",
+            json={"text": "bob private memory", "owners": ["bob"]},
+        )
+        assert placed.status_code == 200 and placed.json()["nearest"] == []
 
         assert owner.get("/api/memory/explorer/rows?owners=../x").status_code == 400

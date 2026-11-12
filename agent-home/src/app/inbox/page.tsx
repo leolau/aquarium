@@ -4,6 +4,7 @@ import { InfoTip } from "@/components/ui/InfoTip";
 import { getT } from "@/i18n/server";
 import { InboxView, type Tab } from "@/components/inbox/InboxView";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
+import { loadWhoseData, NO_WHOSE_DATA, type WhoseData } from "@/lib/whose-data";
 import type {
   Change,
   IncomingsFacets,
@@ -39,7 +40,8 @@ export default async function Page({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requirePrincipal();
+  const principal = await requirePrincipal();
+  let whose: WhoseData = NO_WHOSE_DATA;
   const params = await searchParams;
   const requested = Array.isArray(params.tab) ? params.tab[0] : params.tab;
   const initialTab: Tab =
@@ -65,6 +67,7 @@ export default async function Page({
   let error: string | null = null;
   try {
     const client = await apiClientForRequest();
+    whose = await loadWhoseData(client, principal.user_id);
     const [notifResp, changeResp] = await Promise.all([
       client.notifications(),
       client.changes(),
@@ -77,6 +80,7 @@ export default async function Page({
       [incomings, facets] = await Promise.all([
         client.incomings({
           limit: 50,
+          owners: whose.owners,
           q: first("q"),
           surface: first("surface"),
           tag: first("tag"),
@@ -113,6 +117,7 @@ export default async function Page({
           initialNotifications={notifications}
           initialChanges={changes}
           initialIncomings={incomings}
+          whose={whose}
           incomingsFacets={facets}
           initialTab={initialTab}
         />

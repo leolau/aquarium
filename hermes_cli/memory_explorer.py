@@ -956,6 +956,10 @@ async def post_projection_query(request: Request, mode: Optional[str] = None):
 
     body = await request.json()
     text = (body.get("text") or "").strip()
+    raw_owners = body.get("owners")
+    if isinstance(raw_owners, list):
+        raw_owners = ",".join(str(o) for o in raw_owners)
+    owner_ids = _owner_filter(raw_owners if isinstance(raw_owners, str) else "")
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
 
@@ -1000,10 +1004,17 @@ async def post_projection_query(request: Request, mode: Optional[str] = None):
         async with conn.transaction():
             await bind_principal(conn, principal)
             await bind_elevated_reads(conn, store.role_reads)
+            # The same people as the map: nearest points come from what it shows.
+            where_sql, where_params = predicate.sql, list(predicate.params)
+            if owner_ids:
+                where_params.append(owner_ids)
+                where_sql = (
+                    f"({where_sql}) AND {PROJECTION_TABLE}.owner_user_id = "
+                    f"ANY(${len(where_params)}::text[])"
+                )
             rows = await conn.fetch(
-                f"SELECT id, x, y FROM {PROJECTION_TABLE} "
-                f"WHERE {predicate.sql}",
-                *predicate.params,
+                f"SELECT id, x, y FROM {PROJECTION_TABLE} WHERE {where_sql}",
+                *where_params,
             )
 
         # Project the query embedding into the 2-D basis.
@@ -1065,6 +1076,7 @@ async def post_projection_query(request: Request, mode: Optional[str] = None):
                     {"id": r.id, "score": r.score}
                     for r in records
                     if r.score is not None
+                    and (not owner_ids or getattr(r, "owner_user_id", None) in owner_ids)
                 ]
             except Exception:
                 pass  # No basis, no semantic search — return empty nearest.

@@ -17409,6 +17409,40 @@ async def settings_accounts_assign(request: Request):
     return await _settings_accounts_payload(principal)
 
 
+@app.get("/api/access/viewable-people")
+async def access_viewable_people(request: Request):
+    """Whose data the caller may pick in "Whose data" (FG-38 P4).
+
+    Mirrors the read predicate exactly: the owner reads everyone; with
+    ``memory.sharing.role_reads`` on, anyone else also reads the people ranked
+    below them (an admin: members and viewers, never another admin or the
+    owner); otherwise only themselves. Listing is not access: every read
+    re-checks through the scope predicate and RLS.
+    """
+    from hermes_cli.access import ELEVATED_READER_ROLES, PrincipalStore, role_rank
+    from hermes_cli.config import load_config as _load_config
+    from plugins.memory.supabase_pgvector.store import _role_reads_configured
+
+    principal = await _comms_resolve_principal(request)
+    role_reads = _role_reads_configured(_load_config() or {})
+    people = [principal]
+    if principal.is_owner or (role_reads and principal.role in ELEVATED_READER_ROLES):
+        rank = role_rank(principal.role)
+        for person in await PrincipalStore(_comms_app_store()).list_principals(active=True):
+            if person.user_id != principal.user_id and (
+                principal.is_owner or role_rank(person.role) > rank
+            ):
+                people.append(person)
+    return {
+        "me": principal.user_id,
+        "role_reads": role_reads,
+        "people": [
+            {"user_id": p.user_id, "display": p.display or p.user_id, "role": p.role}
+            for p in people
+        ],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Skills & Tools endpoints
 #

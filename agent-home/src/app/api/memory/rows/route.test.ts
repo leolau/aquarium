@@ -131,8 +131,21 @@ describe("POST /api/memory/query", () => {
       }) as never,
     );
     expect(res.status).toBe(200);
-    expect(memoryQuery).toHaveBeenCalledWith("hello");
+    expect(memoryQuery).toHaveBeenCalledWith("hello", undefined);
     expect(memoryQuery).not.toHaveBeenCalledWith(expect.stringContaining("mode"));
+  });
+
+  it("forwards the picked people so nearest points match the map", async () => {
+    memoryQuery.mockResolvedValue({ x: 1, y: 2, nearest: [] });
+    const res = await queryPOST(
+      makeReq("/api/memory/query", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: "hello", owners: ["sam", 7, "mia"] }),
+      }) as never,
+    );
+    expect(res.status).toBe(200);
+    expect(memoryQuery).toHaveBeenCalledWith("hello", ["sam", "mia"]);
   });
 
   it("returns 400 when text is empty", async () => {
