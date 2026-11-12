@@ -8,6 +8,7 @@ import "@/components/coral/coral-apps";
 import "./coral.css";
 import { buildCoralLayout, isAppActive } from "@/components/coral/coral-registry";
 import {
+  onCoralMenuRequest,
   parkLeadChatForMenu,
   restoreLeadChatAfterMenu,
 } from "@/components/coral/coral-interlock";
@@ -32,10 +33,13 @@ const STAGGER_MS = 18;
 export function CoralHost({
   badgeCounts = {},
   hiddenApps = [],
+  hideFabOnPhone = false,
 }: {
   badgeCounts?: Record<string, number>;
   /** App ids hidden from the caller's role (Settings → Menu). */
   hiddenApps?: readonly string[];
+  /** Phones: no floating button (the page's top bar opens the menu instead). */
+  hideFabOnPhone?: boolean;
 }) {
   const t = useT("nav");
   const pathname = usePathname();
@@ -56,6 +60,15 @@ export function CoralHost({
     restoreLeadChatAfterMenu();
     if (reason === "dismiss") fabRef.current?.focus();
   };
+
+  useEffect(
+    () =>
+      onCoralMenuRequest(() => {
+        parkLeadChatForMenu();
+        setOpen(true);
+      }),
+    [],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -215,7 +228,9 @@ export function CoralHost({
         aria-expanded={open}
         aria-controls={open ? "coral-panel" : undefined}
         aria-label={open ? t("closeMenu") : t("openMenu")}
-        className="coral-fab fixed z-[60] flex h-11 w-11 items-center justify-center rounded-l-none rounded-r-full text-base text-[var(--color-accent-fg)]"
+        className={`coral-fab fixed z-[60] flex h-11 w-11 items-center justify-center rounded-l-none rounded-r-full text-base text-[var(--color-accent-fg)]${
+          hideFabOnPhone ? " max-lg:hidden" : ""
+        }`}
         style={{
           left: 0,
           bottom: "calc(var(--safe-bottom) + 0.75rem)",

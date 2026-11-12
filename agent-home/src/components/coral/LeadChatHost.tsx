@@ -86,9 +86,12 @@ const EDGE = 8;
  */
 export function LeadChatHost({
   storageEnabled = false,
+  hideFabOnPhone = false,
 }: {
   /** Whether Supabase Storage is configured on the box — gates the attach button. */
   storageEnabled?: boolean;
+  /** Phones: no floating button (the chat page is already a chat). */
+  hideFabOnPhone?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
@@ -770,7 +773,9 @@ export function LeadChatHost({
         aria-expanded={open}
         aria-label={open ? "Close lead chat" : "Open lead chat"}
         hidden={open}
-        className="coral-fab fixed z-[60] flex h-14 w-14 items-center justify-center rounded-full text-xl text-[var(--color-accent-fg)]"
+        className={`coral-fab fixed z-[60] flex h-14 w-14 items-center justify-center rounded-full text-xl text-[var(--color-accent-fg)]${
+          hideFabOnPhone ? " max-lg:hidden" : ""
+        }`}
         style={{
           right: "1rem",
           // Float above a composer docked at the bottom (its Send controls).

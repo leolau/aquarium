@@ -20,7 +20,10 @@ export function ShellTopBar({
   accountRole,
   accountRoles,
   currentProfile,
+  compact = false,
 }: {
+  /** Phone chat layout: see `TopBarView`'s `compact`. */
+  compact?: boolean;
   accountName?: string | null;
   accountRole?: Role | null;
   accountRoles?: ProfileRole[];
@@ -46,6 +49,7 @@ export function ShellTopBar({
   return (
     <>
       <TopBarView
+        compact={compact}
         status={status}
         activity={activity}
         needsYou={{

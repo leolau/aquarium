@@ -4,6 +4,8 @@ import { chat, expectPageReady } from "../support/ui";
 
 test.describe("lead-chat launcher placement", { tag: "@regression" }, () => {
   asRole("admin");
+  // Phones hide the launcher on the chat page (mobile-chat.spec.ts covers that).
+  test.skip(({ isMobile }) => isMobile, "desktop only");
 
   test("sits clear of the composer's split Send button", async ({ page }) => {
     await page.goto("/chat");

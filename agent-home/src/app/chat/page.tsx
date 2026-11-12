@@ -95,6 +95,7 @@ export default async function Page({
       title={activeTitle}
       wide
       fill
+      chatChrome
       actions={error ? null : <ChatHeaderActions />}
     >
       {error ? (

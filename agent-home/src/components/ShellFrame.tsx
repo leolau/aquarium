@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 
+import { KeyboardViewport } from "@/lib/use-keyboard-viewport";
+
 /**
  * The page frame of {@link MobileShell}: sticky title bar, centred column and
  * launcher clearance. Kept free of server-only data so a client boundary
@@ -16,6 +18,7 @@ export function ShellFrame({
   overlays,
   topBar,
   pageHeader,
+  chatChrome = false,
 }: {
   title: ReactNode;
   children: ReactNode;
@@ -33,13 +36,25 @@ export function ShellFrame({
   topBar?: ReactNode;
   /** Back row + title rendered at the top of the content column. */
   pageHeader?: ReactNode;
+  /**
+   * Phone chat layout: no floating-launcher clearance, a tighter top, and the
+   * top bar folds away while the keyboard is open (`useKeyboardViewport`).
+   */
+  chatChrome?: boolean;
 }) {
   const contentWidth = wide ? "lg:max-w-7xl" : "lg:max-w-5xl";
   return (
-    <div data-component="MobileShell" className={`${fill ? "h-dvh" : "min-h-dvh"} bg-[var(--color-bg)]`}>
+    <div
+      data-component="MobileShell"
+      data-chat-chrome={chatChrome || undefined}
+      className={`${fill ? "h-dvh" : "min-h-dvh"} bg-[var(--color-bg)]`}>
       <div className={`mx-auto flex ${fill ? "h-dvh" : "min-h-dvh"} w-full max-w-md flex-col md:max-w-2xl lg:max-w-none`}>
         {topBar ? (
-          <div className="sticky top-0 z-20 bg-[var(--color-bg)]" style={{ paddingTop: "var(--safe-top)" }}>
+          <div
+            data-chat-chrome={chatChrome ? "collapsible" : undefined}
+            className="sticky top-0 z-20 bg-[var(--color-bg)]"
+            style={{ paddingTop: "var(--safe-top)" }}
+          >
             {topBar}
           </div>
         ) : (
@@ -57,12 +72,14 @@ export function ShellFrame({
           )}
         {belowHeader}
         <main
-          className={`flex-1 px-4 py-4 lg:px-8 ${
+          className={`flex-1 px-4 lg:px-8 ${
             fill ? "flex min-h-0 flex-col overflow-y-auto" : ""
           } ${
-            clearLauncher
-              ? "pb-[calc(var(--coral-clearance)+var(--safe-bottom)+1rem)] lg:pb-8"
-              : "pb-[calc(var(--safe-bottom)+1rem)]"
+            chatChrome
+              ? "pt-2 pb-[calc(var(--safe-bottom)+0.5rem)] lg:pt-4 lg:pb-8"
+              : clearLauncher
+                ? "py-4 pb-[calc(var(--coral-clearance)+var(--safe-bottom)+1rem)] lg:pb-8"
+                : "py-4 pb-[calc(var(--safe-bottom)+1rem)]"
           }`}
         >
           <div
@@ -74,6 +91,7 @@ export function ShellFrame({
             {children}
           </div>
         </main>
+        {chatChrome ? <KeyboardViewport /> : null}
         {overlays}
       </div>
     </div>

@@ -129,6 +129,7 @@ export function Composer({
   pending = [],
   onRemovePending,
   narrow = false,
+  tall = false,
   onMenuOpenChange,
 }: {
   sending: boolean;
@@ -158,7 +159,7 @@ export function Composer({
    * Left margin that keeps the composer clear of the left-edge Coral
    * launcher. Off where the layout already clears it (the landing dock).
    */
-  launcherClearance?: boolean;
+  launcherClearance?: boolean | "desktop";
   /** Messages sent while the agent works that it has not read yet (chips). */
   pending?: PendingChatInput[];
   /** Take back a queued message before it starts. */
@@ -170,6 +171,12 @@ export function Composer({
   narrow?: boolean;
   /** The mode menu opened or closed (the host may need to lift itself too). */
   onMenuOpenChange?: (open: boolean) => void;
+  /**
+   * Below `lg` (the chat page): the input takes the full width, starts at
+   * three lines and grows to 40% of the visible height (`--vv-height`, above
+   * the keyboard) before it scrolls; the actions sit in one row under it.
+   */
+  tall?: boolean;
 }) {
   const [text, setText] = useState(initialText);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
@@ -238,7 +245,9 @@ export function Composer({
   useEffect(() => onMenuOpenChange?.(menuShown), [menuShown, onMenuOpenChange]);
   // Working on a phone (or in a narrow panel) the actions wrap below a
   // full-width input; the left-launcher reserve then moves onto that row.
-  const reserve = launcherClearance
+  const reserve = launcherClearance === "desktop"
+    ? " lg:ml-14"
+    : launcherClearance
     ? !sending
       ? " ml-14"
       : narrow
@@ -487,7 +496,9 @@ export function Composer({
       ) : null}
       {/* On a phone while working, the input takes the full width and the actions wrap below it. */}
       <div
-        className={`flex items-end gap-2${sending ? (narrow ? " flex-wrap" : " max-sm:flex-wrap") : ""}`}
+        className={`flex items-end gap-2${
+          tall ? " max-lg:flex-wrap" : sending ? (narrow ? " flex-wrap" : " max-sm:flex-wrap") : ""
+        }`}
       >
         {storageEnabled ? (
           <>
@@ -507,8 +518,8 @@ export function Composer({
               title="Attach a file (image, PDF, DOC, XLS, …)"
               disabled={uploading}
               onClick={() => fileRef.current?.click()}
-              className={`rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3 text-sm disabled:opacity-60${
-                sending && launcherClearance ? (narrow ? " ml-14" : " max-sm:ml-14") : ""
+              className={`rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3 text-sm${tall ? " max-lg:min-w-11" : ""} disabled:opacity-60${
+                sending && launcherClearance === true ? (narrow ? " ml-14" : " max-sm:ml-14") : ""
               }`}
             >
               {uploading ? "…" : "+"}
@@ -521,8 +532,8 @@ export function Composer({
           aria-label={ts("composer.lock")}
           title={ts("composer.lock")}
           onClick={openSecretBox}
-          className={`rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3 text-sm${
-            !storageEnabled && sending && launcherClearance ? (narrow ? " ml-14" : " max-sm:ml-14") : ""
+          className={`rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3 text-sm${tall ? " max-lg:min-w-11" : ""}${
+            !storageEnabled && sending && launcherClearance === true ? (narrow ? " ml-14" : " max-sm:ml-14") : ""
           }`}
         >
           <LockIcon />
@@ -543,7 +554,10 @@ export function Composer({
               ? "Steer the agent, or queue a follow-up…"
               : "Message your agent… (Shift+Enter for a new line)"
           }
+          data-tall={tall || undefined}
           className={`max-h-48 min-h-[46px] flex-1 resize-none overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3 text-sm${
+            tall ? " max-lg:order-first max-lg:max-h-[calc(var(--vv-height,100dvh)*0.4)] max-lg:min-h-[86px] max-lg:basis-full" : ""
+          }${
             sending
               ? narrow
                 ? " order-first basis-full"
@@ -568,7 +582,7 @@ export function Composer({
               aria-label={stopping ? "Stopping the agent" : "Stop the agent"}
               title={stopping ? "Stopping the agent" : "Stop the agent"}
               className={`flex items-center gap-1.5 rounded-xl bg-red-600 py-3 text-sm font-semibold text-white disabled:opacity-60 ${
-                narrow ? "ml-auto px-3" : "px-4 max-sm:ml-auto max-sm:px-3"
+                narrow ? "ml-auto px-3" : `px-4 max-sm:ml-auto max-sm:px-3${tall ? " max-lg:ml-auto" : ""}`
               }`}
             >
               <span aria-hidden="true" className="h-3 w-3 rounded-[3px] bg-white" />
@@ -591,7 +605,7 @@ export function Composer({
                 aria-haspopup="menu"
                 aria-expanded={menuOpen}
                 onClick={() => setMenuOpen((cur) => !cur)}
-                className="rounded-r-xl border-l border-[color-mix(in_srgb,var(--color-accent-fg)_30%,transparent)] bg-[var(--color-accent)] px-2 py-3 text-xs text-[var(--color-accent-fg)]"
+                className={`rounded-r-xl border-l border-[color-mix(in_srgb,var(--color-accent-fg)_30%,transparent)] bg-[var(--color-accent)] px-2 py-3 text-xs text-[var(--color-accent-fg)]${tall ? " max-lg:min-w-11" : ""}`}
               >
                 ▾
               </button>
@@ -642,7 +656,9 @@ export function Composer({
             onAction={sendOnce}
             disabled={!canSend}
             busyLabel="Sending…"
-            className="rounded-xl bg-[var(--color-accent)] px-4 py-3 text-sm font-semibold text-[var(--color-accent-fg)] disabled:opacity-60"
+            className={`rounded-xl bg-[var(--color-accent)] px-4 py-3 text-sm font-semibold text-[var(--color-accent-fg)] disabled:opacity-60${
+              tall ? " max-lg:ml-auto" : ""
+            }`}
           >
             Send
           </ActionButton>

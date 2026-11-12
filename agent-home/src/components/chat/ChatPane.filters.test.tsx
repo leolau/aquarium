@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CHAT_FILTERS_OPEN_STORAGE_KEY } from "@/components/chat/ChatFiltersPanel";
 import { ChatPane } from "@/components/chat/ChatPane";
+import { chatHeaderActionsRef } from "@/lib/chat/header-actions";
 import type { ChatMessage, SessionSummary } from "@/types";
 
 const push = vi.hoisted(() => vi.fn());
@@ -207,8 +208,25 @@ describe("ChatPane new chat", () => {
   it("re-opens the page fresh so the heading leaves the old chat", () => {
     renderPane();
     expect(screen.getByText("general kenobi")).toBeTruthy();
-    fireEvent.click(document.querySelector('[data-action="new-chat"]')!);
+    expect(document.querySelector('[data-component="chat-dock"]')).toBeNull();
+    act(() => chatHeaderActionsRef.current.startNew());
     expect(screen.queryByText("general kenobi")).toBeNull();
     expect(push).toHaveBeenCalledWith("/chat?new=1");
+  });
+});
+
+describe("ChatPane title-bar menu callbacks", () => {
+  it("toggles the filters panel from the header menu", () => {
+    renderPane();
+    const region = document.getElementById("chat-filters-panel")!;
+    expect(region.hidden).toBe(true);
+    act(() => chatHeaderActionsRef.current.toggleFilters());
+    expect(document.getElementById("chat-filters-panel")!.hidden).toBe(false);
+  });
+
+  it("hides the collapsed filters row on phones while nothing applies", () => {
+    renderPane();
+    const toggle = screen.getByRole("button", { name: /Filters & search/ });
+    expect(toggle.parentElement!.className).toContain("max-lg:hidden");
   });
 });
