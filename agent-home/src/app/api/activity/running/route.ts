@@ -7,7 +7,7 @@
  * the upstream read is cached briefly per session (token hash + role in the
  * key — never served cross-principal). An upstream failure is a 502, never
  * an empty list, so the bar keeps its last good rows and dims instead of
- * vanishing.
+ * vanishing. An upstream 401 (the session's token expired) stays a 401.
  *
  * The same poll also carries the Scheduled button's summary
  * (`/api/activity/scheduled`), read in parallel under the same cache key. A
@@ -19,6 +19,7 @@ import { createHash } from "node:crypto";
 import { unstable_cache } from "next/cache";
 import { NextResponse } from "next/server";
 
+import { isUpstreamUnauthenticated } from "@/lib/api/client";
 import { apiClientForRequest, getPrincipal } from "@/lib/auth/principal";
 import { canAdminister } from "@/lib/auth/roles";
 import { readSession } from "@/lib/auth/session";
@@ -56,7 +57,10 @@ export async function GET(): Promise<NextResponse> {
         )()
       : await read();
     return NextResponse.json(body);
-  } catch {
+  } catch (err) {
+    if (isUpstreamUnauthenticated(err)) {
+      return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
+    }
     return NextResponse.json({ error: "upstream unavailable" }, { status: 502 });
   }
 }

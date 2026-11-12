@@ -11,6 +11,7 @@ import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GET } from "@/app/api/activity/running/route";
+import { HermesApiError } from "@/lib/api/client";
 import type { ActivityItem, Principal, ScheduledSummary } from "@/types";
 
 const getPrincipal = vi.fn<() => Promise<Principal | null>>();
@@ -143,5 +144,12 @@ describe("GET /api/activity/running", () => {
     expect(res.status).toBe(200);
     expect(unstableCache).not.toHaveBeenCalled();
     expect(activityRunning).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an upstream 401 (expired token) a 401, not a 502", async () => {
+    activityRunning.mockRejectedValue(new HermesApiError(401, "Unauthorized"));
+    const res = await get();
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "unauthenticated" });
   });
 });

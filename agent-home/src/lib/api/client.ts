@@ -238,6 +238,11 @@ export class HermesApiError extends Error {
   }
 }
 
+/** The API refused the session's bridged token: the caller is signed out upstream. */
+export function isUpstreamUnauthenticated(err: unknown): boolean {
+  return err instanceof HermesApiError && err.status === 401;
+}
+
 /**
  * The upstream's own wording when it sent one (F6). Every BFF route and
  * page that renders ``err.message`` must reach a user with the API's
