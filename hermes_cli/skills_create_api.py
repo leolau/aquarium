@@ -151,7 +151,8 @@ def build_create_seed(
         "block. I save it as a disabled draft and trial it before it goes live.",
         "- SKILL.md rules: start with YAML frontmatter between --- lines with `name` "
         "(lowercase letters, digits, '-', '.', '_'; at most 64 characters) and `description` "
-        "(one sentence saying when to use the skill; at most 1024 characters). Then a "
+        "(one sentence saying when to use the skill, in double quotes; at most 1024 "
+        "characters). Then a "
         "Markdown body: when to use it, numbered steps, checks, pitfalls.",
         "- Learn from what worked in the cards below; do not copy secrets, names of people "
         "or one-off values into the skill.",
@@ -249,6 +250,35 @@ async def _create_session_author(request: Request, session_id: str, profile: Opt
 
     await asyncio.to_thread(_check)
     return f"agent:{session_id}"
+
+
+_FM_PLAIN_SCALAR = re.compile(r"^(name|description):[ \t]+(?![\"'|>])(.+?)[ \t]*$", re.M)
+
+
+def quote_frontmatter_scalars(content: str) -> str:
+    """Quote a plain ``name``/``description`` that breaks the frontmatter YAML.
+
+    Models often write ``description: Use when: ...``; an unquoted ``: `` makes
+    the whole draft unsaveable. Valid frontmatter is returned unchanged.
+    """
+    import yaml
+
+    end = re.search(r"\n---\s*\n", content[3:]) if content.startswith("---") else None
+    if not end:
+        return content
+    head = content[3 : end.start() + 3]
+    try:
+        yaml.safe_load(head)
+        return content
+    except yaml.YAMLError:
+        pass
+    fixed = _FM_PLAIN_SCALAR.sub(lambda m: f"{m.group(1)}: {json.dumps(m.group(2), ensure_ascii=False)}", head)
+    try:
+        if not isinstance(yaml.safe_load(fixed), dict):
+            return content
+    except yaml.YAMLError:
+        return content
+    return content[:3] + fixed + content[end.start() + 3 :]
 
 
 def _save_sync(
@@ -393,6 +423,7 @@ async def save_created_skill(request: Request) -> Dict[str, Any]:
     content = body.get("content")
     if not isinstance(content, str) or not content.strip():
         raise HTTPException(status_code=400, detail="content is required")
+    content = quote_frontmatter_scalars(content)
     category = str(body.get("category") or "").strip() or None
     slug = _clean_slug(body.get("project"))
     candidate_id = str(body.get("candidate_id") or "").strip() or None

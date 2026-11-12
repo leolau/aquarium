@@ -229,6 +229,30 @@ def test_save_creates_disabled_draft_marks_project_and_candidate(client, model, 
     assert skill_versions.index_payload("digest-tone")["active"] == vid
 
 
+def test_save_quotes_a_description_that_breaks_yaml(client, home):
+    import yaml
+
+    content = DRAFT.replace(
+        "description: Keep the Monday digest conversational.",
+        "description: Use when: drafting the Monday digest # tone",
+    )
+    r = client.post("/api/skills/create/save", json={"profile": "default", "name": "digest-tone", "content": content})
+    assert r.status_code == 200, r.text
+    saved = next((home / "skills").rglob("digest-tone/SKILL.md")).read_text()
+    meta = yaml.safe_load(saved.split("---")[1])
+    assert meta == {"name": "digest-tone", "description": "Use when: drafting the Monday digest # tone"}
+    assert saved.endswith("# Digest tone\n\n1. Read it aloud.\n")
+
+
+def test_quote_frontmatter_scalars_leaves_valid_or_unfixable_content_alone():
+    from hermes_cli.skills_create_api import quote_frontmatter_scalars
+
+    assert quote_frontmatter_scalars(DRAFT) == DRAFT
+    assert quote_frontmatter_scalars("no frontmatter") == "no frontmatter"
+    broken = "---\nname: x\nmetadata: [unclosed\n---\nbody\n"
+    assert quote_frontmatter_scalars(broken) == broken
+
+
 def test_save_rejects_bad_input(client):
     assert client.post("/api/skills/create/save", json={"name": "../x", "content": DRAFT}).status_code == 400
     assert client.post("/api/skills/create/save", json={"name": "ok", "content": ""}).status_code == 400
