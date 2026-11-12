@@ -90,6 +90,7 @@ def _steps(store: Any, config: dict) -> List[Step]:
     from hermes_cli.human_comms import NotificationStore
     from hermes_cli.inbound_registry import InboundRegistry
     from hermes_cli.interactions import initialize_interactions
+    from hermes_cli.account_owners import AccountOwnerStore
     from hermes_cli.invitations import initialize_invitations
     from hermes_cli.mcp_endpoints import MCPEndpointRegistry
     from hermes_cli.oss_provenance import ProvenanceRegistry
@@ -129,6 +130,7 @@ def _steps(store: Any, config: dict) -> List[Step]:
         ("tags", init(TagRegistry(store))),
         ("files", init(FileRegistry(store, role_reads=role_reads))),
         ("inbound items", init(InboundRegistry(store, role_reads=role_reads))),
+        ("account owners", init(AccountOwnerStore(store))),
         ("tools", init(ToolRegistry(store))),
         ("hosted apps", init(AppStore(store))),
         ("quota overrides", init(QuotaStore(store, config=config))),

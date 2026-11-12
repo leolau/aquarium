@@ -17333,6 +17333,63 @@ async def dismiss_profile_suggestion_endpoint(request: Request, suggestion_id: s
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+async def _settings_accounts_payload(principal) -> dict:
+    from hermes_cli.access import PrincipalStore
+    from hermes_cli.account_owners import AccountOwnerStore, discover_accounts
+
+    app_store = _comms_app_store()
+    people = await PrincipalStore(app_store).list_principals()
+    owner = next((p for p in people if p.role == "owner" and p.active), None)
+    found = await discover_accounts(
+        principal, AccountOwnerStore(app_store), owner.user_id if owner else None
+    )
+    found["people"] = [
+        {"user_id": p.user_id, "display": p.display, "role": p.role, "active": p.active}
+        for p in people
+    ]
+    return found
+
+
+@app.get("/api/settings/accounts")
+async def settings_accounts(request: Request):
+    """Every mailbox, calendar and WhatsApp phone, whose it is and why (owner only, FG-38 P2b)."""
+    principal = await _comms_resolve_principal(request)
+    if not principal.is_owner:
+        raise HTTPException(status_code=403, detail="Only the owner manages whose accounts are whose.")
+    return await _settings_accounts_payload(principal)
+
+
+@app.put("/api/settings/accounts")
+async def settings_accounts_assign(request: Request):
+    """``{surface, account, owner_user_id}`` names whose new arrivals are; ``null`` clears it.
+
+    Owner only. Items that already arrived keep their person.
+    """
+    from hermes_cli.account_owners import AccountOwnerStore, NotOwner
+
+    principal = await _comms_resolve_principal(request)
+    if not principal.is_owner:
+        raise HTTPException(status_code=403, detail="Only the owner manages whose accounts are whose.")
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Send {surface, account, owner_user_id}.")
+    surface, account, who = body.get("surface"), body.get("account"), body.get("owner_user_id")
+    if not isinstance(surface, str) or not isinstance(account, str):
+        raise HTTPException(status_code=400, detail="surface and account are required.")
+    if who is not None and (not isinstance(who, str) or not who.strip()):
+        raise HTTPException(status_code=400, detail="owner_user_id must be a person's id or null.")
+    try:
+        await AccountOwnerStore(_comms_app_store()).set(principal, surface, account, who)
+    except NotOwner as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return await _settings_accounts_payload(principal)
+
+
 # ---------------------------------------------------------------------------
 # Skills & Tools endpoints
 #

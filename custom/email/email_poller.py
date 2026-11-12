@@ -247,10 +247,18 @@ def _mailbox_payload(account):
 def account_owner(account, cred=None):
     """Whose mail a shared (poller-config) mailbox is, or None for the owner.
 
-    The entry's ``owner_user_id`` when set, else the person who saved its
-    credential in Settings. A legacy workspace file has no person.
+    The owner's choice in Settings › Accounts, else the entry's
+    ``owner_user_id``, else the person who saved its credential in Settings.
+    A legacy workspace file has no person.
     """
-    return account.get('owner_user_id') or getattr(cred, 'owner_user_id', '') or None
+    from hermes_cli.account_owners import settings_owner
+
+    return (
+        settings_owner('email', account.get('address'))
+        or account.get('owner_user_id')
+        or getattr(cred, 'owner_user_id', '')
+        or None
+    )
 
 
 def poll_account(account, db):

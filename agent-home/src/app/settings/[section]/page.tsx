@@ -24,6 +24,7 @@ export default async function Page({ params }: { params: Promise<{ section: stri
   const access = {
     canManageMembers: principal.is_owner || principal.role === "admin",
     canManageTools: canManageTools(principal),
+    isOwner: principal.is_owner,
   };
   if (!isDetailSection(section) || !canOpenSettingsSection(section, access)) notFound();
 

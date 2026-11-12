@@ -20,12 +20,15 @@ export const SETTINGS_SECTIONS = [
   "aquarium",
   "model-timeouts",
   "skills-permissions",
+  "accounts",
 ] as const;
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number];
 
 export interface SettingsAccess {
   canManageMembers: boolean;
   canManageTools: boolean;
+  /** Owner-only sections (Accounts) need the install owner. */
+  isOwner?: boolean;
 }
 
 /** Sections that already have their own route under `/settings`. */
@@ -59,6 +62,8 @@ export function canOpenSettingsSection(id: SettingsSectionId, access: SettingsAc
       return access.canManageMembers;
     case "menu":
       return access.canManageTools;
+    case "accounts":
+      return access.isOwner === true;
     default:
       return true;
   }
@@ -96,6 +101,7 @@ export const YOU_ENTRIES: SettingsEntryId[] = [
 /** "This Aquarium": settings that change the install for everyone. */
 export const ADMIN_ENTRIES: SettingsEntryId[] = [
   "people",
+  "accounts",
   "tools",
   "entity-goal",
   "capacity",

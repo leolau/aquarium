@@ -153,9 +153,19 @@ def sync_events(db, account_id, credentials, calendar_id='primary'):
 
     # Get existing sync token + last-pass watermark
     account = db.execute(
-        "SELECT sync_token, last_synced FROM calendar_accounts WHERE id = ?",
+        "SELECT sync_token, last_synced, email FROM calendar_accounts WHERE id = ?",
         (account_id,)
     ).fetchone()
+    # Whose events these are: the owner's choice in Settings › Accounts, else
+    # the person who connected this calendar; a legacy workspace file has
+    # neither and stays the owner's.
+    from hermes_cli.account_owners import settings_owner
+
+    owner_user_id = (
+        settings_owner('calendar', account['email'] if account else '')
+        or getattr(credentials, 'owner_user_id', '')
+        or None
+    )
 
     sync_token = account['sync_token'] if account else None
     last_synced = None
@@ -371,9 +381,7 @@ def sync_events(db, account_id, credentials, calendar_id='primary'):
                         'status': status,
                         'all_day': bool(all_day),
                     },
-                    # The person who connected this calendar in Settings; a
-                    # legacy workspace file has none and stays the owner's.
-                    owner_user_id=getattr(credentials, 'owner_user_id', '') or None,
+                    owner_user_id=owner_user_id,
                 )
             except ImportError:
                 pass
