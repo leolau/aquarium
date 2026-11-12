@@ -128,6 +128,14 @@ CALL_MAX_BYTES_RANGE = (10_000, 50_000_000)
 _SECRET_COLUMN = re.compile(
     r"(^|[^a-z])(password|passwd|pwd|pass ?hash|hash|salt|secret|token|api ?key|private ?key|access ?key"
     r"|credentials?|otp|pin code|session ?(id|key)|sessid)($|[^a-z])")
+# Names that hold a per-page CSRF/anti-forgery value, not a stored secret.
+_CSRF_NAME = re.compile(r"csrf|xsrf|nonce|verification ?token|^ ?token$|^authenticity token$")
+# A stored password hash or a signed token, whatever the key is called.
+_SECRET_VALUE = re.compile(
+    r"^\$(2[abxy]?|argon2(id|i|d)|pbkdf2[\w-]*|scrypt|sha(256|512)|[156])\$\S{8,}$"
+    r"|^(pbkdf2_sha\d+|bcrypt(_sha256)?|argon2|sha1|md5)\$\S{8,}$"
+    r"|^eyJ[\w-]{6,}\.eyJ[\w-]{6,}\.[\w-]+$")
+_DATE_VALUE = re.compile(r"^\d{4}-\d{2}-\d{2}|^\d{1,2}/\d{1,2}/\d{2,4}")
 _TOKEN_RUN = re.compile(r"(?<![A-Za-z0-9+/=._$-])[A-Za-z0-9+/=._$-]{24,}")
 _SENSITIVE_PARAM = re.compile(
     r"pass|pwd|secret|token|csrf|xsrf|auth|session|sess_?id|(^|[_.-])sid$|^sid|cookie|api_?key|access_?key"
@@ -194,6 +202,14 @@ class RecipeError(ValueError):
 
 class ForbiddenTarget(RecipeError):
     """A step would click, submit or open something that changes the site."""
+
+
+class FiltersRefused(RuntimeError):
+    """Explore will not click a search whose filters are all empty (it can return the whole database)."""
+
+    def __init__(self, step: Any, op: str, fields: List[str]):
+        self.step, self.op, self.fields = step, op, list(fields)
+        super().__init__(f"{op} at step {step} refused: every filter is empty {self.fields}")
 
 
 class LoginFailed(RuntimeError):
@@ -333,6 +349,10 @@ def _steps_problems(where: str, steps: Any, *, depth: int = 0, in_window: bool =
             problems.append(f"{at}: 'timeout_ms' must be a whole number of milliseconds, 100 to {MAX_STEP_TIMEOUT_MS}")
         if "allow_empty" in step and (op not in _EXTRACT_OPS or not isinstance(step["allow_empty"], bool)):
             problems.append(f"{at}: 'allow_empty' is a true/false option of the extract_* ops")
+        if "allow_empty_filters" in step and (
+            op not in ("click", "submit") or not isinstance(step["allow_empty_filters"], bool)
+        ):
+            problems.append(f"{at}: 'allow_empty_filters' is a true/false option of click and submit")
         if op == "goto" and not isinstance(step.get("url"), str):
             problems.append(f"{at}: needs 'url'")
         elif op == "click":
@@ -773,6 +793,51 @@ def looks_like_secret_column(name: Any) -> bool:
     return bool(_SECRET_COLUMN.search(re.sub(r"[_.\-]+", " ", words)))
 
 
+def _name_words(name: Any) -> str:
+    words = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(name or "")).lower()
+    return re.sub(r"[_.\-]+", " ", words)
+
+
+def looks_like_secret_value(value: Any) -> bool:
+    """True for a value shaped like a stored password hash (bcrypt, argon2, pbkdf2, crypt) or a JWT."""
+    return isinstance(value, str) and bool(_SECRET_VALUE.match(value.strip()))
+
+
+def secret_data_entry(key: Any, *, hashlike: bool, filled: bool, datelike: bool) -> bool:
+    """Whether a key/value seen in page data or a JSON answer is a secret the site sends to the browser.
+
+    A hash- or JWT-shaped value always is. Otherwise the key's last part must
+    look like a secret (``password_hash``, ``apiKey``) and hold a real value:
+    not empty, not a date (``password_changed_at``), not a CSRF token.
+    """
+    if hashlike:
+        return True
+    last = str(key or "").rsplit(".", 1)[-1]
+    return filled and not datelike and looks_like_secret_column(last) and not _CSRF_NAME.search(_name_words(last))
+
+
+def secret_paths(value: Any, limit: int = 20) -> List[str]:
+    """Key paths (lists folded) in a JSON value that hold what looks like a secret."""
+    found: List[str] = []
+    stack: List[Tuple[str, Any, int]] = [("", value, 0)]
+    while stack and len(found) < limit:
+        path, obj, depth = stack.pop()
+        if depth > 8:
+            continue
+        if isinstance(obj, list):
+            stack.extend((path, x, depth + 1) for x in obj[:20])
+        elif isinstance(obj, Mapping):
+            for k, v in list(obj.items())[:200]:
+                sub = f"{path}.{k}" if path else str(k)
+                if isinstance(v, (Mapping, list)):
+                    stack.append((sub, v, depth + 1))
+                elif sub not in found and isinstance(v, str) and secret_data_entry(
+                        sub, hashlike=looks_like_secret_value(v), filled=len(v.strip()) >= 6
+                        and not set(v.strip()) <= set("*•xX"), datelike=bool(_DATE_VALUE.match(v.strip()))):
+                    found.append(sub)
+    return found
+
+
 def _mask_token_runs(text: str) -> str:
     """``text`` with long letter-and-digit runs (hashes, keys, tokens) masked."""
     def sub(m: "re.Match[str]") -> str:
@@ -838,8 +903,10 @@ def _record_keys(record: Any) -> List[str]:
 def json_shape(value: Any) -> Dict[str, Any]:
     """Where the records sit in a JSON answer: keys, the likely ``records`` path, count and record keys."""
     if isinstance(value, list):
-        return {"type": "array", "records_path": "", "records": len(value),
-                "record_keys": _record_keys(value[0]) if value else []}
+        shape = {"type": "array", "records_path": "", "records": len(value),
+                 "record_keys": _record_keys(value[0]) if value else []}
+        secrets = secret_paths(value)
+        return {**shape, "secret_keys": secrets} if secrets else shape
     if not isinstance(value, Mapping):
         return {"type": type(value).__name__}
     shape: Dict[str, Any] = {"type": "object", "keys": [str(k) for k in list(value)[:40]]}
@@ -860,6 +927,9 @@ def json_shape(value: Any) -> Dict[str, Any]:
     for k in ("recordsTotal", "recordsFiltered", "total", "count", "totalCount"):
         if isinstance(value.get(k), int):
             shape.setdefault("totals", {})[k] = value[k]
+    secrets = secret_paths(value)
+    if secrets:
+        shape["secret_keys"] = secrets
     return shape
 
 
@@ -916,8 +986,9 @@ class Driver:
     def step_requests(self) -> List[Dict[str, Any]]:
         """Same-origin XHR/fetch calls the page made since the last call (for explore)."""
         return []
-    def empty_filters(self, target: Mapping[str, Any]) -> Optional[List[str]]:
-        """Before a search click (explore): the empty date/filter inputs of the target's form, if it looks like one."""
+    def empty_filters(self, target: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+        """Before a search click (explore), if the target's form looks like a search: ``{"fields": [...],
+        "all": bool}`` with its empty date/filter inputs, ``all`` when no filter at all is set."""
         return None
     def close(self) -> None:
         raise NotImplementedError
@@ -1282,11 +1353,70 @@ _EMPTY_FILTERS_JS = r"""
     || dates.length > 0;
   if (!searchy || !fields.length) return null;
   // A filled non-date filter (one warehouse, one id) already narrows the search.
-  if (fields.some((x) => !isDate(x) && !empty(x))) return [];
-  const emptyDates = dates.filter(empty);
-  if (emptyDates.length) return emptyDates.map(label).slice(0, 10);
-  if (fields.every(empty)) return fields.map(label).slice(0, 10);
-  return [];
+  if (fields.some((x) => !isDate(x) && !empty(x))) return {fields: [], all: false};
+  // all: no filter at all is set, so the search asks for everything.
+  if (fields.every(empty)) return {fields: fields.map(label).slice(0, 10), all: true};
+  return {fields: dates.filter(empty).map(label).slice(0, 10), all: false};
+}"""
+
+# Explore: key/value pairs in the page's own data that may be secrets: inline
+# <script> data, data-* attributes, hidden inputs and DataTables row objects.
+# Values never leave the page; only the key, where it was seen, and whether the
+# value is hash/JWT-shaped, filled in or a date. Python decides what counts.
+_INLINE_SECRETS_JS = r"""
+() => {
+  const out = [], seen = new Set();
+  const HASH = /^\$(2[abxy]?|argon2(id|i|d)|pbkdf2[\w-]*|scrypt|sha(256|512)|[156])\$\S{8,}$|^(pbkdf2_sha\d+|bcrypt(_sha256)?|argon2|sha1|md5)\$\S{8,}$|^eyJ[\w-]{6,}\.eyJ[\w-]{6,}\.[\w-]+$/;
+  const NAME = /pass|pwd|hash|salt|secret|token|api.?key|private|access.?key|credential|otp|pin|sess/i;
+  const DATE = /^\d{4}-\d{2}-\d{2}|^\d{1,2}\/\d{1,2}\/\d{2,4}/;
+  const add = (where, key, v) => {
+    if (out.length >= 60) return;
+    const s = typeof v === 'string' ? v.trim() : (typeof v === 'number' ? String(v) : '');
+    const hash = HASH.test(s);
+    if (!hash && !NAME.test(String(key))) return;
+    const id = where + '|' + key;
+    if (seen.has(id)) return;
+    seen.add(id);
+    out.push({where: where.slice(0, 80), key: String(key).slice(0, 80), hash,
+              filled: s.length >= 6 && !/^[*\u2022xX]+$/.test(s), date: DATE.test(s)});
+  };
+  const walk = (where, obj, path, depth) => {
+    if (depth > 6 || obj == null || typeof obj !== 'object') return;
+    if (Array.isArray(obj)) { for (const x of obj.slice(0, 20)) walk(where, x, path, depth + 1); return; }
+    for (const [k, v] of Object.entries(obj).slice(0, 200)) {
+      const p = path ? path + '.' + k : k;
+      if (v && typeof v === 'object') walk(where, v, p, depth + 1); else add(where, p, v);
+    }
+  };
+  const KV = /["']?([A-Za-z_$][\w$-]*)["']?\s*[:=]\s*["']([^"'\\\n]{0,300})["']/g;
+  const scan = (where, text) => {
+    const t = String(text || '').slice(0, 300000);
+    if (/^\s*[\[{]/.test(t)) {
+      try { walk(where, JSON.parse(t), '', 0); return; } catch (e) { /* not plain JSON: scan pairs */ }
+    }
+    for (const m of t.matchAll(KV)) { add(where, m[1], m[2]); if (out.length >= 60) break; }
+  };
+  const tag = (el) => el.tagName.toLowerCase() + (el.id ? '#' + el.id : '');
+  Array.from(document.querySelectorAll('script:not([src])')).slice(0, 40).forEach((el, i) =>
+    scan('script ' + (el.id ? '#' + el.id : i + 1), el.textContent));
+  for (const el of Array.from(document.querySelectorAll('*')).slice(0, 20000)) {
+    for (const a of el.attributes) {
+      if (!a.name.startsWith('data-')) continue;
+      const where = tag(el) + ' [' + a.name + ']';
+      if (/^\s*[\[{]/.test(a.value)) scan(where, a.value); else add(where, a.name.slice(5), a.value);
+    }
+    if (out.length >= 60) break;
+  }
+  for (const el of document.querySelectorAll('input[type=hidden]')) add('hidden input', el.name || el.id, el.value);
+  const $ = window.jQuery;
+  const DT = ($ && $.fn && $.fn.dataTable) || window.DataTable;
+  try {
+    for (const node of (DT && DT.tables ? DT.tables() : [])) {
+      const api = $ && $.fn.dataTable ? $(node).DataTable() : new DT.Api(node);
+      walk('datatable ' + tag(node) + ' rows', api.rows().data().toArray().slice(0, 20), '', 0);
+    }
+  } catch (e) { /* no readable DataTables */ }
+  return out;
 }"""
 
 # A same-origin fetch in the logged-in page: the browser adds the session
@@ -1599,6 +1729,10 @@ class PlaywrightDriver(Driver):
         inventory = self._page.evaluate(_INVENTORY_JS)
         inventory["json_requests"], self._json_seen = self._json_seen, []
         inventory["datatables"] = self._page.evaluate(_DATATABLES_LIST_JS)
+        try:
+            inventory["inline_data"] = self._page.evaluate(_INLINE_SECRETS_JS)
+        except Exception:
+            logger.debug("scanning page data for secrets failed", exc_info=True)
         return inventory
 
     def datatable(self, table: str, columns: Optional[Mapping[str, Any]], start: int, length: int) -> Dict[str, Any]:
@@ -1613,7 +1747,7 @@ class PlaywrightDriver(Driver):
             url = urlunparse(parsed._replace(query=urlencode(query)))
         return self._page.evaluate(_FETCH_JS, [url, method, body, content_type, dict(headers), max_bytes, timeout_ms])
 
-    def empty_filters(self, target: Mapping[str, Any]) -> Optional[List[str]]:
+    def empty_filters(self, target: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
         try:
             return self._locator(target).evaluate(_EMPTY_FILTERS_JS, timeout=min(
                 self._action_timeout(target.get("timeout_ms")), 5_000))
@@ -1883,15 +2017,20 @@ class _Run:
     def note_empty_filters(self, ctx: Mapping[str, Any], step: Mapping[str, Any], target: Mapping[str, Any]) -> None:
         if self.step_warnings is None:
             return
-        empty = self.driver.empty_filters(target)
-        if empty:
-            label = ".".join(ctx.get("step_path") or []) or "?"
-            self.step_warnings.append({
-                "step": int(label) if label.isdigit() else label, "op": step.get("op"), "empty_filters": empty,
-                "warning": (f"{step.get('op')} with empty filters {empty}: a search without a filter can return "
-                            "everything and slow the site. Set the narrowest filter (one day, or one known value) "
-                            "first; if none can be set, do not click, ask the person instead."),
-            })
+        found = self.driver.empty_filters(target) or {}
+        empty = list(found.get("fields") or [])
+        if not empty:
+            return
+        label = ".".join(ctx.get("step_path") or []) or "?"
+        at = int(label) if label.isdigit() else label
+        if found.get("all") and step.get("allow_empty_filters") is not True:
+            raise FiltersRefused(at, str(step.get("op")), empty)
+        self.step_warnings.append({
+            "step": at, "op": step.get("op"), "empty_filters": empty,
+            "warning": (f"{step.get('op')} with empty filters {empty}: a search without a filter can return "
+                        "everything and slow the site. Set the narrowest filter (one day, or one known value) "
+                        "first; if none can be set, do not click, ask the person instead."),
+        })
 
     def guarded_click(self, where: str, target: Mapping[str, Any]) -> None:
         _check_static_target(where, target)
@@ -1954,6 +2093,7 @@ class _Run:
         if op == "goto":
             self.goto(step["url"])
         elif op == "click":
+            _check_static_target(where, step)
             self.note_empty_filters(ctx, step, step)
             self.guarded_click(where, step)
         elif op == "fill":
@@ -2463,10 +2603,22 @@ def _flag_secrets(inventory: Dict[str, Any]) -> None:
             found.append(f"json {r.get('url')}: keys {bad_keys}")
     for group in inventory.get("step_requests") or []:
         for r in group.get("requests") or []:
-            bad_keys = [k for k in (r.get("shape") or {}).get("record_keys") or [] if looks_like_secret_column(k)]
+            shape = r.get("shape") or {}
+            bad_keys = [k for k in shape.get("record_keys") or [] if looks_like_secret_column(k)]
+            bad_keys += [k for k in shape.get("secret_keys") or [] if k not in bad_keys]
             if bad_keys:
                 r["secret_keys"] = bad_keys
-                found.append(f"{r.get('method')} {r.get('path')}: record keys {bad_keys}")
+                found.append(f"{r.get('method')} {r.get('path')}: answer keys {bad_keys}")
+    if "inline_data" in inventory:
+        inline = [f"{c.get('where')}: {c.get('key')}" for c in inventory.pop("inline_data") or []
+                  if isinstance(c, Mapping) and secret_data_entry(
+                      c.get("key"), hashlike=bool(c.get("hash")), filled=bool(c.get("filled")),
+                      datelike=bool(c.get("date")))]
+        if inline:
+            inventory["inline_secrets"] = inline[:20]
+    if inventory.get("inline_secrets"):
+        found.append(f"data in the page itself (scripts, data attributes, hidden inputs, DataTables rows): "
+                     f"{inventory['inline_secrets'][:8]}")
     extracted = inventory.get("extracted")
     if isinstance(extracted, list):
         bad_keys = sorted({k for row in extracted if isinstance(row, Mapping) for k in row
@@ -2513,6 +2665,9 @@ def inventory_summary(name: str, inv: Mapping[str, Any]) -> str:
                 got += f"; keys {shape['keys'][:15]}"
             lines.append(f"  after step {group['step']} ({group['op']}): {r['method']} {r['path']}"
                          f"{' [' + r['request_type'] + ']' if r.get('request_type') else ''} {sent} -> {got}")
+    if inv.get("refused"):
+        lines.append(f"  REFUSED at step {inv.get('refused_step')} ({inv.get('refused_op')}): "
+                     f"{inv['refused']} {inv.get('empty_filters')}; {inv.get('hint', '')}")
     for w in inv.get("warnings") or []:
         lines.append(f"  WARNING at step {w.get('step')}: {w.get('warning')}")
     for note in inv.get("security") or []:
@@ -2569,8 +2724,12 @@ def browse(
     ``step_requests`` lists the XHR/fetch calls each step set off; an answer
     over ``max_call_bytes`` (default: the recipe's ``explore_max_call_bytes``,
     else 2 MB) is cut off and reported ``aborted: too_large``.
-    ``warnings`` notes clicks/submits made with empty search filters, and
-    ``security`` columns that look like secrets the site sends.
+    A click/submit on a search whose filters are all empty is not made: the
+    probe stops there with ``refused: "empty_filters"`` and the empty fields
+    in ``empty_filters`` (a step can opt in with ``allow_empty_filters``).
+    ``warnings`` notes clicks/submits made with some search filters empty, and
+    ``security`` what looks like secrets the site sends: table columns, JSON
+    answer keys, and data in the page itself (``inline_secrets``).
     """
     if max_call_bytes is None:
         max_call_bytes = recipe.get("explore_max_call_bytes") or DEFAULT_CALL_MAX_BYTES
@@ -2605,6 +2764,18 @@ def browse(
                 for item in run.steps(probe["steps"], ctx, after_step=note_requests):
                     extracted.append(item.payload)
                 inventory = annotate_inventory(run.driver.inventory())
+            except FiltersRefused as exc:
+                try:
+                    inventory = annotate_inventory(run.driver.inventory())
+                except Exception:
+                    inventory = {}
+                inventory.update(
+                    refused="empty_filters", refused_step=exc.step, refused_op=exc.op, empty_filters=exc.fields,
+                    hint=("not clicked: every filter of this search is empty, so it would ask for everything. "
+                          "Set the narrowest filter (one day on a date field, or one known value; in a rule "
+                          "builder, pick a field, an operator and a value) and retry once, then read the "
+                          "request it sends in step_requests. Set 'allow_empty_filters': true on the step only "
+                          "when the page is known to answer an empty search with a small result."))
             except Exception as exc:
                 error = _redact(f"{type(exc).__name__}: {exc}", run.password)
                 try:

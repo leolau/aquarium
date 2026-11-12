@@ -97,9 +97,40 @@ Work in `~/site-study/<slug>/` (`design.json`, `recipe.json`,
      one day (`{{date-1}}`..`{{date-1}}`), or a single known value (one
      warehouse, one ID seen on another page). **Never click with empty
      filters**: on many sites that returns the whole database and slows
-     the site for everyone. If no filter can be set, do not click; put a
-     question in your notes instead. The inventory's `warnings` list
-     every click/submit made with empty date/filter inputs.
+     the site for everyone. Explore enforces it: a click/submit on a
+     search whose filters are *all* empty is not made, and the probe stops
+     with `refused: "empty_filters"` and the empty fields in
+     `empty_filters`. The inventory's `warnings` list clicks/submits made
+     with only some filters empty. Do not set `allow_empty_filters: true`
+     to get past a refusal; it is for a page known to answer an empty
+     search with a small result.
+   - **Refused or too large → narrow and retry once.** When a search is
+     refused (`empty_filters`) or its call is cut off (`too_large`), send
+     one more probe with the narrowest filter: one day on a date field
+     (from = to = `{{date-1}}`), or else a single known value (one
+     warehouse, one ID seen on another page). Then read that call in
+     `step_requests`: the masked `body`/`query` sample is the payload
+     format the endpoint takes (field names, date format, rules JSON) and
+     `shape` is where its records sit. Turn it into a bounded
+     `extract_json` (below) inside `date_windows`, and check it with
+     `preview`. Only if the narrow retry is refused or cut off too, stop
+     there and put the page in the entity's `question` / your notes; never
+     click the empty search again.
+   - **Rule builders** (jQuery QueryBuilder and similar: "Add rule",
+     a field dropdown, then an operator and value inputs; the page reads
+     them with `$('#builder').queryBuilder('getRules')` and sets them
+     with `setRules`) start with no rule, so explore refuses their Search.
+     Explore cannot call page JavaScript: build one rule with the visible
+     inputs instead. `select` the field (e.g. the date field), `wait` for
+     the operator/value inputs it reveals (`.rule-operator-container
+     select`, `.rule-value-container input`), `select` the operator
+     (`between`, `equal`) and `fill` one day (or one value), then click
+     Search. The request body in `step_requests` shows the `getRules()`
+     JSON (`{"condition": "AND", "rules": [{"id": ..., "operator":
+     "between", "value": [from, to]}]}`); copy it into the
+     `extract_json` `json` body with the dates set to
+     `{{window_from}}`/`{{window_to}}`. If the builder offers no field
+     you can narrow on, record a question.
    - **Cut-off calls.** Explore cuts off any XHR/fetch answer a step sets
      off past 2 MB (recipe `explore_max_call_bytes`, 10 kB to 50 MB) and
      lists it in `step_requests` as `aborted: "too_large"` with
@@ -171,8 +202,12 @@ Work in `~/site-study/<slug>/` (`design.json`, `recipe.json`,
        of times.
    - **Secrets sent to the browser.** If a table or JSON answer holds
      password, hash, token or API-key fields (the inventory's `security`
-     note and `secret_columns` / `secret_keys` flag them), exclude the
-     **whole entity**, not just the column: add the page to
+     note and `secret_columns` / `secret_keys` flag them), or the page
+     carries them in its own data (inline script JSON, `data-*`
+     attributes, hidden inputs, DataTables row objects: listed in
+     `inline_secrets`), the page is secret-bearing even when every
+     visible column looks clean. Then exclude the **whole entity**,
+     not just the column: add the page to
      `design.exclusions` as `{"page": ..., "reason": ..., "security":
      true}` and tell the user it is a security issue to report to the
      site owner. Never store those columns, and never copy their values

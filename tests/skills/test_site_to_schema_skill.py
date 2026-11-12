@@ -153,7 +153,8 @@ def test_explore_inventories_pages_and_flags_traps(site, capsys):
     running, tmp = site
     (tmp / "probes.json").write_text(json.dumps([
         {"name": "orders", "steps": [{"op": "goto", "url": "/dashboard"}, {"op": "click", "text": "Orders"},
-                                     {"op": "submit", "selector": "#btn-search"}]},
+                                     {"op": "submit", "selector": "#btn-search",
+                                                                      "allow_empty_filters": True}]},
     ]))
     code = explore_site.main(["--recipe", str(tmp / "recipe.json"), "--credential", "web-login/fixture",
                               "--probes", str(tmp / "probes.json"), "--goto", "/reference", "--out", str(tmp / "inv")])
@@ -218,7 +219,10 @@ def test_skill_studies_through_site_db_and_stops_on_missing_prerequisites():
 def test_skill_rules_for_safe_probing_large_tables_and_secrets():
     text = " ".join((SKILL / "SKILL.md").read_text().split())
     assert "set the narrowest filter the form has: one day" in text
-    assert "**Never click with empty filters**" in text and "If no filter can be set, do not click" in text
+    assert "**Never click with empty filters**" in text and '`refused: "empty_filters"`' in text
+    assert "**Refused or too large → narrow and retry once.**" in text and "never click the empty search again" in text
+    assert "**Rule builders**" in text and "`setRules`" in text and "'getRules'" in text
+    assert "`inline_secrets`" in text and "even when every visible column looks clean" in text
     assert "`aborted: \"too_large\"`" in text and "explore_max_call_bytes" in text
     assert "1-day `date_windows`" in text and "`P30D`" in text and "nightly `full` is only for tables read cheaply" in text
     assert "exclude the **whole entity**" in text and "`design.exclusions`" in text and "site owner" in text
@@ -231,7 +235,7 @@ def test_skill_rules_for_safe_probing_large_tables_and_secrets():
 def test_explore_script_cuts_off_a_wide_search(site, capsys):
     running, tmp = site
     (tmp / "probes.json").write_text(json.dumps([{"name": "stock", "steps": [
-        {"op": "goto", "url": "/stock"}, {"op": "click", "text": "Search"},
+        {"op": "goto", "url": "/stock"}, {"op": "click", "text": "Search", "allow_empty_filters": True},
         {"op": "wait", "selector": "#s-status:has-text('aborted')", "timeout_ms": 20000}]}]))
     code = explore_site.main(["--recipe", str(tmp / "recipe.json"), "--credential", "web-login/fixture",
                               "--probes", str(tmp / "probes.json"), "--max-call-bytes", "50000",
@@ -294,7 +298,8 @@ def test_site_db_explore_logs_in_with_the_saved_login(gateway_site):
     recipe["base_url"] = gateway_site.base_url
     out = _tool("alice", action="explore", site="fixture", recipe=recipe, goto=["/reference"],
                 probes=[{"name": "orders", "steps": [{"op": "goto", "url": "/dashboard"}, {"op": "click", "text": "Orders"},
-                                                     {"op": "submit", "selector": "#btn-search"}]}])
+                                                     {"op": "submit", "selector": "#btn-search",
+                                                                      "allow_empty_filters": True}]}])
     assert out["success"], out
     assert out["login"] == "site-login/fixture"
     pages = {p["name"]: p for p in out["pages"]}
@@ -330,7 +335,7 @@ def test_site_db_explore_reports_the_endpoint_behind_a_search_button(gateway_sit
 def test_site_db_explore_cuts_off_a_wide_search_and_flags_secrets(gateway_site):
     recipe = {k: v for k, v in RECIPE.items() if k != "entities"}
     recipe["base_url"] = gateway_site.base_url
-    steps = [{"op": "goto", "url": "/stock"}, {"op": "click", "text": "Search"},
+    steps = [{"op": "goto", "url": "/stock"}, {"op": "click", "text": "Search", "allow_empty_filters": True},
              {"op": "wait", "selector": "#s-status:has-text('aborted')", "timeout_ms": 20000}]
     out = _tool("alice", action="explore", site="fixture", recipe=recipe, goto=["/staff", "/setup/functions"],
                 probes=[{"name": "stock", "steps": steps}])
