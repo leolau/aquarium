@@ -10,7 +10,9 @@ import type { Principal, TriageStatus } from "@/types";
 
 const getPrincipal = vi.fn<() => Promise<Principal | null>>();
 const triageStatus = vi.fn();
-const apiClientForRequest = vi.fn(async (opts?: { profile?: string }) => (opts ? { triageStatus } : { triageStatus }));
+const apiClientForRequest = vi.fn<(opts?: { profile?: string }) => Promise<{ triageStatus: typeof triageStatus }>>(
+  async () => ({ triageStatus }),
+);
 
 vi.mock("@/lib/auth/principal", () => ({
   getPrincipal: () => getPrincipal(),
