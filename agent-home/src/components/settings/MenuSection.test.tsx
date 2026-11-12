@@ -48,19 +48,19 @@ describe("MenuSection", () => {
     expect((screen.getByLabelText(/show graph to viewer/i) as HTMLInputElement).checked).toBe(true);
   });
 
-  it("locks Profiles off for members and viewers only; Skills follows Skills permissions", async () => {
+  it("locks Agent Profiles off for members and viewers only; Skills follows Skills permissions", async () => {
     fetchMock.mockReturnValue(reply(NAV));
     render(<MenuSection />);
     await screen.findByRole("tabpanel");
     fireEvent.click(screen.getByRole("tab", { name: "Admin" }));
-    for (const name of [/show profiles to admin/i, /show skills to admin/i]) {
+    for (const name of [/show agent profiles to admin/i, /show skills to admin/i]) {
       const box = (await screen.findByLabelText(name)) as HTMLInputElement;
       expect(box.checked).toBe(true);
       expect(box.disabled).toBe(false);
     }
     for (const role of ["Member", "Viewer"]) {
       fireEvent.click(screen.getByRole("tab", { name: role }));
-      const profiles = screen.getByLabelText(new RegExp(`show profiles to ${role}`, "i")) as HTMLInputElement;
+      const profiles = screen.getByLabelText(new RegExp(`show agent profiles to ${role}`, "i")) as HTMLInputElement;
       expect(profiles.checked).toBe(false);
       expect(profiles.disabled).toBe(true);
       const skills = screen.getByLabelText(new RegExp(`show skills to ${role}`, "i")) as HTMLInputElement;
@@ -127,12 +127,13 @@ describe("MenuSection", () => {
     expect((screen.getByLabelText(/show to-dos to member/i) as HTMLInputElement).checked).toBe(false);
   });
 
-  it("labels Profiles 'Admins only' and lets the owner edit the Owner tab", async () => {
+  it("labels Agent Profiles 'Admins only' and lets the owner edit the Owner tab", async () => {
     fetchMock.mockReturnValueOnce(reply({ ...NAV, role: "owner", is_owner: true }));
     render(<MenuSection />);
     await screen.findByRole("tabpanel");
     const labels = [...document.querySelectorAll('[data-locked-off="true"]')].map((n) => n.textContent);
     expect(labels).toEqual(["Admins only"]);
+    expect(document.body.textContent).toContain("Agent Profiles and Skills stay off for members and viewers");
     expect(document.body.textContent).toContain("the Owner tab is your own menu");
     fireEvent.click(screen.getByRole("tab", { name: "Owner" }));
     const graph = screen.getByLabelText(/show graph to owner/i) as HTMLInputElement;

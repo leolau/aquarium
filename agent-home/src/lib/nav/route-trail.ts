@@ -37,7 +37,7 @@ const ROUTES: RouteNode[] = [
   { pattern: "/models", label: "Models", parent: "/system" },
   { pattern: "/tools", label: "Tools", parent: "/system" },
   { pattern: "/tools/:name", label: "Tool", parent: "/tools" },
-  { pattern: "/profiles", label: "Profiles", parent: "/system" },
+  { pattern: "/profiles", label: "Agent Profiles", parent: "/system" },
   { pattern: "/profiles/suggestions", label: "Suggestions", parent: "/profiles" },
   { pattern: "/skills", label: "Skills", parent: "/system" },
   { pattern: "/skills/:name", label: "Skill", parent: "/skills" },

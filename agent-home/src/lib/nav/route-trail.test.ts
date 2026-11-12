@@ -23,6 +23,10 @@ describe("routeTrail", () => {
     expect(routeTrail("/settings/get-ready").at(-1)?.label).toBe("Get ready");
   });
 
+  it("names the /profiles page Agent Profiles in its trail", () => {
+    expect(routeTrail("/profiles/suggestions").map((c) => c.label)).toEqual(["Home", "System", "Agent Profiles", "Suggestions"]);
+  });
+
   it("applies label overrides by href", () => {
     const trail = routeTrail("/projects/tender/cards/c1", { "/projects/tender": "Tender bids" });
     expect(trail[2]).toEqual({ label: "Tender bids", href: "/projects/tender" });

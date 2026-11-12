@@ -88,6 +88,20 @@ def test_page_verdict_role_markers_and_admin_only_leak():
     assert not ok and "leaked" in detail
 
 
+def test_page_verdict_admin_names_need_one_name_for_admins_only():
+    spec = PageSpec("/profiles", admin_markers=("ProfilesView",), admin_names=("Agent Profiles", "代理設定檔"), member_markers=("NotAvailableForRole",))
+    assert smoke.page_verdict(spec, ADMIN, 200, _html(*SHELL, "ProfilesView", extra="<h1>Agent Profiles</h1>"))[0]
+    assert smoke.page_verdict(spec, ADMIN, 200, _html(*SHELL, "ProfilesView", extra="<h1>代理設定檔</h1>"))[0]
+    ok, detail = smoke.page_verdict(spec, ADMIN, 200, _html(*SHELL, "ProfilesView", extra="<h1>Profiles</h1>"))
+    assert not ok and "missing name" in detail
+    assert smoke.page_verdict(spec, MEMBER, 200, _html(*SHELL, "NotAvailableForRole"))[0]
+
+
+def test_profiles_page_spec_expects_the_agent_profiles_name():
+    spec = next(p for p in smoke.PAGES if p.path == "/profiles")
+    assert "Agent Profiles" in spec.admin_names
+
+
 def test_page_verdict_member_redirect_applies_to_members_only():
     spec = PageSpec("/settings/upgrade", admin_markers=("SoftwareUpgradeView",), member_redirect="/not-available")
     sent = '"NEXT_REDIRECT;replace;/not-available;307;"'

@@ -19,6 +19,7 @@
     "capacity": { "name": "容量", "hint": "這部伺服器的剩餘資源" },
     "sites": { "name": "網站", "hint": "把網站存成資料表" },
     "users": { "name": "用戶", "hint": "名冊及登記" },
+    "profiles": { "name": "代理設定檔", "hint": "這部機器上的代理" },
     "suggestions": { "name": "建議", "hint": "建議的子目標" },
     "tools": { "name": "工具", "hint": "助理建立的應用程式" },
     "models": { "name": "模型", "hint": "每個位置用的大腦" },

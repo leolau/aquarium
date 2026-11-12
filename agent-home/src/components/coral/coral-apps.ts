@@ -164,7 +164,7 @@ registerApp({
 
 registerApp({
   id: "profiles",
-  name: "Profiles",
+  name: "Agent Profiles",
   glyph: "◍",
   hint: "Agents on this box",
   kind: "next-route",

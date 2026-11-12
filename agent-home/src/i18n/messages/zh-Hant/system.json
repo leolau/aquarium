@@ -16,7 +16,7 @@
   "settingsLink": "打開設定",
   "cards": {
     "profiles": {
-      "name": "設定檔",
+      "name": "代理設定檔",
       "desc": "這部機器上的代理，各有自己的模型、技能和記憶。",
       "meta": "{profiles} 個設定檔 · {suggestions} 個建議"
     },
