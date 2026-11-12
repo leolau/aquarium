@@ -9,10 +9,16 @@ formats them channel-appropriately, and pushes to Telegram.
 import json
 import os
 import sqlite3
+import sys
 import time
 from html import escape as _esc
 from datetime import datetime, timezone
 from urllib.request import Request, urlopen
+
+_CUSTOM_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+for _path in (_CUSTOM_DIR, os.path.dirname(_CUSTOM_DIR)):
+    if _path not in sys.path:
+        sys.path.append(_path)
 
 # Config
 WA_CONFIG_PATH = '/opt/data/whatsapp-messages/config.json'
@@ -55,14 +61,15 @@ def get_db():
     return conn
 
 
-def send_telegram(text, parse_mode='HTML'):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_USER_ID:
+def send_telegram(text, parse_mode='HTML', chat_id=None):
+    chat_id = chat_id or TELEGRAM_USER_ID
+    if not TELEGRAM_BOT_TOKEN or not chat_id:
         print(f"[escalation] No Telegram creds, would send: {text[:100]}")
         return False
 
     url = f'https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage'
     payload = {
-        'chat_id': TELEGRAM_USER_ID,
+        'chat_id': chat_id,
         'text': text,
         'parse_mode': parse_mode,
     }
@@ -214,6 +221,50 @@ def ensure_indexes(db):
     db.commit()
 
 
+def _escalation_arrival(row, db):
+    """The channel identity the escalated message was registered under."""
+    channel = row.get('channel') or 'whatsapp'
+    external_id = row.get('source_msg_id') or ''
+    if channel == 'email' and external_id:
+        # Email escalations carry the store's row id; the registry knows the
+        # Message-ID header.
+        try:
+            hit = db.execute(
+                "SELECT message_id FROM emaildb.email_messages WHERE id = ?",
+                (external_id,),
+            ).fetchone()
+            external_id = (hit or {}).get('message_id') or external_id
+        except sqlite3.Error:
+            pass
+    return (channel, row.get('source_phone') or '', external_id)
+
+
+def deliver_escalation(row, text, db):
+    """Tell the escalated message's person (FG-38 P3).
+
+    ``True`` once told, ``False`` when nobody may be told (their person is
+    deactivated), ``None`` to keep it pending and try again later.
+    """
+    from shared import owner_routing
+
+    arrival = _escalation_arrival(row, db)
+    try:
+        owner, people = owner_routing.resolve_people([arrival])
+    except owner_routing.LookupUnavailable as e:
+        print(f"[escalation] Whose escalation {row['id']} is unknown, retrying: {e}")
+        return None
+    if owner is None:
+        return True if send_telegram(text, parse_mode='HTML') else None
+    persons = people.get(arrival) or []
+    if not persons:
+        return False
+    if owner_routing.deliver_once_each(
+        db, row['id'], persons, owner, text, send=send_telegram, title="Escalation",
+    ):
+        return True
+    return None
+
+
 def process_pending_escalations():
     """Check for and push pending escalations from both channels."""
     db = get_db()
@@ -229,17 +280,21 @@ def process_pending_escalations():
         else:
             msg_text = format_whatsapp_escalation(row, db)
 
-        success = send_telegram(msg_text, parse_mode='HTML')
-
-        if success:
-            now = datetime.now(timezone.utc).isoformat()
+        told = deliver_escalation(row, msg_text, db)
+        if told is None:
+            break
+        now = datetime.now(timezone.utc).isoformat()
+        if told:
             db.execute(
                 "UPDATE escalations SET status = 'delivered', delivered_at = ? WHERE id = ?",
                 (now, row['id'])
             )
-            db.commit()
         else:
-            break
+            db.execute(
+                "UPDATE escalations SET status = 'no_recipient' WHERE id = ?",
+                (row['id'],)
+            )
+        db.commit()
 
     db.close()
     return len(pending)
