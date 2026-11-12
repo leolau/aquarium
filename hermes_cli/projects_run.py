@@ -2472,10 +2472,19 @@ def _default_spawn_inline(
         "Do these steps now, in order. Record every deliverable you "
         "produce as an output delivery for this project."
     )
-    session_id = f"proj-run-{run.get('run_no')}-{uuid.uuid4().hex[:8]}"
+    from cron import scheduler
     from hermes_cli import profiles
 
     host_profile = run.get("profile")
+    # Checked in the host profile: that is where the session runs, and
+    # enrolment (and so the person's role) is per profile.
+    principal, refused = scheduler.resolve_run_principal(
+        getattr(project, "owner_user_id", None),
+        hermes_home=profiles.get_profile_dir(host_profile) if host_profile else None,
+    )
+    if refused:
+        return {"session_id": None, "error": refused}
+    session_id = f"proj-run-{run.get('run_no')}-{uuid.uuid4().hex[:8]}"
     key = run_activity.run_key(project.id, int(run.get("run_no") or 0))
     run_activity.begin(key)
     run_activity.publish_reasoning(
@@ -2496,6 +2505,8 @@ def _default_spawn_inline(
             ),
             enabled_toolsets=list(enabled_toolsets) if enabled_toolsets else None,
             trusted_local=True,
+            internal_user_id=principal.user_id if principal else None,
+            internal_user_role=principal.role if principal else None,
             context=contextvars.copy_context(),
             reasoning_callback=lambda text: run_activity.publish_reasoning(key, text),
             tool_start_callback=lambda tc_id, name, args: run_activity.publish_tool(
