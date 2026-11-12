@@ -6,7 +6,7 @@ Tracking file for in-flight feature work. Update as phases land.
 
 Plan: `plans/2026-11-12-triage-review-reply-loop.md`
 Branch: `devin/port-triage-review-loop` (off `origin/develop`)
-Status: **implemented — PR pending** — updated 2026-11-12
+Status: **implemented — PR #898 open against develop** — updated 2026-11-12
 
 Originally built on `main` (see `devin/triage-loop-main-snapshot`); ported to
 `develop` because both deployments (Hetzner `hermes` via `deploy-hermes.sh
