@@ -328,6 +328,11 @@ for cfg in ${HERMES_HOME_GLOB:-/opt/data/hermes-home*/config.yaml}; do
 done
 unset dsn
 
+# The agent's terminal runs as hermes-tools: raw mail/WhatsApp/calendar stores
+# and old database copies stay closed to it (FG-38).
+echo "== closing raw data stores =="
+bash "$REPO/deploy/hermes-close-data" --data /opt/data
+
 echo "== restarting services =="
 systemctl daemon-reload
 # agent-home runs as `hermes` and `next start` writes into .next, so it is
