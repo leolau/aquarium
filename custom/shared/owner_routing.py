@@ -61,19 +61,14 @@ async def _lookup(arrivals: list) -> tuple:
 
     registry = default_registry("prod")
     known = {owner.user_id: owner}
+    unique = list(dict.fromkeys(arrivals))
+    owners = await registry.owners_for_many(
+        owner, ((s, a or "", str(e)) for s, a, e in unique if e)
+    )
     found: dict = {}
-    for arrival in arrivals:
-        if arrival in found:
-            continue
+    for arrival in unique:
         surface, account_id, external_id = arrival
-        ids = []
-        if external_id:
-            ids = await registry.owners_for(
-                owner,
-                surface=surface,
-                external_id=str(external_id),
-                account_id=account_id or "",
-            )
+        ids = owners.get((surface, account_id or "", str(external_id))) if external_id else None
         if not ids:
             # Never registered (or from before registration): the owner's, as before.
             found[arrival] = [owner]
