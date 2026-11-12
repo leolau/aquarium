@@ -270,6 +270,14 @@ Secrets never travel as chat text: a masked popup (agent-home) or a one-time sec
 |----|-------|------|-----------------------|
 | [37](./feature-groups/FG-37-secret-prompt.md) | Secret prompt: `request_secret` tool, masked popup, one-time links, `secret_env` | **P11** — BUILT: W1 #853, W2 #854, W3 #855, W4 #856, W5 cross-review | `credential_store.py`, api_server approval surface, `ApprovalCard.tsx`, `gateway/run.py` approval notify |
 
+### Phase 12 — FG-38 (data ownership)
+
+Every piece of data belongs to one person; owners and admins pick whose data Files and the 2-D memory map show, default = your own.
+
+| FG | Title | Wave | Primary reuse anchors |
+|----|-------|------|-----------------------|
+| [38](./feature-groups/FG-38-data-ownership-and-whose-data.md) | Data ownership, `owners=` filter, "whose data" picker | **P12** — P0+P1 PR open; P2–P6 planned | `access.scope_filter`, `_comms_resolve_principal`, `FileRegistry`, `InboundRegistry`, `memory_explorer` |
+
 ---
 
 ## 4. Cross-cutting shared contracts (Wave 0 — must merge FIRST)

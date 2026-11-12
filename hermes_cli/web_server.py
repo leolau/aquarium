@@ -3336,13 +3336,16 @@ async def _comms_resolve_principal(request: "Request", *, allow_as: bool = False
     token-authed service, or a test client) resolves to the enrolled **owner**
     — the owner-operator identity for the machine-operator surface.
 
-    ``allow_as`` (read-only endpoints only) lets an **owner or admin** narrow
-    the C2 view to a specific principal via ``?as=`` / ``X-Hermes-User-Id`` — an
-    inspection aid, never an escalation (they may already read every row, so
-    scoping *down* exposes nothing new). A member/viewer's ``?as=`` is ignored:
-    they only ever see themselves. Write endpoints pass ``allow_as=False`` so a
-    mutation is always attributed to the acting principal and can never spoof
-    another identity.
+    ``allow_as`` (read-only endpoints only) lets the **owner** narrow the C2
+    view to a specific principal via ``?as=`` / ``X-Hermes-User-Id`` on a
+    ``GET``/``HEAD`` — an inspection aid, never an escalation (the owner already
+    reads every row, so scoping *down* exposes nothing new). Narrowing *becomes*
+    the target, role and item grants included, so anyone below the owner using
+    it would read with somebody else's authority: an admin's ``?as=`` is a 403
+    (admins narrow with an ``owners=`` filter, which keeps their own identity),
+    and a member/viewer's is ignored — they only ever see themselves. Any other
+    method ignores ``?as=``, so a mutation is always attributed to the acting
+    principal and can never spoof another identity.
 
     Never invents a principal: an unknown ``?as=`` id is a 404, and a machine
     with no principal to resolve is a 409.
@@ -3392,11 +3395,19 @@ async def _comms_resolve_principal(request: "Request", *, allow_as: bool = False
                         "first."
                     ),
                 )
-        # ?as= narrowing is an owner/admin-only read aid; ignored for others.
-        if requested and requested != actor.user_id and actor.role in (
-            "owner",
-            "admin",
-        ):
+        # ?as= narrowing is an owner-only read aid; ignored for members.
+        method = str(getattr(request, "method", "GET") or "GET").upper()
+        if requested and requested != actor.user_id and method in ("GET", "HEAD"):
+            if actor.role == "admin":
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        "Only the owner can view as another person; filter "
+                        "with owners= instead."
+                    ),
+                )
+            if not actor.is_owner:
+                return actor
             principal = await principals.get(requested)
             if principal is None:
                 raise HTTPException(

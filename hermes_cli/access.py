@@ -1256,6 +1256,26 @@ def validate_user_id(user_id: str) -> str:
 #: Historical private alias — callers inside this module predate the public name.
 _validate_user_id = validate_user_id
 
+#: Most people one ``owners=`` filter may name — a picker, not a bulk export.
+MAX_OWNER_FILTER = 50
+
+
+def parse_owner_filter(*values: str | None) -> list[str]:
+    """User ids named by comma-separated ``owners=`` filter values, de-duplicated.
+
+    The filter only ever *narrows* a read: it is ANDed onto the caller's own
+    scope predicate, so naming somebody the caller may not read returns none of
+    their private rows. Raises ``ValueError`` on a malformed id or too many.
+    """
+    owners: list[str] = []
+    for value in values:
+        for part in (value or "").split(","):
+            if part.strip() and validate_user_id(part) not in owners:
+                owners.append(validate_user_id(part))
+    if len(owners) > MAX_OWNER_FILTER:
+        raise ValueError(f"At most {MAX_OWNER_FILTER} owners per filter")
+    return owners
+
 
 def _row_to_principal(
     row: Mapping[str, object],

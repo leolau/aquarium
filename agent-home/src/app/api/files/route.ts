@@ -7,7 +7,7 @@
  */
 import { NextResponse } from "next/server";
 
-import { HermesApiError } from "@/lib/api/client";
+import { HermesApiError, ownersParam } from "@/lib/api/client";
 import { apiClientForRequest, getPrincipal } from "@/lib/auth/principal";
 
 export async function GET(req: Request): Promise<NextResponse> {
@@ -23,6 +23,7 @@ export async function GET(req: Request): Promise<NextResponse> {
       q: params.get("q") ?? undefined,
       surface: params.get("surface") ?? undefined,
       remembered: remembered == null ? undefined : remembered === "true",
+      owners: ownersParam(params.get("owners")),
       limit: params.get("limit") ? Number(params.get("limit")) : undefined,
       offset: params.get("offset") ? Number(params.get("offset")) : undefined,
     });

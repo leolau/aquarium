@@ -799,6 +799,7 @@ class InboundRegistry:
         include_tags: Sequence[str] = (),
         exclude_tags: Sequence[str] = (),
         tag_match: str = "any",
+        owners: Sequence[str] = (),
         limit: int = DEFAULT_PAGE_SIZE,
         cursor: Optional[str] = None,
         connection: Optional["asyncpg.Connection"] = None,
@@ -843,6 +844,8 @@ class InboundRegistry:
             )
         if importance:
             add("importance = ANY({0}::text[])", list(importance))
+        if owners:
+            add("owner_user_id = ANY({0}::text[])", list(owners))
         if since is not None:
             add("occurred_at >= {0}", since)
         if until is not None:

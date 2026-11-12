@@ -525,6 +525,7 @@ class FileRegistry:
         query: str = "",
         surfaces: Sequence[str] = (),
         remembered: Optional[bool] = None,
+        owners: Sequence[str] = (),
         limit: int = 50,
         offset: int = 0,
         connection: Optional["asyncpg.Connection"] = None,
@@ -548,6 +549,10 @@ class FileRegistry:
         if surfaces:
             clauses.append(f"surface = ANY(${idx}::text[])")
             params.append(list(surfaces))
+            idx += 1
+        if owners:
+            clauses.append(f"owner_user_id = ANY(${idx}::text[])")
+            params.append(list(owners))
             idx += 1
         if remembered is True:
             clauses.append("document_id IS NOT NULL")

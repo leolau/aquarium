@@ -477,3 +477,48 @@ async def test_storage_path_lookup_uses_its_index(postgres_dsn: str) -> None:
         assert "file_assets_storage_path_idx" in plan
     finally:
         await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_owners_filter_only_narrows_what_the_reader_can_see(
+    postgres_dsn: str,
+) -> None:
+    registry = await _registry(postgres_dsn)
+    leo, ada, bob = _principal("leo", "owner"), _principal("ada"), _principal("bob")
+    a = await _register(registry, ada, filename="a.pdf", payload=b"a")
+    b = await _register(registry, bob, filename="b.pdf", payload=b"b")
+
+    rows, total = await registry.list(leo, owners=["ada"])
+    assert ([r.id for r in rows], total) == ([a.id], 1)
+    rows, total = await registry.list(leo, owners=["ada", "bob"])
+    assert ({r.id for r in rows}, total) == ({a.id, b.id}, 2)
+    # Naming somebody never widens a read: Bob still cannot see Ada's file.
+    assert await registry.list(bob, owners=["ada"]) == ([], 0)
+    assert await registry.list(bob, owners=["ada", "bob"]) == ([b], 1)
+
+
+@pytest.mark.asyncio
+async def test_owners_filter_keeps_an_admin_on_the_downward_ladder(
+    postgres_dsn: str,
+) -> None:
+    await _registry(postgres_dsn)
+    principals = PrincipalStore(
+        get_store("supabase-app", "prod", config=_config(postgres_dsn))
+    )
+    await principals.enroll("mia", display="Mia", role="admin")
+    await principals.enroll("kit", display="Kit", role="admin")
+    registry = FileRegistry(
+        get_store("supabase-app", "prod", config=_config(postgres_dsn)),
+        role_reads=True,
+    )
+    await registry.initialize()
+    mia, kit = _principal("mia", "admin"), _principal("kit", "admin")
+    leo, ada = _principal("leo", "owner"), _principal("ada")
+    a = await _register(registry, ada, filename="a.pdf", payload=b"a")
+    await _register(registry, kit, filename="k.pdf", payload=b"k")
+    await _register(registry, leo, filename="l.pdf", payload=b"l")
+
+    rows, _ = await registry.list(mia, owners=["ada"])
+    assert [r.id for r in rows] == [a.id]
+    # A peer admin's and the owner's private files stay out of reach.
+    assert await registry.list(mia, owners=["kit", "leo"]) == ([], 0)

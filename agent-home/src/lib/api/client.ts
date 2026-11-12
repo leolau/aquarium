@@ -1871,6 +1871,8 @@ export class HermesApiClient {
       q?: string;
       topic?: string;
       kind?: string;
+      /** Narrow to these owners' rows (a filter, never a different identity). */
+      owners?: string[];
       limit?: number;
       offset?: number;
     } = {},
@@ -1879,15 +1881,21 @@ export class HermesApiClient {
     if (opts.q) p.set("q", opts.q);
     if (opts.topic) p.set("topic", opts.topic);
     if (opts.kind) p.set("kind", opts.kind);
+    if (opts.owners?.length) p.set("owners", opts.owners.join(","));
     p.set("limit", String(opts.limit ?? 25));
     p.set("offset", String(opts.offset ?? 0));
     return this.request(`/api/memory/explorer/rows?${p.toString()}`);
   }
 
   /** The fitted 2-D projection map (scope-filtered, deterministically sampled). */
-  async memoryProjection(limit?: number): Promise<MemoryProjection> {
-    const qs =
-      limit != null ? `?limit=${encodeURIComponent(limit)}` : "";
+  async memoryProjection(
+    limit?: number,
+    owners?: string[],
+  ): Promise<MemoryProjection> {
+    const p = new URLSearchParams();
+    if (limit != null) p.set("limit", String(limit));
+    if (owners?.length) p.set("owners", owners.join(","));
+    const qs = p.size ? `?${p.toString()}` : "";
     return this.request(`/api/memory/explorer/projection${qs}`);
   }
 
@@ -1910,6 +1918,8 @@ export class HermesApiClient {
       q?: string;
       surface?: string;
       remembered?: boolean;
+      /** Narrow to these owners' files (a filter, never a different identity). */
+      owners?: string[];
       limit?: number;
       offset?: number;
     } = {},
@@ -1917,6 +1927,7 @@ export class HermesApiClient {
     const p = new URLSearchParams();
     if (opts.q) p.set("q", opts.q);
     if (opts.surface) p.set("surface", opts.surface);
+    if (opts.owners?.length) p.set("owners", opts.owners.join(","));
     if (opts.remembered != null) p.set("remembered", String(opts.remembered));
     p.set("limit", String(opts.limit ?? 50));
     p.set("offset", String(opts.offset ?? 0));
@@ -1990,6 +2001,8 @@ export class HermesApiClient {
       cursor?: string;
       /** `open` = flagged and not yet handled (the landing Incomings tab). */
       attention?: "open" | "cleared" | "any";
+      /** Narrow to these owners' arrivals (a filter, never a different identity). */
+      owners?: string[];
     } = {},
   ): Promise<IncomingsResponse> {
     const p = new URLSearchParams();
@@ -2004,6 +2017,7 @@ export class HermesApiClient {
     if (opts.has_attachments != null) {
       p.set("has_attachments", String(opts.has_attachments));
     }
+    if (opts.owners?.length) p.set("owners", opts.owners.join(","));
     p.set("limit", String(opts.limit ?? 50));
     return this.request(`/api/registry/incomings?${p.toString()}`);
   }
@@ -4093,4 +4107,10 @@ export interface SetupDomainResult {
   points_here: boolean;
   https_ready: boolean;
   server_addresses: string[];
+}
+
+/** A comma-separated `owners=` query value as ids, or undefined when absent. */
+export function ownersParam(raw: string | null): string[] | undefined {
+  const owners = (raw ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  return owners.length ? owners : undefined;
 }
