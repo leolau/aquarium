@@ -7,32 +7,25 @@
 import { NextResponse } from "next/server";
 
 import { readBody, withPrincipal } from "@/app/api/projects/hermes-bridge";
-import { getPrincipal } from "@/lib/auth/principal";
 import { ACCOUNT_SURFACES, type AccountsState } from "@/lib/accounts";
+import { requireMemberOwner } from "@/lib/api/member-bff";
 
-const UNAUTHENTICATED = { error: "unauthenticated" };
-const FORBIDDEN = { error: "forbidden", detail: "Only the owner manages whose accounts are whose." };
+const OWNER_ONLY = "Only the owner manages whose accounts are whose.";
 
-async function gate(): Promise<NextResponse | null> {
-  const principal = await getPrincipal();
-  if (!principal) return NextResponse.json(UNAUTHENTICATED, { status: 401 });
-  if (!principal.is_owner) return NextResponse.json(FORBIDDEN, { status: 403 });
-  return null;
-}
 
 function invalid(detail: string): NextResponse {
   return NextResponse.json({ error: "invalid_body", detail }, { status: 400 });
 }
 
 export async function GET(): Promise<NextResponse> {
-  const denied = await gate();
-  if (denied) return denied;
+  const owner = await requireMemberOwner(OWNER_ONLY);
+  if ("response" in owner) return owner.response;
   return withPrincipal((client) => client.request<AccountsState>("/api/settings/accounts"));
 }
 
 export async function PUT(req: Request): Promise<NextResponse> {
-  const denied = await gate();
-  if (denied) return denied;
+  const owner = await requireMemberOwner(OWNER_ONLY);
+  if ("response" in owner) return owner.response;
   const raw: unknown = await readBody(req);
   const body = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const { surface, account, owner_user_id: who } = body;

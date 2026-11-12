@@ -228,6 +228,8 @@
   "PUT /api/settings/apps/storage": "admin",
   "DELETE /api/settings/apps/github": "admin",
   "GET /api/settings/menu": "signed-in",
+  "GET /api/settings/accounts": "owner",
+  "PUT /api/settings/accounts": "owner",
   "GET /api/settings/uploads": "signed-in",
   "PUT /api/settings/uploads": "admin",
   "PUT /api/settings/menu/[role]": "admin",

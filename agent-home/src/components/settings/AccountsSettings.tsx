@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { Spinner } from "@/components/ui/Spinner";
 import { useT } from "@/i18n";
+import { useAction } from "@/lib/use-action";
 import {
   ACCOUNT_SURFACES,
   automaticOwner,
@@ -44,7 +45,6 @@ function AccountItem({
   onSaved: (state: AccountsState) => void;
 }) {
   const t = useT("settings");
-  const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const byId = new Map(people.map((p) => [p.user_id, p]));
@@ -54,9 +54,8 @@ function AccountItem({
   const owner = row.owner_user_id ? byId.get(row.owner_user_id) : undefined;
   const choices = people.filter((p) => p.active || p.user_id === row.settings_owner);
 
-  async function choose(value: string) {
+  const { run: choose, pending } = useAction(async (value: string) => {
     const next = value === "" ? null : value;
-    setPending(true);
     setError(null);
     setSaved(null);
     try {
@@ -64,10 +63,8 @@ function AccountItem({
       setSaved(t("accounts.saved", { name: nameOf(next ?? fallback) }));
     } catch (err) {
       setError(t("accounts.saveFailed", { error: err instanceof Error ? err.message : "?" }));
-    } finally {
-      setPending(false);
     }
-  }
+  });
 
   return (
     <li
