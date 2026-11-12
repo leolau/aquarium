@@ -14,6 +14,7 @@ import type {
   MemorySummary,
 } from "@/types";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { WhoseDataPicker } from "@/components/access/WhoseDataPicker";
 import { useAction } from "@/lib/use-action";
 import { useHydrated } from "@/lib/use-hydrated";
 
@@ -56,6 +57,8 @@ export function MemoryView({
   // that one keeps its inline button spinner instead.
   const [replacing, setReplacing] = useState(false);
   const [searching, setSearching] = useState(false);
+  const [owners, setOwners] = useState<string[]>([]);
+  const ownersRef = useRef<string[]>([]);
   const [rowsError, setRowsError] = useState<string | null>(null);
 
   // --- Search (debounced 300 ms, offset reset to 0) -----------------------
@@ -84,6 +87,7 @@ export function MemoryView({
         }
         sp.set("limit", String(limit));
         sp.set("offset", "0");
+        if (ownersRef.current.length) sp.set("owners", ownersRef.current.join(","));
         const res = await fetch(`/api/memory/rows?${sp.toString()}`);
         if (!res.ok) {
           setRowsError(describeFailure(res.status));
@@ -146,6 +150,7 @@ export function MemoryView({
       }
       sp.set("limit", String(limit));
       sp.set("offset", String(nextOffset));
+      if (ownersRef.current.length) sp.set("owners", ownersRef.current.join(","));
       const res = await fetch(`/api/memory/rows?${sp.toString()}`);
       if (!res.ok) {
         setRowsError(describeFailure(res.status));
@@ -169,7 +174,11 @@ export function MemoryView({
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/memory/projection");
+        const res = await fetch(
+          owners.length
+            ? `/api/memory/projection?owners=${encodeURIComponent(owners.join(","))}`
+            : "/api/memory/projection",
+        );
         if (!res.ok) {
           if (!cancelled) setProjectionError(true);
           return;
@@ -183,7 +192,7 @@ export function MemoryView({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [owners]);
 
   // --- Query placement (A4) ----------------------------------------------
   const [queryText, setQueryText] = useState("");
@@ -232,6 +241,14 @@ export function MemoryView({
       className="space-y-4 pb-24 lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start lg:gap-6 lg:space-y-0 lg:pb-8 xl:grid-cols-[minmax(0,1fr)_24rem]"
     >
       <div className="min-w-0 space-y-4">
+      <WhoseDataPicker
+        value={owners}
+        onChange={(next) => {
+          ownersRef.current = next;
+          setOwners(next);
+          void doSearch(q);
+        }}
+      />
       {/* Pills */}
       <div className="flex flex-wrap gap-2">
         <Pill label="memories" value={summary.totals.memories} />

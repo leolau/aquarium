@@ -4,6 +4,7 @@
   "GET /api/access/skills": "admin",
   "PUT /api/access/skills/[role]": "admin",
   "GET /api/access/skills/me": "signed-in",
+  "GET /api/access/viewable-people": "signed-in",
   "GET /api/activity/running": "signed-in",
   "GET /api/aquarium": "signed-in",
   "GET /api/aquarium/settings": "signed-in",

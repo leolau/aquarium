@@ -16,6 +16,7 @@ import {
 import { BusyRegion } from "@/components/ui/BusyRegion";
 import { Spinner } from "@/components/ui/Spinner";
 import type { IncomingItem, IncomingsFacets, IncomingsResponse } from "@/types";
+import { WhoseDataPicker } from "@/components/access/WhoseDataPicker";
 
 const PAGE_SIZE = 50;
 
@@ -54,6 +55,8 @@ export function IncomingsList({
   // the end of the list instead of an overlay over rows the user is reading.
   const [replacing, setReplacing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [owners, setOwners] = useState<string[]>([]);
+  const ownersRef = useRef<string[]>([]);
 
   // The observer fires again before `loading` re-renders, so the next-page
   // fetch is locked synchronously: one request per page, however many hits.
@@ -70,6 +73,7 @@ export function IncomingsList({
       try {
         const params = filtersToParams(value, after);
         params.set("limit", String(PAGE_SIZE));
+        if (ownersRef.current.length) params.set("owners", ownersRef.current.join(","));
         const res = await fetch(`/api/incomings?${params.toString()}`, {
           cache: "no-store",
         });
@@ -143,6 +147,14 @@ export function IncomingsList({
   const fromQuery = fromParams ? `?tab=incomings&${fromParams}` : "";
   return (
     <div data-component="IncomingsList" className="flex flex-col gap-3">
+      <WhoseDataPicker
+        value={owners}
+        onChange={(next) => {
+          ownersRef.current = next;
+          setOwners(next);
+          void fetchPage(filters, null);
+        }}
+      />
       <IncomingsFilters facets={facets} value={filters} onChange={setFilters} />
       <RefJump query={filters.q} kind="M" label={(ref) => t("openRef", { ref })} />
 

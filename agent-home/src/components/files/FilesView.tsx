@@ -10,6 +10,11 @@ import type {
   FileSurfacesResponse,
 } from "@/types";
 import { ActionButton } from "@/components/ui/ActionButton";
+import {
+  ownerLabel,
+  WhoseDataPicker,
+  type ViewablePeople,
+} from "@/components/access/WhoseDataPicker";
 
 /**
  * The `/files` view: everything that arrived, from any surface, with where it
@@ -41,6 +46,9 @@ export function FilesView({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<FileAsset | null>(null);
+  const [owners, setOwners] = useState<string[]>([]);
+  const ownersRef = useRef<string[]>([]);
+  const [people, setPeople] = useState<ViewablePeople | null>(null);
 
   const load = useCallback(
     async (opts: {
@@ -48,6 +56,7 @@ export function FilesView({
       surface?: string;
       remembered?: boolean | null;
       offset?: number;
+      owners?: string[];
     }) => {
       setLoading(true);
       setError(null);
@@ -59,6 +68,8 @@ export function FilesView({
         if (query.trim()) sp.set("q", query.trim());
         if (surf) sp.set("surface", surf);
         if (rem != null) sp.set("remembered", String(rem));
+        const who = opts.owners ?? ownersRef.current;
+        if (who.length) sp.set("owners", who.join(","));
         sp.set("limit", String(limit));
         sp.set("offset", String(opts.offset ?? 0));
         const res = await fetch(`/api/files?${sp.toString()}`);
@@ -107,6 +118,15 @@ export function FilesView({
 
   return (
     <div data-component="FilesView" className="flex flex-col gap-4">
+      <WhoseDataPicker
+        value={owners}
+        onPeople={setPeople}
+        onChange={(next) => {
+          ownersRef.current = next;
+          setOwners(next);
+          void load({ owners: next, offset: 0 });
+        }}
+      />
       <Link
         href="/files/bridge"
         data-component="FolderBridgeAction"
@@ -205,6 +225,14 @@ export function FilesView({
                       <span className="truncate text-sm font-medium">
                         {file.filename}
                       </span>
+                      {ownerLabel(people, owners, file.owner_user_id) ? (
+                        <span
+                          data-component="OwnerBadge"
+                          className="shrink-0 rounded-full border border-[var(--color-border)] px-2 py-0.5 text-xs text-[var(--color-muted)]"
+                        >
+                          {ownerLabel(people, owners, file.owner_user_id)}
+                        </span>
+                      ) : null}
                       {file.remembered ? (
                         <span
                           data-component="RememberedBadge"

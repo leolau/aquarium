@@ -155,6 +155,8 @@ SIGNED_IN = {
     "GET /api/capacity/upload-storage",
     # memory_oauth: memory-provider OAuth status (read)
     "GET /api/memory/providers/{provider}/oauth/status",
+    # access: whose data the caller may pick (FG-38 P4); reads re-check scope
+    "GET /api/access/viewable-people",
     # memory_explorer: memory rows filtered to what the caller may read
     "GET /api/memory/explorer/summary",
     "GET /api/memory/explorer/rows",

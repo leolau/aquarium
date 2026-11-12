@@ -70,7 +70,11 @@ describe("IncomingsList infinite scroll", () => {
       observer.fire();
       observer.fire();
     });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toContain("cur_2");
+    // The "Whose data" picker asks once for whom it may offer; only pages count.
+    const pages = fetchMock.mock.calls
+      .map((call) => String((call as unknown[])[0]))
+      .filter((url) => url.startsWith("/api/incomings"));
+    expect(pages).toHaveLength(1);
+    expect(pages[0]).toContain("cur_2");
   });
 });
