@@ -331,6 +331,8 @@ class _Handler(BaseHTTPRequestHandler):
             "/staff/clean": self._staff_clean,
             "/staff/list": self._staff_list,
             "/rules": self._rules_page,
+            "/wizard": self._wizard,
+            "/staff/noisy": self._staff_noisy,
             "/rules/search": self._rules_search,
         }.get(path)
         if handler is None:
@@ -656,6 +658,27 @@ class _Handler(BaseHTTPRequestHandler):
                 for user, name, role in (("amy", "Amy Chan", "ops"), ("ben", "Ben Lee", "qa"),
                                          ("cat", "Cat Wong", "ops"))]
         self._send(200, json.dumps({"data": rows}), ctype="application/json")
+
+    def _staff_noisy(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
+        """Many CSRF tokens in the page data before the one stored password hash."""
+        tokens = "".join(f'<span id="c{i}" data-csrf-token="{secrets.token_hex(20)}"></span>' for i in range(80))
+        body = ("<h1>Profile</h1>" + tokens
+                + f'<input type="hidden" name="password_hash" value="$2y$10${secrets.token_urlsafe(40)[:53]}">')
+        self._send(200, _page("Profile", body))
+
+    def _wizard(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
+        """A form with an empty date field and a Next button that is not a search."""
+        body = (
+            "<h1>Report wizard</h1>"
+            '<form id="wz" onsubmit="return false">'
+            '<label>From <input type="date" id="wz-from" name="from"></label>'
+            '<button type="button" id="wz-next" onclick="document.getElementById(\'wz-more\').hidden = false">'
+            "Next</button> "
+            '<button type="button" id="wz-search">Search</button> '
+            '<button id="wz-submit">Submit</button>'
+            '<p id="wz-more" hidden>Step 2</p></form>'
+        )
+        self._send(200, _page("Report wizard", body))
 
     def _rules_page(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
         """A rule-builder search like jQuery QueryBuilder: pick a field, then an operator and values."""
