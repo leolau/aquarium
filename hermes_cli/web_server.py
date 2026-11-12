@@ -14242,7 +14242,12 @@ def list_cron_job_runs(job_id: str, profile: Optional[str] = None, limit: int = 
 
 
 @app.post("/api/cron/jobs", dependencies=_ADMIN)
-async def create_cron_job(body: CronJobCreate, profile: str = "default"):
+async def create_cron_job(body: CronJobCreate, request: Request, profile: str = "default"):
+    # The logged-in creator owns the job; a sessionless (token) caller leaves
+    # it unowned, which runs as the install owner like jobs from before FG-38.
+    creator = None
+    if getattr(request.state, "session", None) is not None:
+        creator = (await _comms_resolve_principal(request)).user_id
     try:
         profile_name, profile_home = _cron_profile_home(profile)
         script = _normalize_dashboard_cron_script(body.script, profile_home)
@@ -14272,6 +14277,7 @@ async def create_cron_job(body: CronJobCreate, profile: str = "default"):
             enabled_toolsets=_cron_string_list(body.enabled_toolsets),
             workdir=_cron_optional_text(body.workdir),
             no_agent=no_agent,
+            owner_user_id=creator,
         )
     except HTTPException:
         raise

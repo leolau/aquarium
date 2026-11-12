@@ -2260,13 +2260,59 @@ def _guard_job_credential_exfil(job: dict) -> None:
         raise RuntimeError(f"Cron job '{job_id}' blocked for safety: {err}")
 
 
-def _start_cron_trace(job_id: str, job_name: str, session_key: str):
+def _run_coro(coro):
+    """``asyncio.run`` that also works when called from a running loop."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
+
+
+def resolve_run_principal(owner_user_id: Optional[str]):
+    """The person a scheduled or project run acts for (FG-38 P3).
+
+    Returns ``(principal, refusal)``. A named owner must be an active person
+    here, else the run is refused (never silently run as someone else); a
+    lookup failure refuses too. A job with no recorded owner (created before
+    owners were) acts as the install owner. With no people store configured
+    (single-user install) there is nobody to act as: ``(None, None)``.
+    """
+    owner_id = str(owner_user_id or "").strip()
+    try:
+        from hermes_cli.access import PrincipalStore
+        from hermes_cli.datastore import get_store
+
+        store = get_store("supabase-app", "prod", config=load_config() or {})
+    except Exception as e:
+        logger.debug("run principal: no people store (%s)", e)
+        return None, None
+    if not getattr(store, "dsn", None):
+        return None, None
+    try:
+        people = PrincipalStore(store)
+        person = _run_coro(people.get(owner_id) if owner_id else people.get_owner())
+    except Exception as e:
+        if not owner_id:
+            return None, None
+        return None, f"could not look up the job's owner {owner_id}: {e}"
+    if owner_id and (person is None or not getattr(person, "active", True)):
+        return None, (
+            f"the job's owner {owner_id} is not an active person here, so it "
+            "does not run as anyone else"
+        )
+    return person, None
+
+
+def _start_cron_trace(job_id: str, job_name: str, session_key: str, principal=None):
     """Mint + bind the C8 interaction trace for one scheduled run (FG-16).
 
     A cron run drives the same agent and tools as a chat turn but has no
     inbound channel message, so nothing upstream mints a trace for it and
     scheduled work is invisible in the Activity ledger. Attributed to the
-    enrolled owner (a job has no sender) at ``mode="prod"`` — the schema the
+    job's person (``principal``; the enrolled owner for a job from before
+    owners were recorded) at ``mode="prod"`` — the schema the
     trace read APIs serve. Fail-open: tracing never blocks a job.
 
     Returns ``(trace, ledger, context)``; the context must be closed by
@@ -2281,7 +2327,7 @@ def _start_cron_trace(job_id: str, job_name: str, session_key: str):
         store = get_store("supabase-app", "prod", config=config)
         if not store.dsn:
             return None, None, None
-        owner = asyncio.run(PrincipalStore(store).get_owner())
+        owner = principal or asyncio.run(PrincipalStore(store).get_owner())
         if owner is None:
             return None, None, None
         trace, ledger = create_trace(
@@ -2513,9 +2559,13 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
         logger.info("Job '%s': script produced no output, skipping AI call.", job_name)
         return True, "", SILENT_MARKER, None
     origin = _resolve_origin(job)
+    _principal, _refused = resolve_run_principal(job.get("owner_user_id"))
+    if _refused:
+        logger.warning("Job '%s': %s", job_name, _refused)
+        return False, f"# Cron Job: {job_name}\n\n**Not run:** {_refused}\n", "", _refused
     _cron_session_id = f"cron_{job_id}_{_hermes_now().strftime('%Y%m%d_%H%M%S')}"
     _trace, _trace_ledger, _trace_context = _start_cron_trace(
-        job_id, job_name, _cron_session_id
+        job_id, job_name, _cron_session_id, principal=_principal
     )
 
     logger.info("Running job '%s' (ID: %s)", job_name, job_id)
@@ -2913,6 +2963,8 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
             inactivity_limit=_cron_inactivity_limit,
             context=_cron_context,
             trusted_local=True,
+            internal_user_id=_principal.user_id if _principal else None,
+            internal_user_role=_principal.role if _principal else None,
         )
         agent = _session.agent
 

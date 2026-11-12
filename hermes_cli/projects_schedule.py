@@ -236,6 +236,7 @@ def set_project_schedule(
                 origin=origin,
                 deliver="local",
                 workdir=workdir,
+                owner_user_id=getattr(project, "owner_user_id", None),
             )
     job_id = job["id"]
     next_run_at = _iso_to_epoch(job.get("next_run_at"))

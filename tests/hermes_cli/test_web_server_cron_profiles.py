@@ -1,6 +1,7 @@
 """Regression tests for dashboard cron job profile routing."""
 
 import pytest
+from types import SimpleNamespace
 from fastapi import HTTPException
 
 from hermes_cli.access import Principal
@@ -62,6 +63,9 @@ def test_call_cron_for_profile_routes_storage_and_restores_globals(isolated_prof
     assert cron_jobs.JOBS_FILE == old_jobs_file
     assert cron_jobs.OUTPUT_DIR == old_output_dir
 
+
+# A token (sessionless) caller: the job is left unowned.
+_NO_SESSION = SimpleNamespace(state=SimpleNamespace())
 
 @pytest.mark.asyncio
 async def test_list_cron_jobs_all_includes_default_and_named_profiles(isolated_profiles):
@@ -138,6 +142,7 @@ async def test_create_cron_job_normalizes_representative_core_fields(
             script=str(scripts_dir / "collect-status.py"),
             no_agent=True,
         ),
+        request=_NO_SESSION,
         profile="worker_alpha",
     )
 
@@ -222,6 +227,7 @@ async def test_create_cron_job_rejects_script_outside_profile_scripts(
                 script=str(outside),
                 no_agent=True,
             ),
+            request=_NO_SESSION,
             profile="worker_alpha",
         )
 
@@ -236,6 +242,7 @@ async def test_create_cron_job_rejects_empty_agent_job(isolated_profiles):
     with pytest.raises(HTTPException) as exc:
         await web_server.create_cron_job(
             web_server.CronJobCreate(schedule="every 1h"),
+            request=_NO_SESSION,
             profile="worker_alpha",
         )
 
@@ -256,6 +263,7 @@ async def test_update_cron_job_no_agent_reuses_existing_script(isolated_profiles
             schedule="every 1h",
             script=str(scripts_dir / "collect.py"),
         ),
+        request=_NO_SESSION,
         profile="worker_alpha",
     )
 
@@ -280,6 +288,7 @@ async def test_dashboard_cron_rejects_missing_context_from(isolated_profiles):
                 schedule="every 1h",
                 context_from=["missing-job-id"],
             ),
+            request=_NO_SESSION,
             profile="worker_alpha",
         )
 
@@ -335,6 +344,7 @@ async def test_dashboard_cron_context_from_is_profile_scoped(isolated_profiles):
                 schedule="every 1h",
                 context_from=[default_job["id"]],
             ),
+            request=_NO_SESSION,
             profile="worker_alpha",
         )
 
@@ -344,6 +354,7 @@ async def test_dashboard_cron_context_from_is_profile_scoped(isolated_profiles):
             schedule="every 1h",
             context_from=[worker_upstream["id"]],
         ),
+        request=_NO_SESSION,
         profile="worker_alpha",
     )
 
@@ -642,3 +653,31 @@ def test_cron_jobs_single_user_install_lists_everything(scoped_cron, monkeypatch
 
     monkeypatch.setattr(web_server, "_comms_resolve_principal", _unconfigured)
     assert _ids(client.get("/api/cron/jobs")) == sorted([project_job["id"], other_job["id"]])
+
+
+@pytest.mark.asyncio
+async def test_a_logged_in_creator_owns_the_job(isolated_profiles, monkeypatch):
+    from hermes_cli import web_server
+
+    async def as_sam(request, **_kw):
+        return SimpleNamespace(user_id="sam", role="member")
+
+    monkeypatch.setattr(web_server, "_comms_resolve_principal", as_sam)
+    signed_in = SimpleNamespace(state=SimpleNamespace(session={"sub": "sam"}))
+
+    job = await web_server.create_cron_job(
+        web_server.CronJobCreate(prompt="my tenders", schedule="every 1h"),
+        request=signed_in,
+        profile="worker_alpha",
+    )
+    unowned = await web_server.create_cron_job(
+        web_server.CronJobCreate(prompt="box job", schedule="every 1h"),
+        request=_NO_SESSION,
+        profile="worker_alpha",
+    )
+
+    stored = {
+        j["id"]: j for j in web_server._call_cron_for_profile("worker_alpha", "list_jobs")
+    }
+    assert stored[job["id"]]["owner_user_id"] == "sam"
+    assert "owner_user_id" not in stored[unowned["id"]]
