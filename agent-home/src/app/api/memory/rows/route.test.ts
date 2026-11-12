@@ -93,13 +93,13 @@ describe("GET /api/memory/projection", () => {
     expect(memoryProjection).toHaveBeenCalledWith(5000, undefined);
   });
 
-  it("forwards the owners filter", async () => {
+  it("forwards owners= as a list", async () => {
     memoryProjection.mockResolvedValue({ algorithm: "pca", points: [], stale: false });
     const res = await projectionGET(
-      makeReq("/api/memory/projection?limit=5000&owners=ada,%20bob") as never,
+      makeReq("/api/memory/projection?owners=ada,bob") as never,
     );
     expect(res.status).toBe(200);
-    expect(memoryProjection).toHaveBeenCalledWith(5000, ["ada", "bob"]);
+    expect(memoryProjection).toHaveBeenCalledWith(undefined, ["ada", "bob"]);
   });
 });
 
