@@ -174,11 +174,13 @@ def test_a_todo_for_a_person_s_arrival_is_that_person_s(monkeypatch):
     import shared.todo_registration as tr
 
     owner, mia = types.SimpleNamespace(user_id="leo"), types.SimpleNamespace(user_id="mia")
-    owners = {"M1": ["mia"], "M2": ["gone"], "M3": []}
+    owners = {"M1": ["mia"], "M2": ["gone"], "M3": [], "M4": RuntimeError("no table")}
     created = []
 
     class Registry:
         async def owners_for(self, principal, *, surface, external_id, account_id):
+            if isinstance(owners[external_id], Exception):
+                raise owners[external_id]
             return owners[external_id]
 
         async def id_for(self, principal, **kw):
@@ -200,7 +202,8 @@ def test_a_todo_for_a_person_s_arrival_is_that_person_s(monkeypatch):
     monkeypatch.setattr(inbound_registry, "default_registry", lambda mode: Registry())
     monkeypatch.setattr(todo_notifier, "default_stores", lambda: (Store(), None))
 
-    for ext in ("M1", "M2", "M3"):
+    for ext in ("M1", "M2", "M3", "M4"):
         tr.register_todo(title="Reply", surface="whatsapp", account_id="phone3", external_id=ext)
-    # M2's person is gone: no to-do. M3 never registered: the owner, unlinked as before.
-    assert created == [("mia", "item-mia"), ("leo", "item-leo")]
+    # M2's person is gone: no to-do. M3 never registered, and M4 has no registry
+    # to ask: the owner files them, as before.
+    assert created == [("mia", "item-mia"), ("leo", "item-leo"), ("leo", "item-leo")]
