@@ -5107,11 +5107,72 @@ async def comms_answer_notification(notification_id: str, request: Request):
         raise HTTPException(status_code=404, detail="No such notification")
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
-    return {
+    payload = {
         "ok": True,
         "newly_answered": result.newly_answered,
         "notification": result.notification.as_dict(),
     }
+    # A settled proposal is not yet an outcome: "approved" must send the
+    # reply, and anything that is not consent is feedback the work loop owes
+    # a revision for. Both run through the to-do's own command so the CLI
+    # (`hermes todos send`) and the web surface cannot disagree.
+    item = result.notification
+    if result.newly_answered and item.command.startswith("hermes todos send "):
+        todo_id = (item.dedupe_key or "").removeprefix("todo-action:")
+        if todo_id:
+            payload["action"] = await _settle_todo_proposal(
+                principal, todo_id, answer
+            )
+    return payload
+
+
+async def _settle_todo_proposal(principal, todo_id: str, answer: str) -> dict:
+    """Act on a just-settled send proposal.
+
+    ``approved`` delivers through ``execute_proposal`` — the single code
+    path ``hermes todos send`` also uses, with its replay guard and
+    approval-state checks intact. ``denied``/``rejected`` ends there.
+    Anything else is the user asking for changes rather than consenting:
+    the to-do goes back to ``working`` and the launcher re-runs the session
+    with their note as revision feedback.
+    """
+    try:
+        from hermes_cli.todo_store import default_store
+
+        store = default_store()
+        if answer.strip().lower() == "approved":
+            from hermes_cli.todo_outbound import execute_proposal
+
+            outcome = await execute_proposal(store, principal, todo_id)
+            return {"type": "send", **outcome}
+        if answer.strip().lower() in ("denied", "rejected"):
+            return {"type": "rejected"}
+
+        todo = await store.get(principal, todo_id)
+        if todo is None:
+            return {"type": "feedback", "error": "to-do not found"}
+        from hermes_cli.todo_work import launch_todo_work
+
+        actor = f"user:{principal.user_id}"
+        await store.set_stage(
+            principal,
+            todo_id,
+            "working",
+            outcome=f"Revision requested: {answer.strip()[:200]}",
+            actor=actor,
+        )
+        session_id = launch_todo_work(
+            store,
+            principal,
+            todo,
+            actor=actor,
+            extra_context=answer,
+            revision=True,
+        )
+        return {"type": "revision", "session_id": session_id}
+    except Exception as exc:  # noqa: BLE001 - the answer itself already settled
+        _log.warning("comms: proposal settlement for %s failed (%s)", todo_id, exc)
+        return {"type": "error", "error": str(exc)}
 
 
 @app.get("/api/comms/goals")

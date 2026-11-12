@@ -17,13 +17,14 @@ export interface TodosFilterState {
 }
 
 /**
- * The default view is the live work: staged, open and working.
+ * The default view is the live work: staged, open, working and review —
+ * a draft awaiting verdict is still live work the user owes attention.
  *
  * Done and dismissed to-dos are not deleted — the audit trail is the point —
  * but a list that shows every to-do the agent ever closed is a list nobody
  * reads twice.
  */
-export const DEFAULT_STAGES = ["staged", "open", "working"];
+export const DEFAULT_STAGES = ["staged", "open", "working", "review"];
 
 export const EMPTY_FILTERS: TodosFilterState = {
   q: "",

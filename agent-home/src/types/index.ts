@@ -712,6 +712,17 @@ export interface NotificationAnswerResponse {
   ok: boolean;
   newly_answered: boolean;
   notification: Notification;
+  /** Post-answer settlement for send proposals: the send result, a revision
+   * session id, or "rejected" — present only when the item carried a
+   * `hermes todos send` command. */
+  action?: {
+    type: "send" | "revision" | "rejected" | "feedback" | "error";
+    event?: string;
+    session_id?: string;
+    error?: string;
+    detail?: string;
+    result?: Record<string, unknown>;
+  };
 }
 
 /** `POST /api/comms/changes/{ref}/{undo|redo}`: the reverted/reapplied change. */
@@ -1236,7 +1247,13 @@ export interface IncomingsFacets {
  * notify — captured, visible, silent — which is the whole reason it exists;
  * `open` is what the agent decided is worth an interruption.
  */
-export type TodoStage = "staged" | "open" | "working" | "done" | "dismissed";
+export type TodoStage =
+  | "staged"
+  | "open"
+  | "working"
+  | "review"
+  | "done"
+  | "dismissed";
 
 export type TodoPriority = "critical" | "high" | "normal" | "low";
 
@@ -1268,8 +1285,34 @@ export interface Todo {
   snoozed_until: string | null;
   closed_at: string | null;
   outcome: string | null;
+  work_result: TodoWorkResult | null; // what a work session produced
   created_at: string | null;
   updated_at: string | null;
+}
+
+/** What a finished work session left behind (the launcher's snapshot). */
+export interface TodoWorkResult {
+  session_id?: string;
+  draft_dir?: string;
+  files?: { name: string; path: string; bytes: number }[];
+  draft_text?: string;
+  reply_text?: string;
+  summary?: string;
+  finished_at?: string;
+  error?: string | null;
+}
+
+/** The live draft payload — read from disk, not the snapshot. */
+export interface TodoDraft {
+  draft_dir: string;
+  files: { name: string; path: string; bytes: number }[];
+  draft_text: string;
+  reply_text: string;
+  summary: string;
+  session_id: string | null;
+  finished_at: string | null;
+  error: string | null;
+  proposal_amended?: boolean;
 }
 
 /** One recorded move along the lifecycle, from `task_transitions`. */
@@ -1526,6 +1569,8 @@ export interface TriageKindStatus {
   skills: TriageSkillFolder[];
   skills_source: string;
   config: { path: string; present: boolean };
+  /** Whether a skill's `work_request` may auto-start work (triage.auto_work). */
+  auto_work?: boolean;
   credentials_checked: boolean;
   setup_links: { label: string; href: string }[];
   services: { unit: string; state: string | null }[];

@@ -27,6 +27,7 @@ the door the right shape rather than to walk through it.
 
 from __future__ import annotations
 
+import json
 import logging
 import shlex
 from dataclasses import dataclass
@@ -168,7 +169,40 @@ def command_for(todo_id: str, action: ProposedAction) -> str:
         parts += ["--account", action.account_id]
     if action.thread_id:
         parts += ["--thread", action.thread_id]
+    if action.subject:
+        parts += ["--subject", action.subject]
     return shlex.join(parts)
+
+
+def parse_command_routing(
+    parts: "list[str]",
+) -> "Optional[dict[str, Optional[str]]]":
+    """Extract --channel/--to/--account/--thread/--subject from a command string."""
+    routing: dict[str, Optional[str]] = {
+        "channel": None,
+        "target": None,
+        "account": None,
+        "thread": None,
+        "subject": None,
+    }
+    flags = {
+        "--channel": "channel",
+        "--to": "target",
+        "--account": "account",
+        "--thread": "thread",
+        "--subject": "subject",
+    }
+    i = 0
+    while i < len(parts):
+        flag = parts[i]
+        if flag in flags and i + 1 < len(parts):
+            routing[flags[flag]] = parts[i + 1]
+            i += 2
+        else:
+            i += 1
+    if routing["channel"] is None or routing["target"] is None:
+        return None
+    return routing
 
 
 async def propose(
@@ -208,3 +242,88 @@ async def propose(
         command=result.notification.command,
         auto_approved=result.auto_answered,
     )
+
+
+async def execute_proposal(
+    store: "TodoStore",
+    principal: "Principal",
+    todo_id: str,
+) -> dict[str, Any]:
+    """Deliver an approved outgoing action — shared by the CLI's ``todos send``
+    and the web approval-answer path.
+
+    Everything the CLI checked by hand happens here so both surfaces cannot
+    disagree: pending is not sent, denied is not sent, already-sent is not
+    re-sent, and the body comes from the approval row — never from argv or
+    a request body, so an approved routing decision can never carry text the
+    user did not approve.
+
+    Returns a dict: ``{"event": "sent"|"failed", ...}`` on an attempted send
+    or ``{"error": <code>, ...}`` on a refusal.
+    """
+    from hermes_cli.human_comms import NotificationStore
+
+    notifications = NotificationStore(store._store)
+    dedupe_key = f"todo-action:{todo_id}"
+    approval = await notifications.get_by_dedupe_key(dedupe_key, principal)
+
+    if approval is None:
+        return {"error": "no_approval", "detail": f"No outgoing approval for to-do {todo_id}."}
+    if approval.is_pending:
+        return {"error": "pending", "detail": f"Approval for to-do {todo_id} is still pending."}
+    if not approval.granted:
+        return {"error": "denied", "detail": f"Approval for to-do {todo_id} was denied."}
+
+    routing = parse_command_routing(shlex.split(approval.command))
+    if routing is None:
+        return {"error": "unparseable", "detail": "Could not parse the approval's command.", "command": approval.command}
+
+    # Replay guard: a granted approval is single-use.
+    existing = await store.list_outbound(principal, todo_id)
+    if any(e.get("event") == "sent" for e in existing):
+        return {"error": "already_sent", "detail": f"To-do {todo_id} was already sent."}
+
+    body = approval.body
+    if not body:
+        return {"error": "empty_body", "detail": "The approval has no body to send."}
+
+    # Deliver through the same egress `hermes send` uses — account-aware, so
+    # C4's "reply leaves by the account the message arrived on" is honoured.
+    from hermes_cli.send_cmd import _load_hermes_env
+
+    _load_hermes_env()
+    from tools.send_message_tool import send_message_tool
+
+    channel = routing["channel"] or ""
+    send_target = channel
+    if routing["target"]:
+        send_target += f":{routing['target']}"
+    if routing["thread"]:
+        send_target += f":{routing['thread']}"
+
+    _send_args: dict[str, Any] = {
+        "action": "send",
+        "target": send_target,
+        "message": body,
+    }
+    if routing["account"]:
+        _send_args["account"] = routing["account"]
+    if routing["subject"]:
+        _send_args["subject"] = routing["subject"]
+
+    result_json = send_message_tool(_send_args)
+    try:
+        result_payload = json.loads(result_json) if result_json else {}
+    except json.JSONDecodeError:
+        result_payload = {"error": "invalid JSON from send_message_tool", "raw": result_json}
+
+    delivered = not result_payload.get("error")
+    event = "sent" if delivered else "failed"
+    await store.record_outbound(
+        principal,
+        todo_id,
+        event=event,
+        channel=channel,
+        actor=f"user:{principal.user_id}",
+    )
+    return {"event": event, "routing": routing, "result": result_payload}

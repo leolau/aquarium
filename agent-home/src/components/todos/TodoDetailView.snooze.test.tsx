@@ -28,6 +28,7 @@ const TODO: TodoDetail = {
   snoozed_until: null,
   closed_at: null,
   outcome: null,
+  work_result: null,
   created_at: null,
   updated_at: null,
   history: [],

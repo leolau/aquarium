@@ -177,6 +177,7 @@ import type {
   Todo,
   TodoCompletion,
   TodoDetail,
+  TodoDraft,
   TodosFacets,
   TodosResponse,
   StoreMode,
@@ -2233,6 +2234,25 @@ export class HermesApiClient {
       method: "POST",
       json: payload,
     });
+  }
+
+  /** The draft + reply a work session produced for this to-do. */
+  async todoDraft(id: string): Promise<TodoDraft> {
+    return this.request(`/api/registry/todos/${encodeURIComponent(id)}/draft`);
+  }
+
+  /**
+   * Persist the user's edits to the draft and/or reply. Editing the reply
+   * also amends the pending send proposal — what they approve is what sends.
+   */
+  async updateTodoDraft(
+    id: string,
+    payload: { draft_text?: string; reply_text?: string },
+  ): Promise<TodoDraft> {
+    return this.request(
+      `/api/registry/todos/${encodeURIComponent(id)}/draft`,
+      { method: "PATCH", json: payload },
+    );
   }
 
   /**

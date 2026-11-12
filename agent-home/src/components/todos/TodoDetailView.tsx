@@ -6,6 +6,7 @@ import { useState } from "react";
 import { surfaceGlyph } from "@/components/inbox/IncomingRow";
 import { AddToProjectSheet } from "@/components/projects/AddToProjectSheet";
 import { TodoCompleteForm } from "@/components/todos/TodoCompleteForm";
+import { TodoDraftPanel } from "@/components/todos/TodoDraftPanel";
 import { RefBadge } from "@/components/refs/RefBadge";
 import { ActionButton } from "@/components/ui/ActionButton";
 import { useAction } from "@/lib/use-action";
@@ -22,6 +23,7 @@ const NEXT_STAGES: Record<TodoStage, TodoStage[]> = {
   staged: ["open", "working", "done", "dismissed"],
   open: ["working", "done", "dismissed"],
   working: ["done", "dismissed"],
+  review: ["done", "working", "dismissed"],
   done: ["working"],
   dismissed: ["open"],
 };
@@ -30,6 +32,7 @@ const STAGE_VERB: Record<TodoStage, string> = {
   staged: "Back to staged",
   open: "Open it",
   working: "Work on it",
+  review: "Review draft",
   done: "Mark done",
   dismissed: "Dismiss",
 };
@@ -182,6 +185,11 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
 
       </div>
 
+      {/* The draft, when work produced one — the whole point of `review`.
+          Rendered whenever work_result exists, not only in review stage, so a
+          to-do knocked back to `working` still shows what exists so far. */}
+      {current.work_result ? <TodoDraftPanel todoId={current.id} /> : null}
+
       {source ? (
         <div
           data-component="TodoSource"
@@ -226,7 +234,7 @@ export function TodoDetailView({ todo }: { todo: TodoDetail }) {
             </Link>
           ) : null}
           <Link
-            href={`/todos?source_ref=${encodeURIComponent(source.id)}&stage=staged,open,working,done,dismissed`}
+            href={`/todos?source_ref=${encodeURIComponent(source.id)}&stage=staged,open,working,review,done,dismissed`}
             className="mt-3 inline-block text-xs text-[var(--color-muted)]"
           >
             Everything this arrival raised →

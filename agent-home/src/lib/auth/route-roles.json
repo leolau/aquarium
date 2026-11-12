@@ -240,6 +240,8 @@
   "GET /api/todos/[id]": "signed-in",
   "PATCH /api/todos/[id]": "signed-in",
   "POST /api/todos/[id]/complete": "signed-in",
+  "GET /api/todos/[id]/draft": "signed-in",
+  "PATCH /api/todos/[id]/draft": "signed-in",
   "POST /api/todos/[id]/promote": "signed-in",
   "POST /api/todos/[id]/snooze": "signed-in",
   "POST /api/todos/[id]/stage": "signed-in",

@@ -23,6 +23,14 @@ You MUST respond in this exact JSON format for each event:
   "todos": [
     {"title": "imperative, specific action", "detail": "one or two sentences of context", "priority": "high|medium|low", "due_date": "YYYY-MM-DD or null", "notify": false}
   ],
+  "work_request": {
+    "title": "imperative, specific work item or null",
+    "instructions": "what the agent should produce, detailed enough to act without seeing this event",
+    "deliverable": "what 'done' looks like — e.g. briefing notes and a reply draft",
+    "auto_start": false,
+    "priority": "high|medium|low",
+    "due_date": "YYYY-MM-DD or null"
+  },
   "memory_facts": [
     {"fact": "self-contained factual statement", "category": "contact|preference|decision|project|financial"}
   ]
@@ -40,3 +48,9 @@ You MUST respond in this exact JSON format for each event:
 - `memory_facts` — meeting patterns or contact relationships worth remembering
   (see remember-decisions.md)
 - `escalate` — true for hard conflicts or critical events starting soon
+- `work_request` — the *most important* items only: real work the agent should
+  do, not just a reminder. `null` (or omitted) for most events. Unlike a
+  `todos` entry this is for output the agent produces — prep notes, a drafted
+  reply. `instructions` must stand alone. `auto_start` true asks the system to
+  begin immediately — reserve it for items the user has previously said should
+  be handled automatically; when false the to-do waits for "Work on this".

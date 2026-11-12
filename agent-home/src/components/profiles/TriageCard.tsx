@@ -130,6 +130,7 @@ export function TriageCard({
               <li key={k.kind} data-kind={k.kind} data-state={k.status} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-2">
                 <div className="flex items-center gap-2">
                   <span className="flex-1 font-medium">{k.label} triage</span>
+                  {k.auto_work ? <Pill tone="muted">auto-work</Pill> : null}
                   <Pill tone="success">On</Pill>
                 </div>
                 <ul className="mt-1 divide-y divide-[var(--color-border)]">

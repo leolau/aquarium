@@ -28,12 +28,13 @@ Three properties of the existing schema shape everything here:
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, List, Literal, Optional, Sequence
+from typing import TYPE_CHECKING, Any, List, Literal, Mapping, Optional, Sequence
 
 from hermes_cli.access import (
     Principal,
@@ -85,24 +86,30 @@ GRANT_ID_COLUMN = f"{TASKS_TABLE}.id"
 
 #: The user-facing lifecycle. ``staged`` is the tier that does **not** notify:
 #: triage extracts an action item from most batches, so capturing generously
-#: is only survivable if most captures stay silent until promoted.
-TodoStage = Literal["staged", "open", "working", "done", "dismissed"]
+#: is only survivable if most captures stay silent until promoted. ``review``
+#: is where work leaves its output: a session that finished producing
+#: something parks the to-do there so "draft ready" is a place, not a log line.
+TodoStage = Literal["staged", "open", "working", "review", "done", "dismissed"]
 TODO_STAGES: tuple[TodoStage, ...] = (
     "staged",
     "open",
     "working",
+    "review",
     "done",
     "dismissed",
 )
 
 #: Stages a to-do can still be acted on in — the scope of de-duplication.
-LIVE_STAGES: tuple[TodoStage, ...] = ("staged", "open", "working")
+#: ``review`` is live: a draft awaiting verdict must not be re-created by a
+#: replayed batch, and it still counts as something the user owes attention.
+LIVE_STAGES: tuple[TodoStage, ...] = ("staged", "open", "working", "review")
 
 #: FG-06 ``status`` for each stage. Written in the same statement as ``stage``.
 STAGE_STATUS: dict[str, str] = {
     "staged": "pending",
     "open": "pending",
     "working": "in_progress",
+    "review": "in_progress",
     "done": "completed",
     "dismissed": "cancelled",
 }
@@ -148,7 +155,8 @@ ALTER TABLE {TASKS_TABLE}
     ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS snoozed_until TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ,
-    ADD COLUMN IF NOT EXISTS outcome TEXT;
+    ADD COLUMN IF NOT EXISTS outcome TEXT,
+    ADD COLUMN IF NOT EXISTS work_result JSONB;
 
 CREATE INDEX IF NOT EXISTS tasks_owner_stage_idx
     ON {TASKS_TABLE} (owner_user_id, stage, priority, created_at DESC);
@@ -163,17 +171,18 @@ CREATE INDEX IF NOT EXISTS tasks_keyset_idx
 #: and being asked the same thing again next month must produce a new row, not
 #: a conflict with a closed one.
 DEDUPE_INDEX_SQL = f"""
-CREATE UNIQUE INDEX IF NOT EXISTS tasks_dedupe_idx
+DROP INDEX IF EXISTS tasks_dedupe_idx;
+CREATE UNIQUE INDEX IF NOT EXISTS tasks_dedupe_v2_idx
     ON {TASKS_TABLE} (owner_user_id, dedupe_key)
     WHERE dedupe_key IS NOT NULL
-      AND stage IN ('staged', 'open', 'working');
+      AND stage IN ('staged', 'open', 'working', 'review');
 """
 
 _SELECT_COLUMNS = (
     "id, owner_user_id, visibility, title, description, trigger_state, "
     "completion_state, current_state, status, origin, stage, priority, "
     "due_at, source_kind, source_ref, source_note, dedupe_key, notified_at, "
-    "snoozed_until, closed_at, outcome, created_at, updated_at"
+    "snoozed_until, closed_at, outcome, work_result, created_at, updated_at"
 )
 
 _WHITESPACE = re.compile(r"\s+")
@@ -218,6 +227,7 @@ class Todo:
     snoozed_until: Optional[datetime] = None
     closed_at: Optional[datetime] = None
     outcome: Optional[str] = None
+    work_result: Optional[dict] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     #: False when a write collapsed onto an existing live row. The caller that
@@ -254,6 +264,7 @@ class Todo:
             "snoozed_until": _iso(self.snoozed_until),
             "closed_at": _iso(self.closed_at),
             "outcome": self.outcome,
+            "work_result": self.work_result,
             "created_at": _iso(self.created_at),
             "updated_at": _iso(self.updated_at),
         }
@@ -282,6 +293,7 @@ def _row_to_todo(row: Any, *, created: bool = True) -> Todo:
         snoozed_until=row["snoozed_until"],
         closed_at=row["closed_at"],
         outcome=row["outcome"],
+        work_result=row["work_result"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         created=created,
@@ -469,7 +481,7 @@ class TodoStore:
                             $14::text, $15::text)
                     ON CONFLICT (owner_user_id, dedupe_key)
                         WHERE dedupe_key IS NOT NULL
-                          AND stage IN ('staged', 'open', 'working')
+                          AND stage IN ('staged', 'open', 'working', 'review')
                     DO UPDATE SET
                         -- A re-seen source may carry a better title or a
                         -- raised priority; it must never drag a to-do the
@@ -974,6 +986,46 @@ class TodoStore:
                 {"event": _parse_outbound_event(r["to_state"]), "actor": r["actor"], "at": r["ts"]}
                 for r in rows
             ]
+        finally:
+            if own:
+                await conn.close()
+
+    async def set_work_result(
+        self,
+        principal: Principal,
+        todo_id: str,
+        work_result: Mapping[str, Any],
+        *,
+        actor: str,
+        connection: Optional["asyncpg.Connection"] = None,
+    ) -> None:
+        """Persist what a work session produced on the to-do row.
+
+        ``work_result`` is the draft's handle — paths, summary, the proposed
+        reply — written once by the launcher when the session ends, then read
+        by the draft API and PATCHed when the user edits. It is data, not
+        lifecycle, so it does not go through ``set_stage``; the transition
+        history still hears about it through ``record_outbound``.
+        """
+        predicate = scope_filter(
+            principal,
+            start_index=2,
+            grant_item_kind=GRANT_ITEM_KIND,
+            id_column=GRANT_ID_COLUMN,
+        )
+        own = connection is None
+        conn = connection or await self._connect()
+        try:
+            await conn.execute(
+                f"""
+                UPDATE {TASKS_TABLE}
+                SET work_result = $2::jsonb, updated_at = NOW()
+                WHERE id = $1 AND {predicate.sql}
+                """,
+                todo_id,
+                json.dumps(dict(work_result)),
+                *predicate.params,
+            )
         finally:
             if own:
                 await conn.close()
