@@ -106,6 +106,25 @@ class TestProfileScopedSkills:
         worker_cfg = _load_cfg(isolated_profiles["worker_alpha"])
         assert "worker-skill" not in worker_cfg.get("skills", {}).get("disabled", [])
 
+    def test_toggle_clears_skills_prompt_cache(
+        self, client, isolated_profiles, monkeypatch
+    ):
+        """A toggle reaches the next new chat: the skills prompt snapshot is dropped."""
+        import agent.prompt_builder as prompt_builder
+
+        calls = []
+        monkeypatch.setattr(
+            prompt_builder,
+            "clear_skills_system_prompt_cache",
+            lambda **kw: calls.append(kw),
+        )
+        resp = client.put(
+            "/api/skills/toggle",
+            json={"name": "worker-skill", "enabled": False, "profile": "worker_alpha"},
+        )
+        assert resp.status_code == 200
+        assert calls == [{"clear_snapshot": True}]
+
     def test_unknown_profile_returns_404(self, client, isolated_profiles):
         resp = client.get("/api/skills", params={"profile": "no_such_profile"})
         assert resp.status_code == 404
