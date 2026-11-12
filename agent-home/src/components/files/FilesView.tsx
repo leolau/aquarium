@@ -10,11 +10,8 @@ import type {
   FileSurfacesResponse,
 } from "@/types";
 import { ActionButton } from "@/components/ui/ActionButton";
-import {
-  ownerLabel,
-  WhoseDataPicker,
-  type ViewablePeople,
-} from "@/components/access/WhoseDataPicker";
+import { WhoseDataPicker } from "@/components/access/WhoseDataPicker";
+import { NO_WHOSE_DATA, ownerLabel, type WhoseData } from "@/lib/whose-data";
 
 /**
  * The `/files` view: everything that arrived, from any surface, with where it
@@ -32,9 +29,12 @@ import {
 export function FilesView({
   initial,
   surfaces,
+  whose = NO_WHOSE_DATA,
 }: {
   initial: FileAssetsResponse;
   surfaces: FileSurfacesResponse["surfaces"];
+  /** Whom "Whose data" offers and whose files `initial` already is. */
+  whose?: WhoseData;
 }) {
   const [files, setFiles] = useState<FileAsset[]>(initial.files);
   const [total, setTotal] = useState(initial.total);
@@ -46,9 +46,8 @@ export function FilesView({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<FileAsset | null>(null);
-  const [owners, setOwners] = useState<string[]>([]);
-  const ownersRef = useRef<string[]>([]);
-  const [people, setPeople] = useState<ViewablePeople | null>(null);
+  const [owners, setOwners] = useState<string[]>(whose.owners);
+  const ownersRef = useRef<string[]>(whose.owners);
 
   const load = useCallback(
     async (opts: {
@@ -120,7 +119,7 @@ export function FilesView({
     <div data-component="FilesView" className="flex flex-col gap-4">
       <WhoseDataPicker
         value={owners}
-        onPeople={setPeople}
+        people={whose.roster}
         onChange={(next) => {
           ownersRef.current = next;
           setOwners(next);
@@ -225,12 +224,12 @@ export function FilesView({
                       <span className="truncate text-sm font-medium">
                         {file.filename}
                       </span>
-                      {ownerLabel(people, owners, file.owner_user_id) ? (
+                      {ownerLabel(whose.roster, owners, file.owner_user_id) ? (
                         <span
                           data-component="OwnerBadge"
                           className="shrink-0 rounded-full border border-[var(--color-border)] px-2 py-0.5 text-xs text-[var(--color-muted)]"
                         >
-                          {ownerLabel(people, owners, file.owner_user_id)}
+                          {ownerLabel(whose.roster, owners, file.owner_user_id)}
                         </span>
                       ) : null}
                       {file.remembered ? (

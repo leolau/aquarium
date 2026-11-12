@@ -26,7 +26,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
     const client = await apiClientForRequest();
-    const resp = await client.memoryQuery(text);
+    // Nearest points come from the same people as the map ("Whose data").
+    const owners = Array.isArray(body?.owners)
+      ? (body.owners as unknown[]).filter((o): o is string => typeof o === "string")
+      : undefined;
+    const resp = await client.memoryQuery(text, owners);
     return NextResponse.json(resp);
   } catch (err) {
     if (err instanceof HermesApiError) {

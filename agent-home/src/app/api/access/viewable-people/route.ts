@@ -6,7 +6,7 @@
 import { NextResponse } from "next/server";
 
 import { withPrincipal } from "@/app/api/projects/hermes-bridge";
-import type { ViewablePeople } from "@/components/access/WhoseDataPicker";
+import type { ViewablePeople } from "@/lib/whose-data";
 
 export async function GET(): Promise<NextResponse> {
   return withPrincipal((client) => client.request<ViewablePeople>("/api/access/viewable-people"));

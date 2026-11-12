@@ -1923,10 +1923,10 @@ export class HermesApiClient {
   }
 
   /** Place a typed query on the map. The text is never persisted upstream. */
-  async memoryQuery(text: string): Promise<MemoryQueryPlacement> {
+  async memoryQuery(text: string, owners?: string[]): Promise<MemoryQueryPlacement> {
     return this.request("/api/memory/explorer/projection/query", {
       method: "POST",
-      json: { text },
+      json: owners?.length ? { text, owners } : { text },
     });
   }
 

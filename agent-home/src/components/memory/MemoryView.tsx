@@ -15,6 +15,7 @@ import type {
 } from "@/types";
 import { ActionButton } from "@/components/ui/ActionButton";
 import { WhoseDataPicker } from "@/components/access/WhoseDataPicker";
+import { NO_WHOSE_DATA, type WhoseData } from "@/lib/whose-data";
 import { useAction } from "@/lib/use-action";
 import { useHydrated } from "@/lib/use-hydrated";
 
@@ -34,7 +35,10 @@ export function MemoryView({
   summary,
   initialRows,
   documentId = null,
+  whose = NO_WHOSE_DATA,
 }: {
+  /** Whom "Whose data" offers and whose memories `initialRows` already is. */
+  whose?: WhoseData;
   summary: MemorySummary;
   initialRows: MemoryRowsResponse;
   /** `?document=<id>`: open on that document's passages (a citation link). */
@@ -57,8 +61,8 @@ export function MemoryView({
   // that one keeps its inline button spinner instead.
   const [replacing, setReplacing] = useState(false);
   const [searching, setSearching] = useState(false);
-  const [owners, setOwners] = useState<string[]>([]);
-  const ownersRef = useRef<string[]>([]);
+  const [owners, setOwners] = useState<string[]>(whose.owners);
+  const ownersRef = useRef<string[]>(whose.owners);
   const [rowsError, setRowsError] = useState<string | null>(null);
 
   // --- Search (debounced 300 ms, offset reset to 0) -----------------------
@@ -210,7 +214,10 @@ export function MemoryView({
       const res = await fetch("/api/memory/query", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text: queryText.trim() }),
+        body: JSON.stringify({
+          text: queryText.trim(),
+          ...(ownersRef.current.length ? { owners: ownersRef.current } : {}),
+        }),
       });
       if (!res.ok) {
         // 429 is the upstream's own rate limit (one placement every 3 s).
@@ -242,10 +249,12 @@ export function MemoryView({
     >
       <div className="min-w-0 space-y-4">
       <WhoseDataPicker
+        people={whose.roster}
         value={owners}
         onChange={(next) => {
           ownersRef.current = next;
           setOwners(next);
+          setQueryResult(null);
           void doSearch(q);
         }}
       />

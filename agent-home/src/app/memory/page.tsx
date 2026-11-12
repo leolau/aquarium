@@ -4,6 +4,7 @@ import { MemoryView } from "@/components/memory/MemoryView";
 import { getT } from "@/i18n/server";
 import { HermesApiError } from "@/lib/api/client";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
+import { loadWhoseData, NO_WHOSE_DATA, type WhoseData } from "@/lib/whose-data";
 import type { MemoryRowsResponse, MemorySummary } from "@/types";
 
 // Per-principal HTML — never cached.
@@ -24,7 +25,7 @@ export default async function Page({
 }: {
   searchParams: Promise<{ document?: string }>;
 }) {
-  await requirePrincipal();
+  const principal = await requirePrincipal();
   const t = await getT("system");
   // `?document=<id>` arrives from a citation link: open on that document's
   // passages instead of the whole memory list.
@@ -35,14 +36,17 @@ export default async function Page({
   let first: MemoryRowsResponse | null = null;
   let error: string | null = null;
   let noPrincipal = false;
+  let whose: WhoseData = NO_WHOSE_DATA;
 
   try {
     const client = await apiClientForRequest();
+    whose = await loadWhoseData(client, principal.user_id);
+    const owners = whose.owners;
     [summary, first] = await Promise.all([
       client.memorySummary(),
       documentId
-        ? client.memoryRows({ limit: 25, kind: "chunk", topic: documentId })
-        : client.memoryRows({ limit: 25 }),
+        ? client.memoryRows({ limit: 25, kind: "chunk", topic: documentId, owners })
+        : client.memoryRows({ limit: 25, owners }),
     ]);
   } catch (err) {
     // The status, not the message: `HermesApiError.message` embeds the request
@@ -82,6 +86,7 @@ export default async function Page({
         </div>
       ) : (
         <MemoryView
+          whose={whose}
           summary={summary}
           initialRows={first}
           documentId={documentId}
