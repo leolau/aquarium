@@ -28,6 +28,8 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import logging
+import os
+import tempfile
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -50,6 +52,66 @@ def draft_dir_for(todo_id: str) -> Path:
     from hermes_constants import get_hermes_home
 
     return Path(get_hermes_home()) / "drafts" / f"todo_{todo_id}"
+
+
+def _shared_draft_perms(draft_dir: Path) -> None:
+    """Draft dirs are touched by two service users.
+
+    The triage service / dashboard (``hermes``) creates them, the work
+    session's tools (``terminal.run_as``, ``hermes-tools`` on the box) write
+    ``DRAFT.md`` / ``REPLY.txt``, and the draft PATCH route (``hermes``
+    again) edits them afterwards. Both dirs go to the terminal user's group
+    (``hermes`` is in it), never to everyone on the box: ``drafts/`` is
+    setgid + sticky so a per-to-do dir inherits the group and nobody removes
+    another's, the leaf is setgid so a later PATCH or revision session can
+    replace files it does not own. No ``run_as`` means one user, nothing to
+    share. Best-effort: a dir someone else owns keeps its mode.
+    """
+    from tools import terminal_user
+
+    user = terminal_user.configured_user()
+    if not user:
+        return
+    for path, mode in ((draft_dir.parent, 0o3770), (draft_dir, 0o2770)):
+        try:
+            terminal_user.share_with(user, str(path), mode)
+        except (OSError, KeyError):
+            pass
+
+
+def prepare_draft_dir(draft_dir: Path) -> Path:
+    """Create a drafts dir the whole service split can share."""
+    for path in (draft_dir.parent, draft_dir):
+        if path.is_symlink():
+            # The tree is writable by the terminal user: a planted link would
+            # make the dashboard user hand its own folder to that group.
+            raise OSError(f"draft folder {path} is a symlink; refusing to use it")
+    draft_dir.mkdir(parents=True, exist_ok=True)
+    _shared_draft_perms(draft_dir)
+    return draft_dir
+
+
+def write_draft_file(path: Path, text: str) -> None:
+    """Write a draft file, replacing whatever is there.
+
+    The existing file may be owned by a different service user than the
+    caller (session tools run as ``hermes-tools``, the draft API as
+    ``hermes``): opening it for write needs ownership, but rename only
+    needs a writable directory — which the shared perms provide.
+    """
+    # mkstemp creates the temp file exclusively (O_EXCL), so a link planted
+    # in this shared folder is never followed; os.replace swaps the name.
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(tmp, path)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _work_instructions(draft_dir: Path, *, revision: bool) -> str:
@@ -341,7 +403,7 @@ def launch_todo_work(
     """
     draft_dir = draft_dir_for(todo.id)
     try:
-        draft_dir.mkdir(parents=True, exist_ok=True)
+        prepare_draft_dir(draft_dir)
     except OSError as exc:
         log.warning("todo_work: could not create %s (%s)", draft_dir, exc)
 
