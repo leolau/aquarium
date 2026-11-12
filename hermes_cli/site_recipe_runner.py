@@ -1263,7 +1263,8 @@ _EMPTY_FILTERS_JS = r"""
   const isDate = (x) => ['date', 'datetime-local', 'month', 'week'].includes((x.type || '').toLowerCase())
     || words([x.id, x.name, x.placeholder, x.className, x.labels && x.labels[0] ? x.labels[0].innerText : '']
       .join(' ')).some((w) => DATE.has(w) || w.includes('date'));
-  const ANY = /^\s*(-+.*-+|\*|all|any|全部|所有|(please )?(select|choose)\b.*)\s*$/i;
+  // An unrestricted choice is told by its label (e.g. 'All warehouses' sent as 0).
+  const ANY = /^\s*(-+.*-+|\*|\(?(all|any|every)\b.*|(全部|所有|任何|不限).*|(please )?(select|choose)\b.*)\s*$/i;
   const empty = (x) => {
     const v = String(x.value || '').trim();
     if (!v) return true;
