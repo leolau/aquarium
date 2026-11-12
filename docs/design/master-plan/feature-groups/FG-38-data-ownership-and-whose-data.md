@@ -66,8 +66,8 @@ the default is your own.
 | Phase | What | Status |
 |-------|------|--------|
 | P0+P1 | `?as=` owner-only + GET-only; `owners=` filter on `/api/files`, `/api/incomings`, `/api/memory/explorer/rows` and `/projection`; e2e tests over real Postgres | done (#879, #884) |
-| P2a | Correct owner at arrival: calendar → who connected it, WhatsApp → who added the bridge (by port), shared mailbox → entry's `owner_user_id` else who saved its credential; attachments/media follow; unknown → install owner, known-but-inactive → dropped | **PR open** |
-| P2b | Owner column on the raw SQLite channel stores, email/WhatsApp tool servers filter by the chatting person (needs a caller-identity design: today they trust any holder of the shared token), owner-only Settings page to reassign each box-wide account | planned |
+| P2a | Correct owner at arrival: calendar → who connected it, WhatsApp → who added the bridge (by port), shared mailbox → entry's `owner_user_id` else who saved its credential; attachments/media follow; unknown → install owner, known-but-inactive → dropped | done (#892, #894) |
+| P2b | Raw SQLite stores closed to the terminal user (`deploy/hermes-close-data`), not given owner columns: people only see the owner-scoped Postgres copy. One Postgres account→person map (Settings choice → poller config entry → who connected it → install owner), owner-only Settings › Accounts page in agent-home to reassign each account for new arrivals. Email/WhatsApp tool servers stay off until they carry the caller's identity | in progress |
 | P3 | Scheduled jobs and project runs store and run as their person (memory/RAG written by them is theirs) | planned |
 | P4 | agent-home "Whose data" multi-select on Files and the 2-D memory map (then Incomings, scheduled jobs), default = me, Owner column; a "people I can view" endpoint for the picker | planned |
 | P5 | Re-attribute existing rows on the production box — counts first, snapshot, tagged and reversible, only with Leo's yes | planned |
@@ -83,3 +83,4 @@ surfaces: activity/audit logs, backups and exports.
 |------|----|-------|
 | 2026-11-12 | P0+P1 | `?as=` gated in `_comms_resolve_principal`; `parse_owner_filter` in `hermes_cli/access.py`; `owners=` on files, incomings, memory rows and projection (`owner=` still accepted on rows). |
 | 2026-11-12 | P2a | `account_owner`/`_mailbox_cred` in `email_poller.py`, `phone_owner` in `batcher.py`, calendar uses `credentials.owner_user_id`; `register_file(owner_user_id=)`. Inbound key is `(owner_user_id, surface, account_id, external_id)`, so a reassignment makes new rows: P5/P2b must move old ones explicitly. |
+| 2026-11-12 | P2b (stores) | Box had `email-messages`, `whatsapp-messages`, `calendar`, `backups`, `restore-*` readable by `hermes-tools` (terminal + file tools). Closed by hand (snapshot first), and `hermes-close-data` now runs on every deploy: 750, group hermes, owner root/hermes. |

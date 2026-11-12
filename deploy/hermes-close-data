@@ -1,0 +1,40 @@
+#!/bin/bash
+# Close the box's raw channel stores and old database copies to everyone but
+# their owner and the hermes group.
+#
+#   deploy/hermes-close-data [--data DIR] [--group NAME]     (run as root)
+#
+# The agent's terminal and file tools run as hermes-tools (terminal.run_as).
+# These folders hold every person's raw mail, WhatsApp and calendar, and
+# whole-database backups, so a terminal user must not be able to enter them;
+# people see their own data through the owner-scoped Postgres copy instead.
+# The pollers, batchers and triage run as hermes and keep full access.
+#
+# hermes-deploy.sh runs this on every deploy, so a folder recreated with a
+# looser mode is closed again. Idempotent, never recursive, skips symlinks.
+set -euo pipefail
+DATA=/opt/data GROUP=hermes
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --data) DATA=$2; shift 2 ;;
+    --group) GROUP=$2; shift 2 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+[ -d "$DATA" ] || { echo "--data must be an existing folder" >&2; exit 2; }
+getent group "$GROUP" >/dev/null || { echo "no group $GROUP" >&2; exit 2; }
+
+CLOSED=(email-messages whatsapp-messages calendar backups)
+shopt -s nullglob
+for d in "${CLOSED[@]/#/$DATA/}" "$DATA"/restore-*; do
+  [ -d "$d" ] && [ ! -L "$d" ] || continue
+  owner=$(stat -c %U "$d")
+  # Owned by anyone but root or hermes (a restore left by hermes-tools), the
+  # owner could simply reopen it.
+  if [ "$owner" != root ] && [ "$owner" != "$GROUP" ]; then
+    chown root "$d"
+  fi
+  chgrp "$GROUP" "$d"
+  chmod u+rwx,g+rx,g-w,o-rwx "$d"
+  echo "closed $(stat -c '%a %U:%G' "$d") $d"
+done
