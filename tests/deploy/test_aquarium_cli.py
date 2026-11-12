@@ -413,6 +413,24 @@ def test_update_installs_verified_stable_release(box, capsys):
     assert "TOPSECRETPW" not in out
 
 
+def test_update_closes_raw_stores_to_the_terminal_user(box, capsys):
+    # The agent's terminal runs as hermes-tools: an update must not leave raw
+    # mail/WhatsApp/calendar stores or database copies open to it (FG-38).
+    released_box(box)
+    names = ["email-messages", "whatsapp-messages", "calendar", "backups", "restore-b2c-1"]
+    for name in names + ["hermes-home-extra"]:
+        d = box.p(f"/opt/data/{name}")
+        d.mkdir(parents=True, exist_ok=True)
+        d.chmod(0o777)
+    inner = box.write("/opt/data/email-messages/email_data.db", "x", mode=0o640)
+    assert box.run("update") == 0, capsys.readouterr().out
+    for name in names:
+        mode = box.p(f"/opt/data/{name}").stat().st_mode & 0o777
+        assert mode & 0o007 == 0 and mode & 0o020 == 0 and mode & 0o750 == 0o750, (name, oct(mode))
+    assert box.p("/opt/data/hermes-home-extra").stat().st_mode & 0o777 == 0o777
+    assert inner.stat().st_mode & 0o777 == 0o640
+
+
 def test_update_beta_channel_and_explicit_version(box, capsys):
     released_box(box)
     assert box.run("update", "--channel", "beta") == 0

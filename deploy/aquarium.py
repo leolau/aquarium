@@ -47,6 +47,7 @@ import re
 import secrets
 import shutil
 import socket
+import stat
 import sqlite3
 import ssl
 import subprocess
@@ -863,6 +864,40 @@ def carry_forward(old: Path, new: Path) -> List[str]:
 # --------------------------------------------------------------------------- update
 
 
+#: Raw channel stores and whole-database copies: the agent's terminal runs as
+#: hermes-tools, so only their owner and the hermes group may enter (FG-38).
+#: Mirrors deploy/hermes-close-data, which the git-checkout deploy runs.
+CLOSED_DATA = ("email-messages", "whatsapp-messages", "calendar", "backups")
+
+
+def close_raw_stores(cfg: Dict[str, str]) -> None:
+    import grp
+
+    root = P(cfg["DATA_ROOT"])
+    try:
+        gid = grp.getgrnam("hermes").gr_gid
+    except KeyError:
+        gid = None
+    for d in [root / n for n in CLOSED_DATA] + sorted(root.glob("restore-*")):
+        if d.is_symlink() or not d.is_dir():
+            continue
+        st = d.stat()
+        try:
+            if gid is not None and not test_mode():
+                owner = st.st_uid if st.st_uid in (0, _uid("hermes")) else 0
+                os.chown(d, owner, gid)
+            os.chmod(d, (stat.S_IMODE(st.st_mode) | 0o750) & ~0o027)
+        except OSError as e:
+            say(f"  WARNING: could not close {d}: {e}")
+
+
+def _uid(name: str) -> int:
+    try:
+        return pwd.getpwnam(name).pw_uid
+    except KeyError:
+        return -1
+
+
 def cmd_update(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
     # `aquarium upgrade run` passes a hook that marks each step for Settings → Software upgrade.
     mark: Callable[[str], None] = getattr(args, "progress", None) or (lambda key: None)
@@ -943,6 +978,7 @@ def cmd_update(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
         state.update(previous=before, current=version, layout="release")
         state.setdefault("history", []).append({"version": version, "from": before, "at": utcnow(), "result": "switched"})
         save_state(state)
+        close_raw_stores(cfg)
         restart_services(units)
         mark("checks")
         step("Health check")
