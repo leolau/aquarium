@@ -1244,8 +1244,9 @@ def test_e2e_explore_reports_a_call_cut_off_inside_an_iframe(site):
 
 
 @needs_browser
-def test_e2e_a_search_narrowed_by_a_non_date_filter_is_not_warned(site):
-    probes = [{"name": "stock", "steps": _stock_search({"op": "select", "selector": "#s-wh", "value": "HK1"})}]
+@pytest.mark.parametrize("warehouse", ["HK1", "HK"])  # HK is "All Hong Kong warehouses": a subset
+def test_e2e_a_search_narrowed_by_a_non_date_filter_is_not_warned(site, warehouse):
+    probes = [{"name": "stock", "steps": _stock_search({"op": "select", "selector": "#s-wh", "value": warehouse})}]
     inv = dict(srr.browse(fixture_recipe(site.base_url), probes, CRED, allow_private=True))["stock"]
     assert "warnings" not in inv
     (req,) = inv["step_requests"][0]["requests"]
