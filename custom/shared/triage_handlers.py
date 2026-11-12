@@ -18,6 +18,7 @@ Step 1 alone is safe: the dispatcher logs "no handler for deadlines — ignoring
 """
 
 import json
+import os
 import uuid
 from datetime import datetime, timezone
 
@@ -155,6 +156,149 @@ def _handle_todos(todos, batch, db):
         if recorded and recorded.get('created'):
             print(f"[triage] Staged to-do ({recorded['stage']}): {title}")
 
+
+
+@register('work_request')
+def _handle_work_request(request, batch, db):
+    """Turn a skill's "this needs real work" verdict into a to-do — and start it.
+
+    Distinct from `todos`: a `todos` entry asks the *user* to do something; a
+    `work_request` asks the *agent* to produce something — a quotation, a
+    drafted reply, research. The to-do carries the skill's `instructions` and
+    `deliverable` in its description so the work session can act without the
+    prompt that produced them.
+
+    `auto_start` is a two-key door: the skill asks AND the channel's
+    `config.json` allows (`triage.auto_work`). Either side saying no leaves a
+    normal open to-do waiting for "Work on this". At most one request per
+    batch may auto-start — the second-most-important thing can still wait for
+    a human to see it.
+    """
+    if not request:
+        return
+    candidates = request if isinstance(request, list) else [request]
+    candidates = [c for c in candidates if isinstance(c, dict)]
+    if not candidates:
+        return
+    try:
+        from shared.todo_registration import (
+            MAX_TODOS_PER_BATCH, register_todo, select_candidates,
+        )
+    except ImportError:
+        return
+
+    channel = batch.get('_channel', 'whatsapp')
+    arrivals = _triaged_arrivals(batch)
+    surface, account_id, external_id = (
+        arrivals[0] if arrivals else (channel, '', '')
+    )
+    auto_work = _auto_work_enabled(channel)
+    auto_started = False
+
+    ranked = select_candidates(
+        [{**c, "notify": True} for c in candidates],
+        limit=MAX_TODOS_PER_BATCH,
+    )
+    for candidate in ranked:
+        title = (candidate.get('title') or '').strip()
+        if not title:
+            continue
+        parts = [str(candidate.get('instructions') or '').strip()]
+        deliverable = str(candidate.get('deliverable') or '').strip()
+        if deliverable:
+            parts.append(f"Deliverable: {deliverable}")
+        recorded = register_todo(
+            title=title,
+            description="\n\n".join(p for p in parts if p),
+            priority=candidate.get('priority', 'high'),
+            due_date=candidate.get('due_date'),
+            notify=True,
+            surface=surface,
+            account_id=account_id,
+            external_id=external_id,
+            actor=f'skill:{channel}-triage',
+            origin='triage',
+        )
+        if not recorded:
+            continue
+        print(f"[triage] Work request to-do ({recorded['stage']}): {title}")
+        if (
+            candidate.get('auto_start')
+            and auto_work
+            and recorded.get('created')
+            and not auto_started
+        ):
+            if _auto_start(recorded['id'], channel):
+                auto_started = True
+                print(f"[triage] Auto-started work session for: {title}")
+            else:
+                print(f"[triage] Auto-start failed for: {title} — to-do left open")
+
+
+def _auto_work_enabled(channel):
+    """The channel's `triage.auto_work` flag, read fresh each batch.
+
+    Same hot-reload posture as the skill files: flipping the config takes
+    effect on the next batch with no restart.
+    """
+    paths = {
+        'whatsapp': os.environ.get(
+            'WHATSAPP_CONFIG_PATH', '/opt/data/whatsapp-messages/config.json'
+        ),
+        'email': os.environ.get(
+            'EMAIL_CONFIG_PATH', '/opt/data/email-messages/config.json'
+        ),
+        'calendar': os.environ.get(
+            'CALENDAR_CONFIG_PATH', '/opt/data/calendar/config.json'
+        ),
+    }
+    path = paths.get(channel)
+    if not path:
+        return False
+    try:
+        with open(path) as f:
+            cfg = json.load(f)
+        return bool((cfg.get('triage') or {}).get('auto_work'))
+    except Exception:
+        return False
+
+
+def _auto_start(todo_id, channel):
+    """Move a fresh work to-do to ``working`` and launch its session.
+
+    Mirrors what ``POST /todos/{id}/start {session:true}`` does from the page,
+    with the skill as the actor. Sync callers wrap the async store calls in
+    ``asyncio.run`` — the same shape ``register_todo`` uses. Returns False on
+    any failure so a broken launcher never costs the to-do itself.
+    """
+    try:
+        from shared.todo_registration import resolve_owner
+        from hermes_cli.todo_store import default_store
+        from hermes_cli.todo_work import launch_todo_work
+    except ImportError as exc:
+        print(f"[triage] auto-start unavailable: {exc}")
+        return False
+
+    import asyncio
+
+    async def _do():
+        principal = await resolve_owner()
+        if principal is None:
+            return False
+        store = default_store("prod")
+        todo = await store.get(principal, todo_id)
+        if todo is None or not todo.is_live or todo.stage == 'working':
+            return False
+        actor = f'skill:{channel}-triage'
+        await store.set_stage(principal, todo_id, 'working', actor=actor)
+        launch_todo_work(store, principal, todo, actor=actor)
+        return True
+
+    try:
+        return asyncio.run(_do())
+    except Exception as exc:
+        print(f"[triage] auto-start error for {todo_id}: {exc}")
+        return False
 
 @register('notes')
 def _handle_notes(notes, batch, db):

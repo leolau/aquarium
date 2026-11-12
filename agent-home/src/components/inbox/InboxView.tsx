@@ -144,7 +144,16 @@ export function InboxView({
       );
       setNotice(
         resp.newly_answered
-          ? `Answered "${item.title}" (${value}).`
+          ? `Answered "${item.title}" (${value}).` +
+              (resp.action?.type === "send"
+                ? resp.action.event === "sent"
+                  ? " Reply sent."
+                  : ` Send failed: ${resp.action.result?.error ?? resp.action.detail ?? "unknown"}.`
+                : resp.action?.type === "revision"
+                  ? " Back to work — you'll be told when the revision is ready."
+                  : resp.action?.type === "rejected"
+                    ? " Reply not sent."
+                    : "")
           : `"${item.title}" was already answered on another surface.`,
       );
       await refreshNotifications();

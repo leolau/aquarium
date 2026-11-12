@@ -586,6 +586,41 @@ class NotificationStore:
 
         return await self._with_connection(_run, connection)
 
+    async def amend_body_if_pending(
+        self,
+        notification_id: str,
+        principal: Principal,
+        *,
+        body: str,
+        connection: "Optional[asyncpg.Connection]" = None,
+    ) -> bool:
+        """Rewrite a still-pending item's body.
+
+        The draft the user edits is the draft the approval carries: a
+        proposal whose reply text the user then changes in the draft panel
+        must carry the changed text, or "approve" would send a version the
+        user no longer sees. Settled items are untouched — what was answered
+        is what was answered.
+        """
+        clean = (body or "")[:4000]
+
+        async def _run(conn: "asyncpg.Connection") -> bool:
+            current = await self._load_visible(conn, notification_id, principal)
+            if not current.is_pending:
+                return False
+            row = await conn.fetchval(
+                f"""
+                UPDATE {NOTIFICATIONS_TABLE} SET body = $2
+                WHERE id = $1 AND status = 'pending'
+                RETURNING id
+                """,
+                notification_id,
+                clean,
+            )
+            return row is not None
+
+        return await self._with_connection(_run, connection)
+
     # -- internals ---------------------------------------------------------
 
     async def _load_visible(

@@ -466,6 +466,10 @@ def _kind_result(
         "skills": skills,
         "skills_source": SOURCE_DIRS[kind],
         "config": {"path": str(config_path), "present": config is not None},
+        # The work_request gate: a skill may only auto-start work when the
+        # channel config says ``triage.auto_work`` — read live, like the
+        # pollers read it, so the page shows the flag that would apply now.
+        "auto_work": bool((config or {}).get("triage", {}).get("auto_work")),
         "credentials_checked": credentials_checked,
         "setup_links": SETUP_LINKS[kind],
         "services": [{"unit": u, "state": None} for u in SERVICE_UNITS[kind]],

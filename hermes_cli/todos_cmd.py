@@ -457,7 +457,8 @@ async def _send(
     target: str,
     account: Optional[str],
     thread: Optional[str],
-    json_mode: bool,
+    subject: Optional[str] = None,
+    json_mode: bool = False,
 ) -> int:
     """Deliver an approved outgoing action.
 
@@ -512,6 +513,8 @@ async def _send(
         mismatches.append("account")
     if (cmd_routing["thread"] or None) != (thread or None):
         mismatches.append("thread")
+    if (cmd_routing.get("subject") or None) != (subject or None):
+        mismatches.append("subject")
     if mismatches:
         msg = (
             f"Routing does not match the approved action "
@@ -523,117 +526,35 @@ async def _send(
             print(msg, file=sys.stderr)
         return _SEND_ROUTING
 
-    # Account honour gap: the approval carries --account (multi-account
-    # routing, C4 "the reply leaves by the account the message arrived
-    # on"), but send_message_tool._handle_send reads only 'target' and
-    # 'message' — the account key is discarded.  Refuse rather than
-    # silently deliver by the wrong account.  This is a stated gap, not
-    # a permanent refusal: when _handle_send threads the account through
-    # to the platform adapter, this check is removed.
-    if account:
-        msg = (
-            f"Approval for to-do {todo_id} carries --account {account!r}, "
-            f"but delivery does not yet honour multi-account routing. "
-            f"Refusing rather than delivering by the wrong account."
-        )
-        if json_mode:
-            _print_json({"error": msg})
-        else:
-            print(msg, file=sys.stderr)
-        return _SEND_ROUTING
+    # The routing checked out — the shared executor does the rest (body from
+    # the approval row, replay guard, account-aware delivery, audit).
+    from hermes_cli.todo_outbound import execute_proposal
 
-    # Replay guard: a granted approval must be single-use.  If we already
-    # recorded a 'sent' outbound event for this to-do, refuse to deliver again.
-    existing = await store.list_outbound(principal, todo_id)
-    if any(e.get("event") == "sent" for e in existing):
-        msg = f"To-do {todo_id} was already sent."
-        if json_mode:
-            _print_json({"error": msg})
-        else:
-            print(msg, file=sys.stderr)
-        return _SEND_MISSING
-
-    # The body comes from the approval row.
-    body = approval.body
-    if not body:
-        msg = "The approval has no body to send."
-        if json_mode:
-            _print_json({"error": msg})
-        else:
-            print(msg, file=sys.stderr)
-        return _SEND_MISSING
-
-    # Deliver through the same egress `hermes send` uses.
-    from hermes_cli.send_cmd import _load_hermes_env
-
-    _load_hermes_env()
-    from tools.send_message_tool import send_message_tool
-
-    send_target = channel
-    if target:
-        send_target += f":{target}"
-    if thread:
-        send_target += f":{thread}"
-
-    _send_args: dict = {"action": "send", "target": send_target, "message": body}
-    if account:
-        _send_args["account"] = account
-
-    result_json = send_message_tool(_send_args)
-    result_payload = (
-        json.loads(result_json) if result_json else {}
-    )
-
-    delivered = not result_payload.get("error")
-    event = "sent" if delivered else "failed"
-    await store.record_outbound(
-        principal,
-        todo_id,
-        event=event,
-        channel=channel,
-        actor=f"user:{principal.user_id}",
-    )
+    outcome = await execute_proposal(store, principal, todo_id)
 
     if json_mode:
-        _print_json({"event": event, "result": result_payload})
+        _print_json(outcome)
     else:
-        if delivered:
+        if outcome.get("event") == "sent":
             print(f"Sent on {channel}.")
-        else:
+        elif outcome.get("event") == "failed":
             print(
-                f"Failed: {result_payload.get('error', 'unknown')}",
+                f"Failed: {outcome.get('result', {}).get('error', 'unknown')}",
                 file=sys.stderr,
             )
-    return 0 if delivered else 1
-
-
-def _parse_command_routing(
-    parts: list[str],
-) -> Optional[dict[str, Optional[str]]]:
-    """Extract --channel/--to/--account/--thread from a command string."""
-    routing: dict[str, Optional[str]] = {
-        "channel": None,
-        "target": None,
-        "account": None,
-        "thread": None,
-    }
-    flags = {
-        "--channel": "channel",
-        "--to": "target",
-        "--account": "account",
-        "--thread": "thread",
-    }
-    i = 0
-    while i < len(parts):
-        flag = parts[i]
-        if flag in flags and i + 1 < len(parts):
-            routing[flags[flag]] = parts[i + 1]
-            i += 2
         else:
-            i += 1
-    if routing["channel"] is None or routing["target"] is None:
-        return None
-    return routing
+            print(outcome.get("detail") or outcome.get("error"), file=sys.stderr)
+    if outcome.get("event") == "sent":
+        return 0
+    return _SEND_MISSING if outcome.get("error") else 1
+
+
+# Kept as an alias — the implementation moved to
+# ``todo_outbound.parse_command_routing`` so the web approval path and this
+# verb parse the same command the same way (``--subject`` included).
+from hermes_cli.todo_outbound import (  # noqa: E402
+    parse_command_routing as _parse_command_routing,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -840,6 +761,7 @@ async def _dispatch(args: argparse.Namespace) -> int:
             target=args.to,
             account=args.account,
             thread=args.thread,
+            subject=args.subject,
             json_mode=args.json,
         )
     if action == "backfill":
@@ -978,6 +900,7 @@ def register_todos_subparser(
     send.add_argument("--to", required=True, help="Target conversation")
     send.add_argument("--account", default=None, help="Sending account id")
     send.add_argument("--thread", default=None, help="Thread id")
+    send.add_argument("--subject", default=None, help="Message subject (email)")
     send.add_argument("--json", action="store_true")
 
     # -- backfill (Q4) -----------------------------------------------------

@@ -342,6 +342,92 @@ def _whatsapp_bridge_send_denied(name, pconfig) -> str | None:
     )
 
 
+def _resolve_whatsapp_bridge_port(account: str) -> "int | None":
+    """Resolve a WhatsApp *account* to the bridge port that sends as it.
+
+    Two spellings work: a named bridge (``whatsapp:connectar:+852…``), or a
+    phone id from the custom pipeline's ``config.json`` ``phones[]`` — which
+    is what ``inbound_items.account_id`` actually stores when a message
+    arrives, so C4 routing asks for it by phone number, not by bridge name.
+    """
+    account = account.strip()
+    bridges = _whatsapp_bridge_map()
+    if account in bridges:
+        return bridges[account]
+    import json as _json
+
+    config_path = os.environ.get(
+        "WHATSAPP_CONFIG_PATH", "/opt/data/whatsapp-messages/config.json"
+    )
+    try:
+        with open(config_path) as f:
+            cfg = _json.load(f)
+    except Exception:
+        return None
+    for phone in cfg.get("phones", []) or []:
+        if account in (str(phone.get("id", "")), str(phone.get("phone", ""))):
+            port = phone.get("bridge_port")
+            return int(port) if port else None
+    return None
+
+
+def _resolve_email_account(account: str) -> "dict | None":
+    """Resolve an email *account* to the custom pipeline's account entry.
+
+    ``inbound_items.account_id`` carries the account ``id`` from
+    ``config.json`` (or the address itself); the entry supplies the SMTP
+    host/port and the *name* of the env var holding this account's password,
+    so multi-account boxes send from the right identity.
+    """
+    import json as _json
+
+    config_path = os.environ.get(
+        "EMAIL_CONFIG_PATH", "/opt/data/email-messages/config.json"
+    )
+    try:
+        with open(config_path) as f:
+            cfg = _json.load(f)
+    except Exception:
+        return None
+    for acct in cfg.get("accounts", []) or []:
+        if account in (str(acct.get("id", "")), str(acct.get("address", ""))):
+            return acct
+    return None
+
+
+def _account_pconfig(
+    platform_name: str, account: str, *, subject: "str | None" = None
+):
+    """A send-only PlatformConfig for the account an approval named.
+
+    Returns ``None`` when the account cannot be resolved — the caller then
+    refuses, because a send that leaves by the wrong identity is worse than
+    no send.
+    """
+    from gateway.config import PlatformConfig
+
+    if platform_name == "whatsapp":
+        port = _resolve_whatsapp_bridge_port(account)
+        if port is None:
+            return None
+        return PlatformConfig(enabled=True, extra={"bridge_port": port})
+    if platform_name == "email":
+        acct = _resolve_email_account(account)
+        if acct is None:
+            return None
+        smtp = acct.get("smtp") or {}
+        extra = {
+            "address": acct.get("address", ""),
+            "smtp_host": smtp.get("host", ""),
+            "smtp_port": smtp.get("port", 587),
+            "password_env": acct.get("credentials_env", ""),
+        }
+        if subject:
+            extra["subject"] = subject
+        return PlatformConfig(enabled=True, extra=extra)
+    return None
+
+
 def _handle_send(args):
     """Send a message to a platform target."""
     target = args.get("target", "")
@@ -405,7 +491,23 @@ def _handle_send(args):
     except (ValueError, KeyError):
         return tool_error(f"Unknown platform: {platform_name}")
 
-    pconfig = config.platforms.get(platform)
+    # C4 account routing: an explicit `account` selects WHICH identity sends
+    # (the one the inbound message arrived on). It must resolve or the send
+    # refuses — a reply leaving by the wrong account is worse than no reply.
+    account = str(args.get("account") or "").strip()
+    if account:
+        pconfig = _account_pconfig(
+            platform_name,
+            account,
+            subject=str(args.get("subject") or "").strip() or None,
+        )
+        if pconfig is None:
+            return tool_error(
+                f"Account {account!r} could not be resolved on {platform_name}; "
+                "refusing to send from the wrong account."
+            )
+    else:
+        pconfig = config.platforms.get(platform)
     if not pconfig or not pconfig.enabled:
         # Weixin can be configured purely via .env; synthesize a pconfig so
         # send_message and cron delivery work without a gateway.yaml entry.

@@ -1,4 +1,7 @@
 import { ActionButton } from "@/components/ui/ActionButton";
+import { useState } from "react";
+
+import { ActionButton } from "@/components/ui/ActionButton";
 import { Pill } from "@/components/ui/Pill";
 import type { Notification } from "@/types";
 
@@ -36,6 +39,7 @@ export function ApprovalsList({
     >
       {notifications.map((item) => {
         const pending = item.status === "pending";
+        const isSendProposal = item.command.startsWith("hermes todos send ");
         const busy = busyId === item.id;
         return (
           <article
@@ -93,16 +97,62 @@ export function ApprovalsList({
                   </ActionButton>
                 )}
               </div>
-            ) : (
+            ) : null}
+
+            {/* Send proposals take a third answer: not yes, not no — "change
+                this and show me again". The text routes back to the work
+                session as revision feedback. */}
+            {pending && isSendProposal ? (
+              <ProposalFeedback
+                busy={busy}
+                onSubmit={(text) => onAnswer(item, text)}
+              />
+            ) : null}
+
+            {!pending ? (
               <p className="text-xs text-[var(--color-muted)]">
                 {item.answer ? `Answered "${item.answer}"` : "Settled"}
                 {item.answered_via ? ` via ${item.answered_via}` : ""}
                 {item.answered_by ? ` by ${item.answered_by}` : ""}.
               </p>
-            )}
+            ) : null}
           </article>
         );
       })}
     </section>
+  );
+}
+
+/**
+ * Free-text reply on a send proposal. Submitting routes the text back as
+ * revision feedback (backend re-works the draft and re-proposes); it is NOT
+ * an approve/deny answer, so this can never send anything by itself.
+ */
+function ProposalFeedback({
+  busy,
+  onSubmit,
+}: {
+  busy: boolean;
+  onSubmit: (text: string) => void;
+}) {
+  const [text, setText] = useState("");
+  return (
+    <div className="flex gap-2">
+      <input
+        type="text"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="Request changes — e.g. 'make the greeting warmer'"
+        className="min-w-0 flex-1 rounded-xl border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm"
+      />
+      <ActionButton
+        disabled={busy || !text.trim()}
+        busyLabel="Sending…"
+        onAction={() => onSubmit(text.trim())}
+        className="rounded-xl border border-[var(--color-border)] px-4 py-2 text-sm text-[var(--color-muted)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+      >
+        Revise
+      </ActionButton>
+    </div>
   );
 }

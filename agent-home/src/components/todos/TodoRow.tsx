@@ -12,6 +12,7 @@ export const STAGE_LABEL: Record<TodoStage, string> = {
   staged: "Staged",
   open: "Open",
   working: "Working",
+  review: "Review",
   done: "Done",
   dismissed: "Dismissed",
 };
@@ -141,6 +142,11 @@ export function TodoRow({
               ) : null}
               {todo.snoozed_until ? <span>snoozed</span> : null}
               {todo.origin === "triage" ? <span>from triage</span> : null}
+              {todo.stage === "review" ? (
+                <span className="rounded-full border border-[var(--color-accent)] px-1.5 text-[var(--color-accent)]">
+                  draft ready
+                </span>
+              ) : null}
             </p>
           </div>
         </Link>

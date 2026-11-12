@@ -58,7 +58,7 @@ def test_every_stage_maps_to_a_status() -> None:
 
 
 def test_only_live_stages_are_deduplicated() -> None:
-    assert set(LIVE_STAGES) == {"staged", "open", "working"}
+    assert set(LIVE_STAGES) == {"staged", "open", "working", "review"}
     assert "done" not in LIVE_STAGES
     assert "dismissed" not in LIVE_STAGES
 

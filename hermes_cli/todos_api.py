@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -318,65 +319,19 @@ async def start_todo(request: Request, todo_id: str) -> dict[str, Any]:
         payload["spawned"] = False
         return payload
 
-    # 2. Build the seed prompt from the to-do and its source arrival.
-    #    Profile targeting is dropped until FG-28 provides a "profiles this
-    #    subject holds" query — the previous check was inert (profile_home
-    #    was always get_hermes_home()) and unsafe (PrincipalStore.get()
-    #    returns any enrolled principal, not one the caller holds).
-    prompt_parts = [f"# {todo.title}"]
-    if todo.description:
-        prompt_parts.append(todo.description)
-    if todo.source_note:
-        prompt_parts.append(f"(From {todo.source_note})")
+    # 2. The shared launcher owns the rest: prompt, spawn, and — when the
+    #    session returns — work_result, the review stage, the "draft ready"
+    #    notification and the send proposal.
+    from hermes_cli.todo_work import launch_todo_work
+
     arrival = await _source_item(principal, todo)
-    if arrival and arrival.get("body"):
-        prompt_parts.append(f"\n---\nSource message:\n{arrival['body'][:2000]}")
-    prompt = "\n\n".join(prompt_parts)
-
-    _session_id = f"todo_{todo_id}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
-
-    # 3. Spawn on a detached thread; do not block the request.
-    import contextvars
-    import threading
-
-    from hermes_constants import get_hermes_home
-
-    _profile_home = str(get_hermes_home())
-    _ctx = contextvars.copy_context()
-
-    def _spawn():
-        from agent.seeded_session import spawn_seeded_session
-
-        result = spawn_seeded_session(
-            prompt,
-            origin="todo",
-            session_id=_session_id,
-            profile_home=_profile_home,
-            skip_memory=False,  # a to-do session is the user's work
-            context=_ctx,
-            internal_user_id=principal.user_id,
-            internal_user_role=getattr(principal, "role", None),
-        )
-        if result.error:
-            logger.warning(
-                "todos: /start session %s failed (%s)",
-                _session_id,
-                result.error,
-            )
-        try:
-            import asyncio as _aio
-
-            _aio.run(store.record_session(
-                principal,
-                todo_id,
-                session_id=_session_id,
-                actor=f"user:{principal.user_id}",
-            ))
-        except Exception as exc:
-            logger.debug("todos: /start session pointer for %s failed (%s)", _session_id, exc)
-
-    _thread = threading.Thread(target=_spawn, daemon=True)
-    _thread.start()
+    _session_id = launch_todo_work(
+        store,
+        principal,
+        todo,
+        actor=f"user:{principal.user_id}",
+        arrival=arrival,
+    )
 
     payload["session_id"] = _session_id
     payload["spawned"] = True
@@ -699,4 +654,130 @@ async def promote_todo(
     payload = todo.as_dict()
     payload["card_id"] = card_id
     payload["project_id"] = project.id
+    return payload
+# The draft — what the work session produced, reviewed and edited (§G3)
+# ---------------------------------------------------------------------------
+
+_MAX_DRAFT_READ = 100_000
+
+
+def _draft_payload(todo) -> dict[str, Any]:
+    """The draft files for one to-do, read live from disk.
+
+    ``work_result`` snapshots what the session left; the files themselves
+    are the source of truth — the session, the reviewer and the PATCH route
+    all edit the same bytes.
+    """
+    from hermes_cli.todo_work import draft_dir_for
+
+    work_result = todo.work_result or {}
+    draft_dir = Path(str(work_result.get("draft_dir") or draft_dir_for(todo.id)))
+    files = []
+    for path in sorted(draft_dir.iterdir()) if draft_dir.is_dir() else []:
+        if path.is_file():
+            files.append(
+                {"name": path.name, "path": str(path), "bytes": path.stat().st_size}
+            )
+
+    def _read(name: str) -> str:
+        path = draft_dir / name
+        if not path.is_file():
+            return ""
+        try:
+            return path.read_text(encoding="utf-8", errors="replace")[:_MAX_DRAFT_READ]
+        except OSError:
+            return ""
+
+    from hermes_cli.todo_work import DRAFT_FILENAME, REPLY_FILENAME
+
+    return {
+        "draft_dir": str(draft_dir),
+        "files": files,
+        "draft_text": _read(DRAFT_FILENAME),
+        "reply_text": _read(REPLY_FILENAME),
+        "summary": work_result.get("summary") or "",
+        "session_id": work_result.get("session_id"),
+        "finished_at": work_result.get("finished_at"),
+        "error": work_result.get("error"),
+    }
+
+
+@router.get("/{todo_id}/draft")
+async def get_todo_draft(request: Request, todo_id: str) -> dict[str, Any]:
+    """The draft + reply text a work session produced, plus the file list."""
+    principal = await _resolve_principal(request)
+    store = _store()
+    if not await _table_ready(store):
+        raise HTTPException(status_code=404, detail="No such to-do")
+    todo = await store.get(principal, todo_id)
+    if todo is None:
+        raise HTTPException(status_code=404, detail="No such to-do")
+    return _draft_payload(todo)
+
+
+@router.patch("/{todo_id}/draft")
+async def update_todo_draft(request: Request, todo_id: str) -> dict[str, Any]:
+    """Persist the user's edits to the draft and/or the reply text.
+
+    Editing the reply also amends the pending send proposal's body: what the
+    user approves must be what they just saw, not the version the session
+    drafted before their edit.
+    """
+    principal = await _resolve_principal(request)
+    body = await request.json()
+    draft_text = body.get("draft_text")
+    reply_text = body.get("reply_text")
+    if draft_text is None and reply_text is None:
+        raise HTTPException(
+            status_code=400, detail="expected draft_text and/or reply_text"
+        )
+
+    store = _store()
+    if not await _table_ready(store):
+        raise HTTPException(status_code=404, detail="No such to-do")
+    todo = await store.get(principal, todo_id)
+    if todo is None:
+        raise HTTPException(status_code=404, detail="No such to-do")
+
+    from hermes_cli.todo_work import DRAFT_FILENAME, REPLY_FILENAME, draft_dir_for
+
+    work_result = dict(todo.work_result or {})
+    draft_dir = Path(str(work_result.get("draft_dir") or draft_dir_for(todo.id)))
+    try:
+        draft_dir.mkdir(parents=True, exist_ok=True)
+        if draft_text is not None:
+            (draft_dir / DRAFT_FILENAME).write_text(str(draft_text), encoding="utf-8")
+            work_result["draft_text"] = str(draft_text)[:50000]
+        if reply_text is not None:
+            (draft_dir / REPLY_FILENAME).write_text(str(reply_text), encoding="utf-8")
+            work_result["reply_text"] = str(reply_text)[:50000]
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"could not write draft: {exc}")
+
+    try:
+        await store.set_work_result(
+            principal, todo_id, work_result, actor=f"user:{principal.user_id}"
+        )
+    except Exception as exc:  # noqa: BLE001 - the files are the source of truth
+        logger.debug("todos: work_result update failed (%s)", exc)
+
+    # Amend the pending proposal so an edit changes what approval would send.
+    amended = False
+    if reply_text is not None:
+        try:
+            from hermes_cli.human_comms import NotificationStore
+
+            notifications = NotificationStore(store._store)
+            pending = await notifications.get_by_dedupe_key(
+                f"todo-action:{todo_id}", principal
+            )
+            if pending is not None and pending.is_pending:
+                amended = await notifications.amend_body_if_pending(
+                    pending.id, principal, body=str(reply_text)
+                )
+        except Exception as exc:  # noqa: BLE001 - file edit already landed
+            logger.debug("todos: proposal amend failed (%s)", exc)
+
+    payload = _draft_payload(todo)
+    payload["proposal_amended"] = amended
     return payload

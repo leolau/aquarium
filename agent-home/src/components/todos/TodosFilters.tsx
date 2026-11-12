@@ -13,6 +13,7 @@ const STAGE_ORDER: TodoStage[] = [
   "staged",
   "open",
   "working",
+  "review",
   "done",
   "dismissed",
 ];
