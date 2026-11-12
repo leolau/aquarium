@@ -21,13 +21,16 @@ import re
 import sqlite3
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
 KINDS: tuple[str, ...] = ("email", "whatsapp", "calendar")
 
 SET_UP = "set_up"
 PARTLY_SET_UP = "partly_set_up"
 NOT_SET_UP = "not_set_up"
+#: ``missing`` reason: the poller logs in with another person's credential
+#: for the caller's address, so the caller's own credential is not used.
+OTHER_POLLED = "other_person_polled"
 
 # The pipelines' own config locations (custom/*/): the same constants and
 # environment overrides the services read, so this never drifts from them.
@@ -164,19 +167,37 @@ async def _service_credentials(service: str, provider: str) -> Optional[List[Any
         return None
 
 
-def _claimed(principal: Any, matches: Sequence[Any]) -> Optional[bool]:
-    """Whether the caller holds a credential among ``matches``.
+def _claim(
+    principal: Any,
+    matches: Sequence[Any],
+    polled: Optional[Any],
+    *,
+    recorded_owner: str = "",
+) -> Optional[Dict[str, bool]]:
+    """The caller's stake in one poller account, or None if it isn't theirs.
 
-    ``True``: the caller owns one (an address saved by several people counts
-    for each of them). ``False``: no credential at all, so an unowned legacy
-    account — the install owner's. ``None``: only other people hold it.
+    ``matches`` are every credential saved for the account's address;
+    ``polled`` is the one the poller picks. Only that credential's owner is
+    ``credential: True``. Another holder of the address is listed with
+    ``polled_by_other`` so the status says whose credential is used.
+    ``recorded_owner`` is the account's ``owner_user_id``, if any. With no
+    credential and no recorded owner it is a legacy box-wide account,
+    which belongs to the install owner.
     """
     user_id = getattr(principal, "user_id", None)
-    if any(m.owner_user_id == user_id for m in matches):
-        return True
-    if not matches and _owns(principal, None):
-        return False
-    return None
+    mine = polled is not None and polled.owner_user_id == user_id
+    if not (
+        mine
+        or any(m.owner_user_id == user_id for m in matches)
+        or (recorded_owner and recorded_owner == user_id)
+        or (not matches and not recorded_owner and _owns(principal, None))
+    ):
+        return None
+    return {"credential": mine, "polled_by_other": polled is not None and not mine}
+
+
+def _first(entries: Optional[Iterable[Any]], match: Callable[[Any], bool]) -> Optional[Any]:
+    return next((e for e in entries or [] if match(e)), None)
 
 
 def _by_name(entries: Optional[Iterable[Any]], name: str, *, kind: Optional[str] = None) -> List[Any]:
@@ -208,31 +229,30 @@ async def _email(principal: Any) -> Dict[str, Any]:
             continue
         auth = str(acct.get("auth") or "xoauth2").lower()
         if auth == "password":
-            matches = _by_name(imap, address, kind=email_mailboxes.KIND)
+            # As email_poller._mailbox_payload: the first stored mailbox for
+            # the address, restricted to the recorded owner when there is one.
             owner = str(acct.get("owner_user_id") or "")
-            if owner:
-                # The poller logs in only as the recorded owner.
-                if not _owns(principal, owner):
-                    continue
-                matches = [m for m in matches if m.owner_user_id == owner]
-                has_credential = bool(matches)
-            else:
-                claimed = _claimed(principal, matches)
-                if claimed is None:
-                    continue
-                has_credential = claimed
+            wanted = str(acct.get("address") or "").strip().lower()
+            matches = _by_name(imap, address, kind=email_mailboxes.KIND)
+            polled = _first(
+                (e for e in imap or [] if e.kind == email_mailboxes.KIND),
+                lambda e: e.name.lower() == wanted and (not owner or e.owner_user_id == owner),
+            )
+            claim = _claim(principal, matches, polled, recorded_owner=owner)
         else:
-            claimed = _claimed(principal, _by_name(google, str(acct.get("google_account") or address)))
-            if claimed is None:
-                continue
-            has_credential = claimed
+            # As google_oauth.credentials_for_email: first exact name match.
+            login = acct.get("google_account") or acct.get("address")
+            polled = _first(google, lambda e: e.name == login)
+            claim = _claim(principal, _by_name(google, str(login)), polled)
+        if claim is None:
+            continue
         seen.add(address.lower())
         accounts.append(
             {
                 "address": address,
                 "auth": "password" if auth == "password" else "xoauth2",
                 "enabled": bool(acct.get("enabled", True)),
-                "credential": has_credential,
+                **claim,
                 "in_triage": True,
             }
         )
@@ -246,7 +266,7 @@ async def _email(principal: Any) -> Dict[str, Any]:
         ):
             accounts.append(
                 {"address": entry.name, "auth": "password", "enabled": True,
-                 "credential": True, "in_triage": False}
+                 "credential": True, "polled_by_other": False, "in_triage": False}
             )
     return _kind_result("email", path, config, accounts, credentials_checked=imap is not None and google is not None)
 
@@ -346,8 +366,10 @@ async def _calendar(principal: Any) -> Dict[str, Any]:
         email = str(row.get("email") or "").strip()
         if not email:
             continue
-        claimed = _claimed(principal, _by_name(google, email))
-        if claimed is None:
+        # As calendar_poller: credentials_for_email('calendar', row email).
+        raw = row.get("email")
+        claim = _claim(principal, _by_name(google, email), _first(google, lambda e: e.name == raw))
+        if claim is None:
             continue
         accounts.append(
             {
@@ -355,7 +377,7 @@ async def _calendar(principal: Any) -> Dict[str, Any]:
                 "label": str(row.get("label") or email),
                 "address": email,
                 "enabled": bool(row.get("enabled", 1)),
-                "credential": claimed,
+                **claim,
                 "in_triage": True,
             }
         )
@@ -385,6 +407,10 @@ def _kind_result(
                 missing.append("triage")
             elif not any(a["in_triage"] and a["enabled"] for a in accounts):
                 missing.append("enabled")
+            elif any(
+                a["in_triage"] and a["enabled"] and a.get("polled_by_other") for a in accounts
+            ):
+                missing.append(OTHER_POLLED)
             else:
                 missing.append("credential")
         if not present:

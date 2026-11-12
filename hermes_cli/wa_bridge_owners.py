@@ -34,7 +34,15 @@ _lock = threading.Lock()
 
 
 def whatsapp_dir() -> Path:
-    home = os.environ.get("HERMES_HOME") or str(Path.home() / ".hermes")
+    from hermes_constants import get_hermes_home_override
+
+    # The override is a request's profile scope (``?profile=``); without one
+    # this is the process's own HERMES_HOME.
+    home = (
+        get_hermes_home_override()
+        or os.environ.get("HERMES_HOME")
+        or str(Path.home() / ".hermes")
+    )
     return Path(home) / "whatsapp"
 
 

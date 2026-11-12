@@ -85,10 +85,10 @@ def _google(env, who, email, *services):
     ))
 
 
-def _imap(env, who, address):
+def _imap(env, who, address, password=SECRET):
     run(env.store.put(
         who, provider="imap", name=address, kind="email-imap", services=["email"],
-        payload={"address": address, "username": address, "password": SECRET,
+        payload={"address": address, "username": address, "password": password,
                  "imap_host": "imap.example.com", "imap_port": 993,
                  "smtp_host": "smtp.example.com", "smtp_port": 465},
     ))
@@ -117,7 +117,7 @@ def status(monkeypatch, who) -> dict:
         return who
 
     monkeypatch.setattr(api, "_caller", _caller)
-    out = run(api.get_triage_status(SimpleNamespace(), target=None))
+    out = run(api.get_triage_status(SimpleNamespace(query_params={}), target=None))
     dumped = json.dumps(out)
     for secret in (SECRET, REFRESH, CLIENT_SECRET):
         assert secret not in dumped
@@ -266,41 +266,84 @@ def test_legacy_whatsapp_session_dir_outside_hermes_home(env, monkeypatch, tmp_p
     assert not (env.home / "whatsapp" / "session-phone1").exists()
 
 
-def test_shared_address_counts_for_every_owner_with_a_credential(env, monkeypatch):
+def test_shared_address_only_the_polled_owner_is_set_up(env, monkeypatch):
+    """Report what runs: the poller logs in with one credential per address."""
+    from custom import google_oauth
+    from custom.email import email_poller
+
     for kind in ("email", "calendar"):
         _skill(env, kind)
     for who in (AMY, LEO):
         _google(env, who, "team@example.com", "email", "calendar")
+        _imap(env, who, "shared@corp.example", password=f"{SECRET}-{who.user_id}")
+        _imap(env, who, "owned@corp.example", password=f"{SECRET}-{who.user_id}")
     _write(env.email_cfg, {"triage": _triage("email", env), "accounts": [
-        {"id": "team", "address": "team@example.com"}]})
+        {"id": "team", "address": "team@example.com"},
+        {"id": "shared", "address": "shared@corp.example", "auth": "password"},
+        {"id": "owned", "address": "owned@corp.example", "auth": "password", "owner_user_id": "leo"}]})
     _write(env.cal_cfg, {"triage": _triage("calendar", env)})
     _calendar_db(env, [("team", "team@example.com", "Team", 1)])
+
+    def pw_owner(account):
+        return email_poller._mailbox_payload(account)["password"].rsplit("-", 1)[1]
+
+    # Whose credential the real pollers pick for each account.
+    polled = {
+        "team@example.com": google_oauth.credentials_for_email("email", "team@example.com").owner_user_id,
+        "shared@corp.example": pw_owner({"address": "shared@corp.example"}),
+        "owned@corp.example": pw_owner({"address": "owned@corp.example", "owner_user_id": "leo"}),
+    }
+    cal_owner = google_oauth.credentials_for_email("calendar", "team@example.com").owner_user_id
+    assert polled["owned@corp.example"] == "leo"
+
     for who in (AMY, LEO):
         k = kinds(status(monkeypatch, who))
-        assert k["email"]["status"] == ts.SET_UP, who.user_id
-        assert k["calendar"]["status"] == ts.SET_UP, who.user_id
-        assert k["calendar"]["accounts"][0]["credential"] is True
-    # Someone without a credential for it still doesn't see it.
+        got = {a["address"]: (a["credential"], a["polled_by_other"]) for a in k["email"]["accounts"]}
+        assert got == {
+            addr: (owner == who.user_id, owner != who.user_id) for addr, owner in polled.items()
+        }, who.user_id
+        assert k["email"]["status"] == (
+            ts.SET_UP if who.user_id in polled.values() else ts.PARTLY_SET_UP
+        )
+        cal = k["calendar"]
+        if cal_owner == who.user_id:
+            assert cal["status"] == ts.SET_UP and cal["missing"] == []
+        else:
+            assert cal["status"] == ts.PARTLY_SET_UP
+            assert cal["missing"] == [ts.OTHER_POLLED]
+            assert cal["accounts"][0]["polled_by_other"] is True
+
+    # Someone without a credential for the address still doesn't see it.
     ben = Principal(user_id="ben", display="Ben", role="member")
     assert kinds(status(monkeypatch, ben))["calendar"]["accounts"] == []
 
 
-def test_profile_param_reads_the_target_profiles_setup(box, client, monkeypatch, tmp_path):
-    """``?profile=hr`` is scoped to hr: hr's credential store, hr's identity."""
+def _box_paths(monkeypatch, tmp_path) -> SimpleNamespace:
+    """Box-wide pipeline config for the cross-profile tests (``box`` fixture)."""
     data = tmp_path / "data"
-    skills = data / "skills" / "calendar-triage"
-    skills.mkdir(parents=True)
-    (skills / "SKILL.md").write_text("# calendar\n")
-    cal_cfg = data / "calendar" / "config.json"
-    _write(cal_cfg, {"triage": {"skills_dirs": [str(skills)]}})
-    monkeypatch.setenv("CALENDAR_CONFIG_PATH", str(cal_cfg))
-    monkeypatch.setenv("CALENDAR_DB_PATH", str(data / "calendar" / "calendar_data.db"))
+    paths = SimpleNamespace(
+        data=data,
+        cal_cfg=data / "calendar" / "config.json",
+        cal_db=data / "calendar" / "calendar_data.db",
+        wa_cfg=data / "whatsapp-messages" / "config.json",
+        skills=data / "skills",
+    )
+    monkeypatch.setenv("CALENDAR_CONFIG_PATH", str(paths.cal_cfg))
+    monkeypatch.setenv("CALENDAR_DB_PATH", str(paths.cal_db))
     monkeypatch.setenv("EMAIL_CONFIG_PATH", str(data / "email-messages" / "config.json"))
-    monkeypatch.setattr(ts, "WHATSAPP_CONFIG_PATH", str(data / "whatsapp-messages" / "config.json"))
+    monkeypatch.delenv("WHATSAPP_BRIDGES", raising=False)
+    monkeypatch.setattr(ts, "WHATSAPP_CONFIG_PATH", str(paths.wa_cfg))
     monkeypatch.setattr(owners, "_installed_bridge_ports", lambda: {})
     monkeypatch.setattr(ts, "unit_states", lambda units: {})
-    _calendar_db(SimpleNamespace(cal_db=data / "calendar" / "calendar_data.db"),
-                 [("primary", "leo@hr.example", "Leo", 1)])
+    return paths
+
+
+def test_profile_param_reads_the_target_profiles_setup(box, client, monkeypatch, tmp_path):
+    """``?profile=hr`` is scoped to hr: hr's credential store, hr's identity."""
+    paths = _box_paths(monkeypatch, tmp_path)
+    _skill(paths, "calendar")
+    _write(paths.cal_cfg, {"triage": _triage("calendar", paths)})
+    _calendar_db(paths, [("primary", "leo@hr.example", "Leo", 1)])
     hr_store = SimpleNamespace(store=FileCredentialStore(box["hr"] / "credentials"))
     _google(hr_store, Principal("leo", "Leo", "member"), "leo@hr.example", "calendar")
 
@@ -322,3 +365,51 @@ def test_profile_param_reads_the_target_profiles_setup(box, client, monkeypatch,
     # hr's member Dan holds no credential for it, and a non-enrollee is refused.
     assert cal(client.get("/api/triage/status?profile=hr", headers={SUBJECT_HEADER: "dan"}))["accounts"] == []
     assert client.get("/api/triage/status?profile=hr", headers={SUBJECT_HEADER: "bob"}).status_code == 403
+
+
+def test_whatsapp_reads_the_target_profiles_bridges(box, client, monkeypatch, tmp_path):
+    """Bridge owners and sessions come from the profile ``?profile=`` scopes to."""
+    paths = _box_paths(monkeypatch, tmp_path)
+    _skill(paths, "whatsapp")
+    _write(paths.wa_cfg, {"triage": _triage("whatsapp", paths), "phones": [
+        {"id": "root1", "bridge_port": 3002, "enabled": True},
+        {"id": "hr1", "bridge_port": 3003, "enabled": True}]})
+    for home, name, port, number in (
+        (box["root"], "root1", 3002, "85211110000"),
+        (box["hr"], "hr1", 3003, "85222220000"),
+    ):
+        _write(home / "whatsapp" / "bridge-owners.json", {name: {"user_id": "leo", "port": port}})
+        _wa_session(SimpleNamespace(home=home), name, number=number)
+
+    def wa(query, subject="leo"):
+        resp = client.get(f"/api/triage/status{query}", headers={SUBJECT_HEADER: subject})
+        assert resp.status_code == 200, resp.text
+        return resp, kinds(resp.json())["whatsapp"]
+
+    resp, k = wa("?profile=hr")
+    assert [(a["id"], a["number"], a["credential"]) for a in k["accounts"]] == [
+        ("hr1", "+852****0000", True)]
+    assert k["status"] == ts.SET_UP
+    assert "root1" not in resp.text and "1111" not in resp.text
+
+    # In the acting profile hr1's port has no bridge, so it is an unowned
+    # legacy phone (the install owner's, Leo here); hr's session isn't read.
+    resp, k = wa("")
+    assert [(a["id"], a["number"], a["credential"]) for a in k["accounts"]] == [
+        ("root1", "+852****0000", True), ("hr1", None, False)]
+    assert "2222" not in resp.text
+
+    # Dan is hr's admin but owns no bridge there: nothing of Leo's leaks.
+    resp, k = wa("?profile=hr", subject="dan")
+    assert k["accounts"] == [] and "hr1" not in resp.text
+
+
+def test_naming_the_acting_profile_returns_its_name(box, client, monkeypatch, tmp_path):
+    from hermes_cli.profile_registry import get_profile_registry
+
+    _box_paths(monkeypatch, tmp_path)
+    acting = next(e.name for e in get_profile_registry() if e.hermes_home.resolve() == box["root"].resolve())
+    resp = client.get(f"/api/triage/status?profile={acting}", headers={SUBJECT_HEADER: "leo"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["profile"] == acting
+    assert client.get("/api/triage/status", headers={SUBJECT_HEADER: "leo"}).json()["profile"] is None
