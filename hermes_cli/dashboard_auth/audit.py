@@ -52,6 +52,11 @@ class AuditEvent(enum.Enum):
     # Not an auth event, but the dashboard's one append-only audit file is
     # where an irreversible operator act belongs (projects ``purge=smoke``).
     PROJECT_PURGED = "project_purged"
+    # Owner/admin changes to which skills an Agent Profile has
+    # (agent-home Agent Profiles → Skills panel).
+    SKILL_PROFILE_ADDED = "skill_profile_added"
+    SKILL_PROFILE_REMOVED = "skill_profile_removed"
+    SKILL_PROFILE_DELETED = "skill_profile_deleted"
 
 
 def _resolve_log_path() -> Path:

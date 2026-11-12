@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { choiceValue, modelChoices } from "@/components/profiles/model-choices";
+import { ProfileSkillsPanel } from "@/components/profiles/ProfileSkillsPanel";
 import { ActionButton } from "@/components/ui/ActionButton";
 import {
   dangerButtonClass,
@@ -12,8 +12,8 @@ import {
   secondaryButtonClass,
   Sheet,
 } from "@/components/ui/Sheet";
-import { errorText, getJson, profilePath, profileQuery, sendJson } from "@/lib/admin-fetch";
-import type { ModelProviderOption, ProfileDescribeResult, ProfileInfo, SkillInfo } from "@/types";
+import { errorText, getJson, profilePath, sendJson } from "@/lib/admin-fetch";
+import type { ModelProviderOption, ProfileDescribeResult, ProfileInfo } from "@/types";
 
 export interface ProfileEditorProps {
   profile: ProfileInfo;
@@ -41,7 +41,6 @@ export function ProfileEditor({
   const [model, setModel] = useState(choiceValue(profile.provider, profile.model));
   const [soul, setSoul] = useState<string | null>(null);
   const [savedSoul, setSavedSoul] = useState<string | null>(null);
-  const [skills, setSkills] = useState<SkillInfo[] | null>(null);
   const [mode, setMode] = useState<Mode>("edit");
   const [newName, setNewName] = useState("");
   const [confirmName, setConfirmName] = useState("");
@@ -61,10 +60,6 @@ export function ProfileEditor({
         setSavedSoul(d.content);
       })
       .catch(() => live && setSoul(""));
-    const q = profileQuery(profile.name);
-    getJson<SkillInfo[]>(`/api/skills${q ? `?${q}` : ""}`)
-      .then((d) => live && setSkills(d))
-      .catch(() => live && setSkills(null));
     return () => {
       live = false;
     };
@@ -139,8 +134,6 @@ export function ProfileEditor({
     }
   }
 
-  const enabled = skills?.filter((s) => s.enabled).length;
-  const q = profileQuery(profile.name);
 
   const footer =
     mode === "rename" ? (
@@ -282,19 +275,7 @@ export function ProfileEditor({
           />
         </label>
 
-        <div className="space-y-1">
-          <span className="font-medium">Skills</span>
-          <p data-testid="profile-skills-summary" className="text-[var(--color-muted)]">
-            {profile.skill_count} installed
-            {enabled !== undefined ? ` · ${enabled} enabled` : ""}
-          </p>
-          <Link
-            href={`/skills${q ? `?${q}` : ""}`}
-            className="text-[var(--color-accent)] underline"
-          >
-            Manage skills →
-          </Link>
-        </div>
+        <ProfileSkillsPanel profile={profile.name} onChanged={onChanged} />
 
         <div className="space-y-1">
           <span className="font-medium">Status</span>

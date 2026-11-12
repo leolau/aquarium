@@ -76,6 +76,7 @@ BOX_WIDE_PREFIXES = (
     "/api/email-accounts",
     "/api/comms/people",
     "/api/aquarium",
+    "/api/skills/library",
 )
 
 

@@ -338,6 +338,8 @@
   "GET /api/skills": "skill:view",
   "POST /api/skills": "skill:manage",
   "PUT /api/skills/toggle": "skill:manage",
+  "GET /api/skills/library": "skill:view",
+  "POST /api/skills/library/[action]": "admin",
   "GET /api/skills/content": "skill:view",
   "GET /api/skills/details": "skill:manage",
   "GET /api/skills/usage": "skill:lab",

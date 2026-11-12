@@ -70,6 +70,9 @@ describe("ProfilesView", () => {
     vi.stubGlobal("fetch", fetchMock);
     fetchMock.mockImplementation((url: string) => {
       if (url.includes("/soul")) return reply({ content: "You are kind." });
+      if (url.startsWith("/api/skills/library")) {
+        return reply({ profiles: ["default", "coder"], skills: [{ name: "a", description: "", category: "c", source: "builtin", owners: [], used_by: [{ profile: "coder", enabled: true }] }] });
+      }
       if (url.startsWith("/api/skills")) return reply([{ name: "a", description: "", category: "c", enabled: true }]);
       return reply({ profiles: PROFILES });
     });

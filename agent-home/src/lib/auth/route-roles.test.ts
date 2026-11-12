@@ -132,9 +132,13 @@ describe("agent-home BFF route roles", () => {
     for (const [key, role] of Object.entries(roles)) {
       if (!key.includes(" /api/skills")) continue;
       const lab = /\/api\/skills\/(usage|versions|improve|create)/.test(key);
-      const view = /^GET \/api\/skills(\/content)?$/.test(key);
+      const view = /^GET \/api\/skills(\/content|\/library)?$/.test(key);
       const browse = /^GET \/api\/skills\/hub\/(sources|search|preview|scan)$/.test(key);
-      expect(role, key).toBe(browse ? "signed-in" : lab ? "skill:lab" : view ? "skill:view" : "skill:manage");
+      // Which skills an Agent Profile has is owner/admin-only, like Agent Profiles.
+      const profileSkills = /^POST \/api\/skills\/library\//.test(key);
+      expect(role, key).toBe(
+        profileSkills ? "admin" : browse ? "signed-in" : lab ? "skill:lab" : view ? "skill:view" : "skill:manage",
+      );
     }
   });
 
