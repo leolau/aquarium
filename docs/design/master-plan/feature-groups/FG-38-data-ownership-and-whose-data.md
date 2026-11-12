@@ -77,6 +77,22 @@ Also in scope after P4 (each needs an owner and, where it has a list page, the
 picker): chat sessions list, contacts, todos/needs-you, goals/tasks. Owner-only
 surfaces: activity/audit logs, backups and exports.
 
+## P2b design (approved by Leo 2026-11-12)
+
+- **Raw SQLite stores get no owner column.** They are system-pipeline internals; people see the owner-scoped
+  Postgres copy. They are closed to the terminal user instead (`deploy/hermes-close-data`, #896).
+- **One account → person map:** Postgres table `account_owners` (`hermes_cli/account_owners.py`), key
+  `(surface, account_key)` with surface `email` (address), `calendar` (address) or `whatsapp` (phone id),
+  plus `owner_user_id`, `set_by`, `set_at`. FORCE RLS: only the owner role reads or writes it.
+- **Arrival owner precedence:** Settings choice → poller config entry `owner_user_id` → who connected it
+  (credential / bridge) → install owner. A chosen person who is inactive drops the arrival (as P2a).
+  Pollers read the map as the install owner; if it can't be read they fall through to the next rule.
+- **Settings › Accounts (agent-home, owner only):** every mailbox, calendar and WhatsApp phone with its
+  current person and why. Changing it is audited in the change log and applies to new arrivals only;
+  moving existing rows is P5. Logins stay where they are: reassigning moves data ownership, not credentials.
+- Email/WhatsApp tool servers stay off until they carry the caller's identity. Digest/escalation routing
+  per person moves to P3.
+
 ## Progress log
 
 | Date | PR | Notes |
