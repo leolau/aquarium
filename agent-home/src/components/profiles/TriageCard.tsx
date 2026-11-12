@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { Pill } from "@/components/ui/Pill";
 import { inputClass, primaryButtonClass, secondaryButtonClass, Sheet } from "@/components/ui/Sheet";
 import { errorText, getJson, sendJson } from "@/lib/admin-fetch";
+import { useAction } from "@/lib/use-action";
 import type {
   TriageKindStatus,
   TriageMissing,
@@ -249,7 +250,6 @@ function TriageFileSheet({
   const [picked, setPicked] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
   const [rev, setRev] = useState(0);
   const qs = new URLSearchParams({ kind: open.kind, path: open.file.path, profile }).toString();
 
@@ -280,9 +280,8 @@ function TriageFileSheet({
 
   const editable = canEdit && file?.can_edit === true;
 
-  async function save() {
+  async function saveNow() {
     if (!file) return;
-    setSaving(true);
     setError(null);
     try {
       await sendJson(`/api/triage/skill-file?profile=${encodeURIComponent(profile)}`, "PUT", {
@@ -295,10 +294,10 @@ function TriageFileSheet({
       setRev((r) => r + 1);
     } catch (err) {
       setError(errorText(err));
-    } finally {
-      setSaving(false);
     }
   }
+  // One save at a time: a second click can't send the PUT again.
+  const { run: save, pending: saving } = useAction(saveNow);
 
   const versions = Array.isArray(history?.versions) ? history.versions : [];
   const shown = versions.find((v) => v.id === picked) ?? versions[0];
