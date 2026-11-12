@@ -289,3 +289,65 @@ def test_a_todo_push_goes_to_its_person_s_telegram_only(monkeypatch):
     assert todo_registration.push_todo("t", note, person=owner) is True
     assert todo_registration.push_todo("t", note, person=kit) is False
     assert chats == ["999", BOX_CHAT], "Kit's to-do never reaches the box chat"
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["custom/whatsapp/escalation_pusher.py", "custom/shared/escalation_pusher_v2.py"],
+)
+def test_a_failed_send_to_one_person_does_not_retell_the_others(
+    people, tmp_path, monkeypatch, path
+):
+    from shared import inbound_registration as registration
+
+    for owner in ("sam", "leo"):
+        assert registration.register_item(
+            surface="whatsapp", account_id="phone1", external_id="w-both",
+            body="hi", owner_user_id=owner,
+        )
+    module, sent = _load(ROOT / path, f"_retry_{Path(path).stem}", monkeypatch, tmp_path)
+    _write(tmp_path,
+           """INSERT INTO escalations (id, channel, source_phone, source_msg_id,
+                  reason, summary, priority, status, created_at)
+              VALUES ('e1', 'whatsapp', 'phone1', 'w-both', 'urgent', 'for both',
+                      'high', 'pending', '2026-11-12')""", [()])
+    captured = module.urlopen
+    box_down = [True]
+
+    def _flaky(req, timeout=10):
+        if box_down[0] and str(json.loads(req.data.decode())["chat_id"]) == BOX_CHAT:
+            raise OSError("telegram is down")
+        return captured(req, timeout)
+
+    monkeypatch.setattr(module, "urlopen", _flaky)
+
+    def _status():
+        conn = sqlite3.connect(tmp_path / "messaging.db")
+        try:
+            return conn.execute("SELECT status FROM escalations").fetchone()[0]
+        finally:
+            conn.close()
+
+    module.process_pending_escalations()
+    assert [chat for chat, _ in sent] == ["999"] and _status() == "pending"
+    module.process_pending_escalations()
+    assert [chat for chat, _ in sent] == ["999"], "Sam is not told twice"
+    box_down[0] = False
+    module.process_pending_escalations()
+    assert [chat for chat, _ in sent] == ["999", BOX_CHAT] and _status() == "delivered"
+
+
+def test_a_busy_person_s_tasks_do_not_hide_anyone_else_s(people, tmp_path, monkeypatch):
+    module, sent = _load(ROOT / "custom/whatsapp/digest_cron.py", "_digest_tasks",
+                         monkeypatch, tmp_path)
+    monkeypatch.setattr(module, "call_deepseek", lambda prompt: prompt)
+    _write(tmp_path,
+           """INSERT INTO wa_tasks (id, source_phone, source_msg_id, description,
+                  status, priority, created_at) VALUES (?, 'phone1', ?, ?, 'pending', 'high', ?)""",
+           [("t-leo", "w-leo", "leo old task", "2026-11-01")]
+           + [(f"t{i}", "w-sam", f"sam task {i}", f"2026-11-12T00:{i:02d}") for i in range(60)])
+    module.generate_digest()
+
+    texts = dict(sent)
+    assert "leo old task" in texts[BOX_CHAT] and "sam task" not in texts[BOX_CHAT]
+    assert "PENDING TASKS (60)" in texts["999"]

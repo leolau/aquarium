@@ -258,16 +258,11 @@ def deliver_escalation(row, text, db):
     persons = people.get(arrival) or []
     if not persons:
         return False
-    for person in persons:
-        told = owner_routing.deliver(
-            person, owner, text,
-            send=send_telegram,
-            title="Escalation",
-            dedupe_key=f"escalation:{row['id']}:{person.user_id}",
-        )
-        if not told:
-            return None
-    return True
+    if owner_routing.deliver_once_each(
+        db, row['id'], persons, owner, text, send=send_telegram, title="Escalation",
+    ):
+        return True
+    return None
 
 
 def process_pending_escalations():

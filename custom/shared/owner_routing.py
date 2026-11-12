@@ -144,3 +144,52 @@ def deliver(
     if chat:
         return bool(send(text, parse_mode="HTML", chat_id=chat))
     return notify_in_app(person, title=title, text=text, dedupe_key=dedupe_key)
+
+
+def deliver_once_each(
+    db,
+    escalation_id,
+    persons,
+    owner,
+    text: str,
+    *,
+    send: Callable[..., bool],
+    title: str,
+) -> bool:
+    """Tell each of ``persons`` once; ``True`` when all of them have it.
+
+    A receipt per person is kept in ``db`` (the escalation's SQLite store), so
+    a retry after one person's failed send skips everyone already told.
+    """
+    db.execute(
+        """CREATE TABLE IF NOT EXISTS escalation_recipients (
+               escalation_id INTEGER NOT NULL,
+               user_id TEXT NOT NULL,
+               told_at TEXT NOT NULL DEFAULT (datetime('now')),
+               PRIMARY KEY (escalation_id, user_id))"""
+    )
+    told = {
+        r["user_id"] if isinstance(r, dict) else r[0]
+        for r in db.execute(
+            "SELECT user_id FROM escalation_recipients WHERE escalation_id = ?",
+            (escalation_id,),
+        ).fetchall()
+    }
+    everyone = True
+    for person in persons:
+        if person.user_id in told:
+            continue
+        if deliver(
+            person, owner, text,
+            send=send,
+            title=title,
+            dedupe_key=f"escalation:{escalation_id}:{person.user_id}",
+        ):
+            db.execute(
+                "INSERT OR IGNORE INTO escalation_recipients (escalation_id, user_id) VALUES (?, ?)",
+                (escalation_id, person.user_id),
+            )
+            db.commit()
+        else:
+            everyone = False
+    return everyone

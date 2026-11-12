@@ -110,6 +110,8 @@ def _collect(db, since):
             return []
 
     items = {'wa': [], 'email': [], 'tasks': [], 'escalations': []}
+    # Pending tasks are read uncapped: a cap before the split by person lets
+    # one busy person's newer tasks hide everyone else's.
     for m in rows(
         """SELECT id, source_phone, sender_phone, sender_name, text FROM messages
            WHERE received_at >= ? ORDER BY timestamp DESC""", (since,)):
@@ -121,12 +123,12 @@ def _collect(db, since):
         items['email'].append((('email', e['account_id'] or '', e['message_id'] or ''), e))
     for t in rows(
         """SELECT source_phone, source_msg_id, description, priority, due_date
-           FROM wa_tasks WHERE status = 'pending' ORDER BY created_at DESC LIMIT 50"""):
+           FROM wa_tasks WHERE status = 'pending' ORDER BY created_at DESC"""):
         items['tasks'].append((('whatsapp', t['source_phone'] or '', t['source_msg_id'] or ''), t))
     for t in rows(
         """SELECT t.account_id, m.message_id, t.description, t.priority, t.due_date
            FROM email_tasks t LEFT JOIN email_messages m ON m.id = t.source_email_id
-           WHERE t.status = 'pending' ORDER BY t.created_at DESC LIMIT 50"""):
+           WHERE t.status = 'pending' ORDER BY t.created_at DESC"""):
         items['tasks'].append((('email', t['account_id'] or '', t['message_id'] or ''), t))
     for x in rows(
         """SELECT e.channel, e.source_phone, e.source_msg_id, m.message_id,
