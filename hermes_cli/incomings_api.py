@@ -239,7 +239,7 @@ async def list_incomings(
         cursor=cursor or None,
     )
     items = page.items
-    if pinned is not None:
+    if pinned is not None and (not owner_ids or pinned.owner_user_id in owner_ids):
         items = [pinned, *(item for item in items if item.id != pinned.id)]
     return {
         "items": await _decorate(_tags(), principal, items),

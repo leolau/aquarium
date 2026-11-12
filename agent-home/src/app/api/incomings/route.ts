@@ -8,7 +8,7 @@
  */
 import { NextResponse } from "next/server";
 
-import { HermesApiError } from "@/lib/api/client";
+import { HermesApiError, ownersParam } from "@/lib/api/client";
 import { apiClientForRequest, getPrincipal } from "@/lib/auth/principal";
 
 /** Only the three values the upstream knows; anything else means "any". */
@@ -44,6 +44,7 @@ export async function GET(req: Request): Promise<NextResponse> {
         limit: params.get("limit") ? Number(params.get("limit")) : undefined,
         cursor: params.get("cursor") ?? undefined,
         attention: attentionParam(params.get("attention")),
+        owners: ownersParam(params.get("owners")),
       }),
     );
   } catch (err) {

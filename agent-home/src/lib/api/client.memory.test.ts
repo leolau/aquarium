@@ -5,7 +5,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { HermesApiClient } from "@/lib/api/client";
+import { HermesApiClient, ownersParam } from "@/lib/api/client";
 
 function mockFetch(status = 200, body: unknown = {}): ReturnType<typeof vi.fn> {
   const fn = vi.fn(async () => ({
@@ -65,6 +65,21 @@ describe("HermesApiClient memory methods", () => {
     expect(url).toContain("/api/memory/explorer/projection");
     expect(url).toContain("limit=1000");
     expect(url).not.toContain("mode=");
+  });
+
+  it("memoryRows and memoryProjection send owners= as one comma list", async () => {
+    const { client, fetchFn } = makeClient();
+    await client.memoryRows({ owners: ["ada", "bob"] });
+    await client.memoryProjection(undefined, ["ada"]);
+    await client.files({ owners: ["ada", "bob"] });
+    await client.incomings({ owners: ["bob"] });
+    const urls = fetchFn.mock.calls.map((call) => call[0] as string);
+    expect(urls[0]).toContain("owners=ada%2Cbob");
+    expect(urls[1]).toContain("/api/memory/explorer/projection?owners=ada");
+    expect(urls[2]).toContain("owners=ada%2Cbob");
+    expect(urls[3]).toContain("owners=bob");
+    expect(ownersParam(" ada, ,bob ")).toEqual(["ada", "bob"]);
+    expect(ownersParam(null)).toBeUndefined();
   });
 
   it("memoryProjection omits limit when not specified", async () => {

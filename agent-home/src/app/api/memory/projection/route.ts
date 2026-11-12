@@ -8,7 +8,7 @@
  */
 import { NextResponse } from "next/server";
 
-import { HermesApiError } from "@/lib/api/client";
+import { HermesApiError, ownersParam } from "@/lib/api/client";
 import { apiClientForRequest, getPrincipal } from "@/lib/auth/principal";
 
 export async function GET(req: Request): Promise<NextResponse> {
@@ -18,9 +18,11 @@ export async function GET(req: Request): Promise<NextResponse> {
   }
   try {
     const client = await apiClientForRequest();
-    const limitParam = new URL(req.url).searchParams.get("limit");
+    const sp = new URL(req.url).searchParams;
+    const limitParam = sp.get("limit");
     const resp = await client.memoryProjection(
       limitParam ? Number(limitParam) : undefined,
+      ownersParam(sp.get("owners")),
     );
     return NextResponse.json(resp);
   } catch (err) {
