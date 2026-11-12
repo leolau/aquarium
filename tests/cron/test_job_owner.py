@@ -10,6 +10,7 @@ real Postgres.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 import json
 import sys
 from types import SimpleNamespace
@@ -101,7 +102,7 @@ def test_a_run_binds_the_jobs_owner_as_the_agent(agent_stubs, monkeypatch):
     sam = Principal(user_id="sam", display="Sam", role="member")
     asked = []
     monkeypatch.setattr(
-        sched, "resolve_run_principal", lambda uid: (asked.append(uid), (sam, None))[1]
+        sched, "resolve_run_principal", lambda uid, **kw: (asked.append(uid), (sam, None))[1]
     )
 
     ok, _doc, _resp, error = sched.run_job(
@@ -115,7 +116,7 @@ def test_a_run_binds_the_jobs_owner_as_the_agent(agent_stubs, monkeypatch):
 
 
 def test_a_refused_owner_never_starts_the_agent(agent_stubs, monkeypatch):
-    monkeypatch.setattr(sched, "resolve_run_principal", lambda uid: (None, "gone"))
+    monkeypatch.setattr(sched, "resolve_run_principal", lambda uid, **kw: (None, "gone"))
 
     ok, doc, _resp, error = sched.run_job(
         {"id": "j2", "name": "tenders", "owner_user_id": "gone", "schedule_display": "manual"}
@@ -130,7 +131,18 @@ def test_a_project_run_acts_as_the_project_owner(monkeypatch):
     from hermes_cli import projects_run
 
     sam = Principal(user_id="sam", display="Sam", role="member")
-    monkeypatch.setattr(sched, "resolve_run_principal", lambda uid: (sam, None) if uid == "sam" else (None, "no"))
+    homes = []
+    monkeypatch.setattr(
+        sched,
+        "resolve_run_principal",
+        lambda uid, hermes_home=None: (
+            homes.append(hermes_home),
+            (sam, None) if uid == "sam" else (None, "no"),
+        )[1],
+    )
+    from hermes_cli import profiles
+
+    monkeypatch.setattr(profiles, "get_profile_dir", lambda name: Path(f"/homes/{name}"))
     seen = []
     monkeypatch.setattr(
         seeded_session,
@@ -141,9 +153,11 @@ def test_a_project_run_acts_as_the_project_owner(monkeypatch):
     steps = [{"key": "a", "title": "Collect"}]
 
     out = projects_run._default_spawn_inline(
-        project=project, run={"run_no": 1}, guidance="g", inline_steps=steps
+        project=project, run={"run_no": 1, "profile": "worker"}, guidance="g",
+        inline_steps=steps,
     )
     assert out["error"] is None
+    assert homes == [Path("/homes/worker")], "checked where the run happens"
     assert (seen[0]["internal_user_id"], seen[0]["internal_user_role"]) == ("sam", "member")
 
     gone = SimpleNamespace(id="p2", slug="old", owner_user_id="gone")
@@ -204,4 +218,52 @@ def test_lookup_also_works_from_inside_a_running_loop(postgres_dsn, monkeypatch)
 
 def test_no_people_store_means_a_single_user_install(monkeypatch):
     monkeypatch.setattr(sched, "load_config", lambda: {})
+    assert sched.resolve_run_principal(None) == (None, None)
     assert sched.resolve_run_principal("sam") == (None, None)
+
+
+def test_a_people_store_that_fails_to_open_refuses_a_named_owner(monkeypatch):
+    from hermes_cli import datastore
+
+    def broken(*_a, **_kw):
+        raise RuntimeError("bad datastore config")
+
+    monkeypatch.setattr(datastore, "get_store", broken)
+    person, refused = sched.resolve_run_principal("sam")
+    assert person is None and "sam" in refused, "a named owner never runs as nobody"
+    assert sched.resolve_run_principal(None) == (None, None)
+
+
+def test_a_refused_owner_runs_no_script_either(monkeypatch, tmp_path):
+    ran = tmp_path / "ran"
+    script = tmp_path / "job.sh"
+    script.write_text(f"#!/bin/sh\ntouch {ran}\necho hi\n")
+    script.chmod(0o755)
+    monkeypatch.setattr(sched, "resolve_run_principal", lambda uid, **kw: (None, "gone"))
+    job = {"id": "j", "name": "watch", "no_agent": True, "script": str(script),
+           "owner_user_id": "gone"}
+    ok, _doc, _final, err = sched.run_job(job)
+    assert (ok, err) == (False, "gone") and not ran.exists()
+
+
+def test_the_owner_is_checked_in_the_profile_the_run_uses(
+    postgres_dsn, monkeypatch, tmp_path  # noqa: F811
+):
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+    homes = {}
+    for name in ("worker", "elsewhere"):
+        homes[name] = tmp_path / name
+        homes[name].mkdir()
+        (homes[name] / "config.yaml").write_text(
+            f"datastore:\n  supabase_app:\n    dsn: {postgres_dsn}\n"
+        )
+    token = set_hermes_home_override(str(homes["worker"]))
+    try:
+        asyncio.run(_people(postgres_dsn))  # Sam is enrolled in "worker" only
+    finally:
+        reset_hermes_home_override(token)
+    person, refused = sched.resolve_run_principal("sam", hermes_home=homes["worker"])
+    assert refused is None and person.user_id == "sam"
+    person, refused = sched.resolve_run_principal("sam", hermes_home=homes["elsewhere"])
+    assert person is None and refused, "enrolment elsewhere grants nothing here"

@@ -14248,6 +14248,19 @@ async def create_cron_job(body: CronJobCreate, request: Request, profile: str = 
     creator = None
     if getattr(request.state, "session", None) is not None:
         creator = (await _comms_resolve_principal(request)).user_id
+        # Enrolment is per profile: refuse now rather than store a job whose
+        # every run would be refused in the profile it runs in.
+        from cron import scheduler as _scheduler
+
+        _, home = _cron_profile_home(profile)
+        _, refused = await asyncio.to_thread(
+            _scheduler.resolve_run_principal, creator, hermes_home=home
+        )
+        if refused:
+            raise HTTPException(
+                status_code=409,
+                detail=f"You can't own a job in profile {profile}: {refused}",
+            )
     try:
         profile_name, profile_home = _cron_profile_home(profile)
         script = _normalize_dashboard_cron_script(body.script, profile_home)

@@ -2270,15 +2270,25 @@ def _run_coro(coro):
         return pool.submit(asyncio.run, coro).result()
 
 
-def resolve_run_principal(owner_user_id: Optional[str]):
+def resolve_run_principal(owner_user_id: Optional[str], *, hermes_home=None):
     """The person a scheduled or project run acts for (FG-38 P3).
 
     Returns ``(principal, refusal)``. A named owner must be an active person
-    here, else the run is refused (never silently run as someone else); a
-    lookup failure refuses too. A job with no recorded owner (created before
-    owners were) acts as the install owner. With no people store configured
-    (single-user install) there is nobody to act as: ``(None, None)``.
+    in the profile the run executes in (``hermes_home``, default the current
+    one), else the run is refused (never silently run as someone else or as
+    nobody); a people store that fails to open or answer refuses too. A job
+    with no recorded owner (created before owners were) acts as the install
+    owner. With no people store configured (single-user install) there is
+    nobody to act as: ``(None, None)``.
     """
+    if hermes_home is not None:
+        from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+        token = set_hermes_home_override(str(hermes_home))
+        try:
+            return resolve_run_principal(owner_user_id)
+        finally:
+            reset_hermes_home_override(token)
     owner_id = str(owner_user_id or "").strip()
     try:
         from hermes_cli.access import PrincipalStore
@@ -2286,7 +2296,9 @@ def resolve_run_principal(owner_user_id: Optional[str]):
 
         store = get_store("supabase-app", "prod", config=load_config() or {})
     except Exception as e:
-        logger.debug("run principal: no people store (%s)", e)
+        logger.warning("run principal: people store unavailable (%s)", e)
+        if owner_id:
+            return None, f"could not check the job's owner {owner_id} ({e})"
         return None, None
     if not getattr(store, "dsn", None):
         return None, None
@@ -2387,6 +2399,11 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
     """
     job_id = job["id"]
     job_name = str(job.get("name") or job.get("prompt") or job_id or "cron job")
+    # Whose job it is decides whether anything runs at all, scripts included.
+    _principal, _refused = resolve_run_principal(job.get("owner_user_id"))
+    if _refused:
+        logger.warning("Job '%s': %s", job_name, _refused)
+        return False, f"# Cron Job: {job_name}\n\n**Not run:** {_refused}\n", "", _refused
 
     # ---------------------------------------------------------------
     # no_agent short-circuit — the script IS the job, no LLM involvement.
@@ -2559,10 +2576,6 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
         logger.info("Job '%s': script produced no output, skipping AI call.", job_name)
         return True, "", SILENT_MARKER, None
     origin = _resolve_origin(job)
-    _principal, _refused = resolve_run_principal(job.get("owner_user_id"))
-    if _refused:
-        logger.warning("Job '%s': %s", job_name, _refused)
-        return False, f"# Cron Job: {job_name}\n\n**Not run:** {_refused}\n", "", _refused
     _cron_session_id = f"cron_{job_id}_{_hermes_now().strftime('%Y%m%d_%H%M%S')}"
     _trace, _trace_ledger, _trace_context = _start_cron_trace(
         job_id, job_name, _cron_session_id, principal=_principal

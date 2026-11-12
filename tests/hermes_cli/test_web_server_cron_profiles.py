@@ -663,6 +663,14 @@ async def test_a_logged_in_creator_owns_the_job(isolated_profiles, monkeypatch):
         return SimpleNamespace(user_id="sam", role="member")
 
     monkeypatch.setattr(web_server, "_comms_resolve_principal", as_sam)
+    from cron import scheduler
+
+    homes = []
+    monkeypatch.setattr(
+        scheduler,
+        "resolve_run_principal",
+        lambda uid, hermes_home=None: (homes.append(hermes_home), (None, None))[1],
+    )
     signed_in = SimpleNamespace(state=SimpleNamespace(session={"sub": "sam"}))
 
     job = await web_server.create_cron_job(
@@ -681,3 +689,29 @@ async def test_a_logged_in_creator_owns_the_job(isolated_profiles, monkeypatch):
     }
     assert stored[job["id"]]["owner_user_id"] == "sam"
     assert "owner_user_id" not in stored[unowned["id"]]
+    assert homes == [web_server._cron_profile_home("worker_alpha")[1]]
+
+
+@pytest.mark.asyncio
+async def test_a_creator_not_enrolled_in_the_profile_is_refused(
+    isolated_profiles, monkeypatch
+):
+    from cron import scheduler
+    from hermes_cli import web_server
+
+    async def as_sam(request, **_kw):
+        return SimpleNamespace(user_id="sam", role="admin")
+
+    monkeypatch.setattr(web_server, "_comms_resolve_principal", as_sam)
+    monkeypatch.setattr(
+        scheduler, "resolve_run_principal", lambda uid, **kw: (None, "sam is not here")
+    )
+    signed_in = SimpleNamespace(state=SimpleNamespace(session={"sub": "sam"}))
+    with pytest.raises(web_server.HTTPException) as refused:
+        await web_server.create_cron_job(
+            web_server.CronJobCreate(prompt="my tenders", schedule="every 1h"),
+            request=signed_in,
+            profile="worker_alpha",
+        )
+    assert refused.value.status_code == 409
+    assert web_server._call_cron_for_profile("worker_alpha", "list_jobs") == []

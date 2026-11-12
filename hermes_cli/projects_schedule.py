@@ -229,6 +229,16 @@ def set_project_schedule(
                 {"schedule": parsed, "schedule_display": parsed.get("display", text)},
             )
         else:
+            from cron import scheduler
+
+            _person, refused = scheduler.resolve_run_principal(
+                getattr(project, "owner_user_id", None),
+                hermes_home=_host_profile_cron_dir(host).parent,
+            )
+            if refused:
+                raise SchedulePreconditionError(
+                    f"the schedule would never run in profile {host}: {refused}"
+                )
             job = cron_jobs.create_job(
                 prompt=prompt,
                 schedule=text,
