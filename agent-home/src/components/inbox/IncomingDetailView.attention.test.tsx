@@ -36,7 +36,10 @@ describe("IncomingDetailView Done / Reopen", () => {
     fireEvent.click(screen.getByRole("button", { name: "✓ Done" }));
     expect(await screen.findByText("Marked done. It's out of Incomings.")).toBeTruthy();
     expect(bodies).toEqual([{ action: "clear", outcome: "done" }]);
-    fireEvent.click(screen.getByRole("button", { name: "Reopen" }));
+    // The note lands before ActionButton's own pending state clears; a click on the busy button is dropped.
+    const reopen = screen.getByRole("button", { name: "Reopen" });
+    await waitFor(() => expect(reopen.getAttribute("aria-busy")).toBe("false"));
+    fireEvent.click(reopen);
     expect(await screen.findByText("Reopened. It's back in Incomings.")).toBeTruthy();
     expect(bodies[1]).toEqual({ action: "reopen" });
     await waitFor(() => expect(screen.getByRole("button", { name: "✓ Done" })).toBeTruthy());
