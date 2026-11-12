@@ -1022,6 +1022,10 @@ def test_request_sample_masks_secret_looking_values_and_truncates():
     assert srr.request_sample("\x00binary", "application/octet-stream").startswith("(7 characters")
     assert srr.request_sample("plain words", "text/plain") == "plain words"
     assert srr.request_sample("", "") is None
+    leaky = srr.request_sample("api_key=k1&sid=s1&apiKey=k2&q=abc&tag=" + "a1B2" * 8, "")
+    assert leaky == "api_key={r}&sid={r}&apiKey={r}&q=abc&tag={r}".format(r=srr.REDACTED)
+    nested = json.loads(srr.request_sample(json.dumps({"ids": ["Zx9" * 10], "d": "2026-01-01T00:00:00.000+08:00"})))
+    assert nested == {"ids": [srr.REDACTED], "d": "2026-01-01T00:00:00.000+08:00"}
 
 
 @pytest.mark.parametrize("value", [0, 50, "1000", True, srr.MAX_STEP_TIMEOUT_MS + 1])
@@ -1031,6 +1035,8 @@ def test_validate_rejects_bad_step_timeouts(value):
     assert any("'timeout_ms'" in p for p in srr.recipe_problems(recipe))
     recipe["entities"]["about"]["steps"][0]["timeout_ms"] = 90_000
     assert not any("'timeout_ms'" in p for p in srr.recipe_problems(recipe))
+    recipe["entities"]["about"]["steps"][0] = {"op": "goto", "url": "/about", "timeout_ms": 5000}
+    assert any("'timeout_ms' works on" in p for p in srr.recipe_problems(recipe))
 
 
 def _query_steps(site, *extra):
@@ -1048,6 +1054,7 @@ def test_e2e_browse_reports_the_endpoint_a_search_button_calls(site):
     groups = {g["step"]: g for g in inv["step_requests"]}
     assert list(groups) == [4] and groups[4]["op"] == "click"
     (req,) = groups[4]["requests"]
+    assert "pending" not in req
     assert req["method"] == "POST" and req["path"] == "/query/search" and req["status"] == 200
     assert req["request_type"].startswith("application/json") and "json" in req["content_type"]
     sent = json.loads(req["body"])
@@ -1080,6 +1087,29 @@ def test_e2e_browse_keeps_the_requests_when_a_step_times_out(site):
     assert any(t["selector"] == "#q-results" for t in inv["tables"])
     assert "hint:" in srr.inventory_summary("query", inv)
     assert "Timeout" in got["slow_click"]["error"] and got["slow_click"]["hint"]
+
+
+@needs_browser
+def test_e2e_browse_labels_nested_steps_and_reports_pending_calls(site):
+    window = {"op": "date_windows", "from": "{{date-3}}", "days": 2, "steps": [
+        {"op": "fill", "selector": "#q-from", "value": "{{window_from}}"},
+        {"op": "fill", "selector": "#q-to", "value": "{{window_to}}"},
+        {"op": "click", "text": "Search"}, {"op": "wait", "ms": 300}]}
+    probes = [{"name": "windows", "steps": [{"op": "goto", "url": "/query"}, window]},
+              {"name": "slow", "steps": [{"op": "goto", "url": "/query"}, {"op": "click", "text": "Slow search"},
+                                         {"op": "wait", "selector": "#never", "timeout_ms": 500}]}]
+    recipe = fixture_recipe(site.base_url)
+    recipe["timeout_ms"] = 1000
+    got = dict(srr.browse(recipe, probes, CRED, allow_private=True))
+    groups = got["windows"]["step_requests"]
+    assert [(g["step"], g["op"]) for g in groups] == [("2.3", "click"), ("2.3", "click")]
+    assert all(g["requests"][0]["path"] == "/query/search" for g in groups)
+    slow = got["slow"]
+    assert "Timeout" in slow["error"]
+    (req,) = [r for g in slow["step_requests"] for r in g["requests"]]
+    assert req["path"] == "/query/search" and "pending" in req and "status" not in req
+    summary = srr.inventory_summary("slow", slow)
+    assert "POST /query/search" in summary and "-> PENDING" in summary
 
 
 @needs_browser

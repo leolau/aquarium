@@ -107,6 +107,7 @@ _NESTING_OPS = ("paginate", "date_windows")
 STEP_WHEN = ("full", "incremental")
 _EXTRACT_OPS = ("extract_table", "extract_fields", "extract_datatable", "extract_json")
 _ALLOWED_KEYS = ("Enter", "Tab")
+_TIMEOUT_OPS = ("click", "submit", "press", "wait", "extract_datatable", "extract_json")
 DEFAULT_DATE_FORMAT = "%Y-%m-%d"
 DEFAULT_TIMEOUT_MS = 30_000
 # Clicks/submits/presses on heavy back-office pages (huge dropdowns, slow
@@ -119,7 +120,11 @@ MAX_STEP_TIMEOUT_MS = 600_000
 STEP_REQUESTS_MAX = 30
 SHAPE_MAX_BYTES = 5_000_000
 REQUEST_SAMPLE_CHARS = 300
-_SENSITIVE_PARAM = re.compile(r"pass|pwd|secret|token|csrf|auth|session|cookie", re.I)
+_SENSITIVE_PARAM = re.compile(
+    r"pass|pwd|secret|token|csrf|xsrf|auth|session|sess_?id|(^|[_.-])sid$|^sid|cookie|api_?key|access_?key"
+    r"|private_?key|client_?key|signature|(^|[_.-])sig$|otp|credential|bearer|jwt|nonce|(^|[_.-])pin$", re.I)
+# A long run of letters and digits (a key, a session id, a JWT) is masked whatever it is called.
+_TOKEN_LIKE = re.compile(r"[A-Za-z0-9_\-+/=.]{24,}")
 DEFAULT_MAX_PAGES = 10_000
 DEFAULT_MAX_BYTES = 10_000_000
 DATATABLE_CHUNK = 2_000
@@ -310,7 +315,9 @@ def _steps_problems(where: str, steps: Any, *, depth: int = 0, in_window: bool =
                 _check_static_target(at, step)
         except ForbiddenTarget as exc:
             problems.append(str(exc))
-        if "timeout_ms" in step and not (
+        if "timeout_ms" in step and op not in _TIMEOUT_OPS:
+            problems.append(f"{at}: 'timeout_ms' works on {', '.join(_TIMEOUT_OPS)}")
+        elif "timeout_ms" in step and not (
             isinstance(step["timeout_ms"], int) and not isinstance(step["timeout_ms"], bool)
             and 100 <= step["timeout_ms"] <= MAX_STEP_TIMEOUT_MS
         ):
@@ -746,6 +753,15 @@ def _redact_all(value: Any, secret: Optional[str]) -> Any:
     return value
 
 
+def _mask_value(name: Any, value: Any) -> Any:
+    if _SENSITIVE_PARAM.search(str(name)):
+        return REDACTED
+    if isinstance(value, str) and _TOKEN_LIKE.fullmatch(value) and re.search(r"\d", value) \
+            and re.search(r"[A-Za-z]", value):
+        return REDACTED
+    return value
+
+
 def request_sample(text: Optional[str], content_type: str = "") -> Optional[str]:
     """A short sample of a request body or query string, secret-looking values masked."""
     if not text:
@@ -761,7 +777,10 @@ def request_sample(text: Optional[str], content_type: str = "") -> Optional[str]
         if decoded is not None:
             def mask(value: Any) -> Any:
                 if isinstance(value, Mapping):
-                    return {k: REDACTED if _SENSITIVE_PARAM.search(str(k)) else mask(v) for k, v in value.items()}
+                    return {k: mask(v) if isinstance(v, (Mapping, list)) and not _SENSITIVE_PARAM.search(str(k))
+                            else _mask_value(k, v) for k, v in value.items()}
+                if isinstance(value, str):
+                    return _mask_value("", value)
                 if isinstance(value, list):
                     return [mask(v) for v in value[:5]]
                 return value
@@ -770,7 +789,7 @@ def request_sample(text: Optional[str], content_type: str = "") -> Optional[str]
     elif "=" in text and "multipart" not in content_type:
         pairs = parse_qsl(text, keep_blank_values=True)
         if pairs:
-            sample = "&".join(f"{k}={REDACTED if _SENSITIVE_PARAM.search(k) else v}" for k, v in pairs)
+            sample = "&".join(f"{k}={_mask_value(k, v)}" for k, v in pairs)
     elif "multipart" in content_type or not text.replace("\n", " ").replace("\t", " ").isprintable():
         sample = f"({len(text)} characters, {content_type or 'unknown type'})"
     return sample if len(sample) <= REQUEST_SAMPLE_CHARS else sample[:REQUEST_SAMPLE_CHARS] + "…"
@@ -1211,7 +1230,8 @@ class PlaywrightDriver(Driver):
             self._page.on("requestfailed", self._on_request_failed)
             self._page.on("framenavigated", self._on_frame_navigated)
             self._json_seen: List[Dict[str, Any]] = []
-            self._step_seen: List[Tuple[Any, Any]] = []
+            # id(request) -> [request, response or None, "pending" | "answered" | "finished" | "failed"]
+            self._step_seen: Dict[int, List[Any]] = {}
             self._page.on("response", self._on_response)
         except Exception:
             self._pw.stop()
@@ -1254,8 +1274,13 @@ class PlaywrightDriver(Driver):
     def _on_request(self, req: Any) -> None:
         if self._is_main_navigation(req):
             self._nav_pending.add(id(req))
+        elif self._same_origin_xhr(req) and len(self._step_seen) < 200:
+            self._step_seen[id(req)] = [req, None, "pending"]
 
     def _on_request_finished(self, req: Any) -> None:
+        seen = self._step_seen.get(id(req))
+        if seen is not None and seen[0] is req:
+            seen[2] = "finished"
         if id(req) not in self._nav_pending:
             return
         self._nav_pending.discard(id(req))
@@ -1268,8 +1293,9 @@ class PlaywrightDriver(Driver):
 
     def _on_request_failed(self, req: Any) -> None:
         self._nav_pending.discard(id(req))
-        if self._same_origin_xhr(req) and len(self._step_seen) < 200:
-            self._step_seen.append((req, None))
+        seen = self._step_seen.get(id(req))
+        if seen is not None and seen[0] is req:
+            seen[2] = "failed"
 
     def _same_origin_xhr(self, req: Any) -> bool:
         try:
@@ -1327,7 +1353,7 @@ class PlaywrightDriver(Driver):
         self._settle(mark, timeout)
 
     def describe(self, target: Mapping[str, Any]) -> Dict[str, Any]:
-        return self._locator(target).evaluate(_DESCRIBE_JS)
+        return self._locator(target).evaluate(_DESCRIBE_JS, timeout=self._action_timeout(target.get("timeout_ms")))
 
     def exists(self, target: Mapping[str, Any], *, enabled: bool = False) -> bool:
         loc = self._locator(target)
@@ -1406,18 +1432,18 @@ class PlaywrightDriver(Driver):
         return self._page.evaluate(_FETCH_JS, [url, method, body, content_type, dict(headers), max_bytes, timeout_ms])
 
     def step_requests(self) -> List[Dict[str, Any]]:
-        seen, self._step_seen = self._step_seen, []
+        seen, self._step_seen = list(self._step_seen.values()), {}
         out: List[Dict[str, Any]] = []
-        for req, response in seen[:STEP_REQUESTS_MAX]:
+        for req, response, state in seen[:STEP_REQUESTS_MAX]:
             try:
-                out.append(self._describe_request(req, response))
+                out.append(self._describe_request(req, response, state))
             except Exception:
                 logger.debug("describing a page request failed", exc_info=True)
         if len(seen) > STEP_REQUESTS_MAX:
             out.append({"more": len(seen) - STEP_REQUESTS_MAX})
         return out
 
-    def _describe_request(self, req: Any, response: Any) -> Dict[str, Any]:
+    def _describe_request(self, req: Any, response: Any, state: str) -> Dict[str, Any]:
         """One same-origin XHR/fetch call, with its answer's JSON shape (reads what the page already got)."""
         there = urlparse(req.url)
         req_type = (req.headers.get("content-type") or "").lower()
@@ -1427,13 +1453,18 @@ class PlaywrightDriver(Driver):
             "request_type": req_type[:80] or None,
             "body": request_sample(req.post_data, req_type) if req.post_data else None,
         }
-        if response is None:
+        if state == "failed":
             entry["failed"] = str(getattr(req, "failure", None) or "no answer")[:200]
+            return {k: v for k, v in entry.items() if v is not None}
+        if response is None:
+            entry["pending"] = "no answer yet (still running when the step ended)"
             return {k: v for k, v in entry.items() if v is not None}
         ctype = (response.headers.get("content-type") or "").lower()
         size = int(response.headers.get("content-length") or 0) or None
         entry.update(status=response.status, content_type=ctype[:80] or None, bytes=size)
-        if "json" in ctype or "javascript" in ctype:
+        if state != "finished":
+            entry["pending"] = "answer still downloading when the step ended"
+        elif "json" in ctype or "javascript" in ctype:
             if size is not None and size > SHAPE_MAX_BYTES:
                 entry["shape"] = {"skipped": f"answer over {SHAPE_MAX_BYTES} bytes"}
             else:
@@ -1450,8 +1481,11 @@ class PlaywrightDriver(Driver):
         """Remember same-origin JSON XHR/fetch answers for :meth:`inventory` (keys only, never values)."""
         try:
             req = response.request
-            if self._same_origin_xhr(req) and len(self._step_seen) < 200:
-                self._step_seen.append((req, response))
+            seen = self._step_seen.get(id(req))
+            if seen is not None and seen[0] is req:
+                seen[1] = response
+                if seen[2] == "pending":
+                    seen[2] = "answered"
             if req.resource_type not in ("xhr", "fetch"):
                 return
             ctype = (response.headers.get("content-type") or "").lower()
@@ -1652,15 +1686,22 @@ class _Run:
         return render_template(raw, variables, date_format=fmt, today=self.today)
 
     def steps(self, steps: Sequence[Mapping[str, Any]], ctx: Dict[str, Any],
-              after_step: Optional[Callable[[int, Mapping[str, Any]], None]] = None) -> Iterator[ExtractedItem]:
+              after_step: Optional[Callable[[str, Mapping[str, Any]], None]] = None) -> Iterator[ExtractedItem]:
+        """Run ``steps``; ``after_step(label, step)`` is called after every step, nested ones too ("2.1")."""
+        if after_step is not None:
+            ctx["after_step"], ctx["step_path"] = after_step, []
+        hook = ctx.get("after_step")
+        path: List[str] = ctx.setdefault("step_path", [])
         for i, step in enumerate(steps):
             if step.get("when") not in (None, ctx.get("run_mode", "full")):
                 continue
+            path.append(str(i + 1))
             try:
                 yield from self._step(i, step, ctx)
             finally:
-                if after_step is not None:
-                    after_step(i, step)
+                if hook is not None:
+                    hook(".".join(path), step)
+                path.pop()
 
     def _step(self, i: int, step: Mapping[str, Any], ctx: Dict[str, Any]) -> Iterator[ExtractedItem]:
         op = step["op"]
@@ -1681,7 +1722,7 @@ class _Run:
             self.page_loaded()
         elif op == "submit":
             _check_static_target(where, step)
-            info = d.describe({"selector": step.get("selector") or "form"})
+            info = d.describe({"selector": step.get("selector") or "form", "timeout_ms": step.get("timeout_ms")})
             if str(info.get("tag", "")).upper() == "FORM":
                 info = {k: info.get(k) for k in ("id", "name", "action")}
             _check_element(where, info)
@@ -2138,6 +2179,7 @@ def inventory_summary(name: str, inv: Mapping[str, Any]) -> str:
                 continue
             sent = " ".join(f"{k} {r[k]}" for k in ("query", "body") if r.get(k))
             got = (f"FAILED {r['failed']}" if r.get("failed")
+                   else f"PENDING ({r['pending']})" if "status" not in r
                    else f"{r.get('status')} {r.get('content_type') or ''}{', ' + str(r['bytes']) + ' bytes' if r.get('bytes') else ''}")
             shape = r.get("shape") or {}
             if "records" in shape:
@@ -2210,10 +2252,10 @@ def browse(
                    "date_format": run.date_format, "vars": {"cursor": None}, "last_count": 0, "page_keys": []}
             step_requests: List[Dict[str, Any]] = []
 
-            def note_requests(i: int, step: Mapping[str, Any]) -> None:
+            def note_requests(label: str, step: Mapping[str, Any]) -> None:
                 requests = run.driver.step_requests()
                 if requests:
-                    step_requests.append({"step": i + 1, "op": step.get("op"),
+                    step_requests.append({"step": int(label) if label.isdigit() else label, "op": step.get("op"),
                                           "requests": _redact_all(requests, run.password)})
 
             run.driver.step_requests()  # drop the login's and earlier probes' calls

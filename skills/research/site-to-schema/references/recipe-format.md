@@ -43,7 +43,8 @@ and retries that page.
 Targets are `{"selector": "css"}` or `{"text": "Visible label"}` (button,
 link or input button; `exact`, `nth` optional).
 
-`timeout_ms` on a step (100 to 600000) overrides the recipe's for that
+`timeout_ms` (100 to 600000) on a `click`, `submit`, `press`, `wait`,
+`extract_datatable` or `extract_json` step overrides the recipe's for that
 step. Without one, `click`, `submit` and `press` wait twice the recipe's
 `timeout_ms`, since a click on a heavy page can take a while.
 

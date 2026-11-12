@@ -39,6 +39,7 @@ import html
 import json
 import secrets
 import threading
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -435,7 +436,8 @@ class _Handler(BaseHTTPRequestHandler):
             '<div id="builder"><input type="hidden" id="qtoken" value="tok-123">'
             '<label>From <input type="date" id="q-from"></label>'
             '<label>To <input type="date" id="q-to"></label>'
-            '<button type="button" id="q-search">Search</button></div>'
+            '<button type="button" id="q-search">Search</button>'
+            '<button type="button" id="q-slow">Slow search</button></div>'
             '<table id="q-results"><thead><tr><th>Case</th><th>Opened</th><th>Customer</th></tr></thead>'
             "<tbody></tbody></table>"
             "<script>"
@@ -448,6 +450,10 @@ class _Handler(BaseHTTPRequestHandler):
             "  document.querySelector('#q-results tbody').innerHTML = j.result.rows.map((c) =>"
             "    `<tr><td>${c.case_no}</td><td>${c.opened}</td><td>${c.customer.name}</td></tr>`).join('');"
             "});"
+            "document.getElementById('q-slow').addEventListener('click', () => {"
+            "  fetch('/query/search', {method: 'POST', headers: {'Content-Type': 'application/json'},"
+            "    body: JSON.stringify({slow: '1'})});"
+            "});"
             "</script>"
         )
         self._send(200, _page("Case query", body))
@@ -458,6 +464,8 @@ class _Handler(BaseHTTPRequestHandler):
         raw = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode("utf-8")
         values = {k: str(v) for k, v in json.loads(raw or "{}").items()}
         self._note_json_call(method, values)
+        if values.get("slow"):
+            time.sleep(3)
         rows = self._rma_rows(values)
         self._send(200, json.dumps({"status": "ok", "result": {"rows": rows, "total": len(rows)}}),
                    ctype="application/json")
