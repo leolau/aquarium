@@ -1334,7 +1334,7 @@ class InboundRegistry:
         hour, so it is one round trip, not one connection per row.
         """
         keys = list(dict.fromkeys(
-            (str(s), str(a or ""), str(e)) for s, a, e in identities if e
+            (str(s), str(a or ""), str(e or "")) for s, a, e in identities
         ))
         if not keys:
             return {}

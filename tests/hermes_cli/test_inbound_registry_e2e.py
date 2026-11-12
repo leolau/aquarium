@@ -1502,9 +1502,11 @@ async def test_owners_for_many_answers_like_owners_for_in_one_query(
     await _arrive(registry, _principal("ada"), **shared)
     await _arrive(registry, _principal("bob"), **shared)
     await _arrive(registry, _principal("ada"), external_id="m-1", account_id="ada@example.com")
+    await _arrive(registry, _principal("bob"), external_id="", account_id="no-id-box")
     identities = [
         ("email", "phone4", "wa-99"),
         ("email", "ada@example.com", "m-1"),
+        ("email", "no-id-box", ""),
         ("email", "phone4", "never-registered"),
         ("email", "phone4", "wa-99"),
     ]
@@ -1518,6 +1520,7 @@ async def test_owners_for_many_answers_like_owners_for_in_one_query(
         assert found == {
             ("email", "phone4", "wa-99"): ["bob", "ada"],
             ("email", "ada@example.com", "m-1"): ["ada"],
+            ("email", "no-id-box", ""): ["bob"],
         }
         for surface, account_id, external_id in found:
             assert found[(surface, account_id, external_id)] == await registry.owners_for(
@@ -1526,7 +1529,7 @@ async def test_owners_for_many_answers_like_owners_for_in_one_query(
             )
         assert await registry.owners_for_many(
             _principal("bob"), identities, connection=conn
-        ) == {("email", "phone4", "wa-99"): ["bob"]}
+        ) == {("email", "phone4", "wa-99"): ["bob"], ("email", "no-id-box", ""): ["bob"]}
         assert await registry.owners_for_many(leo, [], connection=conn) == {}
     finally:
         await conn.close()
