@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { signedOut } from "@/lib/auth/expired-session";
 import type { ActivityItem, ActivityRunning, ScheduledSummary } from "@/types";
 
 export const ACTIVITY_POLL_MS = 15_000;
@@ -74,7 +75,8 @@ export interface ActivityRunningState {
 
 /**
  * `GET /api/activity/running` polled every 15 s while the tab is visible and
- * re-read on focus; a failed read keeps the last good rows and flags `stale`.
+ * re-read on focus; a failed read keeps the last good rows and flags `stale`,
+ * and a 401 sends the browser to sign in again.
  * Elapsed timers tick locally (no refetch) only while there is something to
  * time and the tab is visible.
  */
@@ -95,7 +97,7 @@ export function useActivityRunning(): ActivityRunningState {
     const run = (async () => {
       try {
         const res = await fetch("/api/activity/running", { cache: "no-store" });
-        if (!res.ok) throw new Error(String(res.status));
+        if (signedOut(res) || !res.ok) throw new Error(String(res.status));
         const data = (await res.json()) as ActivityRunning;
         const next = Array.isArray(data.items) ? data.items : [];
         const nextScheduled =

@@ -15,8 +15,10 @@
  *   new request becomes the shared in-flight for later callers.
  *
  * Failures resolve to `null` and keep the last good data; callers treat
- * null as "keep what you have" exactly as they treat a non-OK response.
+ * null as "keep what you have" exactly as they treat a non-OK response. A
+ * 401 also sends the browser to sign in again.
  */
+import { signedOut } from "@/lib/auth/expired-session";
 import type { SessionSummary } from "@/types";
 
 export interface SessionListResponse {
@@ -45,7 +47,7 @@ export async function fetchSessionList(
   const inflight = (async () => {
     try {
       const res = await fetch(url, { cache: "no-store" });
-      if (!res.ok) return null;
+      if (signedOut(res) || !res.ok) return null;
       return (await res.json()) as SessionListResponse;
     } catch {
       return null;

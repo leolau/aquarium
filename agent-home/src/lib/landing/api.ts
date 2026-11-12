@@ -1,3 +1,4 @@
+import { signedOut } from "@/lib/auth/expired-session";
 import type {
   LandingBarResponse,
   NeedsYouResponse,
@@ -7,14 +8,15 @@ import type {
 
 /**
  * Browser-side reads for the landing page. Each returns `null` when the
- * route is missing or failing so callers keep their last good data.
+ * route is missing or failing so callers keep their last good data; a 401
+ * also sends the browser to sign in again.
  * Writes (pin, dismiss, needs-you actions) go through the existing
  * mutation hooks so they get the click lock and Idempotency-Key.
  */
 async function getJson<T>(url: string): Promise<T | null> {
   try {
     const res = await fetch(url, { cache: "no-store", method: "GET" });
-    if (!res.ok) return null;
+    if (signedOut(res) || !res.ok) return null;
     return (await res.json()) as T;
   } catch {
     return null;

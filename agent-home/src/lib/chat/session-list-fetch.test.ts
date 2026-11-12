@@ -6,6 +6,10 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
+const replace = vi.fn();
+vi.mock("@/lib/replace-location", () => ({ replaceLocation: (href: string) => replace(href) }));
+
+import { leaveExpiredSession, resetExpiredSession } from "@/lib/auth/expired-session";
 import { fetchSessionList } from "@/lib/chat/session-list-fetch";
 
 let n = 0;
@@ -83,5 +87,22 @@ describe("fetchSessionList", () => {
     const fetchMock = fetchReturning({ sessions: [] });
     await Promise.all([fetchSessionList(a), fetchSessionList(b)]);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("fetchSessionList on an expired login", () => {
+  it("a 401 resolves null and signs the browser out to /login", async () => {
+    resetExpiredSession();
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => jsonResponse({ error: "unauthenticated" }, 401));
+
+    expect(await fetchSessionList(url())).toBeNull();
+    await leaveExpiredSession();
+
+    expect(fetchSpy).toHaveBeenCalledWith("/api/session/logout", { method: "POST" });
+    expect(replace).toHaveBeenCalledWith("/login");
+    fetchSpy.mockRestore();
+    resetExpiredSession();
   });
 });
