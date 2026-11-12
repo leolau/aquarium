@@ -98,6 +98,20 @@ describe("ProjectSkillsPanel", () => {
     expect(screen.getByText("Created here", { selector: "span" })).toBeTruthy();
   });
 
+  it("refetches behind the cached list when it mounts again, so new runs show without a full reload", async () => {
+    fetchMock.mockImplementation(() => json(PAYLOAD));
+    renderPanel();
+    await screen.findByText("vendor-po-checklist");
+    cleanup();
+
+    const fresh = { ...PAYLOAD.skills[0], name: "fresh-skill" };
+    fetchMock.mockImplementation(() => json({ ...PAYLOAD, skills: [...PAYLOAD.skills, fresh] }));
+    renderPanel();
+    expect(screen.getByText("vendor-po-checklist")).toBeTruthy();
+    await screen.findByText("fresh-skill");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("hides Uses / Improve where the caller lacks lab, and New skill when the host profile lacks it", async () => {
     fetchMock.mockImplementation(() => json(PAYLOAD));
     const props = renderPanel();

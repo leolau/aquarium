@@ -28,10 +28,12 @@ export function projectSkillsUrl(slug: string, days: number): string {
   return `/api/projects/${encodeURIComponent(slug)}/skills?days=${days}`;
 }
 
-function load(slug: string, days: number, force = false): Promise<void> {
+/** ``force`` drops the cached list first; ``revalidate`` refetches behind it so a remount shows new runs. */
+function load(slug: string, days: number, mode: "revalidate" | "force"): Promise<void> {
   const key = keyOf(slug, days);
-  if (!force && (cache.has(key) || inflight.has(key))) return inflight.get(key) ?? Promise.resolve();
-  if (force) {
+  const pending = inflight.get(key);
+  if (pending) return pending;
+  if (mode === "force") {
     cache.delete(key);
     emit();
   }
@@ -40,6 +42,7 @@ function load(slug: string, days: number, force = false): Promise<void> {
       cache.set(key, { status: "ready", view: normalizeProjectSkills(raw, days) });
     })
     .catch((err: unknown) => {
+      if (mode === "revalidate" && cache.get(key)?.status === "ready") return;
       cache.set(key, { status: "error", error: err instanceof Error ? err.message : String(err) });
     })
     .finally(() => {
@@ -78,9 +81,9 @@ export function useProjectSkills(slug: string, days: SkillWindow) {
     () => LOADING,
   );
   useEffect(() => {
-    void load(slug, days);
+    void load(slug, days, "revalidate");
   }, [slug, days]);
-  const reload = useCallback(() => load(slug, days, true), [slug, days]);
+  const reload = useCallback(() => load(slug, days, "force"), [slug, days]);
   return { state, reload };
 }
 

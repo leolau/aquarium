@@ -192,9 +192,9 @@ export function SkillUsagePanel({
 
   if (!current) {
     return (
-      <div data-component="SkillUsagePanel" data-state="loading" aria-busy="true" className="space-y-3">
+      <div data-component="SkillUsagePanel" data-state="loading" aria-busy="true" className="@container space-y-3">
         <div className="flex justify-end">{windowPicker}</div>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 @xl:grid-cols-4">
           {[0, 1, 2, 3].map((i) => (
             <div key={i} className={`${cardClass} h-[68px] animate-pulse`} />
           ))}
@@ -263,15 +263,16 @@ export function SkillUsagePanel({
   );
 
   return (
-    <div data-component="SkillUsagePanel" data-state={s.uses ? "ready" : "empty"} className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
-      <div className="min-w-0 space-y-3">
+    <div className="@container">
+    <div data-component="SkillUsagePanel" data-state={s.uses ? "ready" : "empty"} className="grid grid-cols-1 gap-4 @4xl:grid-cols-[minmax(0,1fr)_300px]">
+      <div className="@container min-w-0 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <p className="flex-1 text-sm text-[var(--color-muted)]">Every chat, kanban task and project run that loaded {name}, and what came of it.</p>
           {windowPicker}
           {project ? <ProjectEvidenceChip project={project} onClear={onClearProject} className="basis-full sm:basis-auto" /> : null}
         </div>
 
-        <dl className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <dl className="grid grid-cols-2 gap-3 @xl:grid-cols-4">
           {tiles.map(([value, label]) => (
             <div key={label} data-component="StatTile" className={`${cardClass} flex flex-col-reverse`}>
               <dt className="text-xs text-[var(--color-muted)]">{label}</dt>
@@ -395,6 +396,7 @@ export function SkillUsagePanel({
           </div>
         ) : null}
       </aside>
+    </div>
     </div>
   );
 }
@@ -524,7 +526,7 @@ function RunRow({
   const rateable = canRate(e);
   return (
     <li data-component="UsageRun" data-run={e.id} data-kind={kind} className="rounded-xl border border-[var(--color-border)] px-3 py-2.5">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+      <div className="flex flex-col gap-2 @xl:flex-row @xl:items-center @xl:gap-3">
         <div className="flex min-w-0 flex-1 items-start gap-2.5">
           <Icon size={18} className="mt-0.5 text-[var(--color-muted)]" />
           <div className="min-w-0 flex-1">
@@ -539,7 +541,7 @@ function RunRow({
             {e.note ? <p className="mt-1 text-xs italic text-[var(--color-muted)] [overflow-wrap:anywhere]">“{e.note}”</p> : null}
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-1.5 pl-7 sm:pl-0">
+        <div className="flex flex-wrap items-center gap-1.5 pl-7 @xl:pl-0">
           <span className={e.version_id && e.version_id === active ? accentChipClass : chipClass}>{versionLabel(e.version_id)}</span>
           <span data-outcome={e.outcome ?? "none"} className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-px text-[11px] ${pill.className}`}>
             <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-current" />
