@@ -180,10 +180,30 @@ def download_media(bridge_port, msg_id):
         return None, None
 
 
+def phone_owner(phone):
+    """Whose messages a configured phone's bridge carries, or None for the owner.
+
+    The phone entry's ``owner_user_id`` when set, else the person who added
+    the bridge on that port in Settings (``bridge-owners.json``).
+    """
+    if phone.get('owner_user_id'):
+        return phone['owner_user_id']
+    try:
+        from hermes_cli.wa_bridge_owners import load_owners
+        owners = load_owners()
+    except Exception as e:
+        print(f"[batcher] Could not read bridge owners: {e!r}")
+        return None
+    for rec in owners.values():
+        if rec.get('port') == phone.get('bridge_port'):
+            return rec['user_id']
+    return None
+
+
 def _save_and_register_media(media_data, filename, content_type, msg_id,
                              media_path, db, source_phone, chat_id,
                              sender_phone, sender_name, timestamp,
-                             inbound_item_id=None):
+                             inbound_item_id=None, owner_user_id=None):
     """Save media bytes to MEDIA_DIR, update DB, and register in file registry."""
     try:
         with open(media_path, 'wb') as f:
@@ -212,6 +232,7 @@ def _save_and_register_media(media_data, filename, content_type, msg_id,
             message_id=msg_id,
             received_at=datetime.fromisoformat(timestamp) if timestamp else None,
             inbound_item_id=inbound_item_id,
+            owner_user_id=owner_user_id,
         )
         if registered:
             print(f"[batcher] Registered media file: {filename}")
@@ -242,7 +263,7 @@ def _epoch_seconds(ts):
         return None
 
 
-def process_message(msg, source_phone, bridge_port=None):
+def process_message(msg, source_phone, bridge_port=None, owner_user_id=None):
     """Process a single message: write to DB, download media, add to batch."""
     msg_id = msg.get('messageId') or msg.get('key', {}).get('id') or str(uuid.uuid4())
     sender_phone = extract_sender_phone(msg)
@@ -299,6 +320,7 @@ def process_message(msg, source_phone, bridge_port=None):
             occurred_at=timestamp,
             has_attachments=bool(media_type),
             metadata={'is_group': bool(is_group), 'media_type': media_type},
+            owner_user_id=owner_user_id,
         )
     except ImportError:
         pass  # shared.inbound_registration not available
@@ -335,6 +357,7 @@ def process_message(msg, source_phone, bridge_port=None):
                     media_mimetype or media_ct or 'application/octet-stream',
                     msg_id, media_path, db, source_phone, chat_id,
                     sender_phone, sender_name, timestamp, inbound_item_id,
+                    owner_user_id,
                 )
         else:
             # Fallback: try the bridge's /media/{id} endpoint.
@@ -347,6 +370,7 @@ def process_message(msg, source_phone, bridge_port=None):
                     media_mimetype or media_ct or 'application/octet-stream',
                     msg_id, media_path, db, source_phone, chat_id,
                     sender_phone, sender_name, timestamp, inbound_item_id,
+                    owner_user_id,
                 )
             else:
                 print(f"[batcher] Could not download media for {msg_id} (bridge has no mediaUrls and /media endpoint unavailable)")
@@ -443,7 +467,7 @@ def flush_batch(batch_key):
           f"({len(batch['messages'])} msgs) -> {batch_file}")
 
 
-def poll_bridge(port, source_phone):
+def poll_bridge(port, source_phone, owner_user_id=None):
     """Continuously poll a bridge for new messages."""
     url = f"http://localhost:{port}/messages"
     consecutive_errors = 0
@@ -457,7 +481,8 @@ def poll_bridge(port, source_phone):
             if isinstance(data, list) and len(data) > 0:
                 for msg in data:
                     try:
-                        process_message(msg, source_phone, bridge_port=port)
+                        process_message(msg, source_phone, bridge_port=port,
+                                        owner_user_id=owner_user_id)
                     except Exception as e:
                         msg_id = msg.get('messageId') if isinstance(msg, dict) else None
                         print(f"[batcher] Failed to process message {msg_id} from {port}: {e!r} "
@@ -528,7 +553,7 @@ def main():
         if phone.get('enabled', True):
             t = threading.Thread(
                 target=poll_bridge,
-                args=(phone['bridge_port'], phone['id']),
+                args=(phone['bridge_port'], phone['id'], phone_owner(phone)),
                 daemon=True,
                 name=f"poll-{phone['id']}"
             )

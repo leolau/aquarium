@@ -371,6 +371,9 @@ def sync_events(db, account_id, credentials, calendar_id='primary'):
                         'status': status,
                         'all_day': bool(all_day),
                     },
+                    # The person who connected this calendar in Settings; a
+                    # legacy workspace file has none and stays the owner's.
+                    owner_user_id=getattr(credentials, 'owner_user_id', '') or None,
                 )
             except ImportError:
                 pass
