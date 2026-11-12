@@ -360,13 +360,9 @@ class TestSendGate:
         assert rc == 0
 
     @pytest.mark.asyncio
-    async def test_an_account_the_delivery_cannot_honour_is_refused(self) -> None:
-        """``send_message_tool._handle_send`` reads only ``target``/``message``.
-
-        Until it threads an account through to the adapter, an approval that
-        names one must refuse rather than deliver by whichever account the
-        platform config happens to resolve.
-        """
+    async def test_the_approved_account_reaches_the_delivery(self) -> None:
+        """C4: the reply leaves by the account the approval names;
+        ``send_message_tool`` refuses itself when that account doesn't resolve."""
         from hermes_cli.todos_cmd import _send
 
         action = ProposedAction(
@@ -386,7 +382,10 @@ class TestSendGate:
         with (
             patch("hermes_cli.human_comms.NotificationStore", return_value=notifications),
             patch("hermes_cli.send_cmd._load_hermes_env"),
-            patch("tools.send_message_tool.send_message_tool") as delivery,
+            patch(
+                "tools.send_message_tool.send_message_tool",
+                return_value='{"success": true}',
+            ) as delivery,
         ):
             rc = await _send(
                 store, PRINCIPAL, "tsk_1",
@@ -394,8 +393,8 @@ class TestSendGate:
                 account="work", thread=None,
                 json_mode=False,
             )
-        assert rc == _SEND_ROUTING
-        delivery.assert_not_called()
+        assert rc == 0
+        assert delivery.call_args.args[0]["account"] == "work"
 
     @pytest.mark.asyncio
     async def test_failed_delivery_records_failed(self) -> None:
