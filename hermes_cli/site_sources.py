@@ -41,6 +41,7 @@ import secrets
 import sys
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -2998,9 +2999,33 @@ _DONE = object()
 
 
 async def _consume(writer: SiteWriter, run: SiteRun, iterator: Iterator[Any], allowed: Set[str]) -> None:
-    """Pull items from the (blocking) runner in a thread, write them in batches."""
+    """Pull items from the (blocking) runner in a thread, write them in batches.
+
+    The runner drives sync Playwright, which only works on the thread that
+    started it, so every batch (and the final close) runs on one dedicated thread.
+    """
     it = iter(iterator)
     raised: List[BaseException] = []
+    loop = asyncio.get_running_loop()
+    worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="site-refresh")
+    try:
+        await _consume_batches(writer, run, it, allowed, raised, lambda fn: loop.run_in_executor(worker, fn))
+    finally:
+        close = getattr(it, "close", None)
+        if close is not None:
+            with contextlib.suppress(Exception):
+                await loop.run_in_executor(worker, close)
+        worker.shutdown(wait=False)
+
+
+async def _consume_batches(
+    writer: SiteWriter,
+    run: SiteRun,
+    it: Iterator[Any],
+    allowed: Set[str],
+    raised: List[BaseException],
+    on_worker: Callable[[Callable[[], Any]], Any],
+) -> None:
 
     def _take() -> List[Any]:
         batch: List[Any] = []
@@ -3015,7 +3040,7 @@ async def _consume(writer: SiteWriter, run: SiteRun, iterator: Iterator[Any], al
         return batch
 
     while True:
-        batch = await asyncio.to_thread(_take)
+        batch = await on_worker(_take)
         if not batch and not raised:
             return
         variable: Dict[str, List[Tuple[Optional[str], Dict[str, Any]]]] = {}

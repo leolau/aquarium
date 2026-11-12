@@ -424,6 +424,16 @@ def _normalize_optional_job_value(value: Optional[Any], *, strip_trailing_slash:
     return text or None
 
 
+def _creator_user_id() -> Optional[str]:
+    """The person this tool call runs for, who then owns the job (FG-38 P3)."""
+    try:
+        from tools.access_policy import current_principal
+
+        return current_principal()[0] or None
+    except Exception:
+        return None
+
+
 def _normalize_deliver_param(value: Any) -> Optional[str]:
     """Normalize a user-supplied ``deliver`` value to the canonical string form.
 
@@ -740,6 +750,7 @@ def cronjob(
                 workdir=_normalize_optional_job_value(workdir),
                 no_agent=_no_agent,
                 attach_to_session=attach_to_session,
+                owner_user_id=_creator_user_id(),
             )
             _notify_provider_jobs_changed_safe()
             _create_message = f"Cron job '{job['name']}' created."

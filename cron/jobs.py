@@ -159,7 +159,7 @@ def _jobs_lock():
 # as a filesystem path component under ``OUTPUT_DIR``; allowing it to be
 # updated lets an unsafe value (``../escape``, absolute path, nested) leak
 # into output writes/deletes.
-_IMMUTABLE_JOB_FIELDS = frozenset({"id"})
+_IMMUTABLE_JOB_FIELDS = frozenset({"id", "owner_user_id"})
 
 
 def _job_output_dir(job_id: str) -> Path:
@@ -910,6 +910,7 @@ def create_job(
     workdir: Optional[str] = None,
     no_agent: bool = False,
     attach_to_session: Optional[bool] = None,
+    owner_user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Create a new cron job.
@@ -950,6 +951,9 @@ def create_job(
                 With ``no_agent=True``, ``workdir`` is still applied as the
                 script's cwd so relative paths inside the script behave
                 predictably.
+        owner_user_id: The person the job belongs to. Its runs act as them,
+                so what they collect is theirs. Set once; updates cannot
+                change it.
         no_agent: When True, skip the agent entirely — run ``script`` on schedule
                 and deliver its stdout directly. Empty stdout = silent (no
                 delivery). Requires ``script`` to be set. Ideal for classic
@@ -1059,6 +1063,9 @@ def create_job(
         # Delivery configuration
         "deliver": deliver,
         "origin": origin,  # Tracks where job was created for "origin" delivery
+        # Whose job it is: runs act as this person and what they collect is
+        # theirs (FG-38 P3). Absent on jobs from before owners were recorded.
+        **({"owner_user_id": str(owner_user_id).strip()} if str(owner_user_id or "").strip() else {}),
         "enabled_toolsets": normalized_toolsets,
         "workdir": normalized_workdir,
     }
