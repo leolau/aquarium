@@ -176,6 +176,17 @@ def register_todo(
                 return None
             source_ref = None
             if surface and external_id:
+                from shared.inbound_registration import arrival_people
+
+                people = await arrival_people(
+                    principal,
+                    surface=surface,
+                    external_id=external_id,
+                    account_id=account_id or "",
+                )
+                if not people:
+                    return None
+                principal = people[0]
                 source_ref = await _lookup_arrival(
                     principal,
                     surface=surface,
