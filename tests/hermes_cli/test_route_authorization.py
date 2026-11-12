@@ -109,6 +109,8 @@ HANDLER_CHECKED = {
     "POST /api/profiles/suggestions/{suggestion_id}/adopt": ("owner", "principal.is_owner"),
     "POST /api/profiles/suggestions/{suggestion_id}/dismiss": ("owner", "principal.is_owner"),
     "GET /api/email-accounts": ("owner", "_owner_principal"),
+    "GET /api/settings/accounts": ("owner", "principal.is_owner"),
+    "PUT /api/settings/accounts": ("owner", "principal.is_owner"),
     "PATCH /api/email-accounts": ("owner", "_owner_principal"),
     # wa_bridge_api: only the person a bridge belongs to (bridge-owners.json;
     # unrecorded bridges = the install owner) sees its QR or controls it
@@ -184,6 +186,8 @@ SIGNED_IN = {
     "GET /api/registry/todos/facets",
     "POST /api/registry/todos",
     "GET /api/registry/todos/{todo_id}",
+    "GET /api/registry/todos/{todo_id}/draft",
+    "PATCH /api/registry/todos/{todo_id}/draft",
     "POST /api/registry/todos/{todo_id}/start",
     "PATCH /api/registry/todos/{todo_id}",
     "POST /api/registry/todos/{todo_id}/stage",
