@@ -18,6 +18,10 @@ Executed by `hermes_cli/site_recipe_runner.py` (`run_recipe`). Plan:
   as `aborted: "too_large"`. A synchronous XHR is refused
   (`aborted: "sync_xhr"`). Refresh runs ignore it (`extract_json` has its
   own `max_bytes`).
+- `allow_empty_filters` (explore only, `click`/`submit`, true/false):
+  explore does not click/submit a search whose filters are all empty and
+  reports `refused: "empty_filters"` with the empty fields; `true` lets
+  that one step through. Refresh runs ignore it.
 
 ## login
 
@@ -57,11 +61,11 @@ step. Without one, `click`, `submit` and `press` wait twice the recipe's
 | op | keys |
 |---|---|
 | `goto` | `url` (same site only) |
-| `click` | target, `timeout_ms` |
+| `click` | target, `timeout_ms`, `allow_empty_filters` |
 | `fill` | `selector`, `value` (template), `default` (used when `{{cursor}}` has no value), `format` |
 | `select` | `selector`, `value` or `label` |
 | `press` | `selector`, `key` (`Enter` or `Tab`), `timeout_ms` |
-| `submit` | `selector` of the search button or form (default first form), `timeout_ms` |
+| `submit` | `selector` of the search button or form (default first form), `timeout_ms`, `allow_empty_filters` |
 | `wait` | `selector` (visible), `text`, `gone` (hidden), `ms`, `timeout_ms` |
 | `extract_table` | `table` (selector), `row` (default `tbody tr`), `header` (header cell selector), `columns` |
 | `extract_fields` | `key` (content key), `fields` |

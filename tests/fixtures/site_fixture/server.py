@@ -161,6 +161,7 @@ _DATATABLES_SHIM = r"""
   const DataTable = function (sel, opts) { return init(resolve(sel), opts || {}); };
   DataTable.Api = Api;
   DataTable.isDataTable = (sel) => tables.has(resolve(sel)) || clones.has(resolve(sel));
+  DataTable.tables = () => Array.from(tables.keys());
   window.DataTable = DataTable;
   if (window.__withJquery) {
     const $ = (sel) => ({0: resolve(sel), jquery: '3.7.1', DataTable(opts) { return tables.has(resolve(sel)) ? new Api(sel) : init(resolve(sel), opts || {}); }});
@@ -327,6 +328,10 @@ class _Handler(BaseHTTPRequestHandler):
             "/stock/framed": self._stock_framed,
             "/setup/functions": self._setup_functions,
             "/staff": self._staff,
+            "/staff/clean": self._staff_clean,
+            "/staff/list": self._staff_list,
+            "/rules": self._rules_page,
+            "/rules/search": self._rules_search,
         }.get(path)
         if handler is None:
             return self._send(404, _page("Not found", "<p>Not found</p>"))
@@ -624,6 +629,97 @@ class _Handler(BaseHTTPRequestHandler):
             f'<input type="hidden" name="_token" value="{secrets.token_hex(20)}"></form>'
         )
         self._send(200, _page("Employee Setting", body))
+
+    def _staff_clean(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
+        """Employee list whose visible columns are clean but whose page data carries password hashes."""
+        h = f"$2y$10${secrets.token_urlsafe(40)[:53]}"
+        body = (
+            "<h1>Employee list</h1>"
+            '<script src="/static/datatables-shim.js"></script>'
+            f'<div id="me" data-hash="{h}" data-role="ops"></div>'
+            '<form id="prefs"><input type="hidden" name="_token" value="' + secrets.token_hex(20) + '">'
+            f'<input type="hidden" name="user_secret" value="{secrets.token_hex(12)}">'
+            '<input type="hidden" name="page" value="1"></form>'
+            '<table id="emps"><thead><tr><th>Username</th><th>Name</th><th>Role</th></tr></thead>'
+            "<tbody></tbody></table>"
+            "<script>"
+            f'window.STAFF = {{"amy": {{"role": "ops", "password_hash": "{h}"}}}};'
+            f'window.CONFIG = {{"csrf_token": "{secrets.token_hex(16)}", "password_changed_at": "2026-01-01"}};'
+            "new DataTable('#emps', {ajax: '/staff/list', columns: [{data: 'user'}, {data: 'name'}, {data: 'role'}]});"
+            "</script>"
+        )
+        self._send(200, _page("Employee list", body))
+
+    def _staff_list(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
+        rows = [{"user": user, "name": name, "role": role,
+                 "auth": {"pwd": f"$2y$10${secrets.token_urlsafe(40)[:53]}"}}
+                for user, name, role in (("amy", "Amy Chan", "ops"), ("ben", "Ben Lee", "qa"),
+                                         ("cat", "Cat Wong", "ops"))]
+        self._send(200, json.dumps({"data": rows}), ctype="application/json")
+
+    def _rules_page(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
+        """A rule-builder search like jQuery QueryBuilder: pick a field, then an operator and values."""
+        body = (
+            "<h1>Device query</h1>"
+            '<div class="panel" id="rb"><div id="builder" class="query-builder"><div class="rule-container">'
+            '<div class="rule-filter-container"><select id="rb-field" name="builder_rule_0_filter">'
+            '<option value="-1">------</option><option value="stock_in">Stock-in date</option>'
+            '<option value="imei">IMEI</option></select></div>'
+            '<div class="rule-operator-container" style="display:none">'
+            '<select id="rb-op" name="builder_rule_0_operator"></select></div>'
+            '<div class="rule-value-container" style="display:none">'
+            '<input id="rb-v1" name="builder_rule_0_value_0"><input id="rb-v2" name="builder_rule_0_value_1">'
+            "</div></div></div>"
+            '<button type="button" id="rb-search">Search</button></div>'
+            '<table id="rb-results"><thead><tr><th>IMEI</th><th>Stock-in</th></tr></thead><tbody></tbody></table>'
+            "<script>"
+            "const OPS = {stock_in: ['between'], imei: ['equal']};"
+            "const field = document.getElementById('rb-field'), op = document.getElementById('rb-op');"
+            "field.addEventListener('change', () => {"
+            "  const ops = OPS[field.value] || [];"
+            "  op.innerHTML = ops.map((o) => `<option>${o}</option>`).join('');"
+            "  op.parentNode.style.display = ops.length ? '' : 'none';"
+            "  document.querySelector('.rule-value-container').style.display = ops.length ? '' : 'none';"
+            "  document.getElementById('rb-v2').style.display = field.value === 'stock_in' ? '' : 'none';"
+            "});"
+            "window.builder = {getRules() {"
+            "  if (field.value === '-1') return {condition: 'AND', rules: []};"
+            "  const v = [document.getElementById('rb-v1').value];"
+            "  if (field.value === 'stock_in') v.push(document.getElementById('rb-v2').value);"
+            "  return {condition: 'AND', rules: [{id: field.value, field: field.value, operator: op.value,"
+            "    value: field.value === 'stock_in' ? v : v[0]}]};"
+            "}};"
+            "document.getElementById('rb-search').addEventListener('click', async () => {"
+            "  const r = await fetch('/rules/search', {method: 'POST', headers: {'Content-Type': 'application/json'},"
+            "    body: JSON.stringify(window.builder.getRules())});"
+            "  const j = await r.json();"
+            "  document.querySelector('#rb-results tbody').innerHTML = j.data.map((d) =>"
+            "    `<tr><td>${d.imei}</td><td>${d.stock_in}</td></tr>`).join('');"
+            "});"
+            "</script>"
+        )
+        self._send(200, _page("Device query", body))
+
+    def _rules_search(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
+        """Answers jQuery QueryBuilder rules JSON; no rules at all streams the whole table."""
+        if method != "POST":
+            return self._send(405, "{}", ctype="application/json")
+        raw = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode("utf-8")
+        payload = json.loads(raw or "{}")
+        rules = payload.get("rules") if isinstance(payload, dict) else None
+        self._note_json_call(method, {"rules": json.dumps(rules)})
+        if not rules:
+            return self._stream_big("rules", 40_000_000, declare=False)
+        rows = [{"imei": f"35{i:013d}", "stock_in": (self.state.today - dt.timedelta(days=i % 30)).isoformat()}
+                for i in range(300)]
+        for rule in rules:
+            if rule.get("field") == "stock_in" and rule.get("operator") == "between":
+                lo, hi = (_parse_date(str(v)) for v in rule.get("value") or ["", ""])
+                rows = [r for r in rows if (lo is None or r["stock_in"] >= lo.isoformat())
+                        and (hi is None or r["stock_in"] <= hi.isoformat())]
+            elif rule.get("field") == "imei":
+                rows = [r for r in rows if r["imei"] == rule.get("value")]
+        self._send(200, json.dumps({"data": rows, "recordsTotal": len(rows)}), ctype="application/json")
 
     def _warehouses_api(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
         self._send(200, json.dumps(self.state.warehouses), ctype="application/json")

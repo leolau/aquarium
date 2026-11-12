@@ -644,7 +644,7 @@ def test_e2e_browse_inventories_buttons_forms_and_tables(site):
     probes = [
         {"name": "dashboard", "steps": [{"op": "goto", "url": "/dashboard"}]},
         {"name": "orders", "steps": [{"op": "goto", "url": "/dashboard"}, {"op": "click", "text": "Orders"},
-                                     {"op": "submit", "selector": "#btn-search"}]},
+                                     {"op": "submit", "selector": "#btn-search", "allow_empty_filters": True}]},
         {"name": "broken", "steps": [{"op": "click", "selector": "#does-not-exist"}]},
     ]
     recipe = fixture_recipe(site.base_url)
@@ -1096,7 +1096,8 @@ def test_e2e_browse_labels_nested_steps_and_reports_pending_calls(site):
         {"op": "fill", "selector": "#q-to", "value": "{{window_to}}"},
         {"op": "click", "text": "Search"}, {"op": "wait", "ms": 300}]}
     probes = [{"name": "windows", "steps": [{"op": "goto", "url": "/query"}, window]},
-              {"name": "slow", "steps": [{"op": "goto", "url": "/query"}, {"op": "click", "text": "Slow search"},
+              {"name": "slow", "steps": [{"op": "goto", "url": "/query"}, {"op": "click", "text": "Slow search",
+                                                                          "allow_empty_filters": True},
                                          {"op": "wait", "selector": "#never", "timeout_ms": 500}]}]
     recipe = fixture_recipe(site.base_url)
     recipe["timeout_ms"] = 1000
@@ -1142,16 +1143,17 @@ def test_secret_looking_column_names(name, secret):
     assert srr.looks_like_secret_column(name) is secret
 
 
-def _stock_search(*filters):
-    return [{"op": "goto", "url": "/stock"}, *filters, {"op": "click", "text": "Search"},
+def _stock_search(*filters, allow_empty_filters=False):
+    click = {"op": "click", "text": "Search", **({"allow_empty_filters": True} if allow_empty_filters else {})}
+    return [{"op": "goto", "url": "/stock"}, *filters, click,
             {"op": "wait", "selector": "#s-status:has-text('aborted'), #s-results tbody tr", "timeout_ms": 20000}]
 
 
 @needs_browser
 def test_e2e_explore_cuts_off_an_unfiltered_search_and_warns_before_it(site):
-    probes = [{"name": "stock", "steps": _stock_search()}]
+    probes = [{"name": "stock", "steps": _stock_search(allow_empty_filters=True)}]
     inv = dict(srr.browse(fixture_recipe(site.base_url), probes, CRED, allow_private=True))["stock"]
-    assert "error" not in inv, inv["error"]
+    assert "error" not in inv and "refused" not in inv, inv
     (group,) = inv["step_requests"]
     assert group["step"] == 2 and group["op"] == "click"
     (req,) = group["requests"]
@@ -1164,7 +1166,7 @@ def test_e2e_explore_cuts_off_an_unfiltered_search_and_warns_before_it(site):
     time.sleep(1)
     assert site.state.big_sent["search"] < 4 * srr.DEFAULT_CALL_MAX_BYTES
     (warning,) = inv["warnings"]
-    assert warning["step"] == 2 and set(warning["empty_filters"]) == {"#s-from", "#s-to"}
+    assert warning["step"] == 2 and set(warning["empty_filters"]) == {"#s-from", "#s-to", "#s-wh"}
     assert "narrowest filter" in warning["warning"]
     summary = srr.inventory_summary("stock", inv)
     assert "POST /stock/search [application/json] body [] -> CUT OFF (too large" in summary
@@ -1176,7 +1178,8 @@ def test_e2e_explore_cuts_off_an_unfiltered_search_and_warns_before_it(site):
 @needs_browser
 def test_e2e_explore_cut_off_uses_the_announced_size_and_the_recipe_cap(site):
     recipe = dict(fixture_recipe(site.base_url), explore_max_call_bytes=100_000)
-    probes = [{"name": "all", "steps": [{"op": "goto", "url": "/stock"}, {"op": "click", "text": "Export all"},
+    probes = [{"name": "all", "steps": [{"op": "goto", "url": "/stock"}, {"op": "click", "text": "Export all",
+                                                                         "allow_empty_filters": True},
                                         {"op": "wait", "selector": "#s-status:has-text('export failed')"}]}]
     inv = dict(srr.browse(recipe, probes, CRED, allow_private=True))["all"]
     (req,) = inv["step_requests"][0]["requests"]
@@ -1201,7 +1204,8 @@ def test_e2e_a_narrow_search_is_not_cut_off_or_warned(site):
 
 
 def _stock_probe(name, button, done, url="/stock"):
-    return {"name": name, "steps": [{"op": "goto", "url": url}, {"op": "click", "text": button},
+    return {"name": name, "steps": [{"op": "goto", "url": url},
+                                    {"op": "click", "text": button, "allow_empty_filters": True},
                                     {"op": "wait", "selector": done, "timeout_ms": 20000}]}
 
 
@@ -1279,3 +1283,126 @@ def test_e2e_explore_flags_and_masks_a_password_hash_column(site):
     assert {f["name"]: f["value"] for f in form["fields"]} == {"api_key": srr.REDACTED, "_token": srr.REDACTED}
     assert fx.STAFF_API_KEY not in json.dumps(inv)
     assert "filled-in fields ['api_key']" in note
+
+
+# --------------------------------------------------------------------------
+# explore: empty searches refused; secrets in background and inline data
+# --------------------------------------------------------------------------
+
+
+def _rules_search(*rule, **click):
+    return [{"op": "goto", "url": "/rules"}, *rule, {"op": "click", "text": "Search", **click},
+            {"op": "wait", "selector": "#rb-results tbody tr", "timeout_ms": 10000}]
+
+
+@needs_browser
+def test_e2e_explore_refuses_an_empty_rule_builder_search(site):
+    probes = [{"name": "rules", "steps": _rules_search()}]
+    inv = dict(srr.browse(fixture_recipe(site.base_url), probes, CRED, allow_private=True))["rules"]
+    assert inv["refused"] == "empty_filters" and "error" not in inv
+    assert inv["refused_step"] == 2 and inv["refused_op"] == "click" and inv["empty_filters"] == ["#rb-field"]
+    assert "one day" in inv["hint"] and "step_requests" in inv["hint"]
+    assert "step_requests" not in inv
+    assert "REFUSED at step 2 (click): empty_filters ['#rb-field']" in srr.inventory_summary("rules", inv)
+    assert any(t["selector"] == "#rb-results" for t in inv["tables"])  # the page is still inventoried
+    assert [c for c in site.state.json_calls if c["path"] == "/rules/search"] == []
+    assert site.state.forbidden_hits == []
+
+
+@needs_browser
+def test_e2e_allow_empty_filters_lets_an_empty_search_through_to_the_cap(site):
+    steps = _rules_search(allow_empty_filters=True)
+    steps[-1] = {"op": "wait", "ms": 2500}
+    inv = dict(srr.browse(fixture_recipe(site.base_url), [{"name": "rules", "steps": steps}], CRED,
+                          allow_private=True))["rules"]
+    assert "refused" not in inv and "error" not in inv, inv
+    (req,) = inv["step_requests"][0]["requests"]
+    assert req["path"] == "/rules/search" and req["aborted"] == "too_large"
+    (warning,) = inv["warnings"]
+    assert warning["empty_filters"] == ["#rb-field"]
+
+
+@needs_browser
+def test_e2e_a_one_day_rule_is_searched_and_its_payload_becomes_extract_json(site):
+    day = (site.state.today - dt.timedelta(days=1)).isoformat()
+    rule = [{"op": "select", "selector": "#rb-field", "value": "stock_in"},
+            {"op": "wait", "selector": "#rb-op"},
+            {"op": "select", "selector": "#rb-op", "value": "between"},
+            {"op": "fill", "selector": "#rb-v1", "value": day}, {"op": "fill", "selector": "#rb-v2", "value": day}]
+    inv = dict(srr.browse(fixture_recipe(site.base_url), [{"name": "rules", "steps": _rules_search(*rule)}], CRED,
+                          allow_private=True))["rules"]
+    assert "refused" not in inv and "error" not in inv and "warnings" not in inv, inv
+    (group,) = [g for g in inv["step_requests"] if g["op"] == "click"]
+    (req,) = group["requests"]
+    assert req["method"] == "POST" and req["path"] == "/rules/search" and req["status"] == 200
+    sent = json.loads(req["body"])
+    assert sent == {"condition": "AND", "rules": [{"id": "stock_in", "field": "stock_in", "operator": "between",
+                                                    "value": [day, day]}]}
+    assert req["shape"]["records_path"] == "data" and req["shape"]["records"] == 10
+    assert req["shape"]["record_keys"] == ["imei", "stock_in"]
+    # the payload read from step_requests, as a bounded extract_json over one-day windows
+    body = json.loads(req["body"])
+    body["rules"][0]["value"] = ["{{window_from}}", "{{window_to}}"]
+    step = {"op": "extract_json", "url": req["path"], "method": "POST", "json": body, "records": "data",
+            "columns": {"imei": {"field": "imei"}, "stock_in": {"field": "stock_in", "type": "date"}}}
+    recipe = _one_entity(site, [{"op": "date_windows", "from": "{{date-2}}", "days": 1, "steps": [step]}], ["imei"])
+    assert srr.recipe_problems(recipe) == []
+    items, report = _run(site, recipe)
+    assert len(items) == 30 and report.full_entities == ["data"]
+    calls = [json.loads(c["values"]["rules"]) for c in site.state.json_calls if c["path"] == "/rules/search"]
+    assert all(c and c[0]["value"][0] == c[0]["value"][1] for c in calls)  # every call asked for one day
+    assert "rules" not in site.state.big_sent and site.state.forbidden_hits == []
+
+
+@pytest.mark.parametrize("step, ok", [
+    ({"op": "click", "text": "Search", "allow_empty_filters": True}, True),
+    ({"op": "submit", "selector": "#f", "allow_empty_filters": False}, True),
+    ({"op": "click", "text": "Search", "allow_empty_filters": "yes"}, False),
+    ({"op": "fill", "selector": "#a", "value": "x", "allow_empty_filters": True}, False),
+])
+def test_allow_empty_filters_is_a_true_false_option_of_click_and_submit(step, ok):
+    problems = srr._steps_problems("probe", [{"op": "goto", "url": "/"}, step])
+    assert (problems == []) is ok, problems
+    assert ok or "allow_empty_filters" in problems[0]
+
+
+@needs_browser
+def test_e2e_explore_flags_secrets_in_page_data_behind_a_clean_table(site):
+    steps = [{"op": "goto", "url": "/staff/clean"}, {"op": "wait", "selector": "#emps tbody tr"}]
+    inv = dict(srr.browse(fixture_recipe(site.base_url), [{"name": "emps", "steps": steps}], CRED,
+                          allow_private=True))["emps"]
+    table = next(t for t in inv["tables"] if t["selector"] == "#emps")
+    assert table["headers"] == ["Username", "Name", "Role"] and "secret_columns" not in table
+    found = inv["inline_secrets"]
+    assert "script 1: STAFF.amy.password_hash" not in found  # where/key only, as the page holds it
+    assert any(s.startswith("script") and s.endswith(": password_hash") for s in found), found
+    assert "div#me [data-hash]: hash" in found
+    assert "hidden input: user_secret" in found
+    assert any(s.startswith("datatable table#emps rows") and s.endswith("auth.pwd") for s in found), found
+    # CSRF tokens and dated fields are not secrets
+    assert not any(k in s for s in found for k in ("_token", "csrf", "password_changed_at", "data-role"))
+    (load,) = [r for g in inv["step_requests"] for r in g["requests"] if r["path"] == "/staff/list"]
+    assert "data.auth.pwd" in load["secret_keys"]
+    (note,) = inv["security"]
+    assert "data in the page itself" in note and "/staff/list" in note and "Exclude the whole entity" in note
+    dumped = json.dumps(inv)
+    assert "$2y$" not in dumped
+    assert "SECURITY:" in srr.inventory_summary("emps", inv)
+
+
+@needs_browser
+def test_e2e_a_clean_page_with_csrf_tokens_is_not_flagged(site):
+    inv = dict(srr.browse(fixture_recipe(site.base_url), [{"name": "q", "steps": [{"op": "goto", "url": "/query"}]},
+                                                          {"name": "dt", "steps": [{"op": "goto", "url": "/devices"}]}],
+                          CRED, allow_private=True))
+    for page in inv.values():
+        assert "security" not in page and "inline_secrets" not in page and "inline_data" not in page
+
+
+def test_secret_paths_in_a_json_answer():
+    answer = {"rows": [{"id": 1, "name": "Ann"}], "audit": [{"by": {"pwd_hash": "$2y$10$" + "a" * 53}}],
+              "csrf_token": "c" * 40, "password_changed_at": "2026-01-01", "api_key": "k" * 20,
+              "session": "eyJhbGciOiJI.eyJzdWIiOiIx.sig", "has_password": True, "token": ""}
+    assert sorted(srr.secret_paths(answer)) == ["api_key", "audit.by.pwd_hash", "session"]
+    assert srr.json_shape(answer)["secret_keys"]
+    assert "secret_keys" not in srr.json_shape({"data": [{"id": 1, "name": "Ann", "token_count": 3}]})
