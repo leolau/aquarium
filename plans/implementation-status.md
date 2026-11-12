@@ -52,9 +52,24 @@ develop`, HSD via the agent-home software-upgrade release flow) track
   guard tests pass; full vitest run pending CI.
 - `python -m py_compile` on all touched Python files — clean.
 
-### Not yet verified
+### Verified live on Hetzner (2026-11-12, branch deploy `3bc260fe6`)
 
-- Live loop on the box (needs deploy + `triage.auto_work` config flip).
+- Synthetic whatsapp arrival → `work_request` → to-do → auto-started real
+  session → `DRAFT.md`+`REPLY.txt` → `review` → proposal → approve →
+  **real send** bridge 3000 phone1→phone2 (`msgid 3EB0F0F3CB5CD20BCFC285`);
+  replay correctly refused (`already_sent`); pending-refusal also verified.
+- Email leg verified through send dispatch; delivery blocked by dead
+  box-side credentials (OAuth grant `invalid_grant`, `EMAIL1_PASSWORD`
+  app password stale) — pre-existing infra debt, not the feature code.
+- Smoke test surfaced + fixed: cross-user draft-dir perms (`drafts/` 01777,
+  leaf 0777, atomic PATCH write) and JSONB `work_result` decode.
+
+### Still open
+
+- Re-auth the leo11lau@gmail.com credential (Settings → Email, or a fresh
+  app password) then re-test the email send leg.
+- `notify.im_target` still unset on both channels (in-app notify works;
+  IM push needs the flag).
 
 ## Known follow-ups (not in scope)
 
