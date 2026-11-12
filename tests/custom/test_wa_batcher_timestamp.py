@@ -125,6 +125,6 @@ def test_one_bad_message_does_not_drop_the_rest_of_the_poll(batcher):
     module.urlopen = fake_urlopen
     module.time.sleep = lambda _seconds: None
     with pytest.raises(_StopLoop):
-        module.poll_bridge(3001, "phone2")
+        module.poll_bridge({"bridge_port": 3001, "id": "phone2"})
 
     assert set(_stored(db_path)) == {"M2", "M3"}

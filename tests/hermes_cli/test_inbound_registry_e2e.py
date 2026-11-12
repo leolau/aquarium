@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 
 import asyncpg
 import pytest
+from pathlib import Path
 
 from hermes_cli.access import Principal, PrincipalStore
 from hermes_cli.datastore import get_store, initialize_supabase_app
@@ -1487,3 +1488,42 @@ async def test_owners_for_under_rls_ranks_by_who_registered_last(
         ) == ["bob"]
     finally:
         await conn.close()
+
+
+def test_keep_owner_leaves_an_earlier_arrival_with_its_person(
+    postgres_dsn: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An update to an item registered before its account was reassigned stays
+    with that item's person; a new item goes to the account's new person."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "custom"))
+    import hermes_cli.inbound_registry as inbound_registry
+    import shared.inbound_registration as ir
+
+    registry = asyncio.run(_registry(postgres_dsn))
+    fields = {"external_id": "evt-1", "account_id": "heidi@example.com"}
+    asyncio.run(_arrive(registry, _principal("ada"), surface="calendar", **fields))
+
+    async def owner():
+        return _principal("leo", "owner")
+
+    async def person(user_id):
+        return _principal(user_id)
+
+    monkeypatch.setattr(ir, "_resolve_owner", owner)
+    monkeypatch.setattr(ir, "resolve_person", person)
+    monkeypatch.setattr(inbound_registry, "default_registry", lambda mode=None: registry)
+
+    assert ir.register_item(surface="calendar", owner_user_id="bob", keep_owner=True, **fields)
+    assert ir.register_item(
+        surface="calendar", owner_user_id="bob", keep_owner=True,
+        external_id="evt-2", account_id="heidi@example.com",
+    )
+    leo = _principal("leo", "owner")
+    owners = asyncio.run(registry.owners_for(leo, surface="calendar", **fields))
+    assert owners == ["ada"]
+    new = asyncio.run(registry.owners_for(
+        leo, surface="calendar", external_id="evt-2", account_id="heidi@example.com"
+    ))
+    assert new == ["bob"]
