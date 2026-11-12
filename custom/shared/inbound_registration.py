@@ -118,29 +118,37 @@ def mark_importance(
         from hermes_cli.inbound_registry import default_registry
 
         async def _do() -> bool:
-            principal = await _resolve_owner()
-            if principal is None:
+            owner = await _resolve_owner()
+            if owner is None:
                 return False
             registry = default_registry("prod")
             stamped = False
-            if importance:
-                stamped = await registry.set_importance(
-                    principal,
-                    surface=surface,
-                    external_id=external_id,
-                    account_id=account_id or "",
-                    importance=importance,
-                )
-            if attention_reason:
-                flagged = await registry.flag_attention(
-                    principal,
-                    surface=surface,
-                    external_id=external_id,
-                    account_id=account_id or "",
-                    reason=attention_reason,
-                    priority=attention_priority,
-                )
-                stamped = stamped or flagged
+            for principal in await arrival_people(
+                owner,
+                surface=surface,
+                external_id=external_id,
+                account_id=account_id or "",
+                registry=registry,
+            ):
+                if importance:
+                    set_ = await registry.set_importance(
+                        principal,
+                        surface=surface,
+                        external_id=external_id,
+                        account_id=account_id or "",
+                        importance=importance,
+                    )
+                    stamped = stamped or set_
+                if attention_reason:
+                    flagged = await registry.flag_attention(
+                        principal,
+                        surface=surface,
+                        external_id=external_id,
+                        account_id=account_id or "",
+                        reason=attention_reason,
+                        priority=attention_priority,
+                    )
+                    stamped = stamped or flagged
             return stamped
 
         return asyncio.run(_do())
@@ -152,6 +160,38 @@ def mark_importance(
             exc,
         )
         return False
+
+
+async def arrival_people(
+    owner,
+    *,
+    surface: str,
+    external_id: str,
+    account_id: str = "",
+    registry=None,
+) -> list:
+    """The live principals whose registered arrival this is, newest first.
+
+    ``owner`` is the install owner triage runs as. An arrival filed as another
+    person is answered as that person, never as the owner; one whose person is
+    no longer active gets nobody. With no registered row the owner stands in,
+    as before (a to-do with weak provenance beats no to-do).
+    """
+    if registry is None:
+        from hermes_cli.inbound_registry import default_registry
+
+        registry = default_registry("prod")
+    owners = await registry.owners_for(
+        owner, surface=surface, external_id=external_id, account_id=account_id
+    )
+    if not owners:
+        return [owner]
+    people = []
+    for user_id in owners:
+        person = owner if user_id == owner.user_id else await resolve_person(user_id)
+        if person is not None:
+            people.append(person)
+    return people
 
 
 async def resolve_person(user_id: str):

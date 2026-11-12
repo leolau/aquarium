@@ -1265,17 +1265,57 @@ class InboundRegistry:
         own = connection is None
         conn = connection or await self._connect()
         try:
-            row = await conn.fetchrow(
-                f"""SELECT id FROM {INBOUND_ITEMS_TABLE}
-                     WHERE surface = $1 AND account_id = $2
-                       AND external_id = $3 AND {predicate.sql}
-                     LIMIT 1""",
-                surface,
-                account_id or "",
-                external_id,
-                *predicate.params,
-            )
+            async with conn.transaction():
+                await bind_principal(conn, principal)
+                row = await conn.fetchrow(
+                    f"""SELECT id FROM {INBOUND_ITEMS_TABLE}
+                         WHERE surface = $1 AND account_id = $2
+                           AND external_id = $3 AND {predicate.sql}
+                         LIMIT 1""",
+                    surface,
+                    account_id or "",
+                    external_id,
+                    *predicate.params,
+                )
             return str(row["id"]) if row else None
+        finally:
+            if own:
+                await conn.close()
+
+    async def owners_for(
+        self,
+        principal: Principal,
+        *,
+        surface: str,
+        external_id: str,
+        account_id: str = "",
+        connection: Optional["asyncpg.Connection"] = None,
+    ) -> list[str]:
+        """Whose registered arrival this channel identity is, latest-registered first.
+
+        Triage runs as the install owner and knows only the channel's ids; it
+        uses this to stamp verdicts and file to-dos as the arrival's person
+        rather than as itself. Usually one owner; more after a reassignment.
+        """
+        predicate = scope_filter(principal, start_index=4)
+        own = connection is None
+        conn = connection or await self._connect()
+        try:
+            async with conn.transaction():
+                await bind_principal(conn, principal)
+                rows = await conn.fetch(
+                    f"""SELECT owner_user_id, MAX(registered_at) AS acquired
+                          FROM {INBOUND_ITEMS_TABLE}
+                         WHERE surface = $1 AND account_id = $2
+                           AND external_id = $3 AND {predicate.sql}
+                         GROUP BY owner_user_id
+                         ORDER BY acquired DESC""",
+                    surface,
+                    account_id or "",
+                    external_id,
+                    *predicate.params,
+                )
+            return [str(row["owner_user_id"]) for row in rows]
         finally:
             if own:
                 await conn.close()

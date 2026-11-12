@@ -162,3 +162,48 @@ def test_register_file_as_person_never_falls_back_to_owner(monkeypatch):
     assert not fr.register_file(b"x", surface="whatsapp", filename="a", owner_user_id="gone")
     assert fr.register_file(b"x", surface="whatsapp", filename="a")
     assert stored == ["MIA", "OWNER"]
+
+
+# -- Triage to-dos ----------------------------------------------------------
+
+
+def test_a_todo_for_a_person_s_arrival_is_that_person_s(monkeypatch):
+    import hermes_cli.inbound_registry as inbound_registry
+    import hermes_cli.todo_notifier as todo_notifier
+    import shared.inbound_registration as ir
+    import shared.todo_registration as tr
+
+    owner, mia = types.SimpleNamespace(user_id="leo"), types.SimpleNamespace(user_id="mia")
+    owners = {"M1": ["mia"], "M2": ["gone"], "M3": [], "M4": RuntimeError("no table")}
+    created = []
+
+    class Registry:
+        async def owners_for(self, principal, *, surface, external_id, account_id):
+            if isinstance(owners[external_id], Exception):
+                raise owners[external_id]
+            return owners[external_id]
+
+        async def id_for(self, principal, **kw):
+            return f"item-{principal.user_id}"
+
+    class Store:
+        async def create(self, principal, **kw):
+            created.append((principal.user_id, kw["source_ref"]))
+            return types.SimpleNamespace(id="t", stage=kw["stage"], created=True, notified_at=None, title="x")
+
+    async def resolve_owner():
+        return owner
+
+    async def resolve_person(user_id):
+        return {"mia": mia}.get(user_id)
+
+    monkeypatch.setattr(tr, "resolve_owner", resolve_owner)
+    monkeypatch.setattr(ir, "resolve_person", resolve_person)
+    monkeypatch.setattr(inbound_registry, "default_registry", lambda mode: Registry())
+    monkeypatch.setattr(todo_notifier, "default_stores", lambda: (Store(), None))
+
+    for ext in ("M1", "M2", "M3", "M4"):
+        tr.register_todo(title="Reply", surface="whatsapp", account_id="phone3", external_id=ext)
+    # M2's person is gone: no to-do. M3 never registered, and M4 has no registry
+    # to ask: the owner files them, as before.
+    assert created == [("mia", "item-mia"), ("leo", "item-leo"), ("leo", "item-leo")]

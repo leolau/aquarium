@@ -176,6 +176,22 @@ def register_todo(
                 return None
             source_ref = None
             if surface and external_id:
+                from shared.inbound_registration import arrival_people
+
+                try:
+                    people = await arrival_people(
+                        principal,
+                        surface=surface,
+                        external_id=external_id,
+                        account_id=account_id or "",
+                    )
+                except Exception as exc:
+                    # No registry to ask: the owner files it with a source note.
+                    logger.warning("[todo] arrival owner lookup failed: %s", exc)
+                    people = [principal]
+                if not people:
+                    return None
+                principal = people[0]
                 source_ref = await _lookup_arrival(
                     principal,
                     surface=surface,

@@ -1434,3 +1434,56 @@ async def test_owners_filter_only_narrows_what_the_reader_can_see(
     # Naming somebody never widens a read: Bob still cannot see Ada's mail.
     assert (await registry.list(bob, owners=["ada"])).items == []
     assert [i.id for i in (await registry.list(bob, owners=["ada", "bob"])).items] == [b.id]
+
+
+@pytest.mark.asyncio
+async def test_owners_for_names_the_arrival_s_person_to_the_owner_only(
+    postgres_dsn: str,
+) -> None:
+    registry = await _registry(postgres_dsn)
+    ada = _principal("ada")
+    await _arrive(registry, ada, external_id="wa-77", account_id="ada@example.com")
+    leo = _principal("leo", "owner")
+    found = await registry.owners_for(
+        leo, surface="email", external_id="wa-77", account_id="ada@example.com"
+    )
+    assert found == ["ada"]
+    assert await registry.owners_for(
+        _principal("bob"), surface="email", external_id="wa-77",
+        account_id="ada@example.com",
+    ) == []
+
+
+@pytest.mark.asyncio
+async def test_owners_for_under_rls_ranks_by_who_registered_last(
+    postgres_dsn: str,
+) -> None:
+    """Under the NOBYPASSRLS app role, the owner still sees whose arrival it is.
+
+    A re-poll of the earlier owner's row must not put it ahead of the person
+    the account was reassigned to.
+    """
+    from hermes_cli.access import ensure_app_role
+
+    registry = await _registry(postgres_dsn)
+    fields = {"external_id": "wa-88", "account_id": "phone3"}
+    await _arrive(registry, _principal("ada"), **fields)
+    await _arrive(registry, _principal("bob"), **fields)
+    await _arrive(registry, _principal("ada"), body="re-polled", **fields)
+
+    conn = await registry._connect()
+    try:
+        await ensure_app_role(conn, "app_prod")
+        await conn.execute("SET ROLE hermes_app")
+        leo = _principal("leo", "owner")
+        assert await registry.owners_for(
+            leo, surface="email", connection=conn, **fields
+        ) == ["bob", "ada"]
+        assert await registry.id_for(
+            leo, surface="email", connection=conn, **fields
+        ) is not None
+        assert await registry.owners_for(
+            _principal("bob"), surface="email", connection=conn, **fields
+        ) == ["bob"]
+    finally:
+        await conn.close()

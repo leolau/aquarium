@@ -229,10 +229,16 @@ def _load_registration():
 
 
 class _StubRegistry:
-    def __init__(self):
+    def __init__(self, owners=()):
         self.calls = []
+        self.owners = list(owners)
+        self.principals = []
+
+    async def owners_for(self, principal, **kwargs):
+        return list(self.owners)
 
     async def set_importance(self, principal, **kwargs):
+        self.principals.append(principal)
         self.calls.append(("importance", kwargs))
         return True
 
@@ -276,3 +282,55 @@ def test_mark_importance_without_a_reason_never_flags(stub_registry):
     )
     assert [kind for kind, _ in registry.calls] == ["importance"]
     assert registration.mark_importance(surface="email", external_id="<a@m>") is False
+
+
+class _Who:
+    def __init__(self, user_id):
+        self.user_id = user_id
+
+
+@pytest.fixture
+def people_registry(monkeypatch):
+    import hermes_cli.inbound_registry as inbound_registry
+
+    registration = _load_registration()
+    registry = _StubRegistry()
+    owner = _Who("leo")
+
+    async def _owner():
+        return owner
+
+    async def _person(user_id):
+        return {"mia": _Who("mia")}.get(user_id)
+
+    monkeypatch.setattr(registration, "_resolve_owner", _owner)
+    monkeypatch.setattr(registration, "resolve_person", _person)
+    monkeypatch.setattr(inbound_registry, "default_registry", lambda mode: registry)
+    return registration, registry
+
+
+def test_a_person_s_arrival_is_stamped_as_that_person(people_registry):
+    registration, registry = people_registry
+    registry.owners = ["mia"]
+    assert registration.mark_importance(
+        surface="whatsapp", external_id="M1", account_id="phone3", importance="high"
+    ) is True
+    assert [p.user_id for p in registry.principals] == ["mia"]
+
+
+def test_an_arrival_whose_person_left_is_stamped_by_nobody(people_registry):
+    registration, registry = people_registry
+    registry.owners = ["gone"]
+    assert registration.mark_importance(
+        surface="whatsapp", external_id="M1", account_id="phone3", importance="high"
+    ) is False
+    assert registry.calls == []
+
+
+def test_a_reassigned_arrival_is_stamped_for_each_live_owner(people_registry):
+    registration, registry = people_registry
+    registry.owners = ["mia", "leo", "gone"]
+    registration.mark_importance(
+        surface="email", external_id="<a@m>", account_id="email1", importance="high"
+    )
+    assert [p.user_id for p in registry.principals] == ["mia", "leo"]
