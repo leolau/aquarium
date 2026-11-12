@@ -38,10 +38,15 @@ ENTITY_KIND = "inbound"
 
 
 async def _resolve_principal(request: Request):
-    """Resolve the C1 principal (lazy import to avoid a circular import)."""
+    """Resolve the C1 principal (lazy import to avoid a circular import).
+
+    Never narrowed with ``?as=``: reads keep the caller's own identity and
+    narrow with ``owners=`` instead, so a cross-person read stays one the
+    caller's own role allows (and is labelled as such).
+    """
     from hermes_cli.web_server import _comms_resolve_principal
 
-    return await _comms_resolve_principal(request, allow_as=True)
+    return await _comms_resolve_principal(request, allow_as=False)
 
 
 async def _resolve_write_principal(request: Request):
@@ -49,6 +54,15 @@ async def _resolve_write_principal(request: Request):
     from hermes_cli.web_server import _comms_resolve_principal
 
     return await _comms_resolve_principal(request, allow_as=False)
+
+
+def _owners(raw: str) -> list[str]:
+    from hermes_cli.access import parse_owner_filter
+
+    try:
+        return parse_owner_filter(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _registry(mode: Optional[str] = None):
@@ -177,6 +191,7 @@ async def list_incomings(
     since: str = "",
     until: str = "",
     attention: str = "any",
+    owners: str = "",
     limit: int = _DEFAULT_LIMIT,
     cursor: str = "",
 ) -> dict[str, Any]:
@@ -189,6 +204,7 @@ async def list_incomings(
     nobody has marked Done / Dismissed yet.
     """
     attention_filter = _attention(attention)
+    owner_ids = _owners(owners)
     principal = await _resolve_principal(request)
     registry = _registry()
     if not await _table_exists(registry):
@@ -218,6 +234,7 @@ async def list_incomings(
         include_tags=_csv(tag),
         exclude_tags=_csv(exclude_tag),
         tag_match="all" if str(tag_match).lower() == "all" else "any",
+        owners=owner_ids,
         limit=max(1, min(int(limit or _DEFAULT_LIMIT), _MAX_LIMIT)),
         cursor=cursor or None,
     )

@@ -969,3 +969,44 @@ class TestV5Sampling:
         assert len(nearest) > len(drawn), (
             "the query searched the sample, not the corpus"
         )
+
+
+class TestOwnersFilter:
+    """``owners=`` narrows rows and the map without changing who is reading."""
+
+    @pytest.mark.asyncio
+    async def test_owners_filter_narrows_rows_and_projection(
+        self, postgres_dsn, monkeypatch
+    ):
+        await _reset(postgres_dsn)
+        store = _make_store(postgres_dsn)
+        await store.initialize()
+        await _enroll_principals(store)
+        await store.write(ALICE, "alice private memory", visibility="private")
+        await store.write(BOB, "bob private memory", visibility="private")
+        _patch_projection_store(monkeypatch, store)
+        from hermes_cli.memory_projection import fit_projection
+        await fit_projection(store, algorithm="pca", sample_size=20000)
+        _patch_store(monkeypatch, store)
+
+        owner = _make_client(monkeypatch, OWNER)
+        rows = owner.get("/api/memory/explorer/rows?owners=alice").json()["rows"]
+        assert rows and {r["owner_user_id"] for r in rows} == {"alice"}
+        rows = owner.get("/api/memory/explorer/rows?owners=alice,bob").json()["rows"]
+        assert {r["owner_user_id"] for r in rows} == {"alice", "bob"}
+        # The old single ``owner=`` still works.
+        rows = owner.get("/api/memory/explorer/rows?owner=bob").json()["rows"]
+        assert {r["owner_user_id"] for r in rows} == {"bob"}
+        points = owner.get(
+            "/api/memory/explorer/projection?owners=bob"
+        ).json()["points"]
+        assert points and {p["owner_user_id"] for p in points} == {"bob"}
+
+        # Naming somebody never widens a member's read.
+        alice = _make_client(monkeypatch, ALICE)
+        assert alice.get("/api/memory/explorer/rows?owners=bob").json()["rows"] == []
+        assert alice.get(
+            "/api/memory/explorer/projection?owners=bob"
+        ).json()["points"] == []
+
+        assert owner.get("/api/memory/explorer/rows?owners=../x").status_code == 400

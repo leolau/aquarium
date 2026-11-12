@@ -52,11 +52,21 @@ def _memory_store(mode: Optional[str] = None):
     return PgvectorMemoryStore(app_store, config=config)
 
 
-async def _resolve_principal(request: Request, *, allow_as: bool = True):
+async def _resolve_principal(request: Request, *, allow_as: bool = False):
     """Resolve the C1 principal (lazy import to avoid circular)."""
     from hermes_cli.web_server import _comms_resolve_principal
 
     return await _comms_resolve_principal(request, allow_as=allow_as)
+
+
+def _owner_filter(*values: str) -> list[str]:
+    """``owner=`` / ``owners=`` as a list of user ids, or a 400."""
+    from hermes_cli.access import parse_owner_filter
+
+    try:
+        return parse_owner_filter(*values)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _truncate(text: str) -> tuple[str, bool]:
@@ -284,6 +294,7 @@ async def get_rows(
     request: Request,
     q: str = "",
     owner: str = "",
+    owners: str = "",
     topic: str = "",
     kind: str = "",
     limit: int = 200,
@@ -296,6 +307,7 @@ async def get_rows(
     ``created_at DESC``. With ``q``: uses ``store.query(principal, q,
     min_score=0.0, top_k=limit)`` — floor deliberately 0 for inspection.
     """
+    owner = _owner_filter(owner, owners)
     principal = await _resolve_principal(request)
     store = _memory_store(mode)
 
@@ -361,7 +373,7 @@ async def _rows_with_query(
     )
     # Owner filter is not supported by store.query — apply in Python.
     if owner:
-        records = [r for r in records if r.owner_user_id == owner]
+        records = [r for r in records if r.owner_user_id in owner]
 
     # Fetch uses/last_used for the returned records (RLS-bound transaction).
     uses_map: dict[str, tuple[int, Any]] = {}
@@ -424,7 +436,7 @@ async def _rows_without_query(
     next_idx = 1
 
     if owner:
-        clauses.append(f"owner_user_id = ${next_idx}")
+        clauses.append(f"owner_user_id = ANY(${next_idx}::text[])")
         params.append(owner)
         next_idx += 1
     if topic:
@@ -544,7 +556,7 @@ async def _rows_chunks(
     next_idx = 1
 
     if owner:
-        clauses.append(f"rag_chunks.owner_user_id = ${next_idx}")
+        clauses.append(f"rag_chunks.owner_user_id = ANY(${next_idx}::text[])")
         params.append(owner)
         next_idx += 1
     # ``topic`` is used as a document_id filter for chunks.
@@ -662,7 +674,10 @@ async def _rows_chunks(
 
 @router.get("/projection")
 async def get_projection(
-    request: Request, mode: Optional[str] = None, limit: Optional[int] = None
+    request: Request,
+    mode: Optional[str] = None,
+    limit: Optional[int] = None,
+    owners: str = "",
 ):
     """2-D projection of every memory's embedding, scope-filtered.
 
@@ -678,7 +693,11 @@ async def get_projection(
     applied **after** the scope predicate, so a principal's own rows can
     never be crowded out by rows they may not see. ``/projection/query``'s
     nearest list stays exact (runs over all rows).
+
+    ``owners`` (comma-separated) keeps only those people's points, within what
+    the caller may already read — the map's "whose data" picker.
     """
+    owner_ids = _owner_filter(owners)
     principal = await _resolve_principal(request)
     store = _memory_store(mode)
 
@@ -723,6 +742,14 @@ async def get_projection(
             role_elevation=store.role_reads,
             owner_column="p.owner_user_id",
         )
+        where_sql = predicate.sql
+        where_params = list(predicate.params)
+        if owner_ids:
+            where_params.append(owner_ids)
+            where_sql = (
+                f"({where_sql}) AND p.owner_user_id = "
+                f"ANY(${len(where_params)}::text[])"
+            )
 
         # The chunk label join only exists once RAG has been initialized: with
         # ``memory.rag`` off there is no ``rag_chunks`` table, and joining it
@@ -788,20 +815,20 @@ async def get_projection(
 
             total_points = await conn.fetchval(
                 f"SELECT COUNT(*) FROM {PROJECTION_TABLE} p "
-                f"WHERE {predicate.sql}",
-                *predicate.params,
+                f"WHERE {where_sql}",
+                *where_params,
             ) or 0
 
             sampled = total_points > limit_val
             if sampled:
-                next_idx = len(predicate.params) + 1
+                next_idx = len(where_params) + 1
                 order_limit = (
                     f"ORDER BY hashtext(p.id::text) LIMIT ${next_idx}"
                 )
-                fetch_params = [*predicate.params, limit_val]
+                fetch_params = [*where_params, limit_val]
             else:
                 order_limit = "ORDER BY p.fitted_at DESC"
-                fetch_params = list(predicate.params)
+                fetch_params = list(where_params)
 
             rows = await conn.fetch(
                 f"""SELECT p.id, p.x, p.y, p.owner_user_id, p.topic, p.kind,
@@ -816,7 +843,7 @@ async def get_projection(
                     FROM {PROJECTION_TABLE} p
                     LEFT JOIN {MEMORY_TABLE} m ON m.id = p.id
                     {chunk_join}
-                    WHERE {predicate.sql}
+                    WHERE {where_sql}
                     {order_limit}""",
                 *fetch_params,
             )

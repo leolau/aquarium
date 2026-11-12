@@ -59,13 +59,22 @@ async def _resolve_principal(request: Request):
     """Resolve the C1 principal (lazy import to avoid a circular import)."""
     from hermes_cli.web_server import _comms_resolve_principal
 
-    return await _comms_resolve_principal(request, allow_as=True)
+    return await _comms_resolve_principal(request, allow_as=False)
 
 
 def _registry(mode: Optional[str] = None):
     from hermes_cli.file_registry import default_registry
 
     return default_registry(mode)
+
+
+def _owner_filter(raw: str) -> list[str]:
+    from hermes_cli.access import parse_owner_filter
+
+    try:
+        return parse_owner_filter(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 async def _ensure_table(registry) -> bool:
@@ -94,14 +103,17 @@ async def list_files(
     q: str = "",
     surface: str = "",
     remembered: Optional[str] = None,
+    owners: str = "",
     limit: int = _DEFAULT_LIMIT,
     offset: int = 0,
 ) -> dict[str, Any]:
     """A page of the caller's visible files, newest first.
 
-    ``surface`` accepts a comma-separated list; ``remembered`` is ``true`` /
-    ``false`` / absent.
+    ``surface`` and ``owners`` accept comma-separated lists; ``remembered`` is
+    ``true`` / ``false`` / absent. ``owners`` narrows to those people's files
+    within what the caller may already read.
     """
+    owner_ids = _owner_filter(owners)
     principal = await _resolve_principal(request)
     registry = _registry()
     if not await _ensure_table(registry):
@@ -117,6 +129,7 @@ async def list_files(
         query=q,
         surfaces=surfaces,
         remembered=flag,
+        owners=owner_ids,
         limit=max(1, min(int(limit or _DEFAULT_LIMIT), _MAX_LIMIT)),
         offset=max(0, int(offset or 0)),
     )

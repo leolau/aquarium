@@ -631,7 +631,9 @@ class _FakeRequest:
         subject: str | None = None,
         query: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
+        method: str = "GET",
     ) -> None:
+        self.method = method
         self.state = _FakeState()
         if subject is not None:
             self.state.session = _FakeSession(subject)
@@ -676,18 +678,44 @@ async def test_comms_resolve_principal_binds_logged_in_identity(
     )
     assert still_bob.user_id == "bob"
 
-    # Owner/admin ?as= narrows the read view to the requested principal.
+    # The owner's ?as= narrows a GET to the requested principal.
     narrowed = await ws._comms_resolve_principal(
         _FakeRequest(subject=owner_subject, query={"as": "bob"}), allow_as=True
     )
     assert narrowed.user_id == "bob"
-    admin_narrowed = await ws._comms_resolve_principal(
-        _FakeRequest(subject="adm", query={"as": "bob"}), allow_as=True
+
+    from fastapi import HTTPException
+
+    # Narrowing becomes the target — role and grants — so an admin may not:
+    # not to the owner, not to a peer admin, not even to a member.
+    await principals.enroll("adm2", display="Adm2", role="admin")
+    for target in ("leo_owner", "adm2", "bob"):
+        for how in ({"query": {"as": target}}, {"headers": {"X-Hermes-User-Id": target}}):
+            with pytest.raises(HTTPException) as denied:
+                await ws._comms_resolve_principal(
+                    _FakeRequest(subject="adm", **how), allow_as=True
+                )
+            assert denied.value.status_code == 403
+    # An admin naming themselves is just themselves.
+    self_view = await ws._comms_resolve_principal(
+        _FakeRequest(subject="adm", query={"as": "adm"}), allow_as=True
     )
-    assert admin_narrowed.user_id == "bob"
+    assert self_view.user_id == "adm"
+
+    # ?as= never applies to a write, even on an endpoint that allows it.
+    for method in ("POST", "PUT", "PATCH", "DELETE"):
+        acting = await ws._comms_resolve_principal(
+            _FakeRequest(subject=owner_subject, query={"as": "bob"}, method=method),
+            allow_as=True,
+        )
+        assert acting.user_id == "leo_owner"
+        admin_acting = await ws._comms_resolve_principal(
+            _FakeRequest(subject="adm", query={"as": "leo_owner"}, method=method),
+            allow_as=True,
+        )
+        assert admin_acting.user_id == "adm"
 
     # An authenticated subject with no enrolled principal fails closed (409).
-    from fastapi import HTTPException
 
     with pytest.raises(HTTPException) as excinfo:
         await ws._comms_resolve_principal(

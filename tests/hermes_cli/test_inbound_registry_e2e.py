@@ -1417,3 +1417,20 @@ async def test_the_backfill_flags_what_already_needed_the_user_once(
     await registry.clear_attention(leo, urgent.id, outcome="done")
     await registry.initialize()
     assert not (await registry.get(leo, urgent.id)).needs_attention
+
+
+@pytest.mark.asyncio
+async def test_owners_filter_only_narrows_what_the_reader_can_see(
+    postgres_dsn: str,
+) -> None:
+    registry = await _registry(postgres_dsn)
+    leo, ada, bob = _principal("leo", "owner"), _principal("ada"), _principal("bob")
+    a = await _arrive(registry, ada, external_id="a-1")
+    b = await _arrive(registry, bob, external_id="b-1")
+
+    assert [i.id for i in (await registry.list(leo, owners=["ada"])).items] == [a.id]
+    both = {i.id for i in (await registry.list(leo, owners=["ada", "bob"])).items}
+    assert both == {a.id, b.id}
+    # Naming somebody never widens a read: Bob still cannot see Ada's mail.
+    assert (await registry.list(bob, owners=["ada"])).items == []
+    assert [i.id for i in (await registry.list(bob, owners=["ada", "bob"])).items] == [b.id]
