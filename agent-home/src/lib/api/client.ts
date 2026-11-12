@@ -111,6 +111,9 @@ import type {
   SkillHubSourcesResponse,
   SkillDetails,
   SkillInfo,
+  SkillCopyChoice,
+  SkillLibrary,
+  SkillLibraryAction,
   ProfileSuggestionAdoptResponse,
   ProfileSuggestionDismissResponse,
   ProfileSuggestionsResponse,
@@ -294,6 +297,7 @@ const BOX_WIDE_PATHS = [
   "/api/email-accounts",
   "/api/comms/people",
   "/api/aquarium",
+  "/api/skills/library",
 ] as const;
 
 export function isBoxWidePath(path: string): boolean {
@@ -498,6 +502,17 @@ export class HermesApiClient {
 
   async skillList(): Promise<SkillInfo[]> {
     return this.request("/api/skills");
+  }
+
+  async skillLibrary(): Promise<SkillLibrary> {
+    return this.request("/api/skills/library");
+  }
+
+  async changeProfileSkill(
+    action: SkillLibraryAction,
+    input: { target: string; name: string; where?: SkillCopyChoice },
+  ): Promise<{ ok: boolean; copied?: SkillCopyChoice | null }> {
+    return this.request(`/api/skills/library/${action}`, { method: "POST", json: input });
   }
 
   async toggleSkill(name: string, enabled: boolean): Promise<{ ok: boolean }> {

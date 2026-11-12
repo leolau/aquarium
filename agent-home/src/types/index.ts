@@ -3816,6 +3816,32 @@ export interface ProfileDescribeResult {
 }
 
 /** One installed skill from `GET /api/skills`. */
+/** Where a library skill comes from (Skills page source chips). */
+export type SkillLibrarySource = "builtin" | "hub" | "shared" | "profile";
+
+/** One skill in the box-wide library (`GET /api/skills/library`). */
+export interface SkillLibraryEntry {
+  name: string;
+  description: string;
+  category: string;
+  source: SkillLibrarySource;
+  trust_level?: string;
+  /** Profiles with their own copy of a `profile` skill (Delete is allowed there). */
+  owners: string[];
+  /** Every profile that has the skill, and whether it is on there. */
+  used_by: Array<{ profile: string; enabled: boolean }>;
+  in_shared?: boolean;
+}
+
+export interface SkillLibrary {
+  profiles: string[];
+  skills: SkillLibraryEntry[];
+}
+
+/** A change to one Agent Profile's skills (`POST /api/skills/library/{action}`). */
+export type SkillLibraryAction = "add" | "remove" | "delete";
+export type SkillCopyChoice = "shared" | "only";
+
 export interface SkillInfo {
   name: string;
   description: string;
