@@ -104,10 +104,10 @@ def test_one_bad_message_does_not_drop_the_rest_of_the_poll(batcher):
     ]).encode()
     real_process = module.process_message
 
-    def flaky_process(msg, source_phone, bridge_port=None):
+    def flaky_process(msg, source_phone, bridge_port=None, **kw):
         if msg["messageId"] == "M1":
             raise RuntimeError("boom")
-        real_process(msg, source_phone, bridge_port=bridge_port)
+        real_process(msg, source_phone, bridge_port=bridge_port, **kw)
 
     class _Resp:
         def read(self):

@@ -225,8 +225,8 @@ def _register_email_attachments(payloads, *, account_id, conversation,
     if registered:
         print(f"[poller] Registered {registered} attachment file(s) from email {message_id}")
 
-def _mailbox_payload(account):
-    """Stored IMAP/SMTP login for a password-auth poller entry, or None."""
+def _mailbox_cred(account):
+    """Stored mailbox entry for a password-auth poller entry, or None."""
     wanted = str(account.get('address') or '').strip().lower()
     owner = account.get('owner_user_id')
     for cred in load_personal_mailboxes():
@@ -234,8 +234,23 @@ def _mailbox_payload(account):
             continue
         if owner and cred.owner_user_id != owner:
             continue
-        return cred.payload
+        return cred
     return None
+
+
+def _mailbox_payload(account):
+    """Stored IMAP/SMTP login for a password-auth poller entry, or None."""
+    cred = _mailbox_cred(account)
+    return cred.payload if cred is not None else None
+
+
+def account_owner(account, cred=None):
+    """Whose mail a shared (poller-config) mailbox is, or None for the owner.
+
+    The entry's ``owner_user_id`` when set, else the person who saved its
+    credential in Settings. A legacy workspace file has no person.
+    """
+    return account.get('owner_user_id') or getattr(cred, 'owner_user_id', '') or None
 
 
 def poll_account(account, db):
@@ -249,7 +264,8 @@ def poll_account(account, db):
     use_password = account.get('auth') == 'password'
     cred = payload = None
     if use_password:
-        payload = _mailbox_payload(account)
+        cred = _mailbox_cred(account)
+        payload = cred.payload if cred is not None else None
         if payload is None:
             print(
                 f"[poller] WARNING: no Email mailbox saved for {address} "
@@ -270,6 +286,8 @@ def poll_account(account, db):
             )
             poll_status.setdefault('accounts', {}).setdefault(account_id, {})['auth'] = 'no_credential'
             return 0
+
+    owner_user_id = account_owner(account, cred)
 
     # Ensure account exists in DB
     existing = db.execute("SELECT last_uid FROM email_accounts WHERE id = ?", (account_id,)).fetchone()
@@ -430,6 +448,7 @@ def poll_account(account, db):
                                         'folder': folder,
                                         'in_reply_to': in_reply_to,
                                     },
+                                    owner_user_id=owner_user_id,
                                 )
                             except ImportError:
                                 pass
@@ -449,6 +468,7 @@ def poll_account(account, db):
                                     message_id=message_id,
                                     received_dt=received_dt,
                                     inbound_item_id=inbound_item_id,
+                                    owner_user_id=owner_user_id,
                                 )
                         except sqlite3.IntegrityError:
                             pass  # Duplicate message_id — already stored

@@ -93,11 +93,13 @@ def register_file(
     message_id: Optional[str] = None,
     received_at: Optional[datetime] = None,
     inbound_item_id: Optional[str] = None,
+    owner_user_id: Optional[str] = None,
 ) -> bool:
     """Register a file in the file registry.  Best-effort, never raises.
 
     Returns ``True`` if the file was registered, ``False`` otherwise.  Safe to
     call from synchronous code (uses ``asyncio.run`` internally).
+    ``owner_user_id`` files it as that person instead of the install owner.
     """
     if not data:
         return False
@@ -105,7 +107,12 @@ def register_file(
         from hermes_cli.file_registry import store_and_register
 
         async def _do():
-            principal = await _resolve_owner()
+            if owner_user_id:
+                from shared.inbound_registration import resolve_person
+
+                principal = await resolve_person(owner_user_id)
+            else:
+                principal = await _resolve_owner()
             if principal is None:
                 return False
             asset = await store_and_register(
