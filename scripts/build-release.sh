@@ -32,6 +32,19 @@ done
 
 ROOT=$(git rev-parse --show-toplevel)
 cd "$ROOT"
+# The repo's VERSION file is the release ledger: when present it must name
+# the tag being built, so "bump VERSION -> commit -> tag" is the only path
+# that ships. Missing (releases cut before the file existed) warns only.
+if [ -f VERSION ]; then
+  REPO_VERSION=$(tr -d '[:space:]' < VERSION)
+  if [ "$REPO_VERSION" != "$VERSION" ]; then
+    echo "ABORT: VERSION file says '$REPO_VERSION' but this build is for '$VERSION'." >&2
+    echo "       Set VERSION to the new tag, commit, then tag that commit." >&2
+    exit 1
+  fi
+else
+  echo "note: no VERSION file in this commit; version comes from the tag only." >&2
+fi
 CHANNEL=$(python3 scripts/release_channels.py check "$VERSION")
 COMMIT=$(git rev-parse "$REF^{commit}")
 SOURCE_DATE_EPOCH=$(git log -1 --format=%ct "$COMMIT")
