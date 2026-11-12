@@ -21,6 +21,7 @@ import hermes_cli.triage_status_api as api
 from hermes_cli import wa_bridge_owners as owners
 from hermes_cli.access import Principal
 from hermes_cli.credential_store import FileCredentialStore, default_credential_store
+from tests.hermes_cli.test_fg28_chat_profile_auth import SUBJECT_HEADER, box, client  # noqa: F401
 
 LEO = Principal(user_id="leo", display="Leo", role="owner")
 AMY = Principal(user_id="amy", display="Amy", role="member")
@@ -111,12 +112,12 @@ def _wa_session(env, name, number="85291234567"):
     (d / "creds.json").write_text(json.dumps({"me": {"id": f"{number}:7@s.whatsapp.net"}}))
 
 
-def status(monkeypatch, who, profile=None) -> dict:
+def status(monkeypatch, who) -> dict:
     async def _caller(_request):
         return who
 
     monkeypatch.setattr(api, "_caller", _caller)
-    out = run(api.get_triage_status(SimpleNamespace(), profile=profile))
+    out = run(api.get_triage_status(SimpleNamespace(), target=None))
     dumped = json.dumps(out)
     for secret in (SECRET, REFRESH, CLIENT_SECRET):
         assert secret not in dumped
@@ -182,8 +183,8 @@ def test_configured(env, monkeypatch):
     _write(env.cal_cfg, {"triage": _triage("calendar", env)})
     _calendar_db(env, [("primary", "leo@gmail.com", "Leo", 1)])
 
-    out = status(monkeypatch, LEO, profile="hr")
-    assert out["profile"] == "hr"
+    out = status(monkeypatch, LEO)
+    assert out["profile"] is None
     k = kinds(out)
     assert {n: v["status"] for n, v in k.items()} == {n: ts.SET_UP for n in k}
     assert all(v["missing"] == [] for v in k.values())
@@ -237,3 +238,87 @@ def test_other_users_mailbox_not_counted(env, monkeypatch):
     assert {k["kind"]: k["status"] for k in amy["kinds"]} == {
         "email": ts.NOT_SET_UP, "whatsapp": ts.NOT_SET_UP, "calendar": ts.NOT_SET_UP}
     assert kinds(status(monkeypatch, LEO))["email"]["status"] == ts.SET_UP
+
+
+def test_custom_overlay_skills_alone_count(env, monkeypatch):
+    folder = env.skills / "calendar-triage" / "custom"
+    folder.mkdir(parents=True)
+    (folder / "mine.md").write_text("# mine\n")
+    _google(env, LEO, "leo@gmail.com", "calendar")
+    _write(env.cal_cfg, {"triage": _triage("calendar", env)})
+    _calendar_db(env, [("primary", "leo@gmail.com", "Leo", 1)])
+    k = kinds(status(monkeypatch, LEO))["calendar"]
+    assert k["skills_present"] is True
+    assert k["status"] == ts.SET_UP and k["missing"] == []
+
+
+def test_legacy_whatsapp_session_dir_outside_hermes_home(env, monkeypatch, tmp_path):
+    _skill(env, "whatsapp")
+    legacy = tmp_path / "platforms" / "whatsapp" / "session-phone1"
+    legacy.mkdir(parents=True)
+    (legacy / "creds.json").write_text(json.dumps({"me": {"id": "85298765432:3@s.whatsapp.net"}}))
+    _write(env.wa_cfg, {"triage": _triage("whatsapp", env), "phones": [
+        {"id": "phone1", "bridge_port": 3000, "session_dir": str(legacy), "enabled": True}]})
+    k = kinds(status(monkeypatch, LEO))["whatsapp"]
+    assert k["status"] == ts.SET_UP
+    phone = k["accounts"][0]
+    assert phone["credential"] is True and phone["number"] == "+852****5432"
+    assert not (env.home / "whatsapp" / "session-phone1").exists()
+
+
+def test_shared_address_counts_for_every_owner_with_a_credential(env, monkeypatch):
+    for kind in ("email", "calendar"):
+        _skill(env, kind)
+    for who in (AMY, LEO):
+        _google(env, who, "team@example.com", "email", "calendar")
+    _write(env.email_cfg, {"triage": _triage("email", env), "accounts": [
+        {"id": "team", "address": "team@example.com"}]})
+    _write(env.cal_cfg, {"triage": _triage("calendar", env)})
+    _calendar_db(env, [("team", "team@example.com", "Team", 1)])
+    for who in (AMY, LEO):
+        k = kinds(status(monkeypatch, who))
+        assert k["email"]["status"] == ts.SET_UP, who.user_id
+        assert k["calendar"]["status"] == ts.SET_UP, who.user_id
+        assert k["calendar"]["accounts"][0]["credential"] is True
+    # Someone without a credential for it still doesn't see it.
+    ben = Principal(user_id="ben", display="Ben", role="member")
+    assert kinds(status(monkeypatch, ben))["calendar"]["accounts"] == []
+
+
+def test_profile_param_reads_the_target_profiles_setup(box, client, monkeypatch, tmp_path):
+    """``?profile=hr`` is scoped to hr: hr's credential store, hr's identity."""
+    data = tmp_path / "data"
+    skills = data / "skills" / "calendar-triage"
+    skills.mkdir(parents=True)
+    (skills / "SKILL.md").write_text("# calendar\n")
+    cal_cfg = data / "calendar" / "config.json"
+    _write(cal_cfg, {"triage": {"skills_dirs": [str(skills)]}})
+    monkeypatch.setenv("CALENDAR_CONFIG_PATH", str(cal_cfg))
+    monkeypatch.setenv("CALENDAR_DB_PATH", str(data / "calendar" / "calendar_data.db"))
+    monkeypatch.setenv("EMAIL_CONFIG_PATH", str(data / "email-messages" / "config.json"))
+    monkeypatch.setattr(ts, "WHATSAPP_CONFIG_PATH", str(data / "whatsapp-messages" / "config.json"))
+    monkeypatch.setattr(owners, "_installed_bridge_ports", lambda: {})
+    monkeypatch.setattr(ts, "unit_states", lambda units: {})
+    _calendar_db(SimpleNamespace(cal_db=data / "calendar" / "calendar_data.db"),
+                 [("primary", "leo@hr.example", "Leo", 1)])
+    hr_store = SimpleNamespace(store=FileCredentialStore(box["hr"] / "credentials"))
+    _google(hr_store, Principal("leo", "Leo", "member"), "leo@hr.example", "calendar")
+
+    def cal(resp):
+        assert resp.status_code == 200, resp.text
+        assert REFRESH not in resp.text and CLIENT_SECRET not in resp.text
+        return kinds(resp.json())["calendar"]
+
+    in_hr = client.get("/api/triage/status?profile=hr", headers={SUBJECT_HEADER: "leo"})
+    assert in_hr.json()["profile"] == "hr"
+    k = cal(in_hr)
+    assert k["status"] == ts.SET_UP and k["accounts"][0]["credential"] is True
+
+    # The acting (default) profile has no such credential: not hr's data.
+    here = client.get("/api/triage/status", headers={SUBJECT_HEADER: "leo"})
+    assert here.json()["profile"] is None
+    assert cal(here)["status"] == ts.PARTLY_SET_UP
+
+    # hr's member Dan holds no credential for it, and a non-enrollee is refused.
+    assert cal(client.get("/api/triage/status?profile=hr", headers={SUBJECT_HEADER: "dan"}))["accounts"] == []
+    assert client.get("/api/triage/status?profile=hr", headers={SUBJECT_HEADER: "bob"}).status_code == 403
