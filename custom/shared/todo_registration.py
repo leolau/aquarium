@@ -221,7 +221,9 @@ def register_todo(
                 # would find this row anyway, but an hour later, and "reply by
                 # noon" is not useful at one.
                 result = await announce(store, notifications, principal, todo)
-                pushed = result.should_push and push_todo(todo.title, result)
+                pushed = result.should_push and push_todo(
+                    todo.title, result, person=principal
+                )
             return {
                 "id": todo.id,
                 "stage": todo.stage,
@@ -237,8 +239,12 @@ def register_todo(
         return None
 
 
-def push_todo(title: str, announcement) -> bool:
-    """Push a high-priority to-do to Telegram now. Never raises.
+def push_todo(title: str, announcement, person=None) -> bool:
+    """Push a high-priority to-do to its person's Telegram now. Never raises.
+
+    ``person`` is the to-do's owner: it goes to their linked Telegram, or the
+    box chat when they are the install owner. Anyone else without a linked
+    Telegram already has it in their agent-home notifications (FG-38 P3).
 
     Reuses the escalation pusher's sender rather than adding a second Telegram
     client: same bot, same chat, same failure handling. Whether a push is
@@ -251,7 +257,16 @@ def push_todo(title: str, announcement) -> bool:
         text = f"\u2705 <b>New to-do</b>\n{_esc(title)}"
         if announcement.body:
             text += f"\n<i>{_esc(announcement.body)}</i>"
-        return bool(send_telegram(text, parse_mode="HTML"))
+        if person is None:
+            return bool(send_telegram(text, parse_mode="HTML"))
+        from shared import owner_routing
+
+        chat = owner_routing.telegram_chat(
+            person, getattr(_owner_principal, "user_id", None)
+        )
+        if not chat:
+            return False
+        return bool(send_telegram(text, parse_mode="HTML", chat_id=chat))
     except Exception as exc:
         logger.warning("todo registration: could not push %r (%s)", title, exc)
         return False
