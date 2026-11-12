@@ -106,6 +106,9 @@ Work in `~/site-study/<slug>/` (`design.json`, `recipe.json`,
      `bytes_seen` (and `content_length` when announced). That means the
      filter was too wide: narrow it; do not repeat the wide search or
      raise the cap to get it through.
+     A synchronous XHR can't be cut off part way, so explore refuses it
+     (`aborted: "sync_xhr"`): read that endpoint with an `extract_json`
+     step and a narrow filter instead.
    - **Probe budget.** If the site slows down (a step times out, or
      answers take more than 10 s), stop probing. Wait a few minutes
      before the next `explore` call, and send fewer, narrower probes per

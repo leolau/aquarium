@@ -1200,6 +1200,58 @@ def test_e2e_a_narrow_search_is_not_cut_off_or_warned(site):
     assert next(t for t in inv["tables"] if t["selector"] == "#s-results")["rows"] == 10
 
 
+def _stock_probe(name, button, done, url="/stock"):
+    return {"name": name, "steps": [{"op": "goto", "url": url}, {"op": "click", "text": button},
+                                    {"op": "wait", "selector": done, "timeout_ms": 20000}]}
+
+
+@needs_browser
+def test_e2e_explore_cuts_off_a_call_whose_answer_the_page_never_reads(site):
+    probe = _stock_probe("count", "Count", "#s-status:has-text('counting')")
+    probe["steps"].append({"op": "wait", "ms": 1500})
+    inv = dict(srr.browse(fixture_recipe(site.base_url), [probe], CRED, allow_private=True))["count"]
+    reqs = [r for g in inv["step_requests"] for r in g["requests"]]
+    (req,) = [r for r in reqs if r["path"] == "/stock/search"]
+    assert req["aborted"] == "too_large" and req["bytes_seen"] > srr.DEFAULT_CALL_MAX_BYTES
+    time.sleep(1)
+    assert site.state.big_sent["search"] < 4 * srr.DEFAULT_CALL_MAX_BYTES
+    assert site.state.forbidden_hits == []
+
+
+@needs_browser
+def test_e2e_explore_refuses_a_synchronous_xhr(site):
+    probe = _stock_probe("legacy", "Legacy search", "#s-status:has-text('legacy failed')")
+    inv = dict(srr.browse(fixture_recipe(site.base_url), [probe], CRED, allow_private=True))["legacy"]
+    assert "error" not in inv, inv.get("error")
+    (req,) = [r for g in inv["step_requests"] for r in g["requests"]]
+    assert req["method"] == "POST" and req["path"] == "/stock/search" and req["aborted"] == "sync_xhr"
+    assert "extract_json" in req["hint"]
+    assert "REFUSED (synchronous XHR)" in srr.inventory_summary("legacy", inv)
+    assert "search" not in site.state.big_sent
+    assert [c for c in site.state.json_calls if c["path"] == "/stock/search"] == []
+
+
+@needs_browser
+def test_e2e_explore_reports_a_call_cut_off_inside_an_iframe(site):
+    probe = _stock_probe("framed", "Search in frame", "#f", url="/stock/framed")
+    probe["steps"].append({"op": "wait", "ms": 2500})
+    inv = dict(srr.browse(fixture_recipe(site.base_url), [probe], CRED, allow_private=True))["framed"]
+    reqs = [r for g in inv["step_requests"] for r in g["requests"]]
+    (req,) = [r for r in reqs if r["path"] == "/stock/search"]
+    assert req["aborted"] == "too_large" and "narrower filter" in req["hint"]
+    time.sleep(1)
+    assert site.state.big_sent["search"] < 4 * srr.DEFAULT_CALL_MAX_BYTES
+
+
+@needs_browser
+def test_e2e_a_search_narrowed_by_a_non_date_filter_is_not_warned(site):
+    probes = [{"name": "stock", "steps": _stock_search({"op": "select", "selector": "#s-wh", "value": "HK1"})}]
+    inv = dict(srr.browse(fixture_recipe(site.base_url), probes, CRED, allow_private=True))["stock"]
+    assert "warnings" not in inv
+    (req,) = inv["step_requests"][0]["requests"]
+    assert "aborted" not in req and req["status"] == 200
+
+
 @needs_browser
 def test_e2e_explore_finds_a_lookup_list_on_a_setup_page(site):
     inv = dict(srr.browse(fixture_recipe(site.base_url), [{"name": "setup", "steps": [
@@ -1222,3 +1274,7 @@ def test_e2e_explore_flags_and_masks_a_password_hash_column(site):
     assert "Exclude the whole entity" in note and "site owner" in note
     assert "$2y$" not in json.dumps(inv)
     assert "SECURITY:" in srr.inventory_summary("staff", inv)
+    form = next(f for f in inv["forms"] if f["selector"] == "#api-settings")
+    assert {f["name"]: f["value"] for f in form["fields"]} == {"api_key": srr.REDACTED, "_token": srr.REDACTED}
+    assert fx.STAFF_API_KEY not in json.dumps(inv)
+    assert "filled-in fields ['api_key']" in note

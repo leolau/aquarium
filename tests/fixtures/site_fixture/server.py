@@ -28,11 +28,15 @@ shapes the runner must handle on real back-office sites:
 - ``/stock``: a search page whose "Search" button (XMLHttpRequest) posts a
   JSON filter list to ``POST /stock/search``; with no filter (``[]``) it
   streams a huge answer without a Content-Length, and "Export all" (fetch)
-  gets ``GET /stock/all``, a huge answer with one. Bytes actually sent are in
-  ``state.big_sent``.
+  gets ``GET /stock/all``, a huge answer with one. "Count" sends the empty
+  search by fetch and never reads the answer; "Legacy search" sends it as a
+  synchronous XHR. Bytes actually sent are in ``state.big_sent``.
 - ``/setup/functions``: a configuration screen holding a read-only lookup
   table (function definitions) next to Edit buttons.
-- ``/staff``: an employee table that sends a ``Password Hash`` column.
+- ``/staff``: an employee table that sends a ``Password Hash`` column, and a
+  form showing a filled-in API key (``STAFF_API_KEY``).
+- ``/stock/framed``: ``/stock`` in an iframe, with a button that clicks its
+  Search.
 - ``/logout``, ``/admin/change_passwd``, ``/orders/new``, ``/orders/edit``,
   ``/orders/delete``: traps. Every hit is recorded in ``state.forbidden_hits``.
 
@@ -56,6 +60,7 @@ from urllib.parse import parse_qs, urlparse
 
 USERNAME = "reader"
 PASSWORD = "Fixture-Pa55-xyz!"
+STAFF_API_KEY = "fixture-key-7741-alpha"
 PAGE_SIZE = 10
 TRAP_PATHS = ("/logout", "/admin/change_passwd", "/orders/new", "/orders/edit", "/orders/delete",
               "/api/rma_cases/delete")
@@ -319,6 +324,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/stock": self._stock_page,
             "/stock/search": self._stock_search,
             "/stock/all": self._stock_all,
+            "/stock/framed": self._stock_framed,
             "/setup/functions": self._setup_functions,
             "/staff": self._staff,
         }.get(path)
@@ -493,7 +499,9 @@ class _Handler(BaseHTTPRequestHandler):
             '<label>Warehouse <select id="s-wh"><option value="">(any)</option><option>HK1</option>'
             "<option>SZ1</option></select></label>"
             '<button type="button" id="s-search">Search</button>'
-            '<button type="button" id="s-all">Export all</button></div>'
+            '<button type="button" id="s-all">Export all</button>'
+            '<button type="button" id="s-peek">Count</button>'
+            '<button type="button" id="s-sync">Legacy search</button></div>'
             '<p id="s-status"></p>'
             '<table id="s-results"><thead><tr><th>Lot</th><th>Stock-in</th></tr></thead><tbody></tbody></table>'
             "<script>"
@@ -509,6 +517,17 @@ class _Handler(BaseHTTPRequestHandler):
             "  x.onabort = () => { document.getElementById('s-status').textContent = 'aborted'; };"
             "  x.send(JSON.stringify(f));"
             "});"
+            "document.getElementById('s-peek').addEventListener('click', () => {"
+            "  fetch('/stock/search', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '[]'})"
+            "    .catch(() => {});"
+            "  document.getElementById('s-status').textContent = 'counting';"
+            "});"
+            "document.getElementById('s-sync').addEventListener('click', () => {"
+            "  try { const x = new XMLHttpRequest(); x.open('POST', '/stock/search', false);"
+            "    x.setRequestHeader('Content-Type', 'application/json'); x.send('[]');"
+            "    document.getElementById('s-status').textContent = 'legacy done';"
+            "  } catch (e) { document.getElementById('s-status').textContent = 'legacy failed'; }"
+            "});"
             "document.getElementById('s-all').addEventListener('click', () => {"
             "  fetch('/stock/all').then((r) => r.json()).catch(() => {"
             "    document.getElementById('s-status').textContent = 'export failed'; });"
@@ -516,6 +535,14 @@ class _Handler(BaseHTTPRequestHandler):
             "</script>"
         )
         self._send(200, _page("Stock search", body))
+
+    def _stock_framed(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
+        body = (
+            '<h1>Stock (framed)</h1><iframe id="f" src="/stock" width="800" height="400"></iframe>'
+            '<button type="button" id="f-search" onclick="document.getElementById(\'f\').contentDocument'
+            '.getElementById(\'s-search\').click()">Search in frame</button>'
+        )
+        self._send(200, _page("Stock (framed)", body))
 
     def _stream_big(self, name: str, total: int, *, declare: bool) -> None:
         """A JSON array of ``total`` bytes or so, sent slowly; stops when the browser hangs up."""
@@ -591,6 +618,9 @@ class _Handler(BaseHTTPRequestHandler):
             "<h1>Employee Setting</h1>"
             '<table id="staff"><thead><tr><th>Username</th><th>Name</th><th>Password Hash</th><th>Role</th></tr>'
             f"</thead><tbody>{rows}</tbody></table>"
+            '<form id="api-settings"><label>Integration API key '
+            f'<input name="api_key" value="{STAFF_API_KEY}" readonly></label>'
+            f'<input type="hidden" name="_token" value="{secrets.token_hex(20)}"></form>'
         )
         self._send(200, _page("Employee Setting", body))
 

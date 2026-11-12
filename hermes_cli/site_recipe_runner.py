@@ -1144,19 +1144,21 @@ _DATATABLES_LIST_JS = "() => { const probe = " + _DATATABLE_JS.strip() + r""";
 }"""
 
 # Explore: installed before any page script, it cuts off XHR/fetch answers
-# past ``cap`` bytes (Content-Length or bytes received so far) and records
-# them in ``window.__aqCallCap.aborted``, so a search without a filter cannot
-# pull the whole database through the browser. It never sends a request.
+# past ``cap`` bytes (Content-Length or bytes received so far, whether or not
+# the page reads the body) and records them in ``window.__aqCallCap.aborted``,
+# so a search without a filter cannot pull the whole database through the
+# browser. A synchronous XHR can't be cut off part way, so it is refused
+# (reason ``sync``). It never sends a request.
 _CALL_CAP_JS = r"""
 (cap) => {
   if (window.__aqCallCap) return;
   const aborted = [];
   const origFetch = window.fetch;
   Object.defineProperty(window, '__aqCallCap', {value: {cap, aborted, fetch: origFetch && origFetch.bind(window)}});
-  const note = (method, url, seen, total) => {
+  const note = (method, url, seen, total, reason) => {
     try {
       aborted.push({method: String(method || 'GET').toUpperCase(), url: new URL(String(url), location.href).href,
-                    seen, total: total || null});
+                    seen, total: total || null, reason: reason || 'too_large'});
       if (aborted.length > 100) aborted.shift();
     } catch (e) {}
   };
@@ -1169,6 +1171,10 @@ _CALL_CAP_JS = r"""
     };
     XHR.send = function () {
       const xhr = this, info = xhr.__aqCall;
+      if (info && !info.async) {
+        note(info.method, info.url, 0, null, 'sync');
+        throw new DOMException('synchronous XHR is refused while exploring (no size cap possible)', 'NetworkError');
+      }
       if (info && info.async) {
         let stopped = false;
         const stop = (seen, total) => {
@@ -1206,15 +1212,27 @@ _CALL_CAP_JS = r"""
         if (!res.body || [101, 204, 205, 304].includes(res.status)) return res;
         const reader = res.body.getReader();
         let seen = 0;
+        // Read the real body at once, whether or not the page reads ours: an
+        // ignored answer still counts against the cap. The queue holds at
+        // most ``cap`` bytes, since the call is aborted past it.
+        let done = false;
         const stream = new ReadableStream({
-          async pull(c) {
-            const part = await reader.read();
-            if (part.done) { c.close(); return; }
-            seen += part.value.byteLength;
-            if (seen > cap) { note(method, url, seen, null); ctl.abort(); c.error(tooBig()); return; }
-            c.enqueue(part.value);
+          start(c) {
+            (async () => {
+              try {
+                for (;;) {
+                  const part = await reader.read();
+                  if (part.done || done) { if (!done) c.close(); return; }
+                  seen += part.value.byteLength;
+                  if (seen > cap) { note(method, url, seen, null); ctl.abort(); c.error(tooBig()); return; }
+                  c.enqueue(part.value);
+                }
+              } catch (e) {
+                if (!done) { try { c.error(e); } catch (_) {} }
+              }
+            })();
           },
-          cancel(reason) { return reader.cancel(reason); },
+          cancel(reason) { done = true; return reader.cancel(reason); },
         });
         const out = new Response(stream, {status: res.status, statusText: res.statusText, headers: res.headers});
         for (const k of ['url', 'redirected', 'type']) {
@@ -1245,11 +1263,22 @@ _EMPTY_FILTERS_JS = r"""
   const isDate = (x) => ['date', 'datetime-local', 'month', 'week'].includes((x.type || '').toLowerCase())
     || words([x.id, x.name, x.placeholder, x.className, x.labels && x.labels[0] ? x.labels[0].innerText : '']
       .join(' ')).some((w) => DATE.has(w) || w.includes('date'));
-  const empty = (x) => !String(x.value || '').trim();
+  const ANY = /^\s*(-+.*-+|\*|all|any|全部|所有|(please )?(select|choose)\b.*)\s*$/i;
+  const empty = (x) => {
+    const v = String(x.value || '').trim();
+    if (!v) return true;
+    if (x.tagName === 'SELECT') {
+      const o = x.options[x.selectedIndex];
+      return !!o && (ANY.test(o.text) || ANY.test(v));
+    }
+    return false;
+  };
   const dates = fields.filter(isDate);
-  const searchy = /search|query|filter|find|look ?up|apply|enquir|retriev|load|show|go|查|搜|搵/i.test(text)
+  const searchy = /search|query|filter|find|look ?up|apply|enquir|retriev|load|show|go\b|查|搜|搵/i.test(text)
     || dates.length > 0;
   if (!searchy || !fields.length) return null;
+  // A filled non-date filter (one warehouse, one id) already narrows the search.
+  if (fields.some((x) => !isDate(x) && !empty(x))) return [];
   const emptyDates = dates.filter(empty);
   if (emptyDates.length) return emptyDates.map(label).slice(0, 10);
   if (fields.every(empty)) return fields.map(label).slice(0, 10);
@@ -1590,11 +1619,14 @@ class PlaywrightDriver(Driver):
     def _cut_off_calls(self) -> List[Dict[str, Any]]:
         if not self._call_max_bytes:
             return []
-        try:
-            return self._page.evaluate(
-                "() => (window.__aqCallCap ? window.__aqCallCap.aborted.splice(0) : [])") or []
-        except Exception:
-            return []
+        out: List[Dict[str, Any]] = []
+        for frame in self._page.frames:  # each frame keeps its own list
+            try:
+                out.extend(frame.evaluate(
+                    "() => (window.__aqCallCap ? window.__aqCallCap.aborted.splice(0) : [])") or [])
+            except Exception:
+                continue
+        return out
 
     def step_requests(self) -> List[Dict[str, Any]]:
         seen, self._step_seen = list(self._step_seen.values()), {}
@@ -1622,6 +1654,12 @@ class PlaywrightDriver(Driver):
 
     def _too_large(self, entry: Dict[str, Any], hit: Mapping[str, Any]) -> Dict[str, Any]:
         entry = {k: v for k, v in entry.items() if k not in ("failed", "pending", "shape", "bytes")}
+        if hit.get("reason") == "sync":
+            entry["aborted"] = "sync_xhr"
+            entry["hint"] = ("the page asked for this with a synchronous XHR, which explore can't cut off at its "
+                             "size cap, so it was refused: read this endpoint with an extract_json step (it has "
+                             "max_bytes) and a narrow filter instead")
+            return entry
         entry["aborted"] = "too_large"
         entry["bytes_seen"] = int(hit.get("seen") or 0)
         if hit.get("total"):
@@ -2391,6 +2429,17 @@ def _merge_cut_off(groups: List[Dict[str, Any]], entry: Dict[str, Any]) -> bool:
 def _flag_secrets(inventory: Dict[str, Any]) -> None:
     """Note (and mask) columns and JSON keys that look like secrets the site sends to the browser."""
     found: List[str] = []
+    for form in inventory.get("forms") or []:
+        shown = []
+        for f in form.get("fields") or []:
+            if not isinstance(f, dict) or not any(looks_like_secret_column(f.get(k)) for k in ("name", "id", "label")):
+                continue
+            if f.get("value"):
+                f["value"] = REDACTED
+                if str(f.get("type") or "").lower() != "hidden":  # hidden ones are mostly CSRF tokens
+                    shown.append(f.get("name") or f.get("id") or f.get("label"))
+        if shown:
+            found.append(f"form {form.get('selector')}: filled-in fields {shown}")
     for t in inventory.get("tables") or []:
         bad = [i for i, h in enumerate(t.get("headers") or []) if looks_like_secret_column(h)]
         if bad:
@@ -2445,7 +2494,8 @@ def inventory_summary(name: str, inv: Mapping[str, Any]) -> str:
                 lines.append(f"  after step {group['step']} ({group['op']}): {r['more']} more requests")
                 continue
             sent = " ".join(f"{k} {r[k]}" for k in ("query", "body") if r.get(k))
-            got = (f"CUT OFF (too large: {r.get('bytes_seen')} bytes seen"
+            got = ("REFUSED (synchronous XHR); read it with extract_json" if r.get("aborted") == "sync_xhr"
+                   else f"CUT OFF (too large: {r.get('bytes_seen')} bytes seen"
                    f"{', ' + str(r['content_length']) + ' announced' if r.get('content_length') else ''}); "
                    "add a narrower filter" if r.get("aborted")
                    else f"FAILED {r['failed']}" if r.get("failed")
@@ -2572,7 +2622,7 @@ def browse(
             if run.step_warnings:
                 inventory["warnings"] = run.step_warnings
             run.step_warnings = None
-            if any(r.get("aborted") for g in step_requests for r in g["requests"]):
+            if any(r.get("aborted") == "too_large" for g in step_requests for r in g["requests"]):
                 cut = ("an answer was cut off because it was too large (see step_requests): the search ran "
                        "without a narrow enough filter. Set one day or one known value and try again; do not "
                        "repeat the wide search.")
