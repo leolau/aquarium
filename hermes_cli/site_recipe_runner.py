@@ -1263,14 +1263,17 @@ _EMPTY_FILTERS_JS = r"""
   const isDate = (x) => ['date', 'datetime-local', 'month', 'week'].includes((x.type || '').toLowerCase())
     || words([x.id, x.name, x.placeholder, x.className, x.labels && x.labels[0] ? x.labels[0].innerText : '']
       .join(' ')).some((w) => DATE.has(w) || w.includes('date'));
-  // An unrestricted choice is told by its label (e.g. 'All warehouses' sent as 0).
-  const ANY = /^\s*(-+.*-+|\*|\(?(all|any|every)\b.*|(全部|所有|任何|不限).*|(please )?(select|choose)\b.*)\s*$/i;
+  // An unrestricted choice is told by its label, not its value (e.g. 'All warehouses' sent as 0).
+  // A bare 'All' / '(any)' / '-- select --' is unrestricted anywhere; 'All <something>' only as
+  // the dropdown's first option, since a later one ('All Hong Kong warehouses') names a subset.
+  const ANY = /^\s*(-+.*-+|\*|\(?(all|any|every)\)?|全部|所有|任何|不限|(please )?(select|choose)\b.*)\s*$/i;
+  const ALL_OF = /^\s*(\(?(all|any|every)\b|全部|所有|任何|不限)/i;
   const empty = (x) => {
     const v = String(x.value || '').trim();
     if (!v) return true;
     if (x.tagName === 'SELECT') {
       const o = x.options[x.selectedIndex];
-      return !!o && (ANY.test(o.text) || ANY.test(v));
+      return !!o && (ANY.test(o.text) || ANY.test(v) || (x.selectedIndex === 0 && ALL_OF.test(o.text)));
     }
     return false;
   };

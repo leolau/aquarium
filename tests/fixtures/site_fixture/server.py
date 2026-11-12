@@ -496,7 +496,8 @@ class _Handler(BaseHTTPRequestHandler):
             '<div class="panel" id="s-builder">'
             '<label>Stock-in from <input type="date" id="s-from"></label>'
             '<label>to <input type="date" id="s-to"></label>'
-            '<label>Warehouse <select id="s-wh"><option value="0">All warehouses</option><option>HK1</option>'
+            '<label>Warehouse <select id="s-wh"><option value="0">All warehouses</option>'
+            '<option value="HK">All Hong Kong warehouses</option><option>HK1</option>'
             "<option>SZ1</option></select></label>"
             '<button type="button" id="s-search">Search</button>'
             '<button type="button" id="s-all">Export all</button>'
