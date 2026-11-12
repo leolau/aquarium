@@ -47,5 +47,10 @@
       "refresh": {"mode": "full"},
       "question": null
     }
+  ],
+  "exclusions": [
+    {"page": "/orders/new", "reason": "Add New order form: an action screen, no data to copy"},
+    {"page": "/staff", "reason": "employee table sends a Password Hash column to the browser; report to the site owner",
+     "security": true}
   ]
 }

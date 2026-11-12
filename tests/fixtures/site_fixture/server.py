@@ -25,6 +25,14 @@ shapes the runner must handle on real back-office sites:
 - ``/query``: a query-builder page whose results table stays empty until
   the "Search" button posts the date filter as JSON to ``POST /query/search``
   (``{"status", "result": {"rows": [...], "total"}}``); nothing on page load.
+- ``/stock``: a search page whose "Search" button (XMLHttpRequest) posts a
+  JSON filter list to ``POST /stock/search``; with no filter (``[]``) it
+  streams a huge answer without a Content-Length, and "Export all" (fetch)
+  gets ``GET /stock/all``, a huge answer with one. Bytes actually sent are in
+  ``state.big_sent``.
+- ``/setup/functions``: a configuration screen holding a read-only lookup
+  table (function definitions) next to Edit buttons.
+- ``/staff``: an employee table that sends a ``Password Hash`` column.
 - ``/logout``, ``/admin/change_passwd``, ``/orders/new``, ``/orders/edit``,
   ``/orders/delete``: traps. Every hit is recorded in ``state.forbidden_hits``.
 
@@ -195,6 +203,7 @@ class FixtureState:
     failed_logins: int = 0
     forbidden_hits: List[str] = field(default_factory=list)
     requests: List[str] = field(default_factory=list)
+    big_sent: Dict[str, int] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def __post_init__(self) -> None:
@@ -307,6 +316,11 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/rma_stream": self._rma_stream,
             "/query": self._query_page,
             "/query/search": self._query_search,
+            "/stock": self._stock_page,
+            "/stock/search": self._stock_search,
+            "/stock/all": self._stock_all,
+            "/setup/functions": self._setup_functions,
+            "/staff": self._staff,
         }.get(path)
         if handler is None:
             return self._send(404, _page("Not found", "<p>Not found</p>"))
@@ -469,6 +483,116 @@ class _Handler(BaseHTTPRequestHandler):
         rows = self._rma_rows(values)
         self._send(200, json.dumps({"status": "ok", "result": {"rows": rows, "total": len(rows)}}),
                    ctype="application/json")
+
+    def _stock_page(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
+        body = (
+            "<h1>Stock search</h1>"
+            '<div class="panel" id="s-builder">'
+            '<label>Stock-in from <input type="date" id="s-from"></label>'
+            '<label>to <input type="date" id="s-to"></label>'
+            '<label>Warehouse <select id="s-wh"><option value="">(any)</option><option>HK1</option>'
+            "<option>SZ1</option></select></label>"
+            '<button type="button" id="s-search">Search</button>'
+            '<button type="button" id="s-all">Export all</button></div>'
+            '<p id="s-status"></p>'
+            '<table id="s-results"><thead><tr><th>Lot</th><th>Stock-in</th></tr></thead><tbody></tbody></table>'
+            "<script>"
+            "document.getElementById('s-search').addEventListener('click', () => {"
+            "  const f = [], from = document.getElementById('s-from').value, to = document.getElementById('s-to').value;"
+            "  if (from || to) f.push({field: 'stock_in', op: 'between', value: [from, to]});"
+            "  const wh = document.getElementById('s-wh').value; if (wh) f.push({field: 'wh', op: '=', value: wh});"
+            "  const x = new XMLHttpRequest(); x.open('POST', '/stock/search');"
+            "  x.setRequestHeader('Content-Type', 'application/json');"
+            "  x.onload = () => { const rows = JSON.parse(x.responseText);"
+            "    document.querySelector('#s-results tbody').innerHTML = rows.map((r) =>"
+            "      `<tr><td>${r.lot}</td><td>${r.stock_in}</td></tr>`).join(''); };"
+            "  x.onabort = () => { document.getElementById('s-status').textContent = 'aborted'; };"
+            "  x.send(JSON.stringify(f));"
+            "});"
+            "document.getElementById('s-all').addEventListener('click', () => {"
+            "  fetch('/stock/all').then((r) => r.json()).catch(() => {"
+            "    document.getElementById('s-status').textContent = 'export failed'; });"
+            "});"
+            "</script>"
+        )
+        self._send(200, _page("Stock search", body))
+
+    def _stream_big(self, name: str, total: int, *, declare: bool) -> None:
+        """A JSON array of ``total`` bytes or so, sent slowly; stops when the browser hangs up."""
+        row = json.dumps({"lot": "L-000000", "stock_in": "2026-01-01", "note": "x" * 200}).encode("utf-8")
+        count = max(1, total // (len(row) + 1))
+        size = 2 + count * len(row) + (count - 1)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        if declare:
+            self.send_header("Content-Length", str(size))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        sent = 0
+        try:
+            written = 0
+            while written < count:
+                n = min(255, count - written)
+                part = (b"," if written else b"[") + b",".join([row] * n)
+                written += n
+                if written >= count:
+                    part += b"]"
+                self.wfile.write(part)
+                self.wfile.flush()
+                sent += len(part)
+                with self.state.lock:
+                    self.state.big_sent[name] = sent
+                time.sleep(0.02)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        self.close_connection = True
+
+    def _stock_search(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
+        if method != "POST":
+            return self._send(405, "[]", ctype="application/json")
+        raw = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode("utf-8")
+        filters = json.loads(raw or "[]")
+        self._note_json_call(method, {"filters": json.dumps(filters)})
+        if not filters:
+            return self._stream_big("search", 40_000_000, declare=False)
+        lo = hi = None
+        for f in filters:
+            if f.get("field") == "stock_in":
+                lo, hi = _parse_date(f["value"][0] or ""), _parse_date(f["value"][1] or "")
+        rows = [{"lot": f"L-{i:06d}", "stock_in": (self.state.today - dt.timedelta(days=i % 30)).isoformat()}
+                for i in range(300)]
+        rows = [r for r in rows if (lo is None or r["stock_in"] >= lo.isoformat())
+                and (hi is None or r["stock_in"] <= hi.isoformat())]
+        self._send(200, json.dumps(rows), ctype="application/json")
+
+    def _stock_all(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
+        self._note_json_call(method, {})
+        self._stream_big("all", 40_000_000, declare=True)
+
+    def _setup_functions(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
+        rows = "".join(
+            f"<tr><td>{code}</td><td>{name}</td><td>{step}</td>"
+            f"<td><button type=\"button\" onclick=\"location.href='/setup/functions/edit?id={code}'\">Edit</button>"
+            "</td></tr>"
+            for code, name, step in (("F01", "Stock In", "receive"), ("F02", "Triage", "inspect"),
+                                     ("F03", "Packing", "ship"), ("F04", "QA1", "inspect")))
+        body = (
+            "<h1>Set Function</h1><p>Configure the functions of each workflow step.</p>"
+            '<table id="functions"><thead><tr><th>Code</th><th>Function</th><th>Workflow step</th>'
+            f"<th></th></tr></thead><tbody>{rows}</tbody></table>"
+        )
+        self._send(200, _page("Set Function", body))
+
+    def _staff(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
+        rows = "".join(
+            f"<tr><td>{user}</td><td>{name}</td><td>$2y$10${secrets.token_urlsafe(40)[:53]}</td><td>{role}</td></tr>"
+            for user, name, role in (("amy", "Amy Chan", "ops"), ("ben", "Ben Lee", "qa")))
+        body = (
+            "<h1>Employee Setting</h1>"
+            '<table id="staff"><thead><tr><th>Username</th><th>Name</th><th>Password Hash</th><th>Role</th></tr>'
+            f"</thead><tbody>{rows}</tbody></table>"
+        )
+        self._send(200, _page("Employee Setting", body))
 
     def _warehouses_api(self, method: str, session: Dict[str, Any], query: Dict[str, List[str]]) -> None:
         self._send(200, json.dumps(self.state.warehouses), ctype="application/json")

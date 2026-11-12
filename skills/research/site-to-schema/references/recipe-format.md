@@ -12,6 +12,10 @@ Executed by `hermes_cli/site_recipe_runner.py` (`run_recipe`). Plan:
 - `date_format`: how `{{today}}` / `{{date-N}}` / `{{cursor}}` render into
   form fields (per step `format` overrides; per entity `date_format` too).
 - `delay_ms`: pause after each page load (be gentle with small servers).
+- `explore_max_call_bytes` (explore only, default 2000000, 10000 to
+  50000000): an XHR/fetch answer a step sets off is cut off past this
+  size and reported in `step_requests` as `aborted: "too_large"`. Refresh
+  runs ignore it (`extract_json` has its own `max_bytes`).
 
 ## login
 

@@ -1121,3 +1121,104 @@ def test_e2e_captured_search_endpoint_works_as_extract_json(site):
     items, report = _run(site, recipe)
     assert len(items) == 230 and report.full_entities == ["data"]
     assert site.state.forbidden_hits == []
+
+
+def test_explore_call_cap_must_be_bounded():
+    recipe = fixture_recipe()
+    assert srr.recipe_problems(dict(recipe, explore_max_call_bytes=500_000)) == []
+    for bad in (0, 9_999, 50_000_001, "2MB", True):
+        problems = srr.recipe_problems(dict(recipe, explore_max_call_bytes=bad))
+        assert any("explore_max_call_bytes" in p for p in problems), bad
+    with pytest.raises(srr.RecipeError, match="explore_max_call_bytes"):
+        list(srr.browse(recipe, [{"name": "x", "steps": []}], CRED, max_call_bytes=10**9))
+
+
+@pytest.mark.parametrize("name, secret", [
+    ("password_hash", True), ("passwordHash", True), ("Password Hash", True), ("api_key", True),
+    ("access_token", True), ("session_id", True), ("salt", True),
+    ("passport_no", False), ("hashtag", False), ("customer.name", False), ("opened", False),
+])
+def test_secret_looking_column_names(name, secret):
+    assert srr.looks_like_secret_column(name) is secret
+
+
+def _stock_search(*filters):
+    return [{"op": "goto", "url": "/stock"}, *filters, {"op": "click", "text": "Search"},
+            {"op": "wait", "selector": "#s-status:has-text('aborted'), #s-results tbody tr", "timeout_ms": 20000}]
+
+
+@needs_browser
+def test_e2e_explore_cuts_off_an_unfiltered_search_and_warns_before_it(site):
+    probes = [{"name": "stock", "steps": _stock_search()}]
+    inv = dict(srr.browse(fixture_recipe(site.base_url), probes, CRED, allow_private=True))["stock"]
+    assert "error" not in inv, inv["error"]
+    (group,) = inv["step_requests"]
+    assert group["step"] == 2 and group["op"] == "click"
+    (req,) = group["requests"]
+    assert req["method"] == "POST" and req["path"] == "/stock/search" and req["body"] == "[]"
+    assert req["aborted"] == "too_large" and "pending" not in req and "shape" not in req
+    assert srr.DEFAULT_CALL_MAX_BYTES < req["bytes_seen"] < 3 * srr.DEFAULT_CALL_MAX_BYTES
+    assert "narrower filter" in req["hint"]
+    assert "narrow" in inv["hint"]
+    # the server stopped sending soon after the cut-off: the 40 MB answer was never downloaded
+    time.sleep(1)
+    assert site.state.big_sent["search"] < 4 * srr.DEFAULT_CALL_MAX_BYTES
+    (warning,) = inv["warnings"]
+    assert warning["step"] == 2 and set(warning["empty_filters"]) == {"#s-from", "#s-to"}
+    assert "narrowest filter" in warning["warning"]
+    summary = srr.inventory_summary("stock", inv)
+    assert "POST /stock/search [application/json] body [] -> CUT OFF (too large" in summary
+    assert "WARNING at step 2" in summary
+    assert len([c for c in site.state.json_calls if c["path"] == "/stock/search"]) == 1
+    assert site.state.forbidden_hits == []
+
+
+@needs_browser
+def test_e2e_explore_cut_off_uses_the_announced_size_and_the_recipe_cap(site):
+    recipe = dict(fixture_recipe(site.base_url), explore_max_call_bytes=100_000)
+    probes = [{"name": "all", "steps": [{"op": "goto", "url": "/stock"}, {"op": "click", "text": "Export all"},
+                                        {"op": "wait", "selector": "#s-status:has-text('export failed')"}]}]
+    inv = dict(srr.browse(recipe, probes, CRED, allow_private=True))["all"]
+    (req,) = inv["step_requests"][0]["requests"]
+    assert req["path"] == "/stock/all" and req["aborted"] == "too_large"
+    assert req["content_length"] > 30_000_000 and req["bytes_seen"] <= 100_000
+    assert "100000 bytes" in req["hint"]
+    time.sleep(1)
+    assert site.state.big_sent["all"] < 5_000_000
+    assert site.state.forbidden_hits == []
+
+
+@needs_browser
+def test_e2e_a_narrow_search_is_not_cut_off_or_warned(site):
+    day = (site.state.today - dt.timedelta(days=2)).isoformat()
+    probes = [{"name": "stock", "steps": _stock_search({"op": "fill", "selector": "#s-from", "value": day},
+                                                       {"op": "fill", "selector": "#s-to", "value": day})}]
+    inv = dict(srr.browse(fixture_recipe(site.base_url), probes, CRED, allow_private=True))["stock"]
+    assert "warnings" not in inv and "hint" not in inv
+    (req,) = inv["step_requests"][0]["requests"]
+    assert req["status"] == 200 and "aborted" not in req and req["shape"]["records"] == 10
+    assert next(t for t in inv["tables"] if t["selector"] == "#s-results")["rows"] == 10
+
+
+@needs_browser
+def test_e2e_explore_finds_a_lookup_list_on_a_setup_page(site):
+    inv = dict(srr.browse(fixture_recipe(site.base_url), [{"name": "setup", "steps": [
+        {"op": "goto", "url": "/setup/functions"}]}], CRED, allow_private=True))["setup"]
+    table = next(t for t in inv["tables"] if t["selector"] == "#functions")
+    assert table["rows"] == 4 and table["headers"][:3] == ["Code", "Function", "Workflow step"]
+    assert "security" not in inv and "secret_columns" not in table
+    assert {b["text"] for b in inv["buttons"] if b["forbidden"]} == {"Edit"}
+    assert site.state.forbidden_hits == []
+
+
+@needs_browser
+def test_e2e_explore_flags_and_masks_a_password_hash_column(site):
+    inv = dict(srr.browse(fixture_recipe(site.base_url), [{"name": "staff", "steps": [
+        {"op": "goto", "url": "/staff"}]}], CRED, allow_private=True))["staff"]
+    table = next(t for t in inv["tables"] if t["selector"] == "#staff")
+    assert table["secret_columns"] == ["Password Hash"]
+    assert all(row[2] == srr.REDACTED for row in table["sample"])
+    (note,) = inv["security"]
+    assert "Exclude the whole entity" in note and "site owner" in note
+    assert "$2y$" not in json.dumps(inv)
+    assert "SECURITY:" in srr.inventory_summary("staff", inv)

@@ -2757,9 +2757,9 @@ def _clip(value: Any, limit: int = 200) -> Any:
 
 _INVENTORY_CAPS = {"links": 60, "buttons": 80, "forms": 20, "tables": 15, "datatables": 10,
                    "json_requests": 30, "pagination": 20, "headings": 20, "extracted": 5,
-                   "step_requests": 20}
-# Request body samples and JSON record-key lists are worth a longer cut.
-_INVENTORY_CLIP = {"step_requests": 320}
+                   "step_requests": 20, "warnings": 10, "security": 5}
+# Request body samples, JSON record-key lists, warnings and hints are worth a longer cut.
+_INVENTORY_CLIP = {"step_requests": 320, "warnings": 400, "security": 800, "hint": 600}
 
 
 def compact_inventory(inv: Mapping[str, Any]) -> Dict[str, Any]:
@@ -2774,7 +2774,7 @@ def compact_inventory(inv: Mapping[str, Any]) -> Dict[str, Any]:
         elif key == "text" and isinstance(value, str):
             out[key] = value[:1500]
         else:
-            out[key] = _clip(value)
+            out[key] = _clip(value, _INVENTORY_CLIP.get(key, 200))
     for form in out.get("forms") or []:
         if isinstance(form, dict) and isinstance(form.get("fields"), list):
             form["fields"] = form["fields"][:30]

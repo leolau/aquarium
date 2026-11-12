@@ -7,8 +7,11 @@ Checks the design shape (plan section 3.3), the recipe (the runner's own
 validator, including the read-only guard) and that the two agree: same
 entities and kinds, keys and cursors are real columns, every table/list
 entity is ``variable``, incremental entities really use ``{{cursor}}`` and
-every extracted column is declared. Prints open ``question`` fields so they
-are asked before proposing. Exit 0 = ready, 1 = problems.
+every extracted column is declared. An entity with a secret-looking column
+(``password_hash``, ``api_key``, ``token`` ...) is a problem: the page sends
+secrets to the browser, so the whole entity must be dropped and listed in
+``design.exclusions`` with ``"security": true``. Prints open ``question``
+fields so they are asked before proposing. Exit 0 = ready, 1 = problems.
 """
 
 from __future__ import annotations
@@ -57,10 +60,34 @@ def _recipe_columns(ent: Mapping[str, Any]) -> Tuple[List[str], bool, bool]:
     return cols, tabular, uses_cursor
 
 
+def _source_names(ent: Mapping[str, Any]) -> List[str]:
+    """Every name a recipe entity reads: its columns and the page fields/headers/keys they map from."""
+    names: List[str] = []
+    for step in _walk(ent.get("steps")):
+        for mapping in (step.get("columns"), step.get("fields")):
+            for col, spec in (mapping or {}).items() if isinstance(mapping, dict) else ():
+                names.append(str(col))
+                if isinstance(spec, dict):
+                    names += [str(spec[k]) for k in ("field", "header", "attr") if spec.get(k)]
+    return names
+
+
+def _check_exclusions(design: Mapping[str, Any], problems: List[str]) -> None:
+    exclusions = design.get("exclusions")
+    if exclusions is None:
+        return
+    if not isinstance(exclusions, list):
+        problems.append("design.exclusions must be a list of {page, reason, security?}")
+        return
+    for i, ex in enumerate(exclusions):
+        if not isinstance(ex, dict) or not ex.get("page") or not ex.get("reason"):
+            problems.append(f"design.exclusions[{i}]: needs 'page' and 'reason'")
+
+
 def check(design: Any, recipe: Any) -> Tuple[List[str], List[str], List[str]]:
     """(problems, warnings, open questions)."""
     repo_root()
-    from hermes_cli.site_recipe_runner import recipe_problems
+    from hermes_cli.site_recipe_runner import looks_like_secret_column, recipe_problems
 
     problems = [f"recipe: {p}" for p in recipe_problems(recipe)]
     warnings: List[str] = []
@@ -85,6 +112,7 @@ def check(design: Any, recipe: Any) -> Tuple[List[str], List[str], List[str]]:
     entities = design.get("entities")
     if not isinstance(entities, list) or not entities:
         return problems + ["design.entities must be a non-empty list"], warnings, questions
+    _check_exclusions(design, problems)
     rent: Dict[str, Any] = (recipe.get("entities") if isinstance(recipe, dict) else None) or {}
     seen: set = set()
     for i, ent in enumerate(entities):
@@ -119,6 +147,14 @@ def check(design: Any, recipe: Any) -> Tuple[List[str], List[str], List[str]]:
             if ctype not in COLUMN_TYPES:
                 problems.append(f"{at}: column {c['name']} has unknown type {ctype!r}")
             col_types[c["name"]] = ctype
+        r = rent.get(name)
+        secret = sorted({str(n) for n in [*col_types, *(_source_names(r) if isinstance(r, dict) else [])]
+                         if looks_like_secret_column(n)})
+        if secret:
+            problems.append(
+                f"{at}: secret-looking columns {secret}: the page sends secrets to the browser. Drop the whole "
+                "entity (never store these columns) and list its page in design.exclusions with "
+                '"security": true, to report to the site owner')
         key = ent.get("key") or []
         if kind == "variable":
             if not key:
