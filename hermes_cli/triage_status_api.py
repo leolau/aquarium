@@ -1,18 +1,21 @@
 """``GET /api/triage/status`` — the signed-in person's triage setup (read-only).
 
 Signed-in policy: every person sees only their own mailboxes, numbers and
-calendars (see :mod:`hermes_cli.triage_status`). ``?profile=`` is accepted
-like the Skills APIs; ``require_profile_scope`` refuses a profile the caller
-isn't enrolled in, and the identity is the caller's own in either case.
+calendars (see :mod:`hermes_cli.triage_status`). The route takes no
+``profile`` parameter of its own, so ``?profile=`` is handled wholly by
+``require_profile_scope``: it refuses a profile the caller isn't enrolled in
+and otherwise holds that profile's scope (``HERMES_HOME``, credential store,
+config) for the handler, with the caller resolved in that profile.
 """
 
 from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
 from hermes_cli import triage_status
+from hermes_cli.profile_route_scope import ProfileScope, require_profile_scope
 
 router = APIRouter(prefix="/api/triage", tags=["triage"])
 
@@ -29,7 +32,14 @@ async def _caller(request: Request):
 
 
 @router.get("/status")
-async def get_triage_status(request: Request, profile: Optional[str] = None):
-    principal = await _caller(request)
+async def get_triage_status(
+    request: Request,
+    target: Optional[ProfileScope] = Depends(require_profile_scope),
+):
+    if isinstance(target, ProfileScope) and target.principal is not None:
+        principal = target.principal
+    else:
+        principal = await _caller(request)
     result = await triage_status.triage_status(principal)
-    return {"profile": profile or None, **result}
+    name = target.entry.name if isinstance(target, ProfileScope) else None
+    return {"profile": name, **result}

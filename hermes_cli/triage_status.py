@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import subprocess
 from pathlib import Path
@@ -140,7 +141,7 @@ def skill_sources(kind: str, config: Optional[Dict[str, Any]]) -> List[Dict[str,
 
 
 def _skills_present(sources: Sequence[Dict[str, Any]]) -> bool:
-    return any(s["layer"] == "base" and s["files"] for s in sources)
+    return any(s["files"] for s in sources)
 
 
 # -- ownership -----------------------------------------------------------------
@@ -161,6 +162,21 @@ async def _service_credentials(service: str, provider: str) -> Optional[List[Any
         return await default_credential_store().resolve_for_service(service, provider=provider)
     except Exception:
         return None
+
+
+def _claimed(principal: Any, matches: Sequence[Any]) -> Optional[bool]:
+    """Whether the caller holds a credential among ``matches``.
+
+    ``True``: the caller owns one (an address saved by several people counts
+    for each of them). ``False``: no credential at all, so an unowned legacy
+    account — the install owner's. ``None``: only other people hold it.
+    """
+    user_id = getattr(principal, "user_id", None)
+    if any(m.owner_user_id == user_id for m in matches):
+        return True
+    if not matches and _owns(principal, None):
+        return False
+    return None
 
 
 def _by_name(entries: Optional[Iterable[Any]], name: str, *, kind: Optional[str] = None) -> List[Any]:
@@ -195,21 +211,28 @@ async def _email(principal: Any) -> Dict[str, Any]:
             matches = _by_name(imap, address, kind=email_mailboxes.KIND)
             owner = str(acct.get("owner_user_id") or "")
             if owner:
+                # The poller logs in only as the recorded owner.
+                if not _owns(principal, owner):
+                    continue
                 matches = [m for m in matches if m.owner_user_id == owner]
-            elif matches:
-                owner = matches[0].owner_user_id
+                has_credential = bool(matches)
+            else:
+                claimed = _claimed(principal, matches)
+                if claimed is None:
+                    continue
+                has_credential = claimed
         else:
-            matches = _by_name(google, str(acct.get("google_account") or address))
-            owner = matches[0].owner_user_id if matches else ""
-        if not _owns(principal, owner):
-            continue
+            claimed = _claimed(principal, _by_name(google, str(acct.get("google_account") or address)))
+            if claimed is None:
+                continue
+            has_credential = claimed
         seen.add(address.lower())
         accounts.append(
             {
                 "address": address,
                 "auth": "password" if auth == "password" else "xoauth2",
                 "enabled": bool(acct.get("enabled", True)),
-                "credential": bool(matches),
+                "credential": has_credential,
                 "in_triage": True,
             }
         )
@@ -228,13 +251,23 @@ async def _email(principal: Any) -> Dict[str, Any]:
     return _kind_result("email", path, config, accounts, credentials_checked=imap is not None and google is not None)
 
 
-def _wa_number(name: Optional[str], configured: Any) -> Optional[str]:
+def _linked_digits(session: Optional[Path]) -> Optional[str]:
+    """Digits of the number linked in ``session/creds.json`` (as ``own_number``)."""
+    if session is None:
+        return None
+    doc = _read_json(session / "creds.json")
+    me = (doc or {}).get("me")
+    jid = str((me if isinstance(me, dict) else {}).get("id") or "")
+    digits = re.split(r"[:@]", jid, maxsplit=1)[0]
+    return digits if digits.isdigit() else None
+
+
+def _wa_number(session: Optional[Path], configured: Any) -> Optional[str]:
     from hermes_cli import wa_bridge_owners
 
-    if name:
-        masked = wa_bridge_owners.mask_number(wa_bridge_owners.own_number(name))
-        if masked:
-            return masked
+    masked = wa_bridge_owners.mask_number(_linked_digits(session))
+    if masked:
+        return masked
     text = str(configured or "")
     if "*" in text:
         return text
@@ -261,12 +294,16 @@ async def _whatsapp(principal: Any) -> Dict[str, Any]:
             continue
         if name:
             on_triage.add(name)
-        session_path = owners.session_dir(name) if name else (Path(session) if session else None)
+        # The batcher reads the phone's configured session_dir; a bridge-owned
+        # session under HERMES_HOME is the fallback when the config names none.
+        session_path = Path(str(session)).expanduser() if session else (
+            owners.session_dir(name) if name else None
+        )
         accounts.append(
             {
                 "id": str(phone.get("id") or name or ""),
                 "label": str(phone.get("name") or phone.get("id") or name or ""),
-                "number": _wa_number(name, phone.get("number")),
+                "number": _wa_number(session_path, phone.get("number")),
                 "enabled": bool(phone.get("enabled", True)),
                 "credential": bool(session_path and (session_path / "creds.json").is_file()),
                 "in_triage": True,
@@ -276,7 +313,7 @@ async def _whatsapp(principal: Any) -> Dict[str, Any]:
     for name, record in owners.load_owners().items():
         if record.get("user_id") == user_id and name not in on_triage:
             accounts.append(
-                {"id": name, "label": name, "number": _wa_number(name, None), "enabled": True,
+                {"id": name, "label": name, "number": _wa_number(owners.session_dir(name), None), "enabled": True,
                  "credential": (owners.session_dir(name) / "creds.json").is_file(), "in_triage": False}
             )
     return _kind_result("whatsapp", path, config, accounts, credentials_checked=True)
@@ -309,8 +346,8 @@ async def _calendar(principal: Any) -> Dict[str, Any]:
         email = str(row.get("email") or "").strip()
         if not email:
             continue
-        matches = _by_name(google, email)
-        if not _owns(principal, matches[0].owner_user_id if matches else ""):
+        claimed = _claimed(principal, _by_name(google, email))
+        if claimed is None:
             continue
         accounts.append(
             {
@@ -318,7 +355,7 @@ async def _calendar(principal: Any) -> Dict[str, Any]:
                 "label": str(row.get("label") or email),
                 "address": email,
                 "enabled": bool(row.get("enabled", 1)),
-                "credential": bool(matches),
+                "credential": claimed,
                 "in_triage": True,
             }
         )
