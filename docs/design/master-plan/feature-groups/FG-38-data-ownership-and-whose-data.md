@@ -77,6 +77,22 @@ Also in scope after P4 (each needs an owner and, where it has a list page, the
 picker): chat sessions list, contacts, todos/needs-you, goals/tasks. Owner-only
 surfaces: activity/audit logs, backups and exports.
 
+## P2b design (approved by Leo 2026-11-12)
+
+- **Raw SQLite stores get no owner column.** They are system-pipeline internals; people see the owner-scoped
+  Postgres copy. They are closed to the terminal user instead (`deploy/hermes-close-data`, #896).
+- **One account → person map:** Postgres table `account_owners` (`hermes_cli/account_owners.py`), key
+  `(surface, account_key)` with surface `email` (address), `calendar` (address) or `whatsapp` (phone id),
+  plus `owner_user_id`, `set_by`, `set_at`. FORCE RLS: only the owner role reads or writes it.
+- **Arrival owner precedence:** Settings choice → poller config entry `owner_user_id` → who connected it
+  (credential / bridge) → install owner. A chosen person who is inactive drops the arrival (as P2a).
+  Pollers read the map as the install owner; if it can't be read they fall through to the next rule.
+- **Settings › Accounts (agent-home, owner only):** every mailbox, calendar and WhatsApp phone with its
+  current person and why. Changing it is audited in the change log and applies to new arrivals only;
+  moving existing rows is P5. Logins stay where they are: reassigning moves data ownership, not credentials.
+- Email/WhatsApp tool servers stay off until they carry the caller's identity. Digest/escalation routing
+  per person moves to P3.
+
 ## Progress log
 
 | Date | PR | Notes |
@@ -84,3 +100,4 @@ surfaces: activity/audit logs, backups and exports.
 | 2026-11-12 | P0+P1 | `?as=` gated in `_comms_resolve_principal`; `parse_owner_filter` in `hermes_cli/access.py`; `owners=` on files, incomings, memory rows and projection (`owner=` still accepted on rows). |
 | 2026-11-12 | P2a | `account_owner`/`_mailbox_cred` in `email_poller.py`, `phone_owner` in `batcher.py`, calendar uses `credentials.owner_user_id`; `register_file(owner_user_id=)`. Inbound key is `(owner_user_id, surface, account_id, external_id)`, so a reassignment makes new rows: P5/P2b must move old ones explicitly. |
 | 2026-11-12 | P2b (stores) | Box had `email-messages`, `whatsapp-messages`, `calendar`, `backups`, `restore-*` readable by `hermes-tools` (terminal + file tools). Closed by hand (snapshot first), and `hermes-close-data` now runs on every deploy: 750, group hermes, owner root/hermes. |
+| 2026-11-12 | P2b (accounts) | `hermes_cli/account_owners.py`: `account_owners` table (RLS: owner only), `settings_owner()` read by the email, calendar and WhatsApp pollers before their own rules, each choice in the change log. `GET/PUT /api/settings/accounts` (owner only) and agent-home Settings › Accounts list every account with its person and why. New arrivals only; moving old rows is P5. |

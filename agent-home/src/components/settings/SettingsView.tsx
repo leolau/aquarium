@@ -8,6 +8,7 @@ import { AppsSettings, UploadsSettings } from "@/components/settings/AppsSetting
 import { AquariumIdleSetting, CreaturePicker } from "@/components/settings/AquariumSettings";
 import { EntityGoalSection } from "@/components/settings/EntityGoalSection";
 import { MenuSection } from "@/components/settings/MenuSection";
+import { AccountsSettings } from "@/components/settings/AccountsSettings";
 import { ModelTimeoutsSettings } from "@/components/settings/ModelTimeoutsSettings";
 import { SkillsPermissionsSection } from "@/components/settings/SkillsPermissionsSection";
 import {
@@ -110,7 +111,7 @@ export function SettingsView({
   isOwner?: boolean;
 } = {}) {
   if (!section) {
-    return <SettingsIndex access={{ canManageMembers, canManageTools }} />;
+    return <SettingsIndex access={{ canManageMembers, canManageTools, isOwner }} />;
   }
   return (
     <div data-component="SettingsView" data-detail={section}>
@@ -145,6 +146,7 @@ const ENTRY_ICON: Record<SettingsEntryId, (p: IconProps) => ReactNode> = {
   aquarium: ClockIcon,
   "model-timeouts": CpuIcon,
   "skills-permissions": LockIcon,
+  accounts: MessageIcon,
 };
 
 /** Figma `hub-card` on tablet/desktop, `list-row` on phones: the whole card is the link. */
@@ -299,6 +301,8 @@ function SettingsSection({
       return <ModelTimeoutsSettings />;
     case "skills-permissions":
       return <SkillsPermissionsSection />;
+    case "accounts":
+      return <AccountsSettings />;
     default:
       // tools, get-ready and upgrade have their own routes.
       return null;

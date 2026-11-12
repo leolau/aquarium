@@ -183,9 +183,15 @@ def download_media(bridge_port, msg_id):
 def phone_owner(phone):
     """Whose messages a configured phone's bridge carries, or None for the owner.
 
-    The phone entry's ``owner_user_id`` when set, else the person who added
-    the bridge on that port in Settings (``bridge-owners.json``).
+    The owner's choice in Settings › Accounts, else the phone entry's
+    ``owner_user_id``, else the person who added the bridge on that port in
+    Settings (``bridge-owners.json``).
     """
+    from hermes_cli.account_owners import settings_owner
+
+    chosen = settings_owner('whatsapp', phone.get('id'))
+    if chosen:
+        return chosen
     if phone.get('owner_user_id'):
         return phone['owner_user_id']
     try:
