@@ -117,3 +117,37 @@ describe("useActivityRunning", () => {
     expect(fetchSpy).toHaveBeenCalledOnce();
   });
 });
+
+const expired = vi.hoisted(() => ({ replace: vi.fn() }));
+vi.mock("@/lib/replace-location", () => ({
+  replaceLocation: (href: string) => expired.replace(href),
+}));
+
+describe("useActivityRunning on an expired login", () => {
+  afterEach(async () => {
+    const { resetExpiredSession } = await import("@/lib/auth/expired-session");
+    resetExpiredSession();
+    expired.replace.mockReset();
+  });
+
+  it("a 401 clears the session and goes to /login", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response("{}", { status: 401 }));
+
+    const { result } = renderHook(() => useActivityRunning());
+
+    await waitFor(() => expect(expired.replace).toHaveBeenCalledWith("/login"));
+    expect(fetchSpy).toHaveBeenCalledWith("/api/session/logout", { method: "POST" });
+    expect(result.current.stale).toBe(true);
+  });
+
+  it("a 502 only marks the rows stale", async () => {
+    mockFeed(null);
+
+    const { result } = renderHook(() => useActivityRunning());
+
+    await waitFor(() => expect(result.current.stale).toBe(true));
+    expect(expired.replace).not.toHaveBeenCalled();
+  });
+});
