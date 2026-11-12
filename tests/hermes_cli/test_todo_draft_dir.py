@@ -60,3 +60,35 @@ def test_write_draft_file_replaces_and_leaves_no_temp(tmp_path):
 
     assert target.read_text(encoding="utf-8") == "new"
     assert [p.name for p in folder.iterdir()] == ["DRAFT.md"]
+
+
+def test_write_draft_file_never_follows_a_planted_link(tmp_path):
+    folder = tmp_path / "todo_1"
+    folder.mkdir()
+    victim = tmp_path / "config.yaml"
+    victim.write_text("secret: keep", encoding="utf-8")
+    # Any predictable temp name the writer could pick is a link to the victim.
+    import os as _os
+
+    for name in (f"DRAFT.md.{_os.getpid()}.tmp", ".DRAFT.md.tmp"):
+        (folder / name).symlink_to(victim)
+
+    todo_work.write_draft_file(folder / "DRAFT.md", "new")
+
+    assert victim.read_text(encoding="utf-8") == "secret: keep"
+    assert (folder / "DRAFT.md").read_text(encoding="utf-8") == "new"
+    assert not (folder / "DRAFT.md").is_symlink()
+
+
+def test_a_symlinked_draft_folder_is_refused(tmp_path, monkeypatch):
+    monkeypatch.setattr(terminal_user, "configured_user", lambda: _own_group_user())
+    elsewhere = tmp_path / "home"
+    elsewhere.mkdir(mode=0o700)
+    drafts = tmp_path / "drafts"
+    drafts.mkdir()
+    (drafts / "todo_1").symlink_to(elsewhere)
+
+    with pytest.raises(OSError):
+        todo_work.prepare_draft_dir(drafts / "todo_1")
+
+    assert stat.S_IMODE(elsewhere.stat().st_mode) == 0o700

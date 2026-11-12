@@ -29,6 +29,7 @@ import asyncio
 import contextvars
 import logging
 import os
+import tempfile
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -80,6 +81,11 @@ def _shared_draft_perms(draft_dir: Path) -> None:
 
 def prepare_draft_dir(draft_dir: Path) -> Path:
     """Create a drafts dir the whole service split can share."""
+    for path in (draft_dir.parent, draft_dir):
+        if path.is_symlink():
+            # The tree is writable by the terminal user: a planted link would
+            # make the dashboard user hand its own folder to that group.
+            raise OSError(f"draft folder {path} is a symlink; refusing to use it")
     draft_dir.mkdir(parents=True, exist_ok=True)
     _shared_draft_perms(draft_dir)
     return draft_dir
@@ -93,9 +99,13 @@ def write_draft_file(path: Path, text: str) -> None:
     ``hermes``): opening it for write needs ownership, but rename only
     needs a writable directory — which the shared perms provide.
     """
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    # mkstemp creates the temp file exclusively (O_EXCL), so a link planted
+    # in this shared folder is never followed; os.replace swaps the name.
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
     try:
-        tmp.write_text(text, encoding="utf-8")
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
         os.replace(tmp, path)
     finally:
         try:
