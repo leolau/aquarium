@@ -11,7 +11,10 @@ import type { Role } from "@/types";
 import type { NeedsYouEntry } from "@/types/landing";
 
 import { AccountMenu } from "./AccountMenu";
+import { ActivityPill } from "./ActivityPill";
 import { AttentionBanner } from "./AttentionBanner";
+import { AttentionStrip } from "./AttentionStrip";
+import { CoralMenuButton } from "./CoralMenuButton";
 import { HealthPill } from "./HealthPill";
 import { MobileActivityStrip } from "./MobileActivityStrip";
 import { RunningStripView } from "./RunningStrip";
@@ -28,6 +31,12 @@ export interface TopBarProps {
   accountRole?: Role | null;
   accountRoles?: ProfileRole[];
   currentProfile?: string;
+  /**
+   * Phones on the chat page: the running strip becomes a pill in the bar, the
+   * attention card folds into the bell (one line only for a blocking item),
+   * and the bar carries the Coral menu button in place of the floating one.
+   */
+  compact?: boolean;
 }
 
 export interface TopBarData {
@@ -55,6 +64,7 @@ export function TopBarView({
   accountRole,
   accountRoles,
   currentProfile,
+  compact = false,
 }: TopBarProps & TopBarData) {
   const build = buildInfo(status.summary);
   const barRef = useAutoFit<HTMLElement>();
@@ -93,8 +103,10 @@ export function TopBarView({
           </span>
         </Link>
         <div className="flex shrink-0 items-center gap-2 lg:hidden">
+          {compact ? <ActivityPill items={activity.items} now={activity.now} stale={activity.stale} /> : null}
           <HealthPill variant="compact" status={status} activity={activity} />
           <NeedsYouBadge compact count={needsYou.count} stale={needsYou.stale} onOpen={onOpenNeedsYou} />
+          {compact ? <CoralMenuButton /> : null}
         </div>
         <div className="hidden shrink-0 lg:flex">
           <NeedsYouBadge count={needsYou.count} stale={needsYou.stale} onOpen={onOpenNeedsYou} />
@@ -110,21 +122,32 @@ export function TopBarView({
         scheduled={activity.scheduled}
         className="hidden lg:flex"
       />
-      <MobileActivityStrip
-        items={activity.items}
-        now={activity.now}
-        stale={activity.stale}
-        scheduled={activity.scheduled}
-        className="lg:hidden"
-      />
-      <AttentionBanner
-        items={needsYou.items}
-        count={needsYou.count}
-        blocking={needsYou.blocking}
-        onSeeAll={onOpenNeedsYou}
-        now={activity.now}
-        className="lg:hidden"
-      />
+      {compact ? (
+        <AttentionStrip
+          items={needsYou.items}
+          blocking={needsYou.blocking}
+          onOpen={onOpenNeedsYou}
+          className="lg:hidden"
+        />
+      ) : (
+        <>
+          <MobileActivityStrip
+            items={activity.items}
+            now={activity.now}
+            stale={activity.stale}
+            scheduled={activity.scheduled}
+            className="lg:hidden"
+          />
+          <AttentionBanner
+            items={needsYou.items}
+            count={needsYou.count}
+            blocking={needsYou.blocking}
+            onSeeAll={onOpenNeedsYou}
+            now={activity.now}
+            className="lg:hidden"
+          />
+        </>
+      )}
     </div>
   );
 }

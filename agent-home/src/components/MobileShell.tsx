@@ -80,6 +80,7 @@ export async function MobileShell({
   back,
   labels,
   hideHeader = false,
+  chatChrome = false,
 }: {
   title: ReactNode;
   children: ReactNode;
@@ -102,6 +103,12 @@ export async function MobileShell({
   labels?: Record<string, string>;
   /** Top bar and launcher only, no Back row or page title (the root loading screen). */
   hideHeader?: boolean;
+  /**
+   * The chat page's phone layout (desktop unchanged): a compact top bar
+   * (needs-you folds into the bell, one line for a blocking item), a one-row
+   * title bar, and no floating launchers over the composer.
+   */
+  chatChrome?: boolean;
 }) {
   // The badge count: one cached facets call per 30s.  The session is
   // resolved outside the cache so cookies() isn't called inside it, and
@@ -171,8 +178,10 @@ export async function MobileShell({
       wide={wide}
       fill={fill}
       clearLauncher
+      chatChrome={chatChrome}
       topBar={
         <ShellTopBar
+          compact={chatChrome}
           accountName={accountName}
           accountRole={accountRole}
           accountRoles={accountRoles}
@@ -182,6 +191,7 @@ export async function MobileShell({
       pageHeader={
         hideHeader ? null : (
         <PageHeader
+          compact={chatChrome}
           title={title}
           subtitle={subtitle}
           info={info}
@@ -200,8 +210,8 @@ export async function MobileShell({
       }
       overlays={
         <>
-          <CoralHost badgeCounts={badgeCounts} hiddenApps={hiddenApps} />
-          <LeadChatHost storageEnabled={storageConfigured()} />
+          <CoralHost badgeCounts={badgeCounts} hiddenApps={hiddenApps} hideFabOnPhone={chatChrome} />
+          <LeadChatHost storageEnabled={storageConfigured()} hideFabOnPhone={chatChrome} />
           <AppMcpBridge />
         </>
       }

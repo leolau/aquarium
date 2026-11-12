@@ -26,11 +26,18 @@ export function ChatConversationView({
   composerInitialText,
   composerLauncherClearance = true,
   sessionRef,
+  compactOnPhone = false,
 }: {
   conv: ChatConversation;
   storageEnabled: boolean;
   composerInitialText?: string;
   composerLauncherClearance?: boolean;
+  /**
+   * The chat page's phone layout: no ref/copy row (Copy is in the title-bar
+   * menu, the ref in Details), a taller composer, and no left reserve for the
+   * floating launcher, which phones hide there.
+   */
+  compactOnPhone?: boolean;
   /** The open chat's short ref (`C1024`), shown above the transcript. */
   sessionRef?: string | null;
 }) {
@@ -60,7 +67,7 @@ export function ChatConversationView({
   return (
     <>
       {canCopy || sessionRef ? (
-        <div className="mb-1 flex items-center justify-end gap-2">
+        <div className={`mb-1 flex items-center justify-end gap-2${compactOnPhone ? " max-lg:hidden" : ""}`}>
           <RefBadge value={sessionRef} className="lg:!min-h-0" />
           {canCopy ? (
             <CopyChatButton
@@ -153,7 +160,8 @@ export function ChatConversationView({
         stopping={selTurn?.stopping ?? false}
         pending={conv.selPending}
         onRemovePending={(itemId) => void conv.removePending(itemId)}
-        launcherClearance={composerLauncherClearance}
+        launcherClearance={composerLauncherClearance && compactOnPhone ? "desktop" : composerLauncherClearance}
+        tall={compactOnPhone}
       />
     </>
   );

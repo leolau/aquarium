@@ -40,9 +40,28 @@ export function onLeadChatRequest(listener: (open: boolean) => void): () => void
   };
 }
 
+const menuListeners = new Set<() => void>();
+
+/**
+ * Open the launcher menu from another control — the chat top bar on phones,
+ * where the floating launcher is hidden so it can't cover the composer.
+ */
+export function requestCoralMenu(): void {
+  for (const listener of menuListeners) listener();
+}
+
+/** CoralHost: receive open requests from {@link requestCoralMenu}. */
+export function onCoralMenuRequest(listener: () => void): () => void {
+  menuListeners.add(listener);
+  return () => {
+    menuListeners.delete(listener);
+  };
+}
+
 /** Test-only reset — module state otherwise persists between tests. */
 export function resetCoralInterlockForTests(): void {
   leadChatOpen = false;
   parkedByMenu = false;
   listeners.clear();
+  menuListeners.clear();
 }

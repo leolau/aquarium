@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -127,5 +127,20 @@ describe("CoralHost grid panel", () => {
     openCoral();
     const settings = screen.getByRole("menuitem", { name: /settings/i });
     expect(settings.getAttribute("href")).toBe("/settings");
+  });
+});
+
+describe("CoralHost on the phone chat page", () => {
+  it("hides the floating button below lg only", () => {
+    render(<CoralHost hideFabOnPhone />);
+    const fab = screen.getByRole("button", { name: /open aquarium menu/i });
+    expect(fab.className).toContain("max-lg:hidden");
+  });
+
+  it("opens the menu when the top bar asks", async () => {
+    const { requestCoralMenu } = await import("@/components/coral/coral-interlock");
+    render(<CoralHost hideFabOnPhone />);
+    act(() => requestCoralMenu());
+    expect(document.querySelector("#coral-panel[role='menu']")).toBeTruthy();
   });
 });

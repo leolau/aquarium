@@ -138,3 +138,38 @@ describe("TopBar", () => {
     expect(screen.getByRole("banner")).toBeTruthy();
   });
 });
+
+describe("TopBarView compact (phone chat page)", () => {
+  it("folds the activity strip and attention card into the bar, keeping one blocking line", () => {
+    const onOpen = vi.fn();
+    render(
+      <TopBarView compact status={mockStatus()} activity={mockActivity()} needsYou={needsYou} onOpenNeedsYou={onOpen} />,
+    );
+    expect(document.querySelector('[data-component="MobileActivityStrip"]')).toBeNull();
+    expect(document.querySelector('[data-component="AttentionBanner"]')).toBeNull();
+    const pill = screen.getByRole("button", { name: "4 working — show what's running" });
+    expect(pill.textContent).toContain("4");
+    expect(screen.getByRole("button", { name: "Open Aquarium menu" })).toBeTruthy();
+    const strip = document.querySelector<HTMLButtonElement>('[data-component="AttentionStrip"]')!;
+    expect(strip.textContent).toContain("1 blocking");
+    expect(strip.className).toContain("h-11");
+    fireEvent.click(strip);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    fireEvent.click(pill);
+    expect(document.querySelector('[data-component="ActivitySheet"]')).toBeTruthy();
+  });
+
+  it("shows no strip when nothing blocks — the bell carries the count", () => {
+    const calm = { ...needsYou, blocking: 0, items: MOCK_NEEDS_YOU.filter((i) => i.severity !== "blocking") };
+    render(<TopBarView compact status={mockStatus()} activity={mockActivity()} needsYou={calm} />);
+    expect(document.querySelector('[data-component="AttentionStrip"]')).toBeNull();
+    expect(document.querySelectorAll('[data-component="NeedsYouBadge"]').length).toBeGreaterThan(0);
+  });
+
+  it("keeps the full layout when not compact", () => {
+    render(<TopBarView status={mockStatus()} activity={mockActivity()} needsYou={needsYou} />);
+    expect(document.querySelector('[data-component="ActivityPill"]')).toBeNull();
+    expect(document.querySelector('[data-component="CoralMenuButton"]')).toBeNull();
+    expect(document.querySelector('[data-component="AttentionStrip"]')).toBeNull();
+  });
+});

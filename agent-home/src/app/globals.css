@@ -137,6 +137,24 @@ body {
   }
 }
 
+/* Phone chat page with the keyboard open (useKeyboardViewport): pin the page
+ * to the visible area above the keyboard — iOS keeps the layout viewport full
+ * height — and fold the top bar away so the title bar and composer remain. */
+@media (width < 64rem) {
+  html[data-keyboard="open"] [data-component="MobileShell"][data-chat-chrome] {
+    position: fixed;
+    inset-inline: 0;
+    top: var(--vv-top, 0px);
+    height: var(--vv-height, 100dvh);
+  }
+  html[data-keyboard="open"] [data-component="MobileShell"][data-chat-chrome] > div {
+    height: 100%;
+  }
+  html[data-keyboard="open"] [data-chat-chrome="collapsible"] {
+    display: none;
+  }
+}
+
 /* The field the journey bar just pointed at (revealTarget). */
 [data-journey-highlight="true"] {
   outline: 2px solid var(--color-accent);

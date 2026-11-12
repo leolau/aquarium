@@ -33,3 +33,19 @@ describe("PageHeader", () => {
     expect(document.querySelector('[data-action="back"]')).toBeNull();
   });
 });
+
+describe("PageHeader compact (phone chat page)", () => {
+  it("puts back, title and actions in one row below lg", () => {
+    path = "/chat";
+    render(<PageHeader compact title="A very long conversation title" actions={<button type="button">Act</button>} />);
+    const header = document.querySelector<HTMLElement>('[data-component="PageHeader"]')!;
+    expect(header.dataset.variant).toBe("compact");
+    expect(header.className).toContain("items-center");
+    expect(header.className).toContain("lg:flex-col");
+    const h1 = screen.getByRole("heading", { level: 1 });
+    expect(h1.className).toContain("truncate");
+    const back = document.querySelector<HTMLElement>('[data-action="back"]')!;
+    expect(back.className).toContain("h-11 shrink-0");
+    expect(back.className).toContain("w-11");
+  });
+});

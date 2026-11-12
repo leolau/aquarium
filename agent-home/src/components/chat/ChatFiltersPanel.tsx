@@ -24,6 +24,7 @@ export function ChatFiltersPanel({
   profile,
   filterCount,
   searchActive,
+  compactOnPhone = false,
   children,
 }: {
   open: boolean;
@@ -33,11 +34,17 @@ export function ChatFiltersPanel({
   filterCount: number;
   /** A search bar is open or its highlights are showing. */
   searchActive: boolean;
+  /**
+   * Phones: drop the collapsed row while nothing applies — the title bar's
+   * menu opens the panel. It stays whenever a filter or search is on.
+   */
+  compactOnPhone?: boolean;
   children: ReactNode;
 }) {
+  const rowHidden = compactOnPhone && !open && filterCount === 0 && !searchActive;
   return (
-    <div data-component="ChatFiltersPanel" className="mb-2">
-      <div className="flex min-w-0 items-center gap-2 text-xs">
+    <div data-component="ChatFiltersPanel" className={rowHidden ? "mb-2 max-lg:mb-0" : "mb-2"}>
+      <div className={`flex min-w-0 items-center gap-2 text-xs${rowHidden ? " max-lg:hidden" : ""}`}>
         <button
           type="button"
           onClick={onToggle}

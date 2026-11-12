@@ -16,7 +16,9 @@ test.describe("mobile layout", { tag: "@regression" }, () => {
         () => document.documentElement.scrollWidth - window.innerWidth,
       );
       expect(overflow, "horizontal overflow (px)").toBeLessThanOrEqual(1);
-      await expect(coralFab(page)).toBeInViewport();
+      // The chat page hides the floating launcher on phones (its top bar opens the menu).
+      if (route === "/chat") await expect(coralFab(page)).toBeHidden();
+      else await expect(coralFab(page)).toBeInViewport();
     });
   }
 

@@ -22,10 +22,27 @@ export interface ChatHeaderActionsRef {
   openArchived: () => void;
   /** Opens the details sheet (rename, category, tags) of the open conversation. */
   openDetails: () => void;
+  /** Opens the chats drawer (phones, where the sidebar is hidden). */
+  openChats: () => void;
+  /** Shows or hides the Filters & search panel. */
+  toggleFilters: () => void;
+  /** Copies the open conversation; resolves whether the clipboard took it. */
+  copyChat: () => Promise<boolean>;
 }
 
-const noop = () => {};
+/** Callbacks that do nothing — the ref's value while no `ChatPane` is mounted. */
+export function noopChatHeaderActions(): ChatHeaderActionsRef {
+  const noop = () => {};
+  return {
+    startNew: noop,
+    openArchived: noop,
+    openDetails: noop,
+    openChats: noop,
+    toggleFilters: noop,
+    copyChat: async () => false,
+  };
+}
 
 export const chatHeaderActionsRef: { current: ChatHeaderActionsRef } = {
-  current: { startNew: noop, openArchived: noop, openDetails: noop },
+  current: noopChatHeaderActions(),
 };

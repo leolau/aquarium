@@ -2,13 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useT } from "@/i18n";
 import { useAction } from "@/lib/use-action";
 
 import { ChatsDrawer, ChatsSidebar } from "@/components/landing/chats";
 import { chatHref, chatsApi } from "@/components/landing/chats/chatsApi";
 import { highlightTermOf } from "@/components/landing/chats/MessageSearch";
-import { MessageIcon, PlusIcon } from "@/components/ui/icons";
 import { ArchivedModal } from "@/components/chat/ArchivedModal";
 import {
   CHAT_FILTERS_OPEN_STORAGE_KEY,
@@ -27,7 +25,8 @@ import {
   isCategoryOverrideTag,
   type ChatCategory,
 } from "@/lib/chat/categorize";
-import { chatHeaderActionsRef } from "@/lib/chat/header-actions";
+import { chatHeaderActionsRef, noopChatHeaderActions } from "@/lib/chat/header-actions";
+import { chatTranscriptText, copyText } from "@/lib/chat/copy-chat";
 import {
   nextActiveAfterArchive,
   orderSessions,
@@ -129,7 +128,6 @@ export function ChatPane({
     setDrawerOpen(false);
     setDrawerFocusSearch(false);
   }, [setDrawerOpen, setDrawerFocusSearch]);
-  const t = useT("chatPage");
   // ── Tagging state ──
   const [allTags, setAllTags] = useState<SessionTag[]>([]);
   const [sessionTags, setSessionTags] = useState<SessionTag[]>([]);
@@ -429,14 +427,18 @@ export function ChatPane({
       const active = sessions.find((s) => s.id === sessionId);
       if (active) void onOpenDetails(active);
     };
+    chatHeaderActionsRef.current.openChats = () => setDrawerOpen(true);
+    chatHeaderActionsRef.current.toggleFilters = () => setFiltersOpen(!filtersOpen);
+    chatHeaderActionsRef.current.copyChat = () => {
+      const live = conv.liveActivity[conv.selKey];
+      return copyText(
+        chatTranscriptText(conv.messages, live ? { tools: live.tools, reasoning: live.reasoning } : null),
+      );
+    };
   });
   useEffect(() => {
     return () => {
-      chatHeaderActionsRef.current = {
-        startNew: () => {},
-        openArchived: () => {},
-        openDetails: () => {},
-      };
+      chatHeaderActionsRef.current = noopChatHeaderActions();
     };
   }, []);
 
@@ -492,6 +494,7 @@ export function ChatPane({
         profile={profile}
         filterCount={includeTags.length + excludeTags.length}
         searchActive={inSearchOpen || highlightTerm !== undefined}
+        compactOnPhone
       >
       {/* Tag filter bar */}
       <TagFilterBar
@@ -541,29 +544,10 @@ export function ChatPane({
         storageEnabled={storageEnabled}
         composerInitialText={autoSend ? undefined : initialDraft}
         sessionRef={sessions.find((s) => s.id === sessionId)?.ref}
+        compactOnPhone
       />
 
 
-      <div data-component="chat-dock" className="mt-2 flex gap-2 lg:hidden">
-        <button
-          type="button"
-          data-action="open-chats"
-          onClick={() => setDrawerOpen(true)}
-          className="flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-medium text-[var(--color-fg)]"
-        >
-          <MessageIcon size={16} />
-          <span className="truncate">{t("chats")}</span>
-        </button>
-        <button
-          type="button"
-          data-action="new-chat"
-          onClick={startFreshChat}
-          className="flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-[var(--radius-lg)] bg-[var(--color-accent)] text-sm font-medium text-[var(--color-accent-fg)]"
-        >
-          <PlusIcon size={16} />
-          {t("newChat")}
-        </button>
-      </div>
       </div>
       <ChatsDrawer
         open={drawerOpen}

@@ -70,6 +70,9 @@ describe("globals.css tokens", () => {
     );
     // Set from component style props at runtime.
     defined.add("--coral-delay");
+    // Set on <html> from window.visualViewport (useKeyboardViewport).
+    defined.add("--vv-height");
+    defined.add("--vv-top");
     const used = new Set<string>();
     for (const p of walk(SRC)) {
       for (const m of readFileSync(p, "utf8").matchAll(/var\((--[a-z0-9-]+)/g)) used.add(m[1]);
