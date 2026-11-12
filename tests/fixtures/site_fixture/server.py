@@ -496,7 +496,7 @@ class _Handler(BaseHTTPRequestHandler):
             '<div class="panel" id="s-builder">'
             '<label>Stock-in from <input type="date" id="s-from"></label>'
             '<label>to <input type="date" id="s-to"></label>'
-            '<label>Warehouse <select id="s-wh"><option value="">(any)</option><option>HK1</option>'
+            '<label>Warehouse <select id="s-wh"><option value="0">All warehouses</option><option>HK1</option>'
             "<option>SZ1</option></select></label>"
             '<button type="button" id="s-search">Search</button>'
             '<button type="button" id="s-all">Export all</button>'
@@ -508,7 +508,7 @@ class _Handler(BaseHTTPRequestHandler):
             "document.getElementById('s-search').addEventListener('click', () => {"
             "  const f = [], from = document.getElementById('s-from').value, to = document.getElementById('s-to').value;"
             "  if (from || to) f.push({field: 'stock_in', op: 'between', value: [from, to]});"
-            "  const wh = document.getElementById('s-wh').value; if (wh) f.push({field: 'wh', op: '=', value: wh});"
+            "  const wh = document.getElementById('s-wh').value; if (wh !== '0') f.push({field: 'wh', op: '=', value: wh});"
             "  const x = new XMLHttpRequest(); x.open('POST', '/stock/search');"
             "  x.setRequestHeader('Content-Type', 'application/json');"
             "  x.onload = () => { const rows = JSON.parse(x.responseText);"
