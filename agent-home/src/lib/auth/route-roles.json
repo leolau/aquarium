@@ -287,6 +287,7 @@
   "GET /api/tools/apps/[name]/secrets": "signed-in",
   "DELETE /api/tools/apps/[name]/secrets": "signed-in",
   "GET /api/email/mailboxes": "signed-in",
+  "GET /api/triage/status": "signed-in",
   "PUT /api/email/mailboxes/[address]": "signed-in",
   "DELETE /api/email/mailboxes/[address]": "signed-in",
   "POST /api/email/mailboxes/[address]/test": "signed-in",

@@ -199,6 +199,7 @@ import type {
   RefreshKeysResponse,
   PinnedModelCard,
   ScheduledSummary,
+  TriageStatus,
 } from "@/types";
 
 /** Per-person Telegram bot actions forwarded to Hermes `/api/telegram-bot/*`. */
@@ -3318,6 +3319,11 @@ export class HermesApiClient {
       method: "PATCH",
       json: auth ? { address, enabled, auth } : { address, enabled },
     });
+  }
+
+  /** The caller's own triage setup (email, WhatsApp, calendar); no secrets. */
+  async triageStatus(): Promise<TriageStatus> {
+    return this.request("/api/triage/status");
   }
 
   /** The caller's own IMAP/SMTP mailboxes (never any password). */
