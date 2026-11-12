@@ -8,13 +8,15 @@
  * Polled every 15s from the landing page (and on focus), so the upstream
  * read is cached briefly per session (token hash + role in the key — never
  * served cross-principal). An upstream failure is a 502, never an empty
- * list, so the client keeps its last good items.
+ * list, so the client keeps its last good items. An upstream 401 (the
+ * session's token expired) stays a 401.
  */
 import { createHash } from "node:crypto";
 
 import { unstable_cache } from "next/cache";
 import { NextResponse } from "next/server";
 
+import { isUpstreamUnauthenticated } from "@/lib/api/client";
 import { apiClientForRequest, getPrincipal } from "@/lib/auth/principal";
 import { canAdminister } from "@/lib/auth/roles";
 import { readSession } from "@/lib/auth/session";
@@ -62,7 +64,10 @@ export async function GET(req: Request): Promise<NextResponse> {
         )()
       : await read();
     return NextResponse.json(normalize(raw));
-  } catch {
+  } catch (err) {
+    if (isUpstreamUnauthenticated(err)) {
+      return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
+    }
     return NextResponse.json({ error: "upstream unavailable" }, { status: 502 });
   }
 }

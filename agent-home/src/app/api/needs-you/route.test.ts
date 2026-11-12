@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GET } from "@/app/api/needs-you/route";
+import { HermesApiError } from "@/lib/api/client";
 import type { Principal } from "@/types";
 import type { NeedsYouEntry, NeedsYouResponse } from "@/types/landing";
 
@@ -121,5 +122,17 @@ describe("GET /api/needs-you", () => {
     getPrincipal.mockResolvedValue(principal("member"));
     await get();
     expect(unstableCache.mock.calls[0][1]?.[2]).toBe("member");
+  });
+
+  it("keeps an upstream 401 (expired token) a 401, not a 502", async () => {
+    request.mockRejectedValue(new HermesApiError(401, "Unauthorized"));
+    const res = await get();
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "unauthenticated" });
+  });
+
+  it("still surfaces other upstream refusals as 502", async () => {
+    request.mockRejectedValue(new HermesApiError(500, "boom"));
+    expect((await get()).status).toBe(502);
   });
 });

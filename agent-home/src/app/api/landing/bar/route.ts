@@ -3,7 +3,8 @@
  * (system stats + upload storage), this month's tokens, what is running or
  * waiting (activity), and the needs-you count. Each leg is independent: a
  * failed read degrades its field, and only a bar with every leg down is a
- * 502 (so the client keeps its last good bar).
+ * 502 (so the client keeps its last good bar). An upstream 401 on any leg
+ * means the session's token expired, so the bar is a 401.
  *
  * `?build=<sha>` (optional) is the browser bundle's build; it is compared
  * with this server's to flag a stale post-deploy bundle.
@@ -13,7 +14,7 @@ import { createHash } from "node:crypto";
 import { unstable_cache } from "next/cache";
 import { NextResponse } from "next/server";
 
-import type { HermesApiClient } from "@/lib/api/client";
+import { isUpstreamUnauthenticated, type HermesApiClient } from "@/lib/api/client";
 import { apiClientForRequest, getPrincipal } from "@/lib/auth/principal";
 import { canAdminister } from "@/lib/auth/roles";
 import { readSession } from "@/lib/auth/session";
@@ -36,18 +37,24 @@ interface Legs {
   needs_you: { count: number; blocking: number } | null;
 }
 
+/** A failed leg degrades to null, except an upstream 401: the whole bar is signed out. */
+function leg<T>(read: () => Promise<T>): Promise<T | null> {
+  return Promise.resolve()
+    .then(read)
+    .catch((err: unknown) => {
+      if (isUpstreamUnauthenticated(err)) throw err;
+      return null;
+    });
+}
+
 async function collect(client: HermesApiClient, admin: boolean): Promise<Legs> {
   const [stats, usage, cron, uploadStorage, activity, needs] = await Promise.all([
-    client.systemStats().catch(() => null),
-    client.usageAnalytics(30).catch(() => null),
-    client.cronJobs().catch(() => null),
-    admin
-      ? Promise.resolve()
-          .then(() => client.uploadStorage())
-          .catch(() => null)
-      : Promise.resolve(null),
-    client.activityRunning().catch(() => null),
-    client.request<NeedsYouResponse>("/api/needs-you?include=count").catch(() => null),
+    leg(() => client.systemStats()),
+    leg(() => client.usageAnalytics(30)),
+    leg(() => client.cronJobs()),
+    admin ? leg(() => client.uploadStorage()) : Promise.resolve(null),
+    leg(() => client.activityRunning()),
+    leg(() => client.request<NeedsYouResponse>("/api/needs-you?include=count")),
   ]);
   const items = Array.isArray(activity) ? activity : null;
   return {
@@ -87,17 +94,25 @@ export async function GET(req: Request): Promise<NextResponse> {
   const client = await apiClientForRequest();
   const admin = canAdminister(principal);
   const token = (await readSession())?.hermesToken;
-  const legs = token
-    ? await unstable_cache(
-        () => collect(client, admin),
-        [
-          "landing-bar",
-          createHash("sha256").update(token).digest("hex"),
-          admin ? "admin" : "member",
-        ],
-        { revalidate: CACHE_SECONDS },
-      )()
-    : await collect(client, admin);
+  let legs: Legs;
+  try {
+    legs = token
+      ? await unstable_cache(
+          () => collect(client, admin),
+          [
+            "landing-bar",
+            createHash("sha256").update(token).digest("hex"),
+            admin ? "admin" : "member",
+          ],
+          { revalidate: CACHE_SECONDS },
+        )()
+      : await collect(client, admin);
+  } catch (err) {
+    if (isUpstreamUnauthenticated(err)) {
+      return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
+    }
+    throw err;
+  }
   if (!legs.stats_ok && legs.running === null && legs.needs_you === null) {
     return NextResponse.json({ error: "upstream unavailable" }, { status: 502 });
   }

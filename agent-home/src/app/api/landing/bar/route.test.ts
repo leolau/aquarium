@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GET } from "@/app/api/landing/bar/route";
+import { HermesApiError } from "@/lib/api/client";
 import type { Principal } from "@/types";
 import type { LandingBarResponse } from "@/types/landing";
 
@@ -141,5 +142,19 @@ describe("GET /api/landing/bar", () => {
     expect(key).toEqual([
       "landing-bar", createHash("sha256").update("secret-token").digest("hex"), "admin",
     ]);
+  });
+
+  it("is a 401 when any leg says the session's token expired", async () => {
+    client.usageAnalytics.mockRejectedValue(new HermesApiError(401, "Unauthorized"));
+    const res = await get();
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "unauthenticated" });
+  });
+
+  it("still degrades a leg that fails with another upstream status", async () => {
+    client.usageAnalytics.mockRejectedValue(new HermesApiError(403, "forbidden"));
+    const res = await get();
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as LandingBarResponse).usage.tokens_month).toBeNull();
   });
 });
