@@ -1475,6 +1475,60 @@ export interface EmailMailbox extends EmailServerSettings {
   } | null;
 }
 
+/** How far one triage kind is set up for the signed-in person. */
+export type TriageState = "set_up" | "partly_set_up" | "not_set_up";
+
+/** Why a triage kind isn't fully set up (see hermes_cli/triage_status.py). */
+export type TriageMissing = "account" | "triage" | "enabled" | "credential" | "skills";
+
+/** One of the caller's own mailboxes / numbers / calendars a pipeline reads. */
+export interface TriageAccount {
+  id?: string;
+  label?: string;
+  address?: string;
+  number?: string | null;
+  auth?: "password" | "xoauth2";
+  enabled: boolean;
+  credential: boolean;
+  in_triage: boolean;
+}
+
+export interface TriageSkillFile {
+  name: string;
+  path: string;
+  present: boolean;
+}
+
+/** A skill folder a triage pipeline loads (`base`) or its `custom` overlay. */
+export interface TriageSkillFolder {
+  name: string;
+  path: string;
+  layer: "base" | "custom";
+  present: boolean;
+  files: TriageSkillFile[];
+}
+
+export interface TriageKindStatus {
+  kind: "email" | "whatsapp" | "calendar";
+  label: string;
+  status: TriageState;
+  missing: TriageMissing[];
+  accounts: TriageAccount[];
+  skills_present: boolean;
+  skills: TriageSkillFolder[];
+  skills_source: string;
+  config: { path: string; present: boolean };
+  credentials_checked: boolean;
+  setup_links: { label: string; href: string }[];
+  services: { unit: string; state: string | null }[];
+}
+
+/** `GET /api/triage/status` — the signed-in person's triage setup. */
+export interface TriageStatus {
+  profile: string | null;
+  kinds: TriageKindStatus[];
+}
+
 /** Body of `PUT /api/email/mailboxes/{address}`; empty password keeps the saved one. */
 export interface EmailMailboxInput extends EmailServerSettings {
   username: string;

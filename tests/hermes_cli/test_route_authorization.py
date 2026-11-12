@@ -257,6 +257,8 @@ SIGNED_IN = {
     # owner/admin); adding one makes it the caller's
     "GET /api/wa-bridges",
     "POST /api/wa-bridges",
+    # triage status: the caller's own mailboxes / numbers / calendars only
+    "GET /api/triage/status",
     # vpn_api: the caller's own VPN folders
     "GET /api/vpn/folders",
     "POST /api/vpn/folders",
