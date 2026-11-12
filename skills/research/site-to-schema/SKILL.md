@@ -88,11 +88,34 @@ Work in `~/site-study/<slug>/` (`design.json`, `recipe.json`,
      inventory: `summary`, then buttons, forms, tables, pagination.
    - For each safe button / sub-menu (`forbidden: false`), add a probe that
      clicks it (`{"op": "click", "text": "SKU Table"}`), and for each
-     search/report form a probe that fills a wide date range
-     (`{{date-3650}}`..`{{today}}`) or leaves filters empty and submits the
-     search button. Pass them as `probes`
+     search/report form a probe that sets the narrowest filter (below)
+     and submits the search button. Pass them as `probes`
      (`[{"name": ..., "steps": [...]}]`, up to 20 per call) and keep
      what you learn in `probes.json` / `inventory/`.
+   - **Narrow filter first, every time.** Before clicking any
+     Search/Query/Filter button, set the narrowest filter the form has:
+     one day (`{{date-1}}`..`{{date-1}}`), or a single known value (one
+     warehouse, one ID seen on another page). **Never click with empty
+     filters**: on many sites that returns the whole database and slows
+     the site for everyone. If no filter can be set, do not click; put a
+     question in your notes instead. The inventory's `warnings` list
+     every click/submit made with empty date/filter inputs.
+   - **Cut-off calls.** Explore cuts off any XHR/fetch answer a step sets
+     off past 2 MB (recipe `explore_max_call_bytes`, 10 kB to 50 MB) and
+     lists it in `step_requests` as `aborted: "too_large"` with
+     `bytes_seen` (and `content_length` when announced). That means the
+     filter was too wide: narrow it; do not repeat the wide search or
+     raise the cap to get it through.
+   - **Probe budget.** If the site slows down (a step times out, or
+     answers take more than 10 s), stop probing. Wait a few minutes
+     before the next `explore` call, and send fewer, narrower probes per
+     call after that.
+   - **Configuration / setup screens** (Set Function, Set WorkFlow,
+     settings, parameters) often hold read-only lookup lists (function or
+     workflow definitions, reason codes) as a table or JSON. Open them
+     and check for such a table before excluding the page as "config";
+     only the edit forms are out of scope, and an Edit/Save button next
+     to a list does not make the list itself off limits.
    - The browser tools (`browser_snapshot`, `browser_click`) help to see
      a confusing page, but log in through `explore` so the password is
      never typed by you; if you must use the browser, follow
@@ -143,10 +166,19 @@ Work in `~/site-study/<slug>/` (`design.json`, `recipe.json`,
      - Set `max_bytes` and a recipe `delay_ms`; an unpaged endpoint can
        return tens of MB and slow the site. Never page the DOM thousands
        of times.
+   - **Secrets sent to the browser.** If a table or JSON answer holds
+     password, hash, token or API-key fields (the inventory's `security`
+     note and `secret_columns` / `secret_keys` flag them), exclude the
+     **whole entity**, not just the column: add the page to
+     `design.exclusions` as `{"page": ..., "reason": ..., "security":
+     true}` and tell the user it is a security issue to report to the
+     site owner. Never store those columns, and never copy their values
+     into notes, files or chat.
    - Keep a list: page → how reached → what data (table headers, row
      count, paging, date filter, fields).
    Skip pure action screens (data-entry forms such as Stock In, Packing):
-   they produce no data to copy. Note them in the report.
+   they produce no data to copy. List every skipped page in
+   `design.exclusions` (`page`, `reason`) and in the report.
 5. **Classify** every data source into an entity, with a reason:
    - **variable**: anything paginated, any table, list, search result or
      collection — even a small reference table (it gets rows added and
@@ -154,6 +186,11 @@ Work in `~/site-study/<slug>/` (`design.json`, `recipe.json`,
      in the preview) and typed `columns`.
    - **fixed**: a single page of content (about/help text, a settings
      summary). Stored as versions; `key` optional.
+   - **Very large tables** (an estimated >~100k rows, or a search that
+     needs a date filter) that offer a date/activity filter: propose
+     `incremental` with a 1-day `date_windows` from the cursor plus
+     `full_every` (e.g. `P30D`), not a nightly full read. A nightly
+     `full` is only for tables read cheaply in one page load.
    - **Refresh** per entity: `incremental` only when there is a reliable
      date/ID filter so a search from the cursor returns every new or
      changed row (set `cursor` to that column, and `full_every`, e.g.

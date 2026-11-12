@@ -120,6 +120,15 @@ MAX_STEP_TIMEOUT_MS = 600_000
 STEP_REQUESTS_MAX = 30
 SHAPE_MAX_BYTES = 5_000_000
 REQUEST_SAMPLE_CHARS = 300
+# Explore: an XHR/fetch answer the page gets is cut off past this many bytes
+# (a search clicked without a filter can return the whole database).
+DEFAULT_CALL_MAX_BYTES = 2_000_000
+CALL_MAX_BYTES_RANGE = (10_000, 50_000_000)
+# Column names that hold secrets a page should never send to a browser.
+_SECRET_COLUMN = re.compile(
+    r"(^|[^a-z])(password|passwd|pwd|pass ?hash|hash|salt|secret|token|api ?key|private ?key|access ?key"
+    r"|credentials?|otp|pin code|session ?(id|key)|sessid)($|[^a-z])")
+_TOKEN_RUN = re.compile(r"(?<![A-Za-z0-9+/=._$-])[A-Za-z0-9+/=._$-]{24,}")
 _SENSITIVE_PARAM = re.compile(
     r"pass|pwd|secret|token|csrf|xsrf|auth|session|sess_?id|(^|[_.-])sid$|^sid|cookie|api_?key|access_?key"
     r"|private_?key|client_?key|signature|(^|[_.-])sig$|otp|credential|bearer|jwt|nonce|(^|[_.-])pin$", re.I)
@@ -543,6 +552,11 @@ def recipe_problems(recipe: Any) -> List[str]:
     base = recipe.get("base_url")
     if not isinstance(base, str) or urlparse(base).scheme not in ("http", "https") or not urlparse(base).netloc:
         problems.append("base_url must be an absolute http(s) URL")
+    if "explore_max_call_bytes" in recipe:
+        lo, hi = CALL_MAX_BYTES_RANGE
+        cap = recipe["explore_max_call_bytes"]
+        if isinstance(cap, bool) or not isinstance(cap, int) or not lo <= cap <= hi:
+            problems.append(f"explore_max_call_bytes must be a whole number from {lo} to {hi}")
     login = recipe.get("login")
     if login is not None:
         if not isinstance(login, dict) or not isinstance(login.get("url"), str):
@@ -753,6 +767,20 @@ def _redact_all(value: Any, secret: Optional[str]) -> Any:
     return value
 
 
+def looks_like_secret_column(name: Any) -> bool:
+    """True for a column/key name like ``password_hash``, ``passwordHash``, ``API Key`` or ``token``."""
+    words = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(name or "")).lower()
+    return bool(_SECRET_COLUMN.search(re.sub(r"[_.\-]+", " ", words)))
+
+
+def _mask_token_runs(text: str) -> str:
+    """``text`` with long letter-and-digit runs (hashes, keys, tokens) masked."""
+    def sub(m: "re.Match[str]") -> str:
+        run = m.group(0)
+        return REDACTED if re.search(r"\d", run) and re.search(r"[A-Za-z]", run) else run
+    return _TOKEN_RUN.sub(sub, text)
+
+
 def _mask_value(name: Any, value: Any) -> Any:
     if _SENSITIVE_PARAM.search(str(name)):
         return REDACTED
@@ -888,6 +916,9 @@ class Driver:
     def step_requests(self) -> List[Dict[str, Any]]:
         """Same-origin XHR/fetch calls the page made since the last call (for explore)."""
         return []
+    def empty_filters(self, target: Mapping[str, Any]) -> Optional[List[str]]:
+        """Before a search click (explore): the empty date/filter inputs of the target's form, if it looks like one."""
+        return None
     def close(self) -> None:
         raise NotImplementedError
 
@@ -1112,6 +1143,119 @@ _DATATABLES_LIST_JS = "() => { const probe = " + _DATATABLE_JS.strip() + r""";
   }).filter((x) => x.state === 'ready');
 }"""
 
+# Explore: installed before any page script, it cuts off XHR/fetch answers
+# past ``cap`` bytes (Content-Length or bytes received so far) and records
+# them in ``window.__aqCallCap.aborted``, so a search without a filter cannot
+# pull the whole database through the browser. It never sends a request.
+_CALL_CAP_JS = r"""
+(cap) => {
+  if (window.__aqCallCap) return;
+  const aborted = [];
+  const origFetch = window.fetch;
+  Object.defineProperty(window, '__aqCallCap', {value: {cap, aborted, fetch: origFetch && origFetch.bind(window)}});
+  const note = (method, url, seen, total) => {
+    try {
+      aborted.push({method: String(method || 'GET').toUpperCase(), url: new URL(String(url), location.href).href,
+                    seen, total: total || null});
+      if (aborted.length > 100) aborted.shift();
+    } catch (e) {}
+  };
+  const XHR = window.XMLHttpRequest && window.XMLHttpRequest.prototype;
+  if (XHR) {
+    const open = XHR.open, send = XHR.send;
+    XHR.open = function (method, url) {
+      this.__aqCall = {method, url, async: arguments.length < 3 || arguments[2] !== false};
+      return open.apply(this, arguments);
+    };
+    XHR.send = function () {
+      const xhr = this, info = xhr.__aqCall;
+      if (info && info.async) {
+        let stopped = false;
+        const stop = (seen, total) => {
+          if (stopped) return;
+          stopped = true;
+          note(info.method, info.url, seen, total);
+          try { xhr.abort(); } catch (e) {}
+        };
+        xhr.addEventListener('readystatechange', () => {
+          if (xhr.readyState === 2) {
+            const n = parseInt(xhr.getResponseHeader('content-length') || '', 10);
+            if (n > cap) stop(0, n);
+          }
+        });
+        xhr.addEventListener('progress', (e) => { if (e.loaded > cap) stop(e.loaded, e.lengthComputable ? e.total : null); });
+      }
+      return send.apply(this, arguments);
+    };
+  }
+  if (origFetch) {
+    window.fetch = function (input, init) {
+      const isReq = typeof Request !== 'undefined' && input instanceof Request;
+      const method = (init && init.method) || (isReq ? input.method : 'GET');
+      const url = isReq ? input.url : String(input);
+      const ctl = new AbortController();
+      const outer = (init && init.signal) || (isReq ? input.signal : null);
+      if (outer) {
+        if (outer.aborted) ctl.abort(outer.reason);
+        else outer.addEventListener('abort', () => ctl.abort(outer.reason));
+      }
+      const tooBig = () => new DOMException('answer over the explore size cap', 'AbortError');
+      return origFetch.call(window, input, Object.assign({}, init || {}, {signal: ctl.signal})).then((res) => {
+        const n = parseInt(res.headers.get('content-length') || '', 10);
+        if (n > cap) { note(method, url, 0, n); ctl.abort(); throw tooBig(); }
+        if (!res.body || [101, 204, 205, 304].includes(res.status)) return res;
+        const reader = res.body.getReader();
+        let seen = 0;
+        const stream = new ReadableStream({
+          async pull(c) {
+            const part = await reader.read();
+            if (part.done) { c.close(); return; }
+            seen += part.value.byteLength;
+            if (seen > cap) { note(method, url, seen, null); ctl.abort(); c.error(tooBig()); return; }
+            c.enqueue(part.value);
+          },
+          cancel(reason) { return reader.cancel(reason); },
+        });
+        const out = new Response(stream, {status: res.status, statusText: res.statusText, headers: res.headers});
+        for (const k of ['url', 'redirected', 'type']) {
+          try { Object.defineProperty(out, k, {value: res[k]}); } catch (e) {}
+        }
+        return out;
+      });
+    };
+  }
+}"""
+
+_EMPTY_FILTERS_JS = r"""
+(el) => {
+  const words = (x) => String(x || '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/);
+  const DATE = new Set(['date', 'from', 'to', 'start', 'end', 'since', 'until', 'period', 'day', 'month', 'year',
+                        'begin', 'dt', 'time']);
+  const text = [el.innerText, el.value, el.id, el.name, el.className, el.getAttribute('aria-label')].join(' ');
+  const scope = el.form || el.closest('form') || el.closest('fieldset, .panel, .card, .modal, section, .row')
+    || document;
+  const skip = ['hidden', 'submit', 'button', 'reset', 'image', 'checkbox', 'radio', 'password', 'file'];
+  const visible = (x) => !!(x.offsetWidth || x.offsetHeight || x.getClientRects().length);
+  const fields = Array.from(scope.querySelectorAll('input, select, textarea')).filter((x) =>
+    !skip.includes((x.type || '').toLowerCase()) && visible(x) && !x.disabled);
+  const label = (x) => {
+    const own = x.labels && x.labels[0] ? x.labels[0].innerText : '';
+    return (x.id ? '#' + x.id : x.name || x.placeholder || own || x.tagName.toLowerCase()).slice(0, 60);
+  };
+  const isDate = (x) => ['date', 'datetime-local', 'month', 'week'].includes((x.type || '').toLowerCase())
+    || words([x.id, x.name, x.placeholder, x.className, x.labels && x.labels[0] ? x.labels[0].innerText : '']
+      .join(' ')).some((w) => DATE.has(w) || w.includes('date'));
+  const empty = (x) => !String(x.value || '').trim();
+  const dates = fields.filter(isDate);
+  const searchy = /search|query|filter|find|look ?up|apply|enquir|retriev|load|show|go|查|搜|搵/i.test(text)
+    || dates.length > 0;
+  if (!searchy || !fields.length) return null;
+  const emptyDates = dates.filter(empty);
+  if (emptyDates.length) return emptyDates.map(label).slice(0, 10);
+  if (fields.every(empty)) return fields.map(label).slice(0, 10);
+  return [];
+}"""
+
 # A same-origin fetch in the logged-in page: the browser adds the session
 # cookies, the network guard (context.route) sees it, redirects are not
 # followed and the body is cancelled as soon as it passes max_bytes.
@@ -1123,7 +1267,8 @@ async ([url, method, body, contentType, headers, maxBytes, timeoutMs]) => {
     const h = Object.assign({'X-Requested-With': 'XMLHttpRequest',
                              'Accept': 'application/json, text/javascript, */*; q=0.01'}, headers);
     if (contentType) h['Content-Type'] = contentType;
-    const res = await fetch(url, {method, headers: h, body: body === null ? undefined : body,
+    const fetchFn = (window.__aqCallCap && window.__aqCallCap.fetch) || fetch;
+    const res = await fetchFn(url, {method, headers: h, body: body === null ? undefined : body,
                                   credentials: 'same-origin', redirect: 'manual', signal: ctrl.signal,
                                   cache: 'no-store'});
     if (res.type === 'opaqueredirect' || (res.status >= 300 && res.status < 400)) return {redirected: true};
@@ -1198,7 +1343,8 @@ class PlaywrightDriver(Driver):
     """
 
     def __init__(self, *, timeout_ms: int = DEFAULT_TIMEOUT_MS, guard: Optional[Callable[..., Optional[str]]] = None,
-                 on_blocked: Optional[Callable[[str], None]] = None, headless: bool = True):
+                 on_blocked: Optional[Callable[[str], None]] = None, headless: bool = True,
+                 call_max_bytes: Optional[int] = None):
         sync_playwright, PlaywrightTimeout = _import_playwright()
 
         self._timeout_error = PlaywrightTimeout
@@ -1208,6 +1354,9 @@ class PlaywrightDriver(Driver):
             self._browser = self._launch(headless)
             self._context = self._browser.new_context(accept_downloads=False)
             self._context.set_default_timeout(timeout_ms)
+            self._call_max_bytes = call_max_bytes
+            if call_max_bytes:
+                self._context.add_init_script(script=f"({_CALL_CAP_JS})({int(call_max_bytes)})")
             if guard is not None:
                 def _route(route: Any) -> None:
                     req = route.request
@@ -1431,17 +1580,55 @@ class PlaywrightDriver(Driver):
             url = urlunparse(parsed._replace(query=urlencode(query)))
         return self._page.evaluate(_FETCH_JS, [url, method, body, content_type, dict(headers), max_bytes, timeout_ms])
 
+    def empty_filters(self, target: Mapping[str, Any]) -> Optional[List[str]]:
+        try:
+            return self._locator(target).evaluate(_EMPTY_FILTERS_JS, timeout=min(
+                self._action_timeout(target.get("timeout_ms")), 5_000))
+        except Exception:
+            return None
+
+    def _cut_off_calls(self) -> List[Dict[str, Any]]:
+        if not self._call_max_bytes:
+            return []
+        try:
+            return self._page.evaluate(
+                "() => (window.__aqCallCap ? window.__aqCallCap.aborted.splice(0) : [])") or []
+        except Exception:
+            return []
+
     def step_requests(self) -> List[Dict[str, Any]]:
         seen, self._step_seen = list(self._step_seen.values()), {}
+        cut = self._cut_off_calls()
         out: List[Dict[str, Any]] = []
         for req, response, state in seen[:STEP_REQUESTS_MAX]:
             try:
-                out.append(self._describe_request(req, response, state))
+                entry = self._describe_request(req, response, state)
             except Exception:
                 logger.debug("describing a page request failed", exc_info=True)
+                continue
+            hit = next((c for c in cut if c.get("method") == req.method and c.get("url") == req.url), None)
+            if hit is not None:
+                cut.remove(hit)
+                out.append(self._too_large(entry, hit))
+            else:
+                out.append(entry)
+        for hit in cut[:5]:  # cut off, but not seen as a step's call (a frame, an earlier step)
+            there = urlparse(str(hit.get("url") or ""))
+            out.append(self._too_large({"method": hit.get("method"), "path": there.path or "/", "cut_later": True},
+                                       hit))
         if len(seen) > STEP_REQUESTS_MAX:
             out.append({"more": len(seen) - STEP_REQUESTS_MAX})
         return out
+
+    def _too_large(self, entry: Dict[str, Any], hit: Mapping[str, Any]) -> Dict[str, Any]:
+        entry = {k: v for k, v in entry.items() if k not in ("failed", "pending", "shape", "bytes")}
+        entry["aborted"] = "too_large"
+        entry["bytes_seen"] = int(hit.get("seen") or 0)
+        if hit.get("total"):
+            entry["content_length"] = int(hit["total"])
+        entry["hint"] = (f"the answer passed the explore cap of {self._call_max_bytes} bytes and was cut off: "
+                         "add a narrower filter (one day, or one known value) before clicking")
+        return entry
 
     def _describe_request(self, req: Any, response: Any, state: str) -> Dict[str, Any]:
         """One same-origin XHR/fetch call, with its answer's JSON shape (reads what the page already got)."""
@@ -1574,6 +1761,8 @@ class _Run:
         self.sleep = sleep
         self.logged_in = False
         self.extracted: Dict[int, List[Any]] = {}
+        # Explore only: warnings about the step that is running (empty search filters).
+        self.step_warnings: Optional[List[Dict[str, Any]]] = None
 
     # -- navigation ----------------------------------------------------------
 
@@ -1649,6 +1838,19 @@ class _Run:
             self.driver.goto(target)
             self.page_loaded()
 
+    def note_empty_filters(self, ctx: Mapping[str, Any], step: Mapping[str, Any], target: Mapping[str, Any]) -> None:
+        if self.step_warnings is None:
+            return
+        empty = self.driver.empty_filters(target)
+        if empty:
+            label = ".".join(ctx.get("step_path") or []) or "?"
+            self.step_warnings.append({
+                "step": int(label) if label.isdigit() else label, "op": step.get("op"), "empty_filters": empty,
+                "warning": (f"{step.get('op')} with empty filters {empty}: a search without a filter can return "
+                            "everything and slow the site. Set the narrowest filter (one day, or one known value) "
+                            "first; if none can be set, do not click, ask the person instead."),
+            })
+
     def guarded_click(self, where: str, target: Mapping[str, Any]) -> None:
         _check_static_target(where, target)
         _check_element(where, self.driver.describe(target))
@@ -1710,6 +1912,7 @@ class _Run:
         if op == "goto":
             self.goto(step["url"])
         elif op == "click":
+            self.note_empty_filters(ctx, step, step)
             self.guarded_click(where, step)
         elif op == "fill":
             d.fill(step["selector"], self.render(step, "value", ctx))
@@ -1726,6 +1929,8 @@ class _Run:
             if str(info.get("tag", "")).upper() == "FORM":
                 info = {k: info.get(k) for k in ("id", "name", "action")}
             _check_element(where, info)
+            self.note_empty_filters(ctx, step, {"selector": step.get("selector") or "form",
+                                                "timeout_ms": step.get("timeout_ms")})
             d.submit(step.get("selector"), timeout_ms=step.get("timeout_ms"))
             self.page_loaded()
         elif op == "wait":
@@ -2118,7 +2323,8 @@ def _network_guard(base_url: str, allow_private: bool) -> Callable[..., Optional
 
 @contextmanager
 def _session(recipe: Mapping[str, Any], credential: Any, *, report: RunReport, driver: Optional[Driver],
-             allow_private: bool, today: Optional[dt.date] = None) -> Iterator["_Run"]:
+             allow_private: bool, today: Optional[dt.date] = None,
+             call_max_bytes: Optional[int] = None) -> Iterator["_Run"]:
     """A logged-in :class:`_Run` on a guarded browser, closed afterwards."""
     base_url = str(recipe["base_url"])
     if not allow_private:
@@ -2133,6 +2339,7 @@ def _session(recipe: Mapping[str, Any], credential: Any, *, report: RunReport, d
             timeout_ms=int(recipe.get("timeout_ms") or DEFAULT_TIMEOUT_MS),
             guard=_network_guard(base_url, allow_private),
             on_blocked=report.blocked_requests.append,
+            call_max_bytes=call_max_bytes,
         )
     run = _Run(recipe, driver, username, password, report, today=today)
     try:
@@ -2162,7 +2369,67 @@ def annotate_inventory(inventory: Dict[str, Any]) -> Dict[str, Any]:
     for form in inventory.get("forms") or []:
         form["forbidden"] = any(is_forbidden_text(form.get(k)) for k in ("id", "name")) or \
             is_forbidden_url(form.get("action"))
+    _flag_secrets(inventory)
     return inventory
+
+
+def _merge_cut_off(groups: List[Dict[str, Any]], entry: Dict[str, Any]) -> bool:
+    """Fold a call cut off after its step ended into that step's ``pending`` entry for it."""
+    if not entry.pop("cut_later", False):
+        return False
+    for group in reversed(groups):
+        for r in group["requests"]:
+            if r.get("pending") and r.get("method") == entry.get("method") and r.get("path") == entry.get("path"):
+                kept = {k: v for k, v in r.items() if k in ("method", "path", "query", "request_type", "body",
+                                                            "status", "content_type")}
+                r.clear()
+                r.update(kept, **{k: v for k, v in entry.items() if k not in kept})
+                return True
+    return False
+
+
+def _flag_secrets(inventory: Dict[str, Any]) -> None:
+    """Note (and mask) columns and JSON keys that look like secrets the site sends to the browser."""
+    found: List[str] = []
+    for t in inventory.get("tables") or []:
+        bad = [i for i, h in enumerate(t.get("headers") or []) if looks_like_secret_column(h)]
+        if bad:
+            t["secret_columns"] = [t["headers"][i] for i in bad]
+            t["sample"] = [[REDACTED if i in bad else v for i, v in enumerate(row)] if isinstance(row, list) else row
+                           for row in t.get("sample") or []]
+            found.append(f"table {t.get('selector')}: columns {t['secret_columns']}")
+    for t in inventory.get("datatables") or []:
+        keys = [c.get("data") or c.get("title") for c in t.get("columns") or [] if isinstance(c, Mapping)]
+        bad_keys = [k for k in keys if looks_like_secret_column(k)]
+        if bad_keys:
+            t["secret_columns"] = bad_keys
+            found.append(f"datatable {t.get('selector')}: columns {bad_keys}")
+    for r in inventory.get("json_requests") or []:
+        bad_keys = [k for k in r.get("record_keys") or [] if looks_like_secret_column(k)]
+        if bad_keys:
+            found.append(f"json {r.get('url')}: keys {bad_keys}")
+    for group in inventory.get("step_requests") or []:
+        for r in group.get("requests") or []:
+            bad_keys = [k for k in (r.get("shape") or {}).get("record_keys") or [] if looks_like_secret_column(k)]
+            if bad_keys:
+                r["secret_keys"] = bad_keys
+                found.append(f"{r.get('method')} {r.get('path')}: record keys {bad_keys}")
+    extracted = inventory.get("extracted")
+    if isinstance(extracted, list):
+        bad_keys = sorted({k for row in extracted if isinstance(row, Mapping) for k in row
+                           if looks_like_secret_column(k)})
+        if bad_keys:
+            inventory["extracted"] = [{k: REDACTED if k in bad_keys else v for k, v in row.items()}
+                                      if isinstance(row, Mapping) else row for row in extracted]
+            found.append(f"extracted rows: columns {bad_keys}")
+    if isinstance(inventory.get("text"), str):
+        inventory["text"] = _mask_token_runs(inventory["text"])
+    if found:
+        inventory["security"] = [
+            "this page sends what looks like secrets (password/hash/token/API key) to the browser: "
+            + "; ".join(found)[:600]
+            + ". Exclude the whole entity, never store these columns, and list it in the design's exclusions "
+            "as a security issue to report to the site owner."]
 
 
 def inventory_summary(name: str, inv: Mapping[str, Any]) -> str:
@@ -2178,7 +2445,10 @@ def inventory_summary(name: str, inv: Mapping[str, Any]) -> str:
                 lines.append(f"  after step {group['step']} ({group['op']}): {r['more']} more requests")
                 continue
             sent = " ".join(f"{k} {r[k]}" for k in ("query", "body") if r.get(k))
-            got = (f"FAILED {r['failed']}" if r.get("failed")
+            got = (f"CUT OFF (too large: {r.get('bytes_seen')} bytes seen"
+                   f"{', ' + str(r['content_length']) + ' announced' if r.get('content_length') else ''}); "
+                   "add a narrower filter" if r.get("aborted")
+                   else f"FAILED {r['failed']}" if r.get("failed")
                    else f"PENDING ({r['pending']})" if "status" not in r
                    else f"{r.get('status')} {r.get('content_type') or ''}{', ' + str(r['bytes']) + ' bytes' if r.get('bytes') else ''}")
             shape = r.get("shape") or {}
@@ -2189,6 +2459,10 @@ def inventory_summary(name: str, inv: Mapping[str, Any]) -> str:
                 got += f"; keys {shape['keys'][:15]}"
             lines.append(f"  after step {group['step']} ({group['op']}): {r['method']} {r['path']}"
                          f"{' [' + r['request_type'] + ']' if r.get('request_type') else ''} {sent} -> {got}")
+    for w in inv.get("warnings") or []:
+        lines.append(f"  WARNING at step {w.get('step')}: {w.get('warning')}")
+    for note in inv.get("security") or []:
+        lines.append(f"  SECURITY: {note}")
     for t in inv.get("tables") or []:
         lines.append(f"  table {t['selector']}: {t['rows']} rows; headers {t['headers'][:12]}")
     for t in inv.get("datatables") or []:
@@ -2225,6 +2499,7 @@ def browse(
     driver: Optional[Driver] = None,
     allow_private: bool = False,
     today: Optional[dt.date] = None,
+    max_call_bytes: Optional[int] = None,
 ) -> Iterator[Tuple[str, Dict[str, Any]]]:
     """Log in with ``recipe["login"]`` and yield ``(probe name, page inventory)``.
 
@@ -2236,7 +2511,18 @@ def browse(
     flagged ``forbidden`` when it must never be used. Used by the
     site-to-schema skill to study a site; a probe that fails yields
     ``{"error": ...}`` and the others still run.
+
+    ``step_requests`` lists the XHR/fetch calls each step set off; an answer
+    over ``max_call_bytes`` (default: the recipe's ``explore_max_call_bytes``,
+    else 2 MB) is cut off and reported ``aborted: too_large``.
+    ``warnings`` notes clicks/submits made with empty search filters, and
+    ``security`` columns that look like secrets the site sends.
     """
+    if max_call_bytes is None:
+        max_call_bytes = recipe.get("explore_max_call_bytes") or DEFAULT_CALL_MAX_BYTES
+    lo, hi = CALL_MAX_BYTES_RANGE
+    if isinstance(max_call_bytes, bool) or not isinstance(max_call_bytes, int) or not lo <= max_call_bytes <= hi:
+        raise RecipeError(f"explore_max_call_bytes must be a whole number from {lo} to {hi}")
     problems = [p for p in recipe_problems({**recipe, "entities": {}}) if not p.startswith("entities ")]
     for i, probe in enumerate(probes):
         problems += _steps_problems(f"probes[{i}]", probe.get("steps"))
@@ -2245,7 +2531,7 @@ def browse(
         raise (ForbiddenTarget if any("data-changing action" in p for p in problems) else RecipeError)(message)
     report = report if report is not None else RunReport()
     with _session(recipe, credential, report=report, driver=driver, allow_private=allow_private,
-                  today=today) as run:
+                  today=today, call_max_bytes=max_call_bytes) as run:
         for i, probe in enumerate(probes):
             name = str(probe.get("name") or f"probe_{i + 1}")
             ctx = {"name": name, "kind": "variable", "key": list(probe.get("key") or []), "cursor_col": None,
@@ -2253,12 +2539,13 @@ def browse(
             step_requests: List[Dict[str, Any]] = []
 
             def note_requests(label: str, step: Mapping[str, Any]) -> None:
-                requests = run.driver.step_requests()
+                requests = [r for r in run.driver.step_requests() if not _merge_cut_off(step_requests, r)]
                 if requests:
                     step_requests.append({"step": int(label) if label.isdigit() else label, "op": step.get("op"),
                                           "requests": _redact_all(requests, run.password)})
 
             run.driver.step_requests()  # drop the login's and earlier probes' calls
+            run.step_warnings = []
             extracted: List[Dict[str, Any]] = []
             try:
                 for item in run.steps(probe["steps"], ctx, after_step=note_requests):
@@ -2282,6 +2569,15 @@ def browse(
                 inventory["extracted_count"] = len(extracted)
             if step_requests:
                 inventory["step_requests"] = step_requests
+            if run.step_warnings:
+                inventory["warnings"] = run.step_warnings
+            run.step_warnings = None
+            if any(r.get("aborted") for g in step_requests for r in g["requests"]):
+                cut = ("an answer was cut off because it was too large (see step_requests): the search ran "
+                       "without a narrow enough filter. Set one day or one known value and try again; do not "
+                       "repeat the wide search.")
+                inventory["hint"] = f"{inventory['hint']} {cut}" if inventory.get("hint") else cut
+            _flag_secrets(inventory)
             yield name, inventory
 
 

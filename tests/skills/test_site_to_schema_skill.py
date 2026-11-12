@@ -72,6 +72,34 @@ def test_check_design_finds_each_problem(mutate, needle):
     assert any(needle in p for p in problems), problems
 
 
+def _staff_entity(design, recipe, column="password_hash", header="Password Hash"):
+    design["entities"].append({
+        "name": "staff", "kind": "variable", "reason": "employee table", "source": {"page": "/staff"},
+        "key": ["username"], "columns": [{"name": "username", "type": "text"}, {"name": column, "type": "text"}],
+        "refresh": {"mode": "full"}, "question": None})
+    recipe["entities"]["staff"] = {"kind": "variable", "key": ["username"], "mode": "full", "steps": [
+        {"op": "goto", "url": "/staff"},
+        {"op": "extract_table", "table": "#staff",
+         "columns": {"username": {"header": "Username"}, column: {"header": header}}}]}
+
+
+@pytest.mark.parametrize("column, header", [("password_hash", "Password Hash"), ("pw", "API Key"),
+                                            ("login_token", "Token")])
+def test_check_design_flags_an_entity_with_secret_columns(column, header):
+    problems, _, _ = _mutated(lambda d, r: _staff_entity(d, r, column, header))
+    (problem,) = [p for p in problems if "secret-looking" in p]
+    assert problem.startswith("design.staff:") and "Drop the whole entity" in problem
+    assert "design.exclusions" in problem
+
+
+def test_check_design_accepts_exclusions_and_checks_their_shape():
+    assert [e["page"] for e in DESIGN["exclusions"] if e.get("security")] == ["/staff"]
+    problems, _, _ = _mutated(lambda d, r: d.update(exclusions=[{"page": "/staff"}]))
+    assert any("design.exclusions[0]" in p for p in problems)
+    problems, _, _ = _mutated(lambda d, r: d.update(exclusions="none"))
+    assert any("design.exclusions must be a list" in p for p in problems)
+
+
 def test_open_questions_are_surfaced():
     _, _, questions = _mutated(lambda d, r: _entity(d, "orders").update(
         question="Do orders change after the day they are created?"))
@@ -187,6 +215,36 @@ def test_skill_studies_through_site_db_and_stops_on_missing_prerequisites():
     assert "**ask\n     the user** before proposing" not in text
 
 
+def test_skill_rules_for_safe_probing_large_tables_and_secrets():
+    text = " ".join((SKILL / "SKILL.md").read_text().split())
+    assert "set the narrowest filter the form has: one day" in text
+    assert "**Never click with empty filters**" in text and "If no filter can be set, do not click" in text
+    assert "`aborted: \"too_large\"`" in text and "explore_max_call_bytes" in text
+    assert "1-day `date_windows`" in text and "`P30D`" in text and "nightly `full` is only for tables read cheaply" in text
+    assert "exclude the **whole entity**" in text and "`design.exclusions`" in text and "site owner" in text
+    assert "**Configuration / setup screens**" in text and "lookup lists" in text
+    assert "**Probe budget.**" in text and "more than 10 s" in text and "stop probing" in text
+    assert "leaves filters empty" not in text and "{{date-3650}}`..`{{today}}`) or" not in text
+
+
+@needs_browser
+def test_explore_script_cuts_off_a_wide_search(site, capsys):
+    running, tmp = site
+    (tmp / "probes.json").write_text(json.dumps([{"name": "stock", "steps": [
+        {"op": "goto", "url": "/stock"}, {"op": "click", "text": "Search"},
+        {"op": "wait", "selector": "#s-status:has-text('aborted')", "timeout_ms": 20000}]}]))
+    code = explore_site.main(["--recipe", str(tmp / "recipe.json"), "--credential", "web-login/fixture",
+                              "--probes", str(tmp / "probes.json"), "--max-call-bytes", "50000",
+                              "--out", str(tmp / "inv")])
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "POST /stock/search [application/json] body [] -> CUT OFF (too large" in out
+    assert "WARNING at step 2" in out
+    (req,) = json.loads((tmp / "inv" / "stock.json").read_text())["step_requests"][0]["requests"]
+    assert req["aborted"] == "too_large" and 50_000 < req["bytes_seen"] < 1_000_000
+    assert running.state.forbidden_hits == []
+
+
 @pytest.fixture
 def gateway_site(monkeypatch):
     """A site row for the fixture with its login in the real (file) credential store."""
@@ -265,6 +323,29 @@ def test_site_db_explore_reports_the_endpoint_behind_a_search_button(gateway_sit
     assert "after step 4 (click): POST /query/search" in page["summary"]
     assert len([c for c in gateway_site.state.json_calls if c["path"] == "/query/search"]) == 1
     assert fx.PASSWORD not in json.dumps(out)
+    assert gateway_site.state.forbidden_hits == []
+
+
+@needs_browser
+def test_site_db_explore_cuts_off_a_wide_search_and_flags_secrets(gateway_site):
+    recipe = {k: v for k, v in RECIPE.items() if k != "entities"}
+    recipe["base_url"] = gateway_site.base_url
+    steps = [{"op": "goto", "url": "/stock"}, {"op": "click", "text": "Search"},
+             {"op": "wait", "selector": "#s-status:has-text('aborted')", "timeout_ms": 20000}]
+    out = _tool("alice", action="explore", site="fixture", recipe=recipe, goto=["/staff", "/setup/functions"],
+                probes=[{"name": "stock", "steps": steps}])
+    assert out["success"], out
+    pages = {p["name"]: p for p in out["pages"]}
+    stock = pages["stock"]["inventory"]
+    (req,) = stock["step_requests"][0]["requests"]
+    assert req["path"] == "/stock/search" and req["aborted"] == "too_large" and "narrower filter" in req["hint"]
+    assert stock["warnings"][0]["empty_filters"] and "narrow" in stock["hint"]
+    assert "CUT OFF (too large" in pages["stock"]["summary"]
+    assert "Exclude the whole entity" in pages["staff"]["inventory"]["security"][0]
+    assert "SECURITY:" in pages["staff"]["summary"] and "$2y$" not in json.dumps(out)
+    assert any(t["selector"] == "#functions" and t["rows"] == 4
+               for t in pages["setup_functions"]["inventory"]["tables"])
+    assert gateway_site.state.big_sent["search"] < 10_000_000
     assert gateway_site.state.forbidden_hits == []
 
 

@@ -36,6 +36,9 @@ def main(argv=None) -> int:
     ap.add_argument("--probes", help="JSON file with a list of probes")
     ap.add_argument("--goto", action="append", default=[], help="page path to visit (repeatable)")
     ap.add_argument("--out", help="directory for <probe>.json inventories")
+    ap.add_argument("--max-call-bytes", type=int, default=None,
+                    help="cut off any XHR/fetch answer a step sets off past this size "
+                         "(default: the recipe's explore_max_call_bytes, else 2 MB)")
     args = ap.parse_args(argv)
 
     repo_root()
@@ -53,7 +56,7 @@ def main(argv=None) -> int:
         out.mkdir(parents=True, exist_ok=True)
     report = srr.RunReport()
     try:
-        for name, inv in srr.browse(recipe, probes, credential, report=report):
+        for name, inv in srr.browse(recipe, probes, credential, report=report, max_call_bytes=args.max_call_bytes):
             print(srr.inventory_summary(name, inv), flush=True)
             if out:
                 (out / f"{name}.json").write_text(json.dumps(inv, indent=1, ensure_ascii=False), encoding="utf-8")
