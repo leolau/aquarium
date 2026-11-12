@@ -1412,8 +1412,10 @@ def test_secret_paths_in_a_json_answer():
 def test_e2e_a_non_search_button_next_to_empty_filters_is_clicked_not_refused(site):
     probes = [{"name": "next", "steps": [{"op": "goto", "url": "/wizard"}, {"op": "click", "text": "Next"},
                                          {"op": "wait", "selector": "#wz-more"}]},
-              {"name": "search", "steps": [{"op": "goto", "url": "/wizard"}, {"op": "click", "text": "Search"}]}]
+              {"name": "search", "steps": [{"op": "goto", "url": "/wizard"}, {"op": "click", "text": "Search"}]},
+              {"name": "submit", "steps": [{"op": "goto", "url": "/wizard"}, {"op": "click", "text": "Submit"}]}]
     got = dict(srr.browse(fixture_recipe(site.base_url), probes, CRED, allow_private=True))
+    assert got["submit"]["refused"] == "empty_filters"  # a plain-labelled submit of a date form is a search
     assert "refused" not in got["next"] and "error" not in got["next"], got["next"]
     (warning,) = got["next"]["warnings"]
     assert warning["empty_filters"] == ["#wz-from"]

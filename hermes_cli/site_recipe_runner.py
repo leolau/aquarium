@@ -1349,10 +1349,14 @@ _EMPTY_FILTERS_JS = r"""
     return false;
   };
   const dates = fields.filter(isDate);
-  // The target itself starts a search (its label, or submitting a whole form that has date filters);
-  // a date field nearby only makes the form look like one, which is enough to warn but not to refuse.
+  // The target itself starts a search: its label, or it submits a form that has date filters (the
+  // form itself, or a submit button of it, whatever its label). A date field nearby only makes a
+  // plain button look like a search, which is enough to warn but not to refuse.
+  const submits = el.tagName === 'FORM' || (!!el.form && ((el.tagName === 'BUTTON'
+    && (el.getAttribute('type') || 'submit').toLowerCase() === 'submit')
+    || (el.tagName === 'INPUT' && ['submit', 'image'].includes((el.type || '').toLowerCase()))));
   const own = /search|query|filter|find|look ?up|apply|enquir|retriev|load|show|go\b|export|download|查|搜|搵/i
-    .test(text) || (el.tagName === 'FORM' && dates.length > 0);
+    .test(text) || (submits && dates.length > 0);
   if (!(own || dates.length > 0) || !fields.length) return null;
   // A filled non-date filter (one warehouse, one id) already narrows the search.
   if (fields.some((x) => !isDate(x) && !empty(x))) return {fields: [], all: false};

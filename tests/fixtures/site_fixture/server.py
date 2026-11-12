@@ -674,7 +674,8 @@ class _Handler(BaseHTTPRequestHandler):
             '<label>From <input type="date" id="wz-from" name="from"></label>'
             '<button type="button" id="wz-next" onclick="document.getElementById(\'wz-more\').hidden = false">'
             "Next</button> "
-            '<button type="button" id="wz-search">Search</button>'
+            '<button type="button" id="wz-search">Search</button> '
+            '<button id="wz-submit">Submit</button>'
             '<p id="wz-more" hidden>Step 2</p></form>'
         )
         self._send(200, _page("Report wizard", body))
