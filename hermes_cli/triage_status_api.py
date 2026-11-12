@@ -41,5 +41,9 @@ async def get_triage_status(
     else:
         principal = await _caller(request)
     result = await triage_status.triage_status(principal)
-    name = target.entry.name if isinstance(target, ProfileScope) else None
+    if isinstance(target, ProfileScope):
+        name = target.entry.name
+    else:
+        # No scope switch: the hint (if any) names the acting profile.
+        name = (request.query_params.get("profile") or "").strip() or None
     return {"profile": name, **result}

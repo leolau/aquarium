@@ -1479,7 +1479,13 @@ export interface EmailMailbox extends EmailServerSettings {
 export type TriageState = "set_up" | "partly_set_up" | "not_set_up";
 
 /** Why a triage kind isn't fully set up (see hermes_cli/triage_status.py). */
-export type TriageMissing = "account" | "triage" | "enabled" | "credential" | "skills";
+export type TriageMissing =
+  | "account"
+  | "triage"
+  | "enabled"
+  | "credential"
+  | "other_person_polled"
+  | "skills";
 
 /** One of the caller's own mailboxes / numbers / calendars a pipeline reads. */
 export interface TriageAccount {
@@ -1491,6 +1497,8 @@ export interface TriageAccount {
   enabled: boolean;
   credential: boolean;
   in_triage: boolean;
+  /** Email/calendar: the poller uses another person's credential for this address. */
+  polled_by_other?: boolean;
 }
 
 export interface TriageSkillFile {
