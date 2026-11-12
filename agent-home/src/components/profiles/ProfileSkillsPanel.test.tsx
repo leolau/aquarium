@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }) }));
 
 import { ProfileSkillsPanel } from "@/components/profiles/ProfileSkillsPanel";
-import type { SkillLibrary } from "@/types";
+import { kind, status } from "@/components/profiles/triage-fixtures";
+import type { SkillLibrary, TriageStatus } from "@/types";
 
 const LIBRARY: SkillLibrary = {
   profiles: ["default", "hr", "engineers"],
@@ -15,8 +16,10 @@ const LIBRARY: SkillLibrary = {
     { name: "linear", description: "Issues", category: "dev", source: "hub", owners: [], used_by: [{ profile: "engineers", enabled: true }] },
     { name: "leave-policy-hk", description: "Leave", category: "hr", source: "profile", owners: ["hr"], used_by: [{ profile: "hr", enabled: true }] },
     { name: "deploy-notes", description: "Deploys", category: "dev", source: "profile", owners: ["engineers"], used_by: [{ profile: "engineers", enabled: true }] },
+    { name: "email-triage", description: "Email triage", category: "triage", source: "shared", owners: [], used_by: [] },
   ],
 };
+const TRIAGE_OFF = status(["email", "whatsapp", "calendar"].map((k) => kind(k as "email", "not_set_up", ["account"])));
 
 const fetchMock = vi.fn();
 const reply = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status }));
@@ -28,7 +31,7 @@ const posts = () =>
 beforeEach(() => {
   fetchMock.mockReset();
   fetchMock.mockImplementation((_url: string, init?: RequestInit) =>
-    init?.method === "POST" ? reply({ ok: true }) : reply(LIBRARY),
+    init?.method === "POST" ? reply({ ok: true }) : String(_url).startsWith("/api/triage/status") ? reply(TRIAGE_OFF) : reply(LIBRARY),
   );
   vi.stubGlobal("fetch", fetchMock);
 });
@@ -89,5 +92,46 @@ describe("ProfileSkillsPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "+ Add from library" }));
     fireEvent.click(screen.getByRole("button", { name: "Add linear" }));
     await waitFor(() => expect(posts()).toEqual([["/api/skills/library/add", { target: "hr", name: "linear" }]]));
+  });
+
+  it("keeps triage skills out of the Add picker", async () => {
+    const custom = status([{ ...kind("email", "set_up"), skills: [{ ...kind("email", "set_up").skills[0], name: "my-triage-rules" }] }]);
+    const withOverlay: SkillLibrary = {
+      ...LIBRARY,
+      skills: [...LIBRARY.skills, { name: "my-triage-rules", description: "Overlay", category: "triage", source: "shared", owners: [], used_by: [] }],
+    };
+    fetchMock.mockImplementation((url: string) => reply(String(url).startsWith("/api/triage/status") ? custom : withOverlay));
+    render(<ProfileSkillsPanel profile="hr" />);
+    await screen.findByText("google-workspace");
+    await screen.findByText(/Triage · set up for you/);
+    fireEvent.click(screen.getByRole("button", { name: "+ Add from library" }));
+    const options = [...document.querySelectorAll('[data-component="AddSkillOption"]')].map((e) => e.getAttribute("data-skill"));
+    expect(options).not.toContain("email-triage");
+    expect(options).not.toContain("my-triage-rules");
+  });
+
+  it("shows the Triage card for this profile only, and drops another profile's late reply", async () => {
+    let releaseHr: (v: Response) => void = () => {};
+    const HR: TriageStatus = status([{ ...kind("email", "set_up"), accounts: [{ address: "leo@hr.example", enabled: true, credential: true, in_triage: true }] }]);
+    const ENG: TriageStatus = { ...TRIAGE_OFF, profile: "engineers" };
+    fetchMock.mockImplementation((url: string) => {
+      const u = String(url);
+      if (u === "/api/triage/status?profile=hr") return new Promise<Response>((r) => (releaseHr = r));
+      if (u === "/api/triage/status?profile=engineers") return reply(ENG);
+      return reply(LIBRARY);
+    });
+    const { container, rerender } = render(<ProfileSkillsPanel profile="hr" />);
+    await waitFor(() => expect(fetchMock.mock.calls.map(([u]) => String(u))).toContain("/api/triage/status?profile=hr"));
+    rerender(<ProfileSkillsPanel profile="engineers" />);
+    await screen.findByText(/Triage · not set up yet/);
+    releaseHr(new Response(JSON.stringify(HR), { status: 200 }));
+    await new Promise((r) => setTimeout(r, 20));
+    const triageCard = container.querySelector('[data-component="TriageCard"]') as HTMLElement;
+    expect(triageCard.dataset.state).toBe("not_set_up");
+    expect(container.textContent).not.toContain("escalation-rules.md");
+    expect(fetchMock.mock.calls.map(([u]) => String(u)).filter((u) => u.startsWith("/api/triage/"))).toEqual([
+      "/api/triage/status?profile=hr",
+      "/api/triage/status?profile=engineers",
+    ]);
   });
 });

@@ -1535,6 +1535,34 @@ export interface TriageKindStatus {
 export interface TriageStatus {
   profile: string | null;
   kinds: TriageKindStatus[];
+  /** Owner/admin in the addressed profile: may edit the triage skill files. */
+  can_edit?: boolean;
+}
+
+/** One triage skill file (`GET /api/triage/skill-file`). */
+export interface TriageSkillFileContent {
+  kind: TriageKindStatus["kind"];
+  name: string;
+  path: string;
+  content: string;
+  can_edit: boolean;
+}
+
+/** A saved version of a triage skill file, newest first in `versions`. */
+export interface TriageSkillFileVersion {
+  id: string;
+  /** Unix seconds. */
+  at: number;
+  /** `user:<id>`, or `system` for the pre-edit baseline. */
+  author: string;
+  message: string;
+  content: string;
+}
+
+export interface TriageSkillFileHistory {
+  kind: string;
+  path: string;
+  versions: TriageSkillFileVersion[];
 }
 
 /** Body of `PUT /api/email/mailboxes/{address}`; empty password keeps the saved one. */

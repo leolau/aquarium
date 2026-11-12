@@ -259,6 +259,8 @@ SIGNED_IN = {
     "POST /api/wa-bridges",
     # triage status: the caller's own mailboxes / numbers / calendars only
     "GET /api/triage/status",
+    "GET /api/triage/skill-file",
+    "GET /api/triage/skill-file/history",
     # vpn_api: the caller's own VPN folders
     "GET /api/vpn/folders",
     "POST /api/vpn/folders",

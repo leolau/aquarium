@@ -10,13 +10,14 @@ import {
   needsCopyChoice,
   profileSkills,
 } from "@/components/skills/library";
+import { TriageCard, triageSkillNames } from "@/components/profiles/TriageCard";
 import { NewSkillModal } from "@/components/skills/NewSkillModal";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Pill } from "@/components/ui/Pill";
 import { dangerButtonClass, inputClass, primaryButtonClass, secondaryButtonClass, Sheet } from "@/components/ui/Sheet";
 import { errorText, getJson, sendJson } from "@/lib/admin-fetch";
 import { useAction } from "@/lib/use-action";
-import type { SkillCopyChoice, SkillLibrary, SkillLibraryAction, SkillLibraryEntry } from "@/types";
+import type { SkillCopyChoice, SkillLibrary, SkillLibraryAction, SkillLibraryEntry, TriageStatus } from "@/types";
 
 type Confirm =
   | { type: "copy"; skill: SkillLibraryEntry; choice: SkillCopyChoice | null }
@@ -42,6 +43,20 @@ export function ProfileSkillsPanel({ profile, onChanged }: { profile: string; on
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [justAdded, setJustAdded] = useState<Set<string>>(new Set());
+  const [triage, setTriage] = useState<{ profile: string; status: TriageStatus | null; error: string | null } | null>(null);
+
+  // The Triage card shows the caller's own setup in *this* profile; a reply
+  // for a profile the drawer has since left is dropped.
+  useEffect(() => {
+    let live = true;
+    getJson<TriageStatus>(`/api/triage/status?profile=${encodeURIComponent(profile)}`)
+      .then((status) => live && setTriage({ profile, status, error: null }))
+      .catch((err) => live && setTriage({ profile, status: null, error: errorText(err) }));
+    return () => {
+      live = false;
+    };
+  }, [profile]);
+  const triageHere = triage?.profile === profile ? triage : null;
 
   const load = useCallback(async () => {
     try {
@@ -68,10 +83,10 @@ export function ProfileSkillsPanel({ profile, onChanged }: { profile: string; on
   const candidates = useMemo(() => {
     if (!library) return [];
     const q = search.trim().toLowerCase();
-    return addCandidates(library, profile).filter(
+    return addCandidates(library, profile, triageSkillNames(triageHere?.status ?? null)).filter(
       (s) => !q || `${s.name} ${s.description} ${s.category}`.toLowerCase().includes(q),
     );
-  }, [library, profile, search]);
+  }, [library, profile, search, triageHere]);
   const categories = useMemo(
     () => [...new Set((library?.skills ?? []).map((s) => s.category).filter(Boolean))].sort(),
     [library],
@@ -182,8 +197,9 @@ export function ProfileSkillsPanel({ profile, onChanged }: { profile: string; on
         </Link>
       </p>
 
-      {/* Slot for the Triage card (status + skills of the user's triage setup). */}
-      <div data-slot="profile-skills-triage" />
+      <div data-slot="profile-skills-triage">
+        <TriageCard key={profile} profile={profile} status={triageHere?.status ?? null} error={triageHere?.error ?? null} />
+      </div>
 
       {error ? (
         <p role="alert" className="text-[var(--color-danger)]">
