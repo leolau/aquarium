@@ -431,6 +431,17 @@ def test_update_closes_raw_stores_to_the_terminal_user(box, capsys):
     assert inner.stat().st_mode & 0o777 == 0o640
 
 
+def test_update_with_nothing_to_install_still_closes_raw_stores(box, capsys):
+    released_box(box)
+    assert box.run("update") == 0, capsys.readouterr().out
+    store = box.p("/opt/data/whatsapp-messages")
+    store.mkdir(parents=True, exist_ok=True)
+    store.chmod(0o755)
+    assert box.run("update") == 0
+    assert "Already up to date." in capsys.readouterr().out
+    assert store.stat().st_mode & 0o007 == 0
+
+
 def test_update_beta_channel_and_explicit_version(box, capsys):
     released_box(box)
     assert box.run("update", "--channel", "beta") == 0

@@ -908,6 +908,9 @@ def cmd_update(args: argparse.Namespace, cfg: Dict[str, str]) -> int:
                        "Move it to the release layout once: `aquarium migrate-layout --dry-run`, then `--yes`.")
         if lay != "release":
             raise Fail("no Aquarium installation found", "Install it with install-aquarium.sh first.")
+        # Also on a run that installs nothing: a store recreated world-readable
+        # since the last update is closed again either way.
+        close_raw_stores(cfg)
         state = load_state()
         before = current_release()
         previous_before = state.get("previous")
