@@ -70,6 +70,15 @@ CREATE POLICY hermes_account_owners_owner ON {ACCOUNT_OWNERS_TABLE}
     FOR ALL
     USING (current_setting('{GUC_PRINCIPAL_ROLE}', true) = 'owner')
     WITH CHECK (current_setting('{GUC_PRINCIPAL_ROLE}', true) = 'owner');
+-- ensure_app_role gives every RLS table permissive hermes_app policies (an
+-- unbound read, any insert); a restrictive policy is ANDed with them, so only
+-- an owner-bound session reads or writes the map.
+DROP POLICY IF EXISTS hermes_account_owners_owner_only ON {ACCOUNT_OWNERS_TABLE};
+CREATE POLICY hermes_account_owners_owner_only ON {ACCOUNT_OWNERS_TABLE}
+    AS RESTRICTIVE
+    FOR ALL
+    USING (current_setting('{GUC_PRINCIPAL_ROLE}', true) = 'owner')
+    WITH CHECK (current_setting('{GUC_PRINCIPAL_ROLE}', true) = 'owner');
 """
 
 #: How long a poller trusts its copy of the map; a Settings change reaches

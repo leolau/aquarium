@@ -473,8 +473,13 @@ def flush_batch(batch_key):
           f"({len(batch['messages'])} msgs) -> {batch_file}")
 
 
-def poll_bridge(port, source_phone, owner_user_id=None):
-    """Continuously poll a bridge for new messages."""
+def poll_bridge(phone):
+    """Continuously poll a configured phone's bridge for new messages.
+
+    Whose they are is looked up for every batch, so a change in Settings ›
+    Accounts reaches a running batcher (``settings_owner`` caches for a minute).
+    """
+    port, source_phone = phone['bridge_port'], phone['id']
     url = f"http://localhost:{port}/messages"
     consecutive_errors = 0
     
@@ -485,6 +490,7 @@ def poll_bridge(port, source_phone, owner_user_id=None):
             consecutive_errors = 0
             
             if isinstance(data, list) and len(data) > 0:
+                owner_user_id = phone_owner(phone)
                 for msg in data:
                     try:
                         process_message(msg, source_phone, bridge_port=port,
@@ -559,7 +565,7 @@ def main():
         if phone.get('enabled', True):
             t = threading.Thread(
                 target=poll_bridge,
-                args=(phone['bridge_port'], phone['id'], phone_owner(phone)),
+                args=(phone,),
                 daemon=True,
                 name=f"poll-{phone['id']}"
             )

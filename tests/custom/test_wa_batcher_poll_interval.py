@@ -64,7 +64,7 @@ def _run_poll_loop(module, payload=b"[]", iterations=3):
     module.urlopen = fake_urlopen
     module.time.sleep = fake_sleep
     with pytest.raises(_StopLoop):
-        module.poll_bridge(3000, "phone1")
+        module.poll_bridge({"bridge_port": 3000, "id": "phone1"})
     return polls, sleeps
 
 
@@ -99,6 +99,6 @@ def test_error_path_still_backs_off(tmp_path):
     module.urlopen = fake_urlopen
     module.time.sleep = sleeps.append
     with pytest.raises(_StopLoop):
-        module.poll_bridge(3000, "phone1")
+        module.poll_bridge({"bridge_port": 3000, "id": "phone1"})
 
     assert sleeps == [2, 2]

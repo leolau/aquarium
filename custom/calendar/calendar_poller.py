@@ -382,6 +382,8 @@ def sync_events(db, account_id, credentials, calendar_id='primary'):
                         'all_day': bool(all_day),
                     },
                     owner_user_id=owner_user_id,
+                    # A reassignment is for new events; an old one keeps its person.
+                    keep_owner=True,
                 )
             except ImportError:
                 pass

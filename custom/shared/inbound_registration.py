@@ -234,6 +234,7 @@ def register_item(
     has_attachments: bool = False,
     metadata: Optional[dict] = None,
     owner_user_id: Optional[str] = None,
+    keep_owner: bool = False,
 ) -> Optional[str]:
     """Mirror one arrival into the shared registry. Never raises.
 
@@ -241,6 +242,9 @@ def register_item(
     attachments need it for ``file_assets.inbound_item_id`` — and ``None``
     otherwise. Safe to call from synchronous code. ``owner_user_id`` files
     the arrival as that person (private to them) instead of the install owner.
+    With ``keep_owner`` an item already registered stays with its latest person
+    (an updated calendar event after its account was reassigned), so a change
+    never hands an old item to the account's new person.
     """
     if not surface or not external_id:
         return None
@@ -248,8 +252,23 @@ def register_item(
         from hermes_cli.inbound_registry import register_arrival
 
         async def _do():
-            if owner_user_id:
-                principal = await resolve_person(owner_user_id)
+            user_id = owner_user_id
+            if keep_owner:
+                owner = await _resolve_owner()
+                if owner is None:
+                    return None
+                from hermes_cli.inbound_registry import default_registry
+
+                earlier = await default_registry("prod").owners_for(
+                    owner,
+                    surface=surface,
+                    external_id=external_id,
+                    account_id=account_id or "",
+                )
+                if earlier:
+                    user_id = earlier[0]
+            if user_id:
+                principal = await resolve_person(user_id)
             else:
                 principal = await _resolve_owner()
             if principal is None:

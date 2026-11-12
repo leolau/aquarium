@@ -169,9 +169,9 @@ def test_nobody_but_the_owner_reads_or_writes_the_map(postgres_dsn: str, who: Pr
 
 
 def test_row_level_security_hides_the_map_from_other_people(postgres_dsn: str) -> None:
-    """Past the service check, as the NOBYPASSRLS app role: only an owner-bound
-    session reads the map. Unbound system services (the pollers' own lookup
-    binds the owner) keep the app role's usual unbound read."""
+    """Past the service check, as the NOBYPASSRLS app role and after
+    ``ensure_app_role``'s permissive policies: only an owner-bound session
+    reads or writes the map. The pollers' own lookup binds the owner."""
 
     async def scenario() -> None:
         store = await _store(postgres_dsn)
@@ -181,10 +181,21 @@ def test_row_level_security_hides_the_map_from_other_people(postgres_dsn: str) -
             await ensure_app_role(conn, "app_prod")
             await conn.execute("SET ROLE hermes_app")
             table = account_owners.ACCOUNT_OWNERS_TABLE
+            assert await conn.fetchval(f"SELECT count(*) FROM {table}") == 0
             for who in (KIT, SAM):
                 async with conn.transaction():
                     await bind_principal(conn, who)
                     assert await conn.fetchval(f"SELECT count(*) FROM {table}") == 0
+                    assert await conn.execute(f"UPDATE {table} SET owner_user_id = $1", who.user_id) == "UPDATE 0"
+                    assert await conn.execute(f"DELETE FROM {table}") == "DELETE 0"
+                with pytest.raises(asyncpg.InsufficientPrivilegeError):
+                    async with conn.transaction():
+                        await bind_principal(conn, who)
+                        await conn.execute(
+                            f"INSERT INTO {table} (surface, account_key, owner_user_id, set_by)"
+                            " VALUES ('email', 'sales@example.com', $1, $1)",
+                            who.user_id,
+                        )
             async with conn.transaction():
                 await bind_principal(conn, LEO)
                 assert await conn.fetchval(f"SELECT owner_user_id FROM {table}") == "sam"

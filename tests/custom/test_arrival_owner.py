@@ -57,6 +57,37 @@ def test_whatsapp_message_without_person_stays_owner(batcher, monkeypatch):  # n
     assert [kw["owner_user_id"] for kw in registered] == [None]
 
 
+def test_running_batcher_picks_up_a_reassignment(batcher, monkeypatch):  # noqa: F811
+    """Whose a phone's messages are is looked up per batch, not once at start:
+    a change in Settings › Accounts reaches the long-running poll loop."""
+    module, _ = batcher
+    owners = iter(["leo", "sam"])
+    monkeypatch.setattr(module, "phone_owner", lambda phone: next(owners))
+    seen = []
+    monkeypatch.setattr(
+        module, "process_message",
+        lambda msg, phone, bridge_port=None, owner_user_id=None: seen.append(owner_user_id),
+    )
+
+    class _Stop(BaseException):
+        pass
+
+    batches = iter([b'[{"messageId": "a"}]', b'[{"messageId": "b"}]'])
+
+    class _Resp:
+        def read(self):
+            try:
+                return next(batches)
+            except StopIteration:
+                raise _Stop
+
+    monkeypatch.setattr(module, "urlopen", lambda url, timeout=None: _Resp())
+    monkeypatch.setattr(module.time, "sleep", lambda _s: None)
+    with pytest.raises(_Stop):
+        module.poll_bridge({"bridge_port": 3000, "id": "phone1"})
+    assert seen == ["leo", "sam"]
+
+
 def test_phone_owner_from_bridge_added_in_settings(batcher, tmp_path, monkeypatch):  # noqa: F811
     module, _ = batcher
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "home"))
@@ -97,6 +128,15 @@ def test_calendar_event_filed_as_connecting_person(poller, db, monkeypatch):  # 
     api_capture([make_event()], monkeypatch, poller)
     poller.sync_events(db, "gcal1", _creds(poller, "mia"))
     assert [r["owner_user_id"] for r in poller._test_registrations] == ["mia"]
+
+
+def test_calendar_event_update_keeps_its_person(poller, db, monkeypatch):  # noqa: F811
+    """A reassignment is for new events: the poller asks the registry to keep an
+    already-registered event with its person rather than copy it to the new one."""
+    add_account(db)
+    api_capture([make_event()], monkeypatch, poller)
+    poller.sync_events(db, "gcal1", _creds(poller, "mia"))
+    assert [r.get("keep_owner") for r in poller._test_registrations] == [True]
 
 
 def test_legacy_calendar_without_person_stays_owner(poller, db, monkeypatch):  # noqa: F811
