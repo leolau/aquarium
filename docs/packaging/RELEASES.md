@@ -6,6 +6,14 @@ that downloads a release: `install-aquarium.sh` and `aquarium update`.
 
 ## 1. How a release is made
 
+0. The repo's `VERSION` file is the release ledger — it always names the
+   newest release tag. To cut a release: set `VERSION` to the new tag,
+   commit, then tag **that commit**. `build-release.sh` aborts when the
+   file exists but disagrees with the tag being built, so the tag and the
+   ledger cannot drift. Picking the next number: bump `vX.Y.Z` for the
+   stable channel, or `vX.Y.Z-rc.N` for a beta prerelease (see the table
+   below); check `git tag -l 'v*' --sort=-v:refname | head` if unsure what
+   the latest is.
 1. Leo pushes a tag on the commit to release:
    `git tag v1.2.0 && git push origin v1.2.0`.
 2. GitHub Actions (`Release` workflow) runs the Python test suite and the
