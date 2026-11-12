@@ -1,7 +1,6 @@
 import { ActionButton } from "@/components/ui/ActionButton";
 import { useState } from "react";
 
-import { ActionButton } from "@/components/ui/ActionButton";
 import { Pill } from "@/components/ui/Pill";
 import type { Notification } from "@/types";
 
