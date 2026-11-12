@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from datetime import datetime
 # ``List`` rather than ``list`` in return annotations: the registry defines a
 # method named ``list``, which shadows the builtin inside the class body.
-from typing import TYPE_CHECKING, Any, List, Literal, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Iterable, List, Literal, Optional, Sequence
 
 from hermes_cli.access import (
     Principal,
@@ -1319,6 +1319,55 @@ class InboundRegistry:
         finally:
             if own:
                 await conn.close()
+
+    async def owners_for_many(
+        self,
+        principal: Principal,
+        identities: Iterable[tuple[str, str, str]],
+        *,
+        connection: Optional["asyncpg.Connection"] = None,
+    ) -> dict[tuple[str, str, str], list[str]]:
+        """:meth:`owners_for` for many ``(surface, account_id, external_id)`` in one query.
+
+        Each identity found maps to its owners, latest-registered first; one
+        never registered is absent. A digest asks this for thousands of rows an
+        hour, so it is one round trip, not one connection per row.
+        """
+        keys = list(dict.fromkeys(
+            (str(s), str(a or ""), str(e)) for s, a, e in identities if e
+        ))
+        if not keys:
+            return {}
+        predicate = scope_filter(principal, column="i.visibility", start_index=4)
+        own = connection is None
+        conn = connection or await self._connect()
+        try:
+            async with conn.transaction():
+                await bind_principal(conn, principal)
+                rows = await conn.fetch(
+                    f"""SELECT i.surface, i.account_id, i.external_id, i.owner_user_id,
+                               MAX(i.registered_at) AS acquired
+                          FROM {INBOUND_ITEMS_TABLE} i
+                          JOIN unnest($1::text[], $2::text[], $3::text[])
+                               AS k(surface, account_id, external_id)
+                            ON i.surface = k.surface AND i.account_id = k.account_id
+                           AND i.external_id = k.external_id
+                         WHERE {predicate.sql}
+                         GROUP BY i.surface, i.account_id, i.external_id, i.owner_user_id
+                         ORDER BY acquired DESC""",
+                    [k[0] for k in keys],
+                    [k[1] for k in keys],
+                    [k[2] for k in keys],
+                    *predicate.params,
+                )
+        finally:
+            if own:
+                await conn.close()
+        found: dict[tuple[str, str, str], list[str]] = {}
+        for row in rows:
+            key = (str(row["surface"]), str(row["account_id"]), str(row["external_id"]))
+            found.setdefault(key, []).append(str(row["owner_user_id"]))
+        return found
 
     async def link_attachment(
         self,

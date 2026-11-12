@@ -1490,6 +1490,48 @@ async def test_owners_for_under_rls_ranks_by_who_registered_last(
         await conn.close()
 
 
+@pytest.mark.asyncio
+async def test_owners_for_many_answers_like_owners_for_in_one_query(
+    postgres_dsn: str,
+) -> None:
+    """The bulk lookup a digest uses gives each identity's owners, latest first."""
+    from hermes_cli.access import ensure_app_role
+
+    registry = await _registry(postgres_dsn)
+    shared = {"external_id": "wa-99", "account_id": "phone4"}
+    await _arrive(registry, _principal("ada"), **shared)
+    await _arrive(registry, _principal("bob"), **shared)
+    await _arrive(registry, _principal("ada"), external_id="m-1", account_id="ada@example.com")
+    identities = [
+        ("email", "phone4", "wa-99"),
+        ("email", "ada@example.com", "m-1"),
+        ("email", "phone4", "never-registered"),
+        ("email", "phone4", "wa-99"),
+    ]
+
+    conn = await registry._connect()
+    try:
+        await ensure_app_role(conn, "app_prod")
+        await conn.execute("SET ROLE hermes_app")
+        leo = _principal("leo", "owner")
+        found = await registry.owners_for_many(leo, identities, connection=conn)
+        assert found == {
+            ("email", "phone4", "wa-99"): ["bob", "ada"],
+            ("email", "ada@example.com", "m-1"): ["ada"],
+        }
+        for surface, account_id, external_id in found:
+            assert found[(surface, account_id, external_id)] == await registry.owners_for(
+                leo, surface=surface, account_id=account_id, external_id=external_id,
+                connection=conn,
+            )
+        assert await registry.owners_for_many(
+            _principal("bob"), identities, connection=conn
+        ) == {("email", "phone4", "wa-99"): ["bob"]}
+        assert await registry.owners_for_many(leo, [], connection=conn) == {}
+    finally:
+        await conn.close()
+
+
 def test_keep_owner_leaves_an_earlier_arrival_with_its_person(
     postgres_dsn: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -242,6 +242,12 @@ def _digest_rows(tmp_path):
 
 def test_each_person_gets_a_digest_of_only_their_items(people, tmp_path, monkeypatch):
     module, sent = _load(ROOT / "custom/whatsapp/digest_cron.py", "_digest", monkeypatch, tmp_path)
+    from hermes_cli.inbound_registry import InboundRegistry
+
+    async def _one_by_one(*_a, **_k):
+        raise AssertionError("a digest asks whose its items are in one query")
+
+    monkeypatch.setattr(InboundRegistry, "owners_for", _one_by_one)
     monkeypatch.setattr(module, "call_deepseek", lambda prompt: prompt)
     _digest_rows(tmp_path)
     module.generate_digest()
