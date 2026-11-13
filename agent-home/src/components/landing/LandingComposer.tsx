@@ -7,6 +7,9 @@ import { AquariumLoader } from "@/components/brand/AquariumLoader";
 import { useAction } from "@/lib/use-action";
 import type { ProfileSummary } from "@/types";
 
+import { chatHref } from "./chats/chatsApi";
+import { displayTitle, lastUpdated, type LandingSession } from "./chats/model";
+import { useResumeChat } from "./chats/useResumeChat";
 import { chatHandOffUrl, greetingFor } from "./startChat";
 
 export const LANDING_SUGGESTIONS = [
@@ -26,11 +29,15 @@ export function LandingComposer({
   currentProfile,
   needsYouCount = 0,
   name,
+  onOpenChat,
 }: {
   profiles: ProfileSummary[];
   currentProfile: string;
   needsYouCount?: number;
   name?: string | null;
+  /** Open the "Continue" chat in place (the landing page); without it the
+   * chip navigates to the chat page. */
+  onOpenChat?: (session: LandingSession) => void;
 }) {
   const router = useRouter();
   const [text, setText] = useState("");
@@ -77,6 +84,7 @@ export function LandingComposer({
     needsYouCount > 0
       ? `${needsYouCount} ${needsYouCount === 1 ? "thing needs" : "things need"} you`
       : "What should we work on?";
+  const resume = useResumeChat(currentProfile);
 
   return (
     <section data-component="LandingComposer" className="flex w-full max-w-2xl flex-1 flex-col items-center gap-6 lg:flex-none">
@@ -88,6 +96,16 @@ export function LandingComposer({
         >
           {subline}
         </p>
+        {resume ? (
+          <ContinueChip
+            session={resume}
+            onOpen={
+              onOpenChat
+                ? () => onOpenChat(resume)
+                : () => router.push(chatHref(resume.id, resume.profile ?? currentProfile))
+            }
+          />
+        ) : null}
       </div>
 
       <form
@@ -174,5 +192,42 @@ export function LandingComposer({
         ))}
       </ul>
     </section>
+  );
+}
+
+/**
+ * One-tap way back into the last chat, under the greeting: the Continue
+ * pill the sidebar's resume row wears, plus the chat's title and when it
+ * was last touched.
+ */
+function ContinueChip({ session, onOpen }: { session: LandingSession; onOpen: () => void }) {
+  const { text, untitled } = displayTitle(session);
+  const updated = lastUpdated(session);
+  return (
+    <button
+      type="button"
+      data-component="ContinueChip"
+      onClick={onOpen}
+      title={updated ? `Last updated ${updated.full}` : undefined}
+      className="mt-3 inline-flex max-w-full items-center gap-2 rounded-full border border-[var(--color-accent)] bg-[var(--color-surface)] py-1.5 pl-1.5 pr-3 text-sm shadow-sm hover:bg-[var(--color-surface-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+    >
+      <span
+        data-slot="continue-badge"
+        className="shrink-0 rounded-full bg-[var(--color-accent)] px-1.5 text-[10px] font-semibold leading-4 text-[var(--color-accent-fg)]"
+      >
+        Continue
+      </span>
+      <span
+        data-slot="continue-title"
+        className={`min-w-0 truncate ${untitled ? "italic text-[var(--color-muted)]" : "font-medium text-[var(--color-fg)]"}`}
+      >
+        {text}
+      </span>
+      {updated ? (
+        <span data-slot="continue-updated" className="shrink-0 text-xs tabular-nums text-[var(--color-muted)]">
+          {updated.label}
+        </span>
+      ) : null}
+    </button>
   );
 }
