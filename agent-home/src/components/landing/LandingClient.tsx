@@ -265,6 +265,7 @@ export function LandingClient({
               currentProfile={currentProfile}
               needsYouCount={needsYou.count}
               name={accountName}
+              onOpenChat={openSession}
             />
           )
         }

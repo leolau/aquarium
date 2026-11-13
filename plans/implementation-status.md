@@ -2,6 +2,27 @@
 
 Tracking file for in-flight feature work. Update as phases land.
 
+## Landing Continue chip
+
+Plan: `plans/2026-11-13-landing-continue-chip.md`
+Status: **implemented** — updated 2026-11-13
+
+| Phase | Scope | Status |
+|-------|-------|--------|
+| 1 | `useResumeChat` hook (latest user-started chat, coalesced fetch) | done |
+| 2 | `ContinueChip` under the greeting subline + `onOpenChat` prop | done |
+| 3 | `LandingClient` wiring (`openSession` → inline open) | done |
+| 4 | Composer tests + typecheck + lint | done |
+
+### Verified
+
+- `agent-home` vitest on composer/client/chats-panel suites — 41/41 pass.
+- `tsc -p . --noEmit` clean; eslint clean on touched files.
+
+### Not yet verified
+
+- Visual check in a running dev server against real session data.
+
 ## Triage → Work → Draft → Review → Reply loop (develop port)
 
 Plan: `plans/2026-11-12-triage-review-reply-loop.md`
