@@ -51,6 +51,32 @@ describe("Sheet", () => {
     expect(document.activeElement).toBe(opener);
   });
 
+  it("returns focus to the opener when a child autofocuses", async () => {
+    function AutoHarness() {
+      const [open, setOpen] = useState(false);
+      return (
+        <div>
+          <button type="button" onClick={() => setOpen(true)}>
+            Open form
+          </button>
+          {open ? (
+            <Sheet title="Form" onClose={() => setOpen(false)}>
+              <input aria-label="Name" autoFocus />
+            </Sheet>
+          ) : null}
+        </div>
+      );
+    }
+    render(<AutoHarness />);
+    const opener = screen.getByText("Open form");
+    opener.focus();
+    fireEvent.click(opener);
+    await flushFrame();
+    expect(document.activeElement).toBe(screen.getByLabelText("Name"));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(document.activeElement).toBe(opener);
+  });
+
   it("closes on Escape", async () => {
     render(<Harness />);
     fireEvent.click(screen.getByText("Open sheet"));

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 import { useT } from "@/i18n";
@@ -37,6 +37,12 @@ export function Sheet({
   const t = useT("common");
   const hydrated = useHydrated();
   const panelRef = useRef<HTMLDivElement>(null);
+  // Read during the first render: a child's autoFocus moves focus before effects run.
+  const [opener] = useState(() =>
+    typeof document !== "undefined" && document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null,
+  );
   const onCloseRef = useRef(onClose);
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -51,7 +57,6 @@ export function Sheet({
 
   // Modal focus: move into the panel, keep Tab inside it, return to the opener.
   useEffect(() => {
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const focusables = () =>
       Array.from(
         panelRef.current?.querySelectorAll<HTMLElement>(
@@ -93,7 +98,7 @@ export function Sheet({
       window.removeEventListener("keydown", onKey);
       if (opener?.isConnected) opener.focus();
     };
-  }, []);
+  }, [opener]);
 
   const frame = side
     ? "sm:items-stretch sm:justify-end sm:p-0"
