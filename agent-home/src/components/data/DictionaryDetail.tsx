@@ -85,7 +85,7 @@ export function DictionaryDetail({
         )}
         <span className="flex-1" />
         {draft && canPropose ? (
-          <Link href={`/data/${source.id}/review`} className={`${secondaryButtonClass} inline-flex min-h-9 items-center border-[var(--color-warning,#f59e0b)]`}>
+          <Link href={`/data/${source.id}/review`} className={`${secondaryButtonClass} inline-flex min-h-9 items-center border-[var(--color-warn,#f59e0b)]`}>
             {canManage ? t("detail.reviewDraft", { n: draft.changed_tables?.length ?? 0 }) : t("detail.seeDraft", { n: draft.changed_tables?.length ?? 0 })}
           </Link>
         ) : null}
