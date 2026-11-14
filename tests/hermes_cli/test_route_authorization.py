@@ -220,6 +220,18 @@ SIGNED_IN = {
     "PUT /api/email/mailboxes/{address}",
     "DELETE /api/email/mailboxes/{address}",
     "POST /api/email/mailboxes/{address}/test",
+    # data_dictionary_api: the handler checks the caller's access to the source (404 otherwise)
+    "GET /api/data/sources",
+    "GET /api/data/sources/{source_id}",
+    "GET /api/data/sources/{source_id}/versions",
+    "GET /api/data/sources/{source_id}/versions/{version}",
+    "POST /api/data/sources/{source_id}/draft",
+    "POST /api/data/sources/{source_id}/draft/approve",
+    "DELETE /api/data/sources/{source_id}/draft",
+    "POST /api/data/sources/{source_id}/versions/{version}/restore",
+    "GET /api/data/sources/{source_id}/grants",
+    "POST /api/data/sources/{source_id}/grants",
+    "DELETE /api/data/sources/{source_id}/grants",
     # site_sources_api: the handler checks the caller's grant on the site (404 otherwise)
     "GET /api/sites/settings",
     "GET /api/sites",

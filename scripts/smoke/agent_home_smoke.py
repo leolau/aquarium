@@ -144,6 +144,9 @@ PAGES: Tuple[PageSpec, ...] = (
     # sites.create_roles defaults to owner/admin; members and viewers get a notice.
     PageSpec("/sites/new", admin_markers=("AddSiteForm",), member_markers=("AddSiteNotAllowed",)),
     PageSpec("/sites/zz-smoke-missing", not_found=True),
+    PageSpec("/data", ("DataList",)),
+    PageSpec("/data/zz-smoke-missing", not_found=True),
+    PageSpec("/data/zz-smoke-missing/review", not_found=True),
     PageSpec("/aquarium", ("AquariumView", "AquariumLegend"), shell=False),
     PageSpec("/models", ("ModelsView",), quick=True),
     PageSpec("/tools", ("ToolsRegistry",), quick=True),
@@ -305,6 +308,7 @@ APIS: Tuple[ApiSpec, ...] = (
     ApiSpec("/api/projects/doctor", OK),
     ApiSpec("/api/projects/zz-smoke-missing", _same(404)),
     ApiSpec("/api/security-basics", ADMIN_ONLY),
+    ApiSpec("/api/data/sources", OK),
     ApiSpec("/api/sites", OK),
     ApiSpec("/api/sites/settings", OK),
     ApiSpec("/api/sites/zz-smoke-missing", _same(404)),
