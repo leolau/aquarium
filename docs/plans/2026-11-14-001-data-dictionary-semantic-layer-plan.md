@@ -11,11 +11,11 @@ dictionary** per data source instead of one skill per table.
 | Phase | What | Status |
 |---|---|---|
 | 0 | Evaluation of the "MCP + skills" proposal, decisions, UI mockups | Done (mockups approved) |
-| 1 | Safe access and richer discovery | Done (draft PR) |
-| 2 | Dictionary store, versions, sharing, API | Done (draft PR) |
-| 3 | Study → propose, and the `data-questions` skill | Done (draft PR) |
-| 4 | agent-home UI (`/data`) | Done (draft PR; not browser-tested) |
-| 5 | Improve over time: chat suggestions, answer feedback, Needs You | Built (PR #921), not deployed |
+| 1 | Safe access and richer discovery | Done (PR #921, draft) |
+| 2 | Dictionary store, versions, sharing, API | Done (PR #921, draft) |
+| 3 | Study → propose, and the `data-questions` skill | Done (PR #921, draft) |
+| 4 | agent-home UI (`/data`) | Done (PR #921, draft; browser-tested at 390/768/1440 px) |
+| 5 | Improve over time: chat suggestions, answer feedback, Needs You | Built (PR #921); browser test in progress |
 | 6 | Schema change check (no model) | Not started |
 
 Log:
@@ -62,6 +62,26 @@ Log:
   Approve pinned on phones, Discard). `/api/data/*` BFF proxies, a Data card
   in the System hub, en + zh-Hant strings. Edit covers meaning, row, grain and
   columns; joins, metrics and examples come from chat/study for now.
+- 2026-11-14 — Phase 4 browser test (local backend + real Postgres, test
+  users) found and fixed: phone Approve bar covered by the launchers, ⓘ hint
+  overflowing on phones, and Share saying "Everyone already has access" when
+  the people list failed to load. Root `.gitignore` rule `data/` hid
+  `agent-home/src/**/data/` from Tailwind's source scan, so their classes were
+  never generated; fixed with `!agent-home/src/**/data/`. Known, not fixed:
+  not-found pages return HTTP 200 (Next.js streaming), breadcrumbs stay
+  English in zh-Hant (as on every page), the source list uses stacked rows,
+  not Figma's searchable table. CI green.
+- 2026-11-14 — Phase 5 built (details under Phase 5 below). Backend tests incl.
+  real Postgres, agent-home tsc, ESLint and Vitest pass. Not deployed.
+
+Next steps (for whoever picks this up):
+1. Finish the Phase 5 browser test: answer footer (needs an assistant message
+   ending in a `data-answer` block), Yes/No feedback, `data_draft` Needs You
+   card and its count in the badge/title.
+2. Phase 6: scheduled schema-change check (below).
+3. Before deploy: run `hermes db migrate` (creates the sandbox login and the
+   dictionary tables), then re-run the `/data` browser test on production.
+   Read `production/PRODUCTION.md` in `leolau/aquarium-ops` first.
 
 ## 1. Decisions
 
