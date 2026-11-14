@@ -243,17 +243,19 @@ export function Composer({
   const attachmentsWait = sending && attachments.length > 0;
   const menuShown = sending && menuOpen;
   useEffect(() => onMenuOpenChange?.(menuShown), [menuShown, onMenuOpenChange]);
-  // Working on a phone (or in a narrow panel) the actions wrap below a
-  // full-width input; the left-launcher reserve then moves onto that row.
+  // In a narrow panel (always) or on a phone while working, the actions wrap
+  // below a full-width input; the left-launcher reserve then moves onto that row.
   const reserve = launcherClearance === "desktop"
     ? " lg:ml-14"
     : launcherClearance
-    ? !sending
-      ? " ml-14"
-      : narrow
-        ? ""
+    ? narrow
+      ? ""
+      : !sending
+        ? " ml-14"
         : " ml-14 max-sm:ml-0"
     : "";
+  const actionReserve =
+    launcherClearance === true ? (narrow ? " ml-14" : sending ? " max-sm:ml-14" : "") : "";
   const canSend =
     !uploading &&
     (sending ? text.trim() !== "" : text.trim() !== "" || attachments.length > 0);
@@ -497,7 +499,7 @@ export function Composer({
       {/* On a phone while working, the input takes the full width and the actions wrap below it. */}
       <div
         className={`flex items-end gap-2${
-          tall ? " max-lg:flex-wrap" : sending ? (narrow ? " flex-wrap" : " max-sm:flex-wrap") : ""
+          tall ? " max-lg:flex-wrap" : narrow ? " flex-wrap" : sending ? " max-sm:flex-wrap" : ""
         }`}
       >
         {storageEnabled ? (
@@ -518,9 +520,7 @@ export function Composer({
               title="Attach a file (image, PDF, DOC, XLS, …)"
               disabled={uploading}
               onClick={() => fileRef.current?.click()}
-              className={`rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3 text-sm${tall ? " max-lg:min-w-11" : ""} disabled:opacity-60${
-                sending && launcherClearance === true ? (narrow ? " ml-14" : " max-sm:ml-14") : ""
-              }`}
+              className={`rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3 text-sm${tall ? " max-lg:min-w-11" : ""} disabled:opacity-60${actionReserve}`}
             >
               {uploading ? "…" : "+"}
             </button>
@@ -532,9 +532,7 @@ export function Composer({
           aria-label={ts("composer.lock")}
           title={ts("composer.lock")}
           onClick={openSecretBox}
-          className={`rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3 text-sm${tall ? " max-lg:min-w-11" : ""}${
-            !storageEnabled && sending && launcherClearance === true ? (narrow ? " ml-14" : " max-sm:ml-14") : ""
-          }`}
+          className={`rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3 text-sm${tall ? " max-lg:min-w-11" : ""}${!storageEnabled ? actionReserve : ""}`}
         >
           <LockIcon />
         </button>
@@ -558,11 +556,7 @@ export function Composer({
           className={`max-h-48 min-h-[46px] flex-1 resize-none overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3 text-sm${
             tall ? " max-lg:order-first max-lg:max-h-[calc(var(--vv-height,100dvh)*0.4)] max-lg:min-h-[86px] max-lg:basis-full" : ""
           }${
-            sending
-              ? narrow
-                ? " order-first basis-full"
-                : " max-sm:order-first max-sm:basis-full"
-              : ""
+            narrow ? " order-first basis-full" : sending ? " max-sm:order-first max-sm:basis-full" : ""
           }`}
         />
         {sending ? (
@@ -656,9 +650,9 @@ export function Composer({
             onAction={sendOnce}
             disabled={!canSend}
             busyLabel="Sending…"
-            className={`rounded-xl bg-[var(--color-accent)] px-4 py-3 text-sm font-semibold text-[var(--color-accent-fg)] disabled:opacity-60${
-              tall ? " max-lg:ml-auto" : ""
-            }`}
+            className={`rounded-xl bg-[var(--color-accent)] py-3 text-sm font-semibold text-[var(--color-accent-fg)] disabled:opacity-60${
+              narrow ? " ml-auto px-3" : " px-4"
+            }${tall ? " max-lg:ml-auto" : ""}`}
           >
             Send
           </ActionButton>

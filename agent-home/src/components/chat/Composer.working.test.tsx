@@ -243,6 +243,17 @@ describe("Composer layout while working", () => {
     expect(screen.getByText(/agent is working/i).className).not.toContain("lg:inline");
   });
 
+  it("in a narrow panel gives the idle input the full width, with the actions and Send below it", () => {
+    render(<Composer narrow sending={false} storageEnabled sessionId="s1" onSend={() => true} />);
+    const input = screen.getByRole("textbox");
+    expect((input.parentElement as HTMLElement).classList.contains("flex-wrap")).toBe(true);
+    expect(input.classList.contains("basis-full")).toBe(true);
+    expect(input.classList.contains("order-first")).toBe(true);
+    expect(box().className).not.toMatch(/(^|\s)ml-14/);
+    expect(screen.getByRole("button", { name: /attach file/i }).classList.contains("ml-14")).toBe(true);
+    expect(screen.getByRole("button", { name: /^send$/i }).classList.contains("ml-auto")).toBe(true);
+  });
+
   it("drops the left-launcher reserve from the input while working on a phone, keeping it on the action row", () => {
     working({ storageEnabled: true });
     const attach = screen.getByRole("button", { name: /attach file/i });
