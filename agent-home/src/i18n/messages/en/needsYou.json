@@ -27,7 +27,8 @@
     "Deny": "Deny",
     "Allow": "Allow",
     "Allow once": "Allow once",
-    "Open chat": "Open chat"
+    "Open chat": "Open chat",
+    "Open dictionary": "Open dictionary"
   },
   "banner": {
     "countOne": "1 thing needs you",
@@ -68,11 +69,20 @@
     "webviewOn": "Webview wants to {kind} on {url}",
     "profileSuggested": "New profile suggested: {name}",
     "dataDraft": "Dictionary draft v{v} for {source} is ready",
-    "dataDraftUnnamed": "Dictionary draft v{v} for a data source is ready"
+    "dataDraftUnnamed": "Dictionary draft v{v} for a data source is ready",
+    "dataSchema": "The {source} schema changed — its dictionary needs an update",
+    "dataSchemaUnnamed": "A data source's schema changed — its dictionary needs an update"
   },
   "details": {
     "changesOne": "1 change",
     "changes": "{n} changes",
+    "schemaDriftOne": "1 table differs",
+    "schemaDrift": "{n} tables differ",
+    "schemaItem": {
+      "added": "{table} is new",
+      "removed": "{table} is gone",
+      "columns": "{table}: columns changed"
+    },
     "origin": {
       "chat": "from a chat",
       "feedback": "from answer feedback",

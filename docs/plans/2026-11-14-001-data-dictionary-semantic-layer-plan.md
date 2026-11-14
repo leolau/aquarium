@@ -16,7 +16,7 @@ dictionary** per data source instead of one skill per table.
 | 3 | Study → propose, and the `data-questions` skill | Done (PR #921, draft) |
 | 4 | agent-home UI (`/data`) | Done (PR #921, draft; browser-tested at 390/768/1440 px) |
 | 5 | Improve over time: chat suggestions, answer feedback, Needs You | Built (PR #921); browser-tested locally, not deployed |
-| 6 | Schema change check (no model) | Not started |
+| 6 | Schema change check (no model) | Built (PR #921); backend tests pass, not deployed |
 
 Log:
 - 2026-11-14 — Evaluated the hybrid "MCP for access, skills for semantics"
@@ -84,12 +84,13 @@ Log:
   `messages/*/needsYou.json`, with the server's English as fallback. The panel,
   badge, banner, strip, ages, severities and action labels are translated.
   Free-text notification titles from other features stay as written.
+- 2026-11-15 — Phase 6 built (details under Phase 6 below). Unit + real
+  Postgres tests, agent-home tsc and Vitest pass. Not deployed.
 
 Next steps (for whoever picks this up):
-1. Phase 6: scheduled schema-change check (below).
-2. Before deploy: run `hermes db migrate` (creates the sandbox login and the
-   dictionary tables), then re-run the `/data` browser test on production.
-   Read `production/PRODUCTION.md` in `leolau/aquarium-ops` first.
+1. Before deploy: run `hermes db migrate` (adds the `schema_checked_at` /
+   `schema_drift` columns), then re-run the `/data` browser test on
+   production. Read `production/PRODUCTION.md` in `leolau/aquarium-ops` first.
 
 ## 1. Decisions
 
@@ -181,6 +182,24 @@ The site-to-schema plan rejected a skill-only design for the same reason.
 - Scheduled backend job (no model) compares each schema with its approved
   dictionary, marks changed entries stale, and raises a Needs You item; the
   agent can then propose the update.
+- Built: `data_sources` gains `schema_checked_at` / `schema_drift` (idempotent
+  ALTERs in `_ensure` and `hermes db migrate`). `schema_diff` compares the
+  schema a dictionary should describe — a site's approved design, or the app
+  areas the code exposes (`app_data.schema()`) — with the approved entries:
+  `added` / `removed` tables and `columns` diffs. `check_source` stores the
+  result; `schema_check_tick` re-checks any approved source whose check is
+  missing or older than 24 h, and `schema_check_loop` runs the sweep hourly
+  alongside the site refresh scheduler (same `scheduler_enabled` gate) in the
+  web server lifespan. Drift is also detected instantly: `apply_design`
+  re-checks its site after a new design is approved, and `approve`/`restore`
+  re-check best-effort so a fixed dictionary clears its own flag. Served
+  dictionaries mark drifted entries `stale`; `list_sources` and the `site_db`
+  `dictionary`/`study` actions expose the drift (`stale` tables listed for the
+  agent, which the `data-questions` skill tells to re-study and re-propose).
+  Each drifted source a caller manages raises one `data_schema` Needs You card
+  (`/data/<id>`); agent-home shows a "Schema changed" pill on the source list,
+  a warn banner naming the drifted tables on the dictionary page, and a
+  `stale` pill on affected entries — en + zh-Hant strings throughout.
 
 ### Later (not scheduled)
 - Other engines (SQL Server, MySQL, SQLite) as adapters behind one interface.

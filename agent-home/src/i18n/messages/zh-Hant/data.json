@@ -10,7 +10,8 @@
   "status": {
     "approved": "已批准 v{v}",
     "draft": "草稿 · 待審閱",
-    "not_described": "未描述"
+    "not_described": "未描述",
+    "drift": "結構有變"
   },
   "access": {
     "read": "可閱讀",
@@ -40,7 +41,16 @@
     "emptyBodyRead": "擁有人尚未描述這些資料表。",
     "table": "資料表",
     "tables": "資料表",
-    "edit": "編輯"
+    "edit": "編輯",
+    "driftTitle": "結構有變 — {n} 個表與字典不符",
+    "driftTitleOne": "結構有變 — 1 個表與字典不符",
+    "driftHint": "在擁有者更新之前，回答可能沿用過時的意思。",
+    "driftStale": "已過時 — 結構有變",
+    "driftItem": {
+      "added": "{table} 是新增的",
+      "removed": "{table} 已移除",
+      "columns": "{table}：欄位有變"
+    }
   },
   "build": {
     "label": "建立字典",

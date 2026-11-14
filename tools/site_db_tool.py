@@ -190,6 +190,12 @@ async def _dictionary_action(action: str, principal: Any, args: Mapping[str, Any
             out["draft"] = {k: found["draft"][k] for k in ("version", "changed_tables")}
         if approved is None:
             out["note"] = "Nothing approved yet: answer from describe, and say the tables aren't described."
+        if found.get("schema_drift"):
+            out["note"] = (
+                (out.get("note") or "")
+                + " Entries marked stale no longer match the schema — study them, "
+                  "then propose_dictionary to update the draft."
+            ).strip()
         return _result(**out)
     if action == "study":
         if site is not None:
@@ -203,6 +209,7 @@ async def _dictionary_action(action: str, principal: Any, args: Mapping[str, Any
             source=source.view(access),
             tables=detail,
             undescribed=[n for n in names if n not in described],
+            stale=[d["table"] for d in found.get("schema_drift") or [] if d.get("change") != "added"],
             approved_version=approved and approved["version"],
             next=("Draft entries from this, ask the person about anything unclear, then "
                   "propose_dictionary with origin=study."),

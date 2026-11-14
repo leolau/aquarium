@@ -13,14 +13,20 @@ site's read grantees also read its dictionary). Only ``manage`` approves.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
+import logging
 import re
 import uuid
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set
 
 from hermes_cli import site_sources as ss
 from hermes_cli.site_sources import SiteError, jsonable
+
+logger = logging.getLogger(__name__)
 
 LEVELS = ("read", "propose", "manage")
 GRANTS = ("read", "propose")
@@ -46,6 +52,8 @@ CREATE TABLE IF NOT EXISTS public.data_sources (
     profile text NOT NULL,
     name text NOT NULL,
     owner_user_id text NOT NULL DEFAULT '',
+    schema_checked_at timestamptz,
+    schema_drift jsonb NOT NULL DEFAULT '[]'::jsonb,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     CHECK ((kind = 'site') = (site_id IS NOT NULL))
@@ -83,6 +91,13 @@ REVOKE ALL ON public.data_sources, public.data_source_grants,
     public.data_dictionary_versions FROM PUBLIC;
 """
 
+#: For installs that created the tables before the columns existed
+#: (``CREATE TABLE IF NOT EXISTS`` leaves them alone).
+_ALTER_DDL = """
+ALTER TABLE public.data_sources ADD COLUMN IF NOT EXISTS schema_checked_at timestamptz;
+ALTER TABLE public.data_sources ADD COLUMN IF NOT EXISTS schema_drift jsonb NOT NULL DEFAULT '[]'::jsonb;
+"""
+
 _TABLES = ("data_sources", "data_source_grants", "data_dictionary_versions")
 _ready: set = set()
 
@@ -95,6 +110,8 @@ class Source:
     name: str
     owner_user_id: str = ""
     site_id: Optional[str] = None
+    schema_checked_at: Optional[Any] = None
+    schema_drift: Optional[List[Dict[str, Any]]] = None
 
     def view(self, access: Optional[str] = None) -> Dict[str, Any]:
         out = {
@@ -103,6 +120,8 @@ class Source:
             "name": self.name,
             "owner_user_id": self.owner_user_id,
             "site_id": self.site_id,
+            "schema_checked_at": jsonable(self.schema_checked_at),
+            "schema_drift": self.schema_drift or [],
         }
         if access is not None:
             out["access"] = access
@@ -117,6 +136,8 @@ def _source(row: Mapping[str, Any]) -> Source:
         name=row["name"],
         owner_user_id=row["owner_user_id"] or "",
         site_id=str(row["site_id"]) if row["site_id"] else None,
+        schema_checked_at=row["schema_checked_at"],
+        schema_drift=_json(row["schema_drift"]) or [],
     )
 
 
@@ -233,16 +254,17 @@ async def _ensure(conn: Any, db: Any) -> None:
         return
     names = ", ".join(f"to_regclass('public.{t}')" for t in _TABLES)
     present = await conn.fetchval(f"SELECT bool_and(r IS NOT NULL) FROM (VALUES ({names})) v(r)")
-    if not present:
-        may = await conn.fetchval("SELECT has_schema_privilege('public', 'CREATE')")
-        if may and not getattr(conn, "_hermes_skip_setup", False):
-            await conn.execute(DDL)
-        elif not present:
-            raise SiteError(
-                "the data dictionary tables are missing and this database login cannot "
-                "create them; run `hermes db migrate`",
-                503,
-            )
+    may = await conn.fetchval("SELECT has_schema_privilege('public', 'CREATE')")
+    if may and not getattr(conn, "_hermes_skip_setup", False):
+        # CREATE covers fresh installs; the ALTERs are the idempotent upgrade
+        # path for tables created before the schema-check columns existed.
+        await conn.execute(_ALTER_DDL if present else DDL + _ALTER_DDL)
+    elif not present:
+        raise SiteError(
+            "the data dictionary tables are missing and this database login cannot "
+            "create them; run `hermes db migrate`",
+            503,
+        )
     _ready.add(key)
 
 
@@ -271,7 +293,7 @@ async def migrate(conn: Any, *, app_role: Optional[str] = None) -> None:
     role = app_role or APP_ROLE_NAME
     if not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", role):
         raise ValueError(f"invalid role name {role!r}")
-    await conn.execute(DDL)
+    await conn.execute(DDL + _ALTER_DDL)
     if await conn.fetchval("SELECT 1 FROM pg_roles WHERE rolname = $1", role):
         await conn.execute(
             f"GRANT USAGE ON SCHEMA public TO {role}; GRANT SELECT, INSERT, UPDATE, DELETE ON "
@@ -280,7 +302,7 @@ async def migrate(conn: Any, *, app_role: Optional[str] = None) -> None:
         )
 
 
-_SOURCE_COLUMNS = "id, kind, site_id, profile, name, owner_user_id"
+_SOURCE_COLUMNS = "id, kind, site_id, profile, name, owner_user_id, schema_checked_at, schema_drift"
 
 
 def _design_entries(design: Mapping[str, Any]) -> Dict[str, Any]:
@@ -466,7 +488,14 @@ async def dictionary(source: Source, *, draft: bool = False, db: Any = None) -> 
         )
     by = {r["status"]: r for r in rows}
     approved = _version_view(by["approved"]) if "approved" in by else None
-    out: Dict[str, Any] = {"approved": approved}
+    out: Dict[str, Any] = {"approved": approved, "schema_drift": source.schema_drift or []}
+    # Changed/removed tables are flagged so readers (UI, the agent's site_db
+    # tool) can see their text no longer describes the live schema.
+    for item in source.schema_drift or ():
+        if item.get("change") in ("columns", "removed") and approved is not None:
+            table = (approved["entries"].get("tables") or {}).get(item.get("table"))
+            if table is not None:
+                table["stale"] = True
     if draft:
         open_draft = _version_view(by["draft"]) if "draft" in by else None
         if open_draft is not None:
@@ -643,7 +672,9 @@ async def approve(
             await conn.execute(
                 "UPDATE public.data_sources SET updated_at = now() WHERE id = $1::uuid", source.id
             )
-    return {"version": int(version), "status": "approved", "changed_tables": changed_tables(before, entries)}
+    result = {"version": int(version), "status": "approved", "changed_tables": changed_tables(before, entries)}
+    await _recheck_quiet(source, db=db)
+    return result
 
 
 async def discard(source: Source, *, by: str, db: Any = None) -> bool:
@@ -692,7 +723,135 @@ async def restore(source: Source, version: int, *, by: str, db: Any = None) -> D
                 json.dumps([{"table": "*", "origin": "restore", "by": by, "note": f"Restored v{version}"}]),
                 approved["version"] if approved else None, by,
             )
-    return {"version": new, "status": "approved", "restored_from": int(version)}
+    result = {"version": new, "status": "approved", "restored_from": int(version)}
+    await _recheck_quiet(source, db=db)
+    return result
+
+
+# -- schema-change check ----------------------------------------------------
+
+#: How long a recorded check stays fresh before the scheduled job re-checks.
+SCHEMA_CHECK_EVERY = timedelta(hours=24)
+
+
+def schema_diff(
+    truth: Mapping[str, Set[str]], tables: Mapping[str, Any]
+) -> List[Dict[str, Any]]:
+    """Diff the real schema (``{table: {columns}}``) against approved entries.
+
+    Returns one item per differing table: ``added`` (in the schema but not
+    documented), ``removed`` (documented but gone), ``columns`` (set differs).
+    """
+    out: List[Dict[str, Any]] = []
+    for name in sorted(set(truth) | set(tables)):
+        want = truth.get(name)
+        have = tables.get(name)
+        if want is None:
+            out.append({"table": name, "change": "removed"})
+        elif have is None:
+            out.append({"table": name, "change": "added", "detail": {"columns": sorted(want)}})
+        else:
+            cols = set(have.get("columns") or {})
+            added, removed = sorted(want - cols), sorted(cols - want)
+            if added or removed:
+                out.append({"table": name, "change": "columns",
+                            "detail": {"added": added, "removed": removed}})
+    return out
+
+
+async def _schema_truth(source: Source, *, db: Any = None) -> Dict[str, Set[str]]:
+    """The schema the approved dictionary should describe: ``{table: {columns}}``.
+
+    Site sources follow their site's approved design; the app source follows
+    the areas the code currently exposes.
+    """
+    if source.kind == "app":
+        from hermes_cli import app_data
+
+        return {name: set(cols) for name, cols in app_data.schema().items()}
+    if not source.site_id:
+        return {}
+    site = await ss.get_site(source.site_id, db=db)
+    if site is None:
+        return {}
+    current = await ss.approved_design(site, db=db)
+    if current is None:
+        return {}
+    _version, design, _recipe = current
+    return {
+        e["name"]: {c["name"] for c in e["columns"]}
+        for e in ss.validate_design(design)["entities"]
+    }
+
+
+async def check_source(source: Source, *, db: Any = None) -> List[Dict[str, Any]]:
+    """Compare the source's schema with its approved dictionary; record the drift."""
+    truth = await _schema_truth(source, db=db)
+    async with _Conn(db) as conn:
+        approved = await conn.fetchrow(
+            "SELECT entries FROM public.data_dictionary_versions "
+            "WHERE source_id = $1::uuid AND status = 'approved'",
+            source.id,
+        )
+        tables = (_json(approved["entries"]) or {}).get("tables") or {} if approved else {}
+        drift = schema_diff(truth, tables) if approved else []
+        await conn.execute(
+            "UPDATE public.data_sources SET schema_checked_at = now(), schema_drift = $2::jsonb "
+            "WHERE id = $1::uuid",
+            source.id, json.dumps(drift),
+        )
+    return drift
+
+
+async def recheck_site(site_id: Any, *, db: Any = None) -> None:
+    """Re-check the data source bound to ``site_id`` (called after a design change)."""
+    async with _Conn(db) as conn:
+        row = await conn.fetchrow(
+            f"SELECT {_SOURCE_COLUMNS} FROM public.data_sources WHERE site_id = $1::uuid",
+            str(site_id),
+        )
+    if row is not None:
+        await check_source(_source(row), db=db)
+
+
+async def _recheck_quiet(source: Source, *, db: Any = None) -> None:
+    """Best-effort re-check after a write — never fails the write itself."""
+    try:
+        await check_source(source, db=db)
+    except Exception:  # noqa: BLE001
+        logger.warning("schema re-check failed for source %s", source.id, exc_info=True)
+
+
+async def schema_check_tick(*, db: Any = None) -> int:
+    """Re-check every approved source whose last check is missing or stale."""
+    cutoff = datetime.now(timezone.utc) - SCHEMA_CHECK_EVERY
+    async with _Conn(db) as conn:
+        rows = await conn.fetch(
+            f"SELECT {_SOURCE_COLUMNS} FROM public.data_sources s "
+            "WHERE EXISTS (SELECT 1 FROM public.data_dictionary_versions v "
+            "WHERE v.source_id = s.id AND v.status = 'approved') "
+            "AND (s.schema_checked_at IS NULL OR s.schema_checked_at < $1)",
+            cutoff,
+        )
+    checked = 0
+    for row in rows:
+        try:
+            await check_source(_source(row), db=db)
+            checked += 1
+        except Exception:  # noqa: BLE001 - one bad source never stops the sweep
+            logger.warning("schema check failed for source %s", row["id"], exc_info=True)
+    return checked
+
+
+async def schema_check_loop(stop: asyncio.Event, *, interval: float = 3600.0, db: Any = None) -> None:
+    """Hourly sweep; each source is re-checked at most once per SCHEMA_CHECK_EVERY."""
+    while not stop.is_set():
+        try:
+            await schema_check_tick(db=db)
+        except Exception:  # noqa: BLE001 - the sweep keeps running
+            logger.exception("data dictionary schema check failed")
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=interval)
 
 
 # -- grants ------------------------------------------------------------------

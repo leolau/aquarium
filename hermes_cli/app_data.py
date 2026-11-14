@@ -71,6 +71,11 @@ def _areas() -> Dict[str, Area]:
     return {a.name: a for a in items}
 
 
+def schema() -> Dict[str, Tuple[str, ...]]:
+    """The queryable surface the app dictionary documents: ``{area: (columns,)}``."""
+    return {a.name: a.columns for a in _areas().values()}
+
+
 def _app_store() -> Any:
     from hermes_cli.config import load_config_readonly
     from hermes_cli.datastore import get_store

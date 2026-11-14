@@ -458,3 +458,32 @@ def test_data_drafts_are_listed_only_for_sources_the_caller_approves():
     ]
     # list_sources sends the draft time as ISO text; the card must keep its age.
     assert item["created_at"] == datetime(2026, 11, 14, 12, tzinfo=timezone.utc).timestamp()
+
+
+def test_schema_drift_cards_are_listed_only_for_managers_with_drift():
+    rows = [
+        {"id": "s1", "name": "HSDOS WMS", "access": "manage",
+         "schema_checked_at": "2026-11-15T09:00:00+00:00",
+         "schema_drift": [
+             {"table": "orders", "change": "columns"},
+             {"table": "customers", "change": "added"},
+             {"table": "legacy", "change": "removed"},
+         ]},
+        {"id": "s2", "name": "Shared", "access": "propose",
+         "schema_drift": [{"table": "t", "change": "added"}]},
+        {"id": "s3", "name": "Clean", "access": "manage", "schema_drift": []},
+    ]
+    [item] = ny.data_schema_entries(rows)
+    assert item["id"] == "data_schema:s1"
+    assert item["severity"] == "review"
+    assert item["href"] == "/data/s1"
+    assert item["title"] == "The HSDOS WMS schema changed — its dictionary needs an update"
+    # the card names at most two drifted tables in detail text
+    assert item["detail"] == "3 tables differ · orders: columns changed · customers is new"
+    assert item["i18n"]["title"] == [
+        {"key": "titles.dataSchema", "vars": {"source": "HSDOS WMS"}}
+    ]
+    assert [p["key"] for p in item["i18n"]["detail"]] == [
+        "details.schemaDrift", "details.schemaItem.columns", "details.schemaItem.added",
+    ]
+    assert item["created_at"] == datetime(2026, 11, 15, 9, tzinfo=timezone.utc).timestamp()

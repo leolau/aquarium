@@ -315,14 +315,19 @@ async def _lifespan_services(app: "FastAPI"):
 
     db_pool_on = db_pool.enable(db_pool.settings_from_config(load_config() or {}))
 
-    # Site-to-schema scheduled refreshes (hermes_cli/site_sources.py).
+    # Site-to-schema scheduled refreshes (hermes_cli/site_sources.py) and the
+    # dictionary schema-change sweep (hermes_cli/data_dictionary.py).
     sites_stop = asyncio.Event()
     sites_task = None
+    schema_task = None
     try:
         from hermes_cli import site_sources
 
         if site_sources.scheduler_enabled(load_config() or {}):
             sites_task = asyncio.create_task(site_sources.scheduler_loop(sites_stop))
+            from hermes_cli import data_dictionary
+
+            schema_task = asyncio.create_task(data_dictionary.schema_check_loop(sites_stop))
     except Exception:  # noqa: BLE001 - never block the dashboard on it
         _log.debug("site scheduler not started", exc_info=True)
 
@@ -332,6 +337,8 @@ async def _lifespan_services(app: "FastAPI"):
         sites_stop.set()
         if sites_task is not None:
             sites_task.cancel()
+        if schema_task is not None:
+            schema_task.cancel()
         if db_pool_on:
             await asyncio.to_thread(db_pool.disable)
         cpu_stop.set()
@@ -13419,7 +13426,9 @@ async def needs_you(request: Request):
         from hermes_cli import data_dictionary as dd
         from hermes_cli import site_sources as ss
 
-        items.extend(ny.data_draft_entries(await dd.list_sources(principal, ss.current_profile())))
+        sources = await dd.list_sources(principal, ss.current_profile())
+        items.extend(ny.data_draft_entries(sources))
+        items.extend(ny.data_schema_entries(sources))
     except Exception:
         _log.warning("needs-you: data dictionary source failed", exc_info=True)
 

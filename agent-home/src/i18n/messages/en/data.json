@@ -10,7 +10,8 @@
   "status": {
     "approved": "Approved v{v}",
     "draft": "Draft · review",
-    "not_described": "Not described"
+    "not_described": "Not described",
+    "drift": "Schema changed"
   },
   "access": {
     "read": "Can read",
@@ -40,7 +41,16 @@
     "emptyBodyRead": "The owner hasn't described these tables yet.",
     "table": "Table",
     "tables": "Tables",
-    "edit": "Edit"
+    "edit": "Edit",
+    "driftTitle": "The schema changed — {n} tables no longer match this dictionary",
+    "driftTitleOne": "The schema changed — 1 table no longer matches this dictionary",
+    "driftHint": "Answers may use outdated meanings until the owner updates them.",
+    "driftStale": "stale — schema changed",
+    "driftItem": {
+      "added": "{table} is new",
+      "removed": "{table} is gone",
+      "columns": "{table}: columns changed"
+    }
   },
   "build": {
     "label": "Build dictionary",

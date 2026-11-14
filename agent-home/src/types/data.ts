@@ -4,6 +4,12 @@ export type DataAccess = "read" | "propose" | "manage";
 export type DataGrantLevel = "read" | "propose";
 export type DictionaryStatus = "approved" | "draft" | "not_described";
 
+export interface SchemaDriftItem {
+  table: string;
+  change: "added" | "removed" | "columns";
+  detail?: { columns?: string[]; added?: string[]; removed?: string[] };
+}
+
 export interface DataSource {
   id: string;
   kind: "app" | "site";
@@ -17,12 +23,16 @@ export interface DataSource {
   tables_described?: number;
   draft_version?: number | null;
   draft_changes?: number;
+  schema_checked_at?: string | null;
+  schema_drift?: SchemaDriftItem[];
 }
 
 export interface DictionaryEntry {
   meaning: string;
   row: string;
   grain: string;
+  /** Set when the schema check found this table no longer matches the dictionary. */
+  stale?: boolean;
   columns: Record<string, string>;
   joins: { to: string; on: string; note: string }[];
   metrics: { name: string; definition: string; sql: string }[];
@@ -58,6 +68,7 @@ export interface DataSourceDoc {
   source: DataSource;
   approved: DictionaryVersion | null;
   draft?: DictionaryVersion | null;
+  schema_drift?: SchemaDriftItem[];
 }
 
 export interface DataGrant {

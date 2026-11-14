@@ -55,6 +55,7 @@ export function DictionaryDetail({
   const [error, setError] = useState<string | null>(null);
   const canPropose = allows(source.access, "propose");
   const canManage = allows(source.access, "manage");
+  const drift = source.schema_drift ?? [];
   const entry = picked ? entryOf(approved?.entries, picked) : null;
   const buildPrompt = t("build.prompt", { source: source.kind === "app" ? "app" : source.name });
 
@@ -72,6 +73,19 @@ export function DictionaryDetail({
   return (
     <div data-component="DictionaryDetail" className="flex flex-col gap-4 pb-24 lg:pb-8">
       {error ? <InlineAlert tone="danger">{error}</InlineAlert> : null}
+      {drift.length ? (
+        <InlineAlert
+          tone="warn"
+          title={t(drift.length === 1 ? "detail.driftTitleOne" : "detail.driftTitle", { n: drift.length })}
+        >
+          <ul className="list-inside list-disc">
+            {drift.slice(0, 4).map((d) => (
+              <li key={`${d.change}:${d.table}`}>{t(`detail.driftItem.${d.change}`, { table: d.table })}</li>
+            ))}
+          </ul>
+          <p className="mt-1 text-xs">{t("detail.driftHint")}</p>
+        </InlineAlert>
+      ) : null}
       <div data-component="VersionBar" className="flex flex-wrap items-center gap-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm">
         {approved ? (
           <>
@@ -142,6 +156,7 @@ export function DictionaryDetail({
             <section data-component="DictionaryEntry" className="flex flex-col gap-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
               <div className="flex items-center justify-between gap-2">
                 <h2 className="truncate text-lg font-semibold">{picked}</h2>
+                {entry.stale ? <Pill tone="warning">{t("detail.driftStale")}</Pill> : null}
                 {canPropose ? (
                   <button type="button" className={secondaryButtonClass} onClick={() => setEditing(picked)}>
                     {t("detail.edit")}

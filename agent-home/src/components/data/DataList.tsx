@@ -27,8 +27,11 @@ export function DataList({ sources, people }: { sources: DataSource[]; people: R
     >
       {sources.map((s) => {
         const status = s.status ?? "not_described";
+        const drift = (s.schema_drift?.length ?? 0) > 0;
         const next =
-          status === "draft" && allows(s.access, "manage")
+          drift && allows(s.access, "manage")
+            ? t("status.drift")
+            : status === "draft" && allows(s.access, "manage")
             ? t("list.next.review", { n: s.draft_changes ?? 0 })
             : status === "not_described"
               ? allows(s.access, "propose")
@@ -49,6 +52,7 @@ export function DataList({ sources, people }: { sources: DataSource[]; people: R
                       ? t("status.approved", { v: s.approved_version ?? 0 })
                       : t(`status.${status}`)}
                   </Pill>
+                  {drift ? <Pill tone="warning">{t("status.drift")}</Pill> : null}
                 </span>
                 <span className="text-[13px] text-[var(--color-muted)] [overflow-wrap:anywhere]">
                   {t(`kind.${s.kind}`)} · {t("list.described", { n: s.tables_described ?? 0 })} ·{" "}

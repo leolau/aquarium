@@ -49,6 +49,7 @@ SEVERITY_BY_SOURCE = {
     "clarify": "approval",
     "output_acceptance": "review",
     "data_draft": "review",
+    "data_schema": "review",
     "card_blocked": "review",
     "todo": "fyi",
     "profile_suggestion": "fyi",
@@ -582,6 +583,50 @@ def data_draft_entries(sources: Iterable[dict]) -> list[dict]:
             },
             href=href, created_at=s.get("draft_proposed_at"),
             actions=[_open_action(href, "Review")],
+        ))
+    return out
+
+
+_SCHEMA_DRIFT_TEXT = {
+    "added": "{table} is new", "removed": "{table} is gone", "columns": "{table}: columns changed",
+}
+
+
+def data_schema_entries(sources: Iterable[dict]) -> list[dict]:
+    """Sources whose schema no longer matches their approved dictionary.
+
+    One card per drifted source (``manage`` approves its dictionary); the id
+    is stable while drift persists so a still-open check shows once.
+    """
+    out: list[dict] = []
+    for s in sources:
+        if s.get("access") != "manage":
+            continue
+        drift = [
+            d for d in s.get("schema_drift") or []
+            if d.get("change") in _SCHEMA_DRIFT_TEXT and d.get("table")
+        ]
+        if not drift:
+            continue
+        n, shown = len(drift), drift[:2]
+        name = s.get("name")
+        href = f"/data/{quote(str(s['id']), safe='')}"
+        out.append(entry(
+            id=f"data_schema:{s['id']}",
+            source="data_schema",
+            title=f"The {name or 'data source'} schema changed — its dictionary needs an update",
+            detail=" · ".join(
+                [f"{n} table{'s' if n != 1 else ''} differ"]
+                + [_SCHEMA_DRIFT_TEXT[d["change"]].format(table=d["table"]) for d in shown]
+            ),
+            i18n={
+                "title": [_m("titles.dataSchema" if name else "titles.dataSchemaUnnamed",
+                             source=name)],
+                "detail": [_m("details.schemaDriftOne" if n == 1 else "details.schemaDrift", n=n)]
+                + [_m(f"details.schemaItem.{d['change']}", table=d["table"]) for d in shown],
+            },
+            href=href, created_at=s.get("schema_checked_at"),
+            actions=[_open_action(href, "Open dictionary")],
         ))
     return out
 

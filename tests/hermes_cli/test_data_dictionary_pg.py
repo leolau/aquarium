@@ -35,6 +35,25 @@ DESIGN = {
 ORDERS = {"meaning": "Orders placed in the shop", "row": "One order", "grain": "order",
           "columns": {"amount": "Total in HKD, refunds excluded"},
           "metrics": [{"name": "revenue", "definition": "sum(amount)"}]}
+DESIGN_V2 = {
+    "entities": [
+        {
+            "name": "orders",
+            "kind": "variable",
+            "reason": "Each order placed in the shop",
+            "columns": [{"name": "order_no", "type": "text"}, {"name": "amount", "type": "number"},
+                        {"name": "coupon", "type": "text"}],
+            "key": ["order_no"],
+        },
+        {
+            "name": "customers",
+            "kind": "variable",
+            "reason": "Each customer",
+            "columns": [{"name": "id", "type": "number"}],
+            "key": ["id"],
+        },
+    ]
+}
 
 
 def run(coro):
@@ -91,6 +110,48 @@ def test_site_source_seeds_from_approved_design(env):
     assert approved["changes"][0]["origin"] == "design"
     assert sources(BOB, profile) == {}
     assert set(sources(BOSS, profile)) == {"app", "site"}
+
+
+def test_schema_check_flags_drift_and_approve_rechecks(env):
+    """A new approved design marks the dictionary stale; updating it clears the drift."""
+    profile, site = env
+
+    async def go():
+        proposed = await ss.propose_design(site, DESIGN, None, by="alice")
+        await ss.apply_design(site, proposed["version"], approved_by="alice")
+
+    run(go())
+    mine = sources(ALICE, profile)
+    assert mine["site"]["schema_drift"] == []
+
+    async def evolve():
+        v2 = await ss.propose_design(site, DESIGN_V2, None, by="alice")
+        await ss.apply_design(site, v2["version"], approved_by="alice")
+
+    run(evolve())
+    drift = {d["table"]: d for d in sources(ALICE, profile)["site"]["schema_drift"]}
+    assert drift["orders"]["change"] == "columns"
+    assert drift["orders"]["detail"]["added"] == ["coupon"]
+    assert drift["customers"]["change"] == "added"
+
+    # Served entries flag the stale table; undescribed new ones are in drift.
+    source = run(dd.get_source(mine["site"]["id"]))
+    found = run(dd.dictionary(source))
+    assert {d["table"] for d in found["schema_drift"]} == {"orders", "customers"}
+    assert found["approved"]["entries"]["tables"]["orders"]["stale"] is True
+
+    # Proposing + approving updated entries re-checks and clears the drift.
+    run(dd.propose(
+        source,
+        tables={
+            "orders": {**ORDERS, "columns": {**ORDERS["columns"], "coupon": "Coupon code"}},
+            "customers": {"meaning": "Each customer", "columns": {"id": "Customer id"}},
+        },
+        by="alice",
+    ))
+    run(dd.approve(source, 2, by="alice"))
+    assert sources(ALICE, profile)["site"]["schema_drift"] == []
+    assert run(dd.dictionary(run(dd.get_source(mine["site"]["id"]))))["approved"]["entries"]["tables"]["orders"].get("stale") is None
 
 
 def test_draft_review_approve_and_restore(env):

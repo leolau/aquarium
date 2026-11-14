@@ -1734,6 +1734,14 @@ async def apply_design(
             "WHERE id = $1::uuid AND status <> 'paused'",
             site.id,
         )
+    # A new approved design changes the schema: re-check the data dictionary
+    # right away so drift shows up before the scheduled sweep.
+    try:
+        from hermes_cli import data_dictionary
+
+        await data_dictionary.recheck_site(site.id, db=db)
+    except Exception:  # noqa: BLE001 - a failed check never blocks the approval
+        logger.debug("data dictionary schema check after design approval failed", exc_info=True)
     out: Dict[str, Any] = {"version": int(version), "status": "approved", "statements": statements}
     if rezoned:
         out["rezoned"] = rezoned

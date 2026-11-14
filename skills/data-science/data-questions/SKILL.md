@@ -27,6 +27,11 @@ person asking: they only ever see rows they may see.
    metric definitions. Use those definitions; never invent a different one for
    a metric it defines. If you get an error or nothing is approved, carry on
    from the structure and say in your answer that the tables aren't described.
+   **Stale entries**: when the source shows `schema_drift`, the schema changed
+   since the dictionary was approved — entries marked `stale` may no longer
+   match (a removed column, new columns still undocumented). Warn the person
+   when answering from stale text, and offer to update it: `study` the drifted
+   tables, then `propose_dictionary` once they agree.
 3. **Look before you write SQL**: `describe` (site, entity?, q?) for a site,
    `app_describe` for app data. Check column names, fill and common values.
 4. **Ask when it's unclear.** If the question could mean two things (which

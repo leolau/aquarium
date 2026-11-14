@@ -27,7 +27,8 @@
     "Deny": "拒絕",
     "Allow": "允許",
     "Allow once": "允許一次",
-    "Open chat": "開啟對話"
+    "Open chat": "開啟對話",
+    "Open dictionary": "開啟字典"
   },
   "banner": {
     "countOne": "有 1 件事需要你",
@@ -68,7 +69,9 @@
     "webviewOn": "網頁檢視想在 {url} 執行 {kind}",
     "profileSuggested": "建議新增代理設定檔：{name}",
     "dataDraft": "{source} 的字典草稿 v{v} 可以審閱了",
-    "dataDraftUnnamed": "一個數據來源的字典草稿 v{v} 可以審閱了"
+    "dataDraftUnnamed": "一個數據來源的字典草稿 v{v} 可以審閱了",
+    "dataSchema": "{source} 的結構有變 — 字典需要更新",
+    "dataSchemaUnnamed": "一個數據來源的結構有變 — 字典需要更新"
   },
   "details": {
     "changesOne": "1 項修改",
@@ -79,6 +82,13 @@
       "study": "來自研究",
       "schema_check": "來自結構檢查",
       "edit": "來自編輯"
+    },
+    "schemaDriftOne": "1 個表有差異",
+    "schemaDrift": "{n} 個表有差異",
+    "schemaItem": {
+      "added": "{table} 是新增的",
+      "removed": "{table} 已移除",
+      "columns": "{table}：欄位有變"
     }
   }
 }
