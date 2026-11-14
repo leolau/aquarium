@@ -53,7 +53,8 @@ the logged-in page, optionally paged by start/length), ``paginate`` and
 ``date_windows``. Value templates: ``{{today}}``, ``{{date-N}}``,
 ``{{cursor}}`` (falls back to the step's ``default`` on a full run or a first
 run), ``{{window_from}}`` / ``{{window_to}}`` (dates) and ``{{window_start}}`` /
-``{{window_end}}`` (timestamps) inside ``date_windows``.
+``{{window_end}}`` (timestamps, end inclusive) / ``{{window_until}}`` (exclusive
+end, for ``<`` filters) inside ``date_windows``.
 
 The Playwright sync API must not run on a thread with a running asyncio loop:
 async callers use ``asyncio.to_thread``.
@@ -431,9 +432,12 @@ def _steps_problems(where: str, steps: Any, *, depth: int = 0, in_window: bool =
             if split is not None:
                 if not (_positive_int(split) and split <= 1440):
                     problems.append(f"{at}: 'split_min_minutes' must be a whole number of minutes from 1 to 1440")
-                elif not _TIME_TEMPLATE.search(json.dumps(step.get("steps"))):
-                    problems.append(f"{at}: 'split_min_minutes' needs {{{{window_start}}}} / {{{{window_end}}}} "
-                                    "in the steps, or a split window would ask for the same days again")
+                else:
+                    used = set(_TIME_TEMPLATE.findall(json.dumps(step.get("steps"))))
+                    if "start" not in used or not used & {"end", "until"}:
+                        problems.append(f"{at}: 'split_min_minutes' needs {{{{window_start}}}} and {{{{window_end}}}} "
+                                        "(or {{window_until}}) in the steps, or a split window would ask for the "
+                                        "same range again")
             if "time_format" in step and not isinstance(step["time_format"], str):
                 problems.append(f"{at}: 'time_format' must be a strftime string")
             if "cursor" in _template_names(step.get("from")) and "default" not in step and no_cursor:
@@ -646,10 +650,10 @@ def validate_recipe(recipe: Any) -> None:
 # --------------------------------------------------------------------------
 
 _TEMPLATE = re.compile(r"\{\{\s*([a-z_]+)\s*(?:([+-])\s*(\d+)\s*)?\}\}")
-_TEMPLATE_VARS = ("today", "date", "cursor", "window_from", "window_to", "window_start", "window_end")
-_WINDOW_VARS = ("window_from", "window_to", "window_start", "window_end")
-_TIME_VARS = ("window_start", "window_end")
-_TIME_TEMPLATE = re.compile(r"\{\{\s*window_(?:start|end)\s*\}\}")
+_TIME_VARS = ("window_start", "window_end", "window_until")
+_WINDOW_VARS = ("window_from", "window_to") + _TIME_VARS
+_TEMPLATE_VARS = ("today", "date", "cursor") + _WINDOW_VARS
+_TIME_TEMPLATE = re.compile(r"\{\{\s*window_(start|end|until)\s*\}\}")
 DEFAULT_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
@@ -2483,32 +2487,40 @@ class _Run:
                 stop = min(end, cursor + dt.timedelta(days=days - 1))
                 lo = dt.datetime.combine(cursor, dt.time())
                 hi = dt.datetime.combine(stop + dt.timedelta(days=1), dt.time())
-                yield from self._window(where, step, ctx, outer, lo, hi, min_span)
+                yield from self._window(where, step, ctx, outer, lo, hi, min_span, frozenset())
                 cursor = stop + dt.timedelta(days=1)
         finally:
             ctx["vars"] = outer
 
     def _window(self, where: str, step: Mapping[str, Any], ctx: Dict[str, Any], outer: Mapping[str, Any],
-                lo: dt.datetime, hi: dt.datetime, min_span: Optional[dt.timedelta]) -> Iterator[ExtractedItem]:
+                lo: dt.datetime, hi: dt.datetime, min_span: Optional[dt.timedelta],
+                replayed: frozenset) -> Iterator[ExtractedItem]:
         """Run the window [lo, hi); with ``split_min_minutes``, halve it while an answer is too large.
 
-        Rows already yielded before the split are yielded again; the writer upserts by key.
+        Rows the failed attempt already yielded are not yielded again by its halves.
         """
         fmt = str(step.get("time_format") or DEFAULT_TIME_FORMAT)
-        last = hi - dt.timedelta(seconds=1)
+        last = hi - (dt.timedelta(microseconds=1) if "%f" in fmt else dt.timedelta(seconds=1))
         ctx["vars"] = {**outer, "window_from": lo.date(), "window_to": last.date(),
-                       "window_start": lo.strftime(fmt), "window_end": last.strftime(fmt)}
+                       "window_start": lo.strftime(fmt), "window_end": last.strftime(fmt),
+                       "window_until": hi.strftime(fmt)}
+        emitted = set()
         try:
-            yield from self.steps(step["steps"], ctx)
-        except ResponseTooLarge as exc:
-            half = (hi - lo) / 2
-            half = dt.timedelta(minutes=int(half.total_seconds() // 60))
+            for item in self.steps(step["steps"], ctx):
+                ident = (item.entity, item.key)
+                if ident in replayed:
+                    continue
+                emitted.add(ident)
+                yield item
+        except ResponseTooLarge:
+            half = dt.timedelta(minutes=int((hi - lo).total_seconds() // 120))
             if min_span is None or half < min_span:
                 raise
             self.report.warnings.append(f"{where}: {lo:%Y-%m-%d %H:%M} to {hi:%Y-%m-%d %H:%M} answered too much; "
                                         "split it in two")
-            yield from self._window(where, step, ctx, outer, lo, lo + half, min_span)
-            yield from self._window(where, step, ctx, outer, lo + half, hi, min_span)
+            done = replayed | emitted
+            yield from self._window(where, step, ctx, outer, lo, lo + half, min_span, done)
+            yield from self._window(where, step, ctx, outer, lo + half, hi, min_span, done)
 
 
 _LOGIN_FORM = re.compile(r"<input[^>]+type\s*=\s*[\"']?password", re.I)

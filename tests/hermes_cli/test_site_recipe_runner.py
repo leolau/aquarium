@@ -701,6 +701,9 @@ def _one_entity(site, steps, key, **ent):
     ({"op": "date_windows", "from": "{{today}}", "days": 1, "split_min_minutes": 60,
       "steps": [{"op": "extract_json", "url": "/x", "params": {"f": "{{window_from}}"},
                  "columns": {"a": {"field": "a"}}}]}, "window_start"),
+    ({"op": "date_windows", "from": "{{today}}", "days": 1, "split_min_minutes": 60,
+      "steps": [{"op": "extract_json", "url": "/x", "params": {"f": "{{window_from}}", "t": "{{window_end}}"},
+                 "columns": {"a": {"field": "a"}}}]}, "window_start"),
 ])
 def test_validate_datatable_and_json_steps(step, needle):
     recipe = fixture_recipe()
@@ -850,6 +853,17 @@ def test_e2e_date_windows_split_stops_at_the_minimum_and_fails(site):
     # 1 day, then 2 x 12 h, then 4 x 6 h; a 3 h half is below the 6 h minimum, so it stops at the first 6 h.
     assert [c["values"]["date_from"][11:] for c in calls] == ["00:00:00", "00:00:00", "00:00:00"]
     assert calls[-1]["values"]["date_to"][11:] == "05:59:59"
+
+
+@needs_browser
+def test_e2e_date_windows_split_does_not_replay_rows_of_earlier_steps(site):
+    old_day = {"op": "extract_json", "url": "/search/rma_case", "method": "POST", "records": "",
+               "json": {"date_from": "{{date-40}}", "date_to": "{{date-40}}"}, "columns": CASE_COLUMNS}
+    recipe = _split_recipe(site, 8, len(json.dumps(site.state.cases[:5])) + 100)
+    recipe["entities"]["data"]["steps"][0]["steps"].insert(0, old_day)
+    items, report = _run(site, recipe)
+    assert any("split it in two" in w for w in report.warnings)
+    assert len(items) == len({i.key for i in items}) == 5 + 8 * 5
 
 
 @needs_browser
