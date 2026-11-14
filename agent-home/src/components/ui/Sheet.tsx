@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 import { useT } from "@/i18n";
@@ -36,6 +36,11 @@ export function Sheet({
 }) {
   const t = useT("common");
   const hydrated = useHydrated();
+  const panelRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
   useEffect(() => {
     const previous = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -44,13 +49,51 @@ export function Sheet({
     };
   }, []);
 
+  // Modal focus: move into the panel, keep Tab inside it, return to the opener.
   useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusables = () =>
+      Array.from(
+        panelRef.current?.querySelectorAll<HTMLElement>(
+          'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+    const frame = requestAnimationFrame(() => {
+      if (!panelRef.current?.contains(document.activeElement)) panelRef.current?.focus();
+    });
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        onCloseRef.current();
+        return;
+      }
+      if (e.key !== "Tab" || !panelRef.current) return;
+      const items = focusables();
+      if (items.length === 0) {
+        e.preventDefault();
+        panelRef.current.focus();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+      if (!panelRef.current.contains(active)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+      } else if (e.shiftKey && (active === first || active === panelRef.current)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
     }
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("keydown", onKey);
+      if (opener?.isConnected) opener.focus();
+    };
+  }, []);
 
   const frame = side
     ? "sm:items-stretch sm:justify-end sm:p-0"
@@ -69,7 +112,9 @@ export function Sheet({
       onClick={onClose}
     >
       <div
-        className={`flex w-full flex-col border ${mobileFull ? "h-[100dvh] max-h-[100dvh]" : "max-h-[92vh] rounded-t-2xl"} border-[var(--color-border)] bg-[var(--color-bg)] sm:max-h-full ${panel}`}
+        ref={panelRef}
+        tabIndex={-1}
+        className={`flex w-full flex-col border outline-none ${mobileFull ? "h-[100dvh] max-h-[100dvh]" : "max-h-[92vh] rounded-t-2xl"} border-[var(--color-border)] bg-[var(--color-bg)] sm:max-h-full ${panel}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-3">
