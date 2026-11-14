@@ -1,0 +1,84 @@
+{
+  "heading": "Needs you",
+  "listLabel": "Waiting on you",
+  "retrying": "Couldn’t check right now — retrying.",
+  "allClearTitle": "Nothing needs you right now",
+  "allClearBody": "We’ll flag it here, in the top bar and by push.",
+  "new": "New",
+  "tryAgain": "Try again",
+  "working": "Working…",
+  "done": "Done",
+  "severity": {
+    "blocking": "Blocking",
+    "approval": "Needs approval",
+    "review": "To review",
+    "fyi": "For your information"
+  },
+  "age": {
+    "justNow": "just now",
+    "min": "{n} min",
+    "h": "{n} h",
+    "d": "{n} d"
+  },
+  "actions": {
+    "Open": "Open",
+    "Review": "Review",
+    "Approve": "Approve",
+    "Deny": "Deny",
+    "Allow": "Allow",
+    "Allow once": "Allow once",
+    "Open chat": "Open chat"
+  },
+  "banner": {
+    "countOne": "1 thing needs you",
+    "count": "{n} things need you",
+    "seeAll": "See all",
+    "expand": "Expand",
+    "collapse": "Collapse",
+    "dismiss": "Dismiss"
+  },
+  "strip": {
+    "blocking": "{n} blocking",
+    "ariaOne": "1 blocking item needs you — open the list",
+    "aria": "{n} blocking items need you — open the list"
+  },
+  "badge": {
+    "needsOne": " needs you",
+    "needs": " need you",
+    "allClear": "All clear",
+    "unknown": "Needs you",
+    "ariaOne": "1 item needs you — open the list",
+    "aria": "{n} items need you — open the list",
+    "ariaNone": "All clear — nothing needs you",
+    "ariaUnknown": "Needs you — not loaded yet",
+    "stale": "{label} (couldn't refresh — showing the last count)"
+  },
+  "titles": {
+    "needsAnswer": "Needs your answer",
+    "runWaiting": "{project} · run {run} is waiting on you",
+    "approveCard": "Approve: {label}",
+    "blocked": "Blocked: {title}",
+    "reviewOutput": "Review output: {title}",
+    "clarifyOne": "{project}: 1 question to answer",
+    "clarify": "{project}: {n} questions to answer",
+    "planApproval": "{project}: plan awaiting approval",
+    "approveTool": "Approve tool use: {what}",
+    "approveToolCommand": "Approve tool use: command",
+    "webview": "Webview wants to {kind}",
+    "webviewOn": "Webview wants to {kind} on {url}",
+    "profileSuggested": "New profile suggested: {name}",
+    "dataDraft": "Dictionary draft v{v} for {source} is ready",
+    "dataDraftUnnamed": "Dictionary draft v{v} for a data source is ready"
+  },
+  "details": {
+    "changesOne": "1 change",
+    "changes": "{n} changes",
+    "origin": {
+      "chat": "from a chat",
+      "feedback": "from answer feedback",
+      "study": "from a study",
+      "schema_check": "from a schema check",
+      "edit": "from an edit"
+    }
+  }
+}

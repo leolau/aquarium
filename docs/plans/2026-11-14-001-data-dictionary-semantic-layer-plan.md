@@ -77,9 +77,13 @@ Log:
 - 2026-11-14 — Phase 5 browser test (local backend + real Postgres, answers
   injected into session storage) passed after two fixes: an answer that is only
   a `data-answer` block vanished (`MessageBubble.tsx`), and draft cards showed
-  "20771 d" because `needs_you._ts` didn't parse ISO times. Known: Needs You
-  card text stays English in zh-Hant (built server-side). Not tested: a live
-  model writing the block.
+  "20771 d" because `needs_you._ts` didn't parse ISO times. Not tested: a
+  live model writing the block.
+- 2026-11-14 — Needs You in zh-Hant: every entry now carries `i18n` parts
+  (`needsYou.<key>` + vars) and agent-home renders them from
+  `messages/*/needsYou.json`, with the server's English as fallback. The panel,
+  badge, banner, strip, ages, severities and action labels are translated.
+  Free-text notification titles from other features stay as written.
 
 Next steps (for whoever picks this up):
 1. Phase 6: scheduled schema-change check (below).

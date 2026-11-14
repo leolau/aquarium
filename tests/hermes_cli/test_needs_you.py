@@ -449,5 +449,12 @@ def test_data_drafts_are_listed_only_for_sources_the_caller_approves():
     assert item["title"] == "Dictionary draft v4 for HSDOS WMS is ready"
     assert item["detail"] == "3 changes · from a chat · from answer feedback"
     assert item["actions"][0]["label"] == "Review"
+    # agent-home translates these parts; the English text above is the fallback.
+    assert item["i18n"]["title"] == [
+        {"key": "titles.dataDraft", "vars": {"v": 4, "source": "HSDOS WMS"}}
+    ]
+    assert [p["key"] for p in item["i18n"]["detail"]] == [
+        "details.changes", "details.origin.chat", "details.origin.feedback",
+    ]
     # list_sources sends the draft time as ISO text; the card must keep its age.
     assert item["created_at"] == datetime(2026, 11, 14, 12, tzinfo=timezone.utc).timestamp()

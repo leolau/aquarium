@@ -1,0 +1,84 @@
+{
+  "heading": "需要你",
+  "listLabel": "等你處理",
+  "retrying": "暫時無法檢查，正在重試。",
+  "allClearTitle": "目前沒有需要你處理的事",
+  "allClearBody": "有事時會在這裡、頂部欄和推送通知提醒你。",
+  "new": "新",
+  "tryAgain": "再試一次",
+  "working": "處理中…",
+  "done": "完成",
+  "severity": {
+    "blocking": "阻塞中",
+    "approval": "需要批准",
+    "review": "待審閱",
+    "fyi": "供你參考"
+  },
+  "age": {
+    "justNow": "剛剛",
+    "min": "{n} 分鐘",
+    "h": "{n} 小時",
+    "d": "{n} 天"
+  },
+  "actions": {
+    "Open": "開啟",
+    "Review": "審閱",
+    "Approve": "批准",
+    "Deny": "拒絕",
+    "Allow": "允許",
+    "Allow once": "允許一次",
+    "Open chat": "開啟對話"
+  },
+  "banner": {
+    "countOne": "有 1 件事需要你",
+    "count": "有 {n} 件事需要你",
+    "seeAll": "查看全部",
+    "expand": "展開",
+    "collapse": "收合",
+    "dismiss": "關閉"
+  },
+  "strip": {
+    "blocking": "{n} 項阻塞",
+    "ariaOne": "1 項阻塞事項需要你，開啟列表",
+    "aria": "{n} 項阻塞事項需要你，開啟列表"
+  },
+  "badge": {
+    "needsOne": " 項需要你",
+    "needs": " 項需要你",
+    "allClear": "一切就緒",
+    "unknown": "需要你",
+    "ariaOne": "1 項事項需要你，開啟列表",
+    "aria": "{n} 項事項需要你，開啟列表",
+    "ariaNone": "一切就緒，沒有需要你處理的事",
+    "ariaUnknown": "需要你：尚未載入",
+    "stale": "{label}（無法更新，顯示上次的數目）"
+  },
+  "titles": {
+    "needsAnswer": "需要你回覆",
+    "runWaiting": "{project} · 第 {run} 次執行正在等你",
+    "approveCard": "批准：{label}",
+    "blocked": "受阻：{title}",
+    "reviewOutput": "審閱成果：{title}",
+    "clarifyOne": "{project}：有 1 個問題要回答",
+    "clarify": "{project}：有 {n} 個問題要回答",
+    "planApproval": "{project}：計劃等待批准",
+    "approveTool": "批准使用工具：{what}",
+    "approveToolCommand": "批准使用工具：指令",
+    "webview": "網頁檢視想要執行 {kind}",
+    "webviewOn": "網頁檢視想在 {url} 執行 {kind}",
+    "profileSuggested": "建議新增代理設定檔：{name}",
+    "dataDraft": "{source} 的字典草稿 v{v} 可以審閱了",
+    "dataDraftUnnamed": "一個數據來源的字典草稿 v{v} 可以審閱了"
+  },
+  "details": {
+    "changesOne": "1 項修改",
+    "changes": "{n} 項修改",
+    "origin": {
+      "chat": "來自對話",
+      "feedback": "來自回答意見",
+      "study": "來自研究",
+      "schema_check": "來自結構檢查",
+      "edit": "來自編輯"
+    }
+  }
+}
