@@ -135,6 +135,7 @@ export function LandingClient({
   const closeChat = () => window.history.pushState(null, "", "/");
 
   const ti = useT("incomings");
+  const tn = useT("needsYou");
   const [storedTab, storeTab] = useLeftPanelTab();
   // `/?panel=incomings` shows the tab until the user picks one themselves.
   const [tabPicked, setTabPicked] = useState(false);
@@ -311,7 +312,7 @@ export function LandingClient({
         }
       />
       {needsYouOpen ? (
-        <Sheet title="Needs you" component="NeedsYouSheet" onClose={() => setNeedsYouOpen(false)}>
+        <Sheet title={tn("heading")} component="NeedsYouSheet" onClose={() => setNeedsYouOpen(false)}>
           <LandingWorkPanel needsYou={feed} activity={activity} />
         </Sheet>
       ) : null}

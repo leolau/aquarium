@@ -9,5 +9,6 @@
   "cancel": "Cancel",
   "working": "Working…",
   "loading": "Loading…",
-  "stillWorking": "Still working… a busy server can take a few more seconds."
+  "stillWorking": "Still working… a busy server can take a few more seconds.",
+  "close": "Close"
 }
