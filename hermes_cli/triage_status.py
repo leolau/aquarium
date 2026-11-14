@@ -581,52 +581,85 @@ def file_history(file: Path) -> List[Dict[str, Any]]:
     return list(reversed(out))
 
 
-def _append_version(file: Path, content: str, *, author: str, message: str) -> Dict[str, Any]:
+def _new_version(file: Path, content: str, *, author: str, message: str, seq: int) -> Dict[str, Any]:
     import time
 
-    hist = _history_path(file)
-    hist.parent.mkdir(parents=True, exist_ok=True)
     now = time.time()
-    rec = {
-        "id": f"{int(now * 1000)}-{len(file_history(file)) + 1}",
+    return {
+        "id": f"{int(now * 1000)}-{seq}",
         "at": now,
         "author": author,
         "message": message,
         "content": content,
     }
-    with hist.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(rec) + "\n")
-    return rec
+
+
+def _rollback_history(hist: Path, size: Optional[int]) -> None:
+    """Undo an append: back to ``size`` bytes, or no file if there was none."""
+    try:
+        if size is None:
+            hist.unlink(missing_ok=True)
+        else:
+            with hist.open("r+b") as fh:
+                fh.truncate(size)
+    except OSError:
+        pass
 
 
 def write_triage_file(file: Path, content: str, *, author: str) -> Dict[str, Any]:
-    """Replace ``file`` (atomically) and record the new version.
+    """Record the new version, then replace ``file`` atomically.
 
-    The first edit also stores the file as it was, so History always holds
-    the pre-edit text. The pipelines read the file on the next message.
+    A save never leaves the file changed without a matching History entry:
+    the new text is staged next to the file, the version (plus, on the first
+    edit, the pre-edit text) is appended to History, and only then is the
+    staged file swapped in. If recording fails the file is untouched; if the
+    swap fails the History append is rolled back. The pipelines read the file
+    on the next message.
     """
     import tempfile
 
     if len(content.encode("utf-8")) > MAX_SKILL_FILE_BYTES:
         raise SkillFileError(413, "triage skill file is too large")
+    hist = _history_path(file)
+    tmp: Optional[str] = None
     try:
         before = file.read_text(encoding="utf-8")
-        if not file_history(file):
-            _append_version(file, before, author="system", message="Before the first edit")
         mode = file.stat().st_mode & 0o777
         fd, tmp = tempfile.mkstemp(dir=str(file.parent), prefix=f".{file.name}.")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        os.chmod(tmp, mode)
+
+        existing = file_history(file)
+        records = []
+        if not existing:
+            records.append(_new_version(file, before, author="system", message="Before the first edit", seq=1))
+        version = _new_version(
+            file, content, author=author, message="Edited in Agent Profiles", seq=len(existing) + len(records) + 1
+        )
+        records.append(version)
+        size = hist.stat().st_size if hist.exists() else None
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(content)
-            os.chmod(tmp, mode)
+            hist.parent.mkdir(parents=True, exist_ok=True)
+            with hist.open("a", encoding="utf-8") as fh:
+                fh.write("".join(json.dumps(r) + "\n" for r in records))
+                fh.flush()
+                os.fsync(fh.fileno())
+        except BaseException:
+            _rollback_history(hist, size)
+            raise
+        try:
             os.replace(tmp, file)
         except BaseException:
+            _rollback_history(hist, size)
+            raise
+        tmp = None
+        return version
+    except OSError as exc:
+        raise SkillFileError(500, f"could not save {file.name}: {exc.strerror or exc}") from exc
+    finally:
+        if tmp is not None:
             try:
                 os.unlink(tmp)
             except OSError:
                 pass
-            raise
-        return _append_version(file, content, author=author, message="Edited in Agent Profiles")
-    except OSError as exc:
-        raise SkillFileError(500, f"could not save {file.name}: {exc.strerror or exc}") from exc
-

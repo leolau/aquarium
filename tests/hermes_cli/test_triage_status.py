@@ -497,3 +497,74 @@ def test_triage_skill_files_view_edit_history(box, client, monkeypatch, tmp_path
     files = [f["name"] for s in kinds(status)["email"]["skills"] for f in s["files"]]
     assert sorted(files) == ["SKILL.md", "escalation-rules.md"]
 
+
+def _triage_file(tmp_path, text="# rules v1\n"):
+    folder = tmp_path / "skills" / "email-triage"
+    folder.mkdir(parents=True)
+    file = folder / "escalation-rules.md"
+    file.write_text(text)
+    return file
+
+
+def test_save_leaves_the_file_unchanged_when_history_cannot_be_recorded(box, client, monkeypatch, tmp_path):
+    """Recording the version fails (``.versions`` can't be created): 500, file untouched."""
+    paths = _box_paths(monkeypatch, tmp_path)
+    skill = _skill(paths, "email")
+    target = skill.parent / "escalation-rules.md"
+    target.write_text("# rules v1\n")
+    _write(paths.data / "email-messages" / "config.json", {"triage": _triage("email", paths)})
+    (skill.parent / ts.VERSIONS_DIR).write_text("not a folder")
+
+    r = client.put("/api/triage/skill-file", json={"kind": "email", "path": str(target), "content": "# rules v2\n"},
+                   headers={SUBJECT_HEADER: "leo"})
+    assert r.status_code == 500, r.text
+    assert target.read_text() == "# rules v1\n"
+    assert ts.file_history(target) == []
+    assert sorted(p.name for p in skill.parent.iterdir()) == [ts.VERSIONS_DIR, "SKILL.md", "escalation-rules.md"]
+
+
+def test_a_failed_append_is_rolled_back_and_the_file_kept(tmp_path, monkeypatch):
+    """The History write itself fails midway: no partial version, file untouched."""
+    file = _triage_file(tmp_path)
+    ts.write_triage_file(file, "# rules v2\n", author="user:leo")
+    hist = file.parent / ts.VERSIONS_DIR / f"{file.name}.jsonl"
+    before = hist.read_bytes()
+
+    real_fsync = ts.os.fsync
+
+    def broken_fsync(fd):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(ts.os, "fsync", broken_fsync)
+    with pytest.raises(ts.SkillFileError) as err:
+        ts.write_triage_file(file, "# rules v3\n", author="user:leo")
+    monkeypatch.setattr(ts.os, "fsync", real_fsync)
+    assert err.value.status == 500
+    assert file.read_text() == "# rules v2\n"
+    assert hist.read_bytes() == before
+    assert [v["content"] for v in ts.file_history(file)] == ["# rules v2\n", "# rules v1\n"]
+    assert [p.name for p in file.parent.iterdir() if p.name.startswith(".escalation")] == []
+
+
+def test_a_failed_swap_rolls_history_back(tmp_path, monkeypatch):
+    """Recorded, then the file can't be replaced: the version is withdrawn."""
+    file = _triage_file(tmp_path)
+
+    def broken_replace(src, dst):
+        raise OSError(13, "Permission denied")
+
+    monkeypatch.setattr(ts.os, "replace", broken_replace)
+    with pytest.raises(ts.SkillFileError):
+        ts.write_triage_file(file, "# rules v2\n", author="user:leo")
+    assert file.read_text() == "# rules v1\n"
+    assert ts.file_history(file) == []
+    assert [p.name for p in file.parent.iterdir() if p.name.startswith(".escalation")] == []
+
+
+def test_every_saved_text_has_a_matching_history_entry(tmp_path):
+    file = _triage_file(tmp_path)
+    for n in (2, 3):
+        version = ts.write_triage_file(file, f"# rules v{n}\n", author="user:leo")
+        assert file.read_text() == version["content"] == ts.file_history(file)[0]["content"]
+    assert [v["content"] for v in ts.file_history(file)] == ["# rules v3\n", "# rules v2\n", "# rules v1\n"]
+
