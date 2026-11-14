@@ -72,7 +72,7 @@ step. Without one, `click`, `submit` and `press` wait twice the recipe's
 | `extract_datatable` | `table` (selector of a client-side DataTables `<table>`), `columns`, `timeout_ms`, `optional`, `allow_empty` |
 | `extract_json` | `url` (same site), `method` (`GET`/`POST`), `params` (query), `form` **or** `json` (body; POST only), `headers`, `records` (dotted path; `""` = top-level array), `columns`, `page`, `max_bytes` (default 10 MB), `delay_ms`, `default`, `format`, `timeout_ms`, `allow_empty` |
 | `paginate` | `steps` (run per page), `next` target **or** `page_param` (+ `start`), `max_pages`, `stop_on_empty` |
-| `date_windows` | `from` (template, e.g. `{{cursor}}`), `default`, `to` (default `{{today}}`), `days`, `steps`; inside use `{{window_from}}` / `{{window_to}}` |
+| `date_windows` | `from` (template, e.g. `{{cursor}}`), `default`, `to` (default `{{today}}`), `days`, `steps`, `split_min_minutes`, `time_format`; inside use `{{window_from}}` / `{{window_to}}` (dates) or `{{window_start}}` / `{{window_end}}` (timestamps, default `%Y-%m-%d %H:%M:%S`, end inclusive: `... 23:59:59`) |
 
 Column / field spec: `header` (table header text, case-insensitive) or
 `selector` (inside the row / on the page) or `index`; `attr` (read an
@@ -167,6 +167,13 @@ the step fails with a hint to add `page` or narrower `date_windows`; the
 recipe's `delay_ms` (or the step's own `delay_ms`) is waited after every
 call. Keep `length` modest (100–1000) and prefer `date_windows` over one
 huge request.
+
+Busy days: when an endpoint has no paging and some windows still answer
+more than `max_bytes`, give the `date_windows` a `split_min_minutes` (e.g.
+`60`) and filter by `{{window_start}}` / `{{window_end}}`. A window whose
+answer is too large is halved and retried, down to that many minutes, so
+only the busy days cost extra requests; a window still too large at the
+minimum fails the entity as before. Do not just raise `max_bytes`.
 
 ```json
 {"op": "extract_json", "url": "/search/rma_case", "method": "POST",

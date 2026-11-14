@@ -52,7 +52,8 @@ DataTables API), ``extract_json`` (a same-origin JSON read endpoint fetched in
 the logged-in page, optionally paged by start/length), ``paginate`` and
 ``date_windows``. Value templates: ``{{today}}``, ``{{date-N}}``,
 ``{{cursor}}`` (falls back to the step's ``default`` on a full run or a first
-run), ``{{window_from}}`` / ``{{window_to}}`` inside ``date_windows``.
+run), ``{{window_from}}`` / ``{{window_to}}`` (dates) and ``{{window_start}}`` /
+``{{window_end}}`` (timestamps) inside ``date_windows``.
 
 The Playwright sync API must not run on a thread with a running asyncio loop:
 async callers use ``asyncio.to_thread``.
@@ -198,6 +199,10 @@ class RunReport:
 
 class RecipeError(ValueError):
     """The recipe is malformed or asks for something the runner refuses."""
+
+
+class ResponseTooLarge(RecipeError):
+    """A read endpoint answered more than the step's ``max_bytes``."""
 
 
 class ForbiddenTarget(RecipeError):
@@ -365,7 +370,7 @@ def _steps_problems(where: str, steps: Any, *, depth: int = 0, in_window: bool =
             names = _template_names(step.get("value"))
             if "cursor" in names and "default" not in step and no_cursor:
                 problems.append(f"{at}: uses {{{{cursor}}}} without a 'default' for full/first runs")
-            if any(n in ("window_from", "window_to") for n in names) and not in_window:
+            if any(n in _WINDOW_VARS for n in names) and not in_window:
                 problems.append(f"{at}: {{{{window_*}}}} only works inside date_windows")
             for name in names + _template_names(step.get("default")):
                 if name not in _TEMPLATE_VARS:
@@ -422,6 +427,15 @@ def _steps_problems(where: str, steps: Any, *, depth: int = 0, in_window: bool =
                 problems.append(f"{at}: 'days' must be a positive integer")
             if not step.get("from"):
                 problems.append(f"{at}: needs 'from'")
+            split = step.get("split_min_minutes")
+            if split is not None:
+                if not (_positive_int(split) and split <= 1440):
+                    problems.append(f"{at}: 'split_min_minutes' must be a whole number of minutes from 1 to 1440")
+                elif not _TIME_TEMPLATE.search(json.dumps(step.get("steps"))):
+                    problems.append(f"{at}: 'split_min_minutes' needs {{{{window_start}}}} / {{{{window_end}}}} "
+                                    "in the steps, or a split window would ask for the same days again")
+            if "time_format" in step and not isinstance(step["time_format"], str):
+                problems.append(f"{at}: 'time_format' must be a strftime string")
             if "cursor" in _template_names(step.get("from")) and "default" not in step and no_cursor:
                 problems.append(f"{at}: uses {{{{cursor}}}} without a 'default' for full/first runs")
             problems.extend(_steps_problems(at, step.get("steps"), depth=depth + 1, in_window=True,
@@ -503,7 +517,7 @@ def _json_step_problems(at: str, step: Mapping[str, Any], *, in_window: bool, ne
         names = _template_names(value)
         if "cursor" in names and "default" not in step and needs_default:
             problems.append(f"{at}: uses {{{{cursor}}}} without a 'default' for full/first runs")
-        if any(n in ("window_from", "window_to") for n in names) and not in_window:
+        if any(n in _WINDOW_VARS for n in names) and not in_window:
             problems.append(f"{at}: {{{{window_*}}}} only works inside date_windows")
         for name in names + _template_names(step.get("default")):
             if name not in _TEMPLATE_VARS:
@@ -632,7 +646,11 @@ def validate_recipe(recipe: Any) -> None:
 # --------------------------------------------------------------------------
 
 _TEMPLATE = re.compile(r"\{\{\s*([a-z_]+)\s*(?:([+-])\s*(\d+)\s*)?\}\}")
-_TEMPLATE_VARS = ("today", "date", "cursor", "window_from", "window_to")
+_TEMPLATE_VARS = ("today", "date", "cursor", "window_from", "window_to", "window_start", "window_end")
+_WINDOW_VARS = ("window_from", "window_to", "window_start", "window_end")
+_TIME_VARS = ("window_start", "window_end")
+_TIME_TEMPLATE = re.compile(r"\{\{\s*window_(?:start|end)\s*\}\}")
+DEFAULT_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
 def _as_date(value: Any) -> Optional[dt.date]:
@@ -667,6 +685,10 @@ def render_template(value: Any, variables: Mapping[str, Any], *, date_format: st
             raw = variables.get(name)
             if raw is None:
                 raise RecipeError(f"template {{{{{name}}}}} has no value here")
+        if name in _TIME_VARS:
+            if sign:
+                raise RecipeError(f"template {{{{{name}}}}} is a timestamp and cannot be shifted")
+            return str(raw)
         as_date = _as_date(raw)
         if as_date is None:
             if sign:
@@ -2319,9 +2341,10 @@ class _Run:
             delay = step.get("delay_ms")
             self.page_loaded(None if delay is None else int(delay) / 1000.0)
             if res.get("too_big") is not None:
-                raise RecipeError(
+                raise ResponseTooLarge(
                     f"{where}: {method} {urlparse(url).path} answered more than max_bytes={max_bytes} "
-                    f"({res['too_big']} bytes read); add a start/length 'page' block or a narrower date_windows"
+                    f"({res['too_big']} bytes read); add a start/length 'page' block, a narrower date_windows "
+                    "or date_windows 'split_min_minutes'"
                 )
             if res.get("error"):
                 raise RecipeError(f"{where}: {method} {urlparse(url).path} failed: {res['error']}")
@@ -2451,14 +2474,41 @@ class _Run:
         if start is None or end is None:
             raise RecipeError(f"{where}: 'from'/'to' must render to dates")
         days = int(step["days"])
+        split = step.get("split_min_minutes")
+        min_span = dt.timedelta(minutes=int(split)) if split else None
         outer = dict(ctx["vars"])
         cursor = start
-        while cursor <= end:
-            stop = min(end, cursor + dt.timedelta(days=days - 1))
-            ctx["vars"] = {**outer, "window_from": cursor, "window_to": stop}
+        try:
+            while cursor <= end:
+                stop = min(end, cursor + dt.timedelta(days=days - 1))
+                lo = dt.datetime.combine(cursor, dt.time())
+                hi = dt.datetime.combine(stop + dt.timedelta(days=1), dt.time())
+                yield from self._window(where, step, ctx, outer, lo, hi, min_span)
+                cursor = stop + dt.timedelta(days=1)
+        finally:
+            ctx["vars"] = outer
+
+    def _window(self, where: str, step: Mapping[str, Any], ctx: Dict[str, Any], outer: Mapping[str, Any],
+                lo: dt.datetime, hi: dt.datetime, min_span: Optional[dt.timedelta]) -> Iterator[ExtractedItem]:
+        """Run the window [lo, hi); with ``split_min_minutes``, halve it while an answer is too large.
+
+        Rows already yielded before the split are yielded again; the writer upserts by key.
+        """
+        fmt = str(step.get("time_format") or DEFAULT_TIME_FORMAT)
+        last = hi - dt.timedelta(seconds=1)
+        ctx["vars"] = {**outer, "window_from": lo.date(), "window_to": last.date(),
+                       "window_start": lo.strftime(fmt), "window_end": last.strftime(fmt)}
+        try:
             yield from self.steps(step["steps"], ctx)
-            cursor = stop + dt.timedelta(days=1)
-        ctx["vars"] = outer
+        except ResponseTooLarge as exc:
+            half = (hi - lo) / 2
+            half = dt.timedelta(minutes=int(half.total_seconds() // 60))
+            if min_span is None or half < min_span:
+                raise
+            self.report.warnings.append(f"{where}: {lo:%Y-%m-%d %H:%M} to {hi:%Y-%m-%d %H:%M} answered too much; "
+                                        "split it in two")
+            yield from self._window(where, step, ctx, outer, lo, lo + half, min_span)
+            yield from self._window(where, step, ctx, outer, lo + half, hi, min_span)
 
 
 _LOGIN_FORM = re.compile(r"<input[^>]+type\s*=\s*[\"']?password", re.I)
