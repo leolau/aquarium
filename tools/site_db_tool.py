@@ -41,7 +41,7 @@ SCHEMA = {
         "list_sites; create_site (name, base_url, login_url, username, password); "
         "get_design (site); propose_design (site, design, recipe) — stores a design for "
         "approval, creates nothing; approve_design (site, version) — only when the person "
-        "explicitly approves; describe (site, entity?) — tables with row counts, or one table's "
+        "explicitly approves; describe (site, entity?, q? keywords) — tables with row counts, or one table's "
         "columns with fill, distinct counts and common values: use before writing SQL; query (site, sql: one SELECT over the site's tables, at most "
         "500 rows); refresh (site, entities?, mode? incremental|full) — starts a backend "
         "refresh; run_status (site) — recent refresh runs. Studying a site (logs in with the "
@@ -76,6 +76,7 @@ SCHEMA = {
             "sample": {"type": "integer", "description": "preview: sample rows per entity (default 3)"},
             "version": {"type": "integer", "description": "approve_design: design version"},
             "entity": {"type": "string", "description": "describe: one table name"},
+            "q": {"type": "string", "description": "describe: keep tables matching these words"},
             "areas": {"type": "array", "items": {"type": "string"}, "description": "app_query: areas to copy"},
             "sql": {"type": "string", "description": "query: one SELECT statement"},
             "max_rows": {"type": "integer"},
@@ -190,7 +191,9 @@ async def site_db_tool(args: Mapping[str, Any], **_kw: Any) -> str:
         if action == "describe":
             if args.get("entity"):
                 return _result(site=site.slug, table=await ss.describe_entity(site, str(args["entity"])))
-            return _result(site=site.slug, tables=await ss.table_summaries(site))
+            return _result(
+                site=site.slug, tables=await ss.table_summaries(site, q=args.get("q") or None)
+            )
         if action == "query":
             result = await ss.query(site, str(args.get("sql") or ""), max_rows=int(args.get("max_rows") or ss.MAX_QUERY_ROWS))
             return _result(site=site.slug, **result)

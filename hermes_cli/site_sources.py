@@ -2148,15 +2148,31 @@ async def query(
     }
 
 
-async def table_summaries(site: Site, *, db: Optional[SiteDatabase] = None) -> List[Dict[str, Any]]:
-    """The approved design's entities with row counts."""
+def _matches(entity: Mapping[str, Any], words: Sequence[str]) -> bool:
+    text = " ".join(
+        [entity["name"], entity.get("reason", "")] + [c["name"] for c in entity["columns"]]
+    ).lower()
+    return all(w in text for w in words)
+
+
+async def table_summaries(
+    site: Site, *, q: Optional[str] = None, db: Optional[SiteDatabase] = None
+) -> List[Dict[str, Any]]:
+    """The approved design's entities with row counts.
+
+    ``q`` keeps only tables whose name, reason or column names hold every word.
+    """
     current = await approved_design(site, db=db)
     if current is None:
         return []
     _, design, _ = current
-    out = []
+    words = (q or "").lower().split()
+    entities = [e for e in validate_design(design)["entities"] if _matches(e, words)]
+    out: List[Dict[str, Any]] = []
+    if not entities:
+        return out
     async with _reader(site, db) as conn:
-        for entity in validate_design(design)["entities"]:
+        for entity in entities:
             if entity["kind"] == "variable":
                 row = await conn.fetchrow(
                     f"SELECT count(*) FILTER (WHERE _removed_at IS NULL) AS live, "

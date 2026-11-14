@@ -11,7 +11,7 @@ dictionary** per data source instead of one skill per table.
 | Phase | What | Status |
 |---|---|---|
 | 0 | Evaluation of the "MCP + skills" proposal, decisions, UI mockups | Done (mockups approved) |
-| 1 | Safe access and richer discovery | In progress: site `describe` and app-data private-copy queries done; list search and comments next |
+| 1 | Safe access and richer discovery | Done (draft PR) |
 | 2 | Dictionary store, versions, sharing, API | Not started |
 | 3 | Study → propose, and the `data-questions` skill | Not started |
 | 4 | agent-home UI (`/data`) | Not started (mockups ready) |
@@ -39,6 +39,9 @@ Log:
   can read any table or run a SECURITY DEFINER/dblink function, the question is
   refused. Each area copies at most 50,000 rows. Projects and runs are not
   areas yet: they live in the box's SQLite `projects.db`, not Supabase.
+- 2026-11-14 — Phase 1 done: `describe` takes `q` keywords (name, reason,
+  column names). Site tables have no `COMMENT ON` text; the design's reasons
+  serve instead. App-data tests also pass on Supabase's Postgres image.
 
 ## 1. Decisions
 

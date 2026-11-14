@@ -701,5 +701,8 @@ def test_describe_entity_counts_live_rows_and_common_values(site):
         assert about["rows"] == 1 and title["filled"] == 1 and title["common_values"] == []
         with pytest.raises(ss.SiteError):
             await ss.describe_entity(site, "nope")
+        assert [t["name"] for t in await ss.table_summaries(site, q="AMOUNT")] == ["orders"]
+        assert [t["name"] for t in await ss.table_summaries(site, q="title")] == ["about"]
+        assert await ss.table_summaries(site, q="order title") == []
 
     run(go())

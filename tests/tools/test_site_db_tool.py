@@ -310,8 +310,8 @@ def test_page_summaries_count_towards_the_explore_cap(monkeypatch):
 def test_describe_lists_tables_or_one_table(fake_registry, monkeypatch):
     calls = []
 
-    async def summaries(site, **_kw):
-        calls.append(("summaries", site.slug))
+    async def summaries(site, q=None, **_kw):
+        calls.append(("summaries", site.slug, q))
         return [{"name": "orders", "rows": 3}]
 
     async def describe(site, entity, **_kw):
@@ -320,10 +320,10 @@ def test_describe_lists_tables_or_one_table(fake_registry, monkeypatch):
 
     monkeypatch.setattr(ss, "table_summaries", summaries)
     monkeypatch.setattr(ss, "describe_entity", describe)
-    assert call("reader", "member", action="describe", site="shop")["tables"][0]["name"] == "orders"
+    assert call("reader", "member", action="describe", site="shop", q="order")["tables"][0]["name"] == "orders"
     assert call("reader", "member", action="describe", site="shop", entity="orders")["table"]["rows"] == 3
     assert call("bob", "member", action="describe", site="shop")["success"] is False
-    assert calls == [("summaries", "shop"), ("describe", "orders")]
+    assert calls == [("summaries", "shop", "order"), ("describe", "orders")]
 
 
 def test_app_actions_run_for_the_bound_person(fake_registry, monkeypatch):
