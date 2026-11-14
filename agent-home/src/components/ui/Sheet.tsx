@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import { useT } from "@/i18n";
+import { useHydrated } from "@/lib/use-hydrated";
 
 /**
  * A dismissable modal panel: a bottom sheet on phones, a centred dialog from
@@ -33,6 +35,7 @@ export function Sheet({
   component?: string;
 }) {
   const t = useT("common");
+  const hydrated = useHydrated();
   useEffect(() => {
     const previous = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -56,7 +59,7 @@ export function Sheet({
     ? "sm:h-full sm:max-w-md sm:rounded-none sm:border-y-0 sm:border-r-0"
     : `sm:rounded-2xl ${full ? "sm:h-[90vh] sm:max-w-5xl" : wide ? "sm:max-w-2xl" : "sm:max-w-lg"}`;
 
-  return (
+  const dialog = (
     <div
       data-component={component}
       role="dialog"
@@ -89,6 +92,9 @@ export function Sheet({
       </div>
     </div>
   );
+  // On <body>: a Sheet opened from a sticky bar or a stacking context would
+  // otherwise sit under page bars and the z-60 launchers.
+  return hydrated ? createPortal(dialog, document.body) : dialog;
 }
 
 export const inputClass =
