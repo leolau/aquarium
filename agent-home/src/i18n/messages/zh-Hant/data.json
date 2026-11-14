@@ -1,0 +1,134 @@
+{
+  "title": "數據",
+  "subtitle": "說明你的數據代表甚麼，讓代理準確回答相關問題。",
+  "info": "甚麼是數據字典？",
+  "infoBody": "字典以淺白文字解釋每個資料表：一行代表甚麼、各欄位的意思、資料表之間如何連接，以及指標如何計算。代理只會使用已批准的版本。有權限的人都可以建議修改，由來源擁有人或管理員批准。",
+  "kind": {
+    "app": "Aquarium 數據",
+    "site": "網站數據"
+  },
+  "status": {
+    "approved": "已批准 v{v}",
+    "draft": "草稿 · 待審閱",
+    "not_described": "未描述"
+  },
+  "access": {
+    "read": "可閱讀",
+    "propose": "可建議修改",
+    "manage": "擁有人或管理員"
+  },
+  "list": {
+    "emptyTitle": "暫時沒有數據來源",
+    "emptyBody": "你新增的網站及與你分享的數據會在這裡出現。",
+    "described": "已描述 {n} 個資料表",
+    "owner": "擁有人：{who}",
+    "ownerAdmins": "擁有人：管理員",
+    "next": {
+      "review": "審閱 {n} 項修改",
+      "build": "建立字典",
+      "none": "尚未描述",
+      "open": "開啟"
+    }
+  },
+  "detail": {
+    "answersUse": "回答使用此版本 · 由 {who} 於 {when} 批准",
+    "noneApproved": "尚未有已批准版本：代理會根據資料表結構回答並加以說明。",
+    "reviewDraft": "審閱草稿（{n}）",
+    "seeDraft": "查看草稿（{n}）",
+    "emptyTitle": "尚未描述任何資料表",
+    "emptyBody": "使用「建立字典」讓代理研究資料表並草擬描述，供你批准。",
+    "emptyBodyRead": "擁有人尚未描述這些資料表。",
+    "table": "資料表",
+    "tables": "資料表",
+    "edit": "編輯"
+  },
+  "build": {
+    "label": "建立字典",
+    "hint": "開啟已填好請求的對話。按下傳送前不會開始。",
+    "prompt": "請研究 {source} 數據來源，為尚未描述的資料表草擬字典條目。提出前如有不清楚的地方請先問我。"
+  },
+  "field": {
+    "meaning": "此資料表是甚麼",
+    "row": "一行代表",
+    "grain": "粒度",
+    "columns": "欄位",
+    "joins": "連接",
+    "metrics": "指標",
+    "examples": "已驗證例子"
+  },
+  "edit": {
+    "title": "編輯 {table}",
+    "hint": "你的修改會加入草稿。擁有人批准前，回答仍使用已批准版本。",
+    "columnsHint": "每行一個欄位：名稱: 意思",
+    "note": "原因（選填）",
+    "notePlaceholder": "例如：金額不包括退款",
+    "cancel": "取消",
+    "save": "加入草稿",
+    "saving": "儲存中…"
+  },
+  "history": {
+    "title": "歷史",
+    "empty": "暫時沒有版本。",
+    "line": "{who} · {when} · {n} 項修改",
+    "restore": "還原",
+    "restoreTitle": "還原 v{v}？",
+    "restoreBody": "其內容會再次成為已批准版本，並儲存為新版本。不會遺失任何內容：目前版本會保留在歷史中。",
+    "restoreBlocked": "還原舊版本前，請先批准或捨棄目前的草稿。",
+    "status": {
+      "approved": "使用中",
+      "superseded": "較早",
+      "draft": "草稿",
+      "rejected": "已捨棄"
+    }
+  },
+  "review": {
+    "title": "審閱草稿",
+    "noneTitle": "沒有待審閱的草稿",
+    "noneBody": "來自對話、編輯和研究的建議修改會集中在這裡。",
+    "hint": "逐項接受或拒絕，然後批准。被拒絕的資料表會保留已批准的內容。",
+    "hintRead": "只有擁有人或管理員可以批准。你可以查看待處理的內容。",
+    "new": "新增",
+    "removed": "移除",
+    "changed": "已修改",
+    "from": "來自 {who} 的{origin}",
+    "current": "目前",
+    "proposed": "建議",
+    "decide": "{table} 的決定",
+    "accept": "接受",
+    "reject": "拒絕",
+    "summary": "已接受 {accepted}／{total} 項修改",
+    "approve": "批准 v{v}",
+    "rejectAll": "全部拒絕",
+    "approving": "批准中…",
+    "discard": "捨棄草稿",
+    "discardTitle": "捨棄此草稿？",
+    "discardBody": "其中所有建議修改都會被刪除。已批准版本維持不變。"
+  },
+  "origin": {
+    "edit": "編輯",
+    "chat": "對話",
+    "feedback": "回答意見",
+    "study": "研究",
+    "schema_check": "結構檢查",
+    "design": "網站設計",
+    "restore": "還原"
+  },
+  "share": {
+    "open": "分享",
+    "title": "分享字典",
+    "always": "擁有人及管理員一直都有權限。分享字典不會讓任何人看到他們原本看不到的資料行。",
+    "owner": "擁有人",
+    "loading": "載入中…",
+    "levelFor": "{who} 的權限",
+    "remove": "移除",
+    "removeTitle": "移除 {who}？",
+    "removeBody": "對方會即時失去此字典的權限。",
+    "person": "人員",
+    "pick": "選擇人員",
+    "nobody": "所有人都已有權限",
+    "level": "權限",
+    "add": "分享",
+    "adding": "分享中…",
+    "levels": "可閱讀：查看已批准的字典。可建議修改：亦可提出修改，由擁有人批准。"
+  }
+}

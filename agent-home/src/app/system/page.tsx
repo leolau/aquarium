@@ -37,7 +37,7 @@ export default async function Page() {
   );
   const client = await apiClientForRequest();
 
-  const [profiles, skills, memory, graph, models, tools, core, webview] = await Promise.all([
+  const [profiles, skills, memory, graph, models, tools, core, webview, data] = await Promise.all([
     meta(async () => {
       const [infos, sugg] = await Promise.all([client.profileInfos(), client.profileSuggestions()]);
       return t("cards.profiles.meta", { profiles: infos.profiles.length, suggestions: sugg.suggestions.length });
@@ -75,6 +75,10 @@ export default async function Page() {
           return t("cards.webview.meta", { state: w.session ? t("cards.webview.open") : t("cards.webview.idle") });
         })
       : Promise.resolve(null),
+    meta(async () => {
+      const { sources } = await client.dataSources();
+      return t("cards.data.meta", { sources: sources.length, drafts: sources.filter((x) => x.status === "draft" && x.access === "manage").length });
+    }),
   ]);
 
   const card = (id: string, href: string, value: string | null, extra: Partial<HubCard> = {}): HubCard => ({
@@ -96,6 +100,7 @@ export default async function Page() {
         card("profiles", "/profiles", profiles),
         card("skills", "/skills", skills),
         card("memory", "/memory", memory),
+        card("data", "/data", data),
         card("graph", "/graph", graph, { advanced: true }),
       ].filter(visible),
     },

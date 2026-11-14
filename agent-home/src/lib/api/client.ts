@@ -37,6 +37,7 @@ import type {
   SiteTableQuery,
   SiteTableRows,
 } from "@/types/sites";
+import type { DataGrant, DataGrantLevel, DataSource, DataSourceDoc, DictionaryVersion } from "@/types/data";
 import type {
   ChatInputMode,
   ActivityItem,
@@ -3491,6 +3492,52 @@ export class HermesApiClient {
     return this.request(`/api/sites/${encodeURIComponent(id)}/grants?${qs.toString()}`, {
       method: "DELETE",
     });
+  }
+
+  // -- Data dictionary (/api/data/*; Hermes checks the caller's access) --
+
+  async dataSources(): Promise<{ sources: DataSource[] }> {
+    return this.request("/api/data/sources");
+  }
+
+  async dataSource(id: string): Promise<DataSourceDoc> {
+    return this.request(`/api/data/sources/${encodeURIComponent(id)}`);
+  }
+
+  async dataVersions(id: string): Promise<{ versions: DictionaryVersion[] }> {
+    return this.request(`/api/data/sources/${encodeURIComponent(id)}/versions`);
+  }
+
+  async proposeDictionary(id: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this.request(`/api/data/sources/${encodeURIComponent(id)}/draft`, { method: "POST", json: body });
+  }
+
+  async approveDictionary(id: string, body: { version: number; reject: string[] }): Promise<Record<string, unknown>> {
+    return this.request(`/api/data/sources/${encodeURIComponent(id)}/draft/approve`, { method: "POST", json: body });
+  }
+
+  async discardDictionary(id: string): Promise<{ discarded: boolean }> {
+    return this.request(`/api/data/sources/${encodeURIComponent(id)}/draft`, { method: "DELETE" });
+  }
+
+  async restoreDictionary(id: string, version: string): Promise<Record<string, unknown>> {
+    return this.request(
+      `/api/data/sources/${encodeURIComponent(id)}/versions/${encodeURIComponent(version)}/restore`,
+      { method: "POST" },
+    );
+  }
+
+  async dataGrants(id: string): Promise<{ owner_user_id: string; grants: DataGrant[] }> {
+    return this.request(`/api/data/sources/${encodeURIComponent(id)}/grants`);
+  }
+
+  async putDataGrant(id: string, body: { user_id: string; grant: DataGrantLevel }): Promise<{ grant: DataGrant }> {
+    return this.request(`/api/data/sources/${encodeURIComponent(id)}/grants`, { method: "POST", json: body });
+  }
+
+  async revokeDataGrant(id: string, userId: string): Promise<{ revoked: boolean }> {
+    const qs = new URLSearchParams({ user_id: userId });
+    return this.request(`/api/data/sources/${encodeURIComponent(id)}/grants?${qs.toString()}`, { method: "DELETE" });
   }
 
   async refreshSite(

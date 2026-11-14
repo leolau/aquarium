@@ -14,7 +14,7 @@ dictionary** per data source instead of one skill per table.
 | 1 | Safe access and richer discovery | Done (draft PR) |
 | 2 | Dictionary store, versions, sharing, API | Done (draft PR) |
 | 3 | Study → propose, and the `data-questions` skill | Done (draft PR) |
-| 4 | agent-home UI (`/data`) | Not started (mockups ready) |
+| 4 | agent-home UI (`/data`) | Done (draft PR; not browser-tested) |
 | 5 | Improve over time: chat suggestions, answer feedback, Needs You | Not started |
 | 6 | Schema change check (no model) | Not started |
 
@@ -55,6 +55,13 @@ Log:
   skill. Decided with Yan: the app source's dictionary is visible only to the
   instance owner and admins until shared. The "Build dictionary" button
   (Phase 4) will start a chat that runs `study`.
+- 2026-11-14 — Phase 4 done in agent-home: `/data` (source list),
+  `/data/[id]` (version bar, table list / phone picker, entry, history with
+  Restore, Edit sheet, Share sheet, Build dictionary opens `/chat?new=1&draft=`
+  unsent), `/data/[id]/review` (current vs proposed per table, accept/reject,
+  Approve pinned on phones, Discard). `/api/data/*` BFF proxies, a Data card
+  in the System hub, en + zh-Hant strings. Edit covers meaning, row, grain and
+  columns; joins, metrics and examples come from chat/study for now.
 
 ## 1. Decisions
 
