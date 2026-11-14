@@ -437,7 +437,8 @@ def test_route_is_empty_without_the_multi_user_datastore(route, monkeypatch):
 def test_data_drafts_are_listed_only_for_sources_the_caller_approves():
     rows = [
         {"id": "s1", "name": "HSDOS WMS", "access": "manage", "draft_version": 4,
-         "draft_changes": 3, "draft_origins": ["chat", "feedback"], "draft_proposed_at": 1000.0},
+         "draft_changes": 3, "draft_origins": ["chat", "feedback"],
+         "draft_proposed_at": "2026-11-14T12:00:00+00:00"},
         {"id": "s2", "name": "Shared", "access": "propose", "draft_version": 2, "draft_changes": 1},
         {"id": "s3", "name": "Clean", "access": "manage", "draft_version": None},
     ]
@@ -448,3 +449,5 @@ def test_data_drafts_are_listed_only_for_sources_the_caller_approves():
     assert item["title"] == "Dictionary draft v4 for HSDOS WMS is ready"
     assert item["detail"] == "3 changes · from a chat · from answer feedback"
     assert item["actions"][0]["label"] == "Review"
+    # list_sources sends the draft time as ISO text; the card must keep its age.
+    assert item["created_at"] == datetime(2026, 11, 14, 12, tzinfo=timezone.utc).timestamp()

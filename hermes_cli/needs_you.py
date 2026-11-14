@@ -68,7 +68,13 @@ def _ts(value: Any) -> float:
     try:
         return float(value)
     except (TypeError, ValueError):
-        return 0.0
+        pass
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            pass
+    return 0.0
 
 
 def chat_href(session_id: str, profile: Optional[str]) -> str:

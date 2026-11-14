@@ -192,7 +192,7 @@ export const MessageBubble = memo(function MessageBubble({
   const dataAnswer = data?.answer ?? null;
   const reasoning = isUser ? "" : (message.reasoning ?? "").trim();
 
-  if (content === "" && reasoning === "") {
+  if (content === "" && reasoning === "" && !dataAnswer) {
     // Summary-only row (or a user turn that was just the context line): no
     // bubble at all — at most the compaction divider.
     return split.hadCompaction ? <CompactionDivider /> : null;
