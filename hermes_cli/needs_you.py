@@ -13,7 +13,8 @@ into ``NeedsYouEntry`` rows (``agent-home/src/types/landing.ts``):
   store is unavailable;
 * in-memory approvals — chat tool approvals (``tools.approval``) and
   webview actions (``WebviewSession.pending``);
-* open profile suggestions.
+* open profile suggestions;
+* data dictionary drafts the caller may approve.
 
 Ids are ``<source>:<native id>`` and stable for the life of the wait, so the
 client can tell what is new since it last looked. Row builders are pure;
@@ -47,6 +48,7 @@ SEVERITY_BY_SOURCE = {
     "plan_approval": "approval",
     "clarify": "approval",
     "output_acceptance": "review",
+    "data_draft": "review",
     "card_blocked": "review",
     "todo": "fyi",
     "profile_suggestion": "fyi",
@@ -520,6 +522,30 @@ def profile_suggestion_entries(suggestions: Iterable[Any]) -> list[dict]:
             detail=s.rationale or s.proposed_role,
             context={"profile": s.origin_profile},
             href="/profiles", created_at=s.created_at,
+        ))
+    return out
+
+
+_ORIGIN_TEXT = {"chat": "from a chat", "feedback": "from answer feedback", "study": "from a study",
+                "schema_check": "from a schema check", "edit": "from an edit"}
+
+
+def data_draft_entries(sources: Iterable[dict]) -> list[dict]:
+    """Open dictionary drafts on sources the caller manages (owner or admin approves)."""
+    out: list[dict] = []
+    for s in sources:
+        if s.get("access") != "manage" or not s.get("draft_version"):
+            continue
+        n = int(s.get("draft_changes") or 0)
+        origins = [_ORIGIN_TEXT[o] for o in s.get("draft_origins") or [] if o in _ORIGIN_TEXT]
+        href = f"/data/{quote(str(s['id']), safe='')}/review"
+        out.append(entry(
+            id=f"data_draft:{s['id']}:{s['draft_version']}",
+            source="data_draft",
+            title=f"Dictionary draft v{s['draft_version']} for {s.get('name') or 'a data source'} is ready",
+            detail=" · ".join([f"{n} change{'s' if n != 1 else ''}"] + origins[:2]),
+            href=href, created_at=s.get("draft_proposed_at"),
+            actions=[_open_action(href, "Review")],
         ))
     return out
 

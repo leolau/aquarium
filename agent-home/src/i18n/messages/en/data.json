@@ -132,5 +132,19 @@
     "levels": "Can read: see the approved dictionary. Can propose changes: also suggest edits for the owner to approve.",
     "directoryError": "Couldn't load the list of people, so you can't add anyone right now. Try again later; existing access is unchanged.",
     "unavailable": "People list unavailable"
+  },
+  "answer": {
+    "basedOn": "Based on {source} dictionary v{v}",
+    "noDictionary": "Based on {source} · no approved dictionary yet",
+    "showSql": "Show SQL",
+    "hideSql": "Hide SQL",
+    "wasRight": "Was this right?",
+    "yes": "Yes, save as example",
+    "saving": "Saving…",
+    "no": "No, correct it",
+    "saved": "Saved as a suggested example. The owner will review it.",
+    "correctHint": "Tell the agent what's wrong in your next message. It will fix the answer and suggest a dictionary change for the owner to approve.",
+    "undescribed": "{tables} isn't described yet, so this answer is based only on column names. Ask the agent to describe it, and the owner approves the description under Data.",
+    "failed": "Couldn't save the example: {error}"
   }
 }

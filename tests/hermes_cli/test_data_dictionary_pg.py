@@ -146,3 +146,21 @@ def test_grants_and_validation(env):
             run(dd.propose(app, tables=bad, by="boss"))
     with pytest.raises(ss.SiteError, match="nothing to propose"):
         run(dd.propose(app, by="boss"))
+
+
+def test_confirmed_answer_becomes_a_feedback_example(env):
+    profile, _site = env
+    app = run(dd.get_source(sources(BOSS, profile)["app"]["id"]))
+    run(dd.propose(app, tables={"tasks": ORDERS}, by="boss"))
+    run(dd.approve(app, 1, by="boss"))
+    q, sql = "How many tasks are open?", "SELECT count(*) FROM tasks WHERE status = 'open'"
+    out = run(dd.add_example(app, table="tasks", question=q, sql=sql, by="bob"))
+    assert out["changed_tables"] == ["tasks"]
+    run(dd.add_example(app, table="tasks", question=q, sql=sql, by="bob"))
+    draft = run(dd.dictionary(app, draft=True))["draft"]
+    entry = draft["entries"]["tables"]["tasks"]
+    assert [e["question"] for e in entry["examples"]].count(q) == 1
+    assert entry["meaning"] == ORDERS["meaning"]
+    assert {c["origin"] for c in draft["changes"]} == {"feedback"}
+    with pytest.raises(ss.SiteError):
+        run(dd.add_example(app, table="tasks", question="", sql=sql, by="bob"))

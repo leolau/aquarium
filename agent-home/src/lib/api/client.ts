@@ -3512,6 +3512,10 @@ export class HermesApiClient {
     return this.request(`/api/data/sources/${encodeURIComponent(id)}/draft`, { method: "POST", json: body });
   }
 
+  async dictionaryFeedback(id: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this.request(`/api/data/sources/${encodeURIComponent(id)}/feedback`, { method: "POST", json: body });
+  }
+
   async approveDictionary(id: string, body: { version: number; reject: string[] }): Promise<Record<string, unknown>> {
     return this.request(`/api/data/sources/${encodeURIComponent(id)}/draft/approve`, { method: "POST", json: body });
   }

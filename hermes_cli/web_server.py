@@ -13416,6 +13416,14 @@ async def needs_you(request: Request):
         _log.warning("needs-you: profile suggestions source failed", exc_info=True)
 
     try:
+        from hermes_cli import data_dictionary as dd
+        from hermes_cli import site_sources as ss
+
+        items.extend(ny.data_draft_entries(await dd.list_sources(principal, ss.current_profile())))
+    except Exception:
+        _log.warning("needs-you: data dictionary source failed", exc_info=True)
+
+    try:
         enrolled = set() if admin else await _enrolled_profiles(principal.user_id)
         items.extend(await asyncio.to_thread(ny.project_entries, principal, enrolled, covered))
     except Exception:

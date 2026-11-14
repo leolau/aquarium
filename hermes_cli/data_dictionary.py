@@ -422,9 +422,12 @@ async def list_sources(principal: Any, profile: str, *, db: Any = None) -> List[
             item["draft_changes"] = len(changed_tables(
                 _json(approved["entries"]) if approved else _empty(), _json(draft["entries"])
             ))
+            item["draft_proposed_at"] = jsonable(draft["proposed_at"])
+            item["draft_origins"] = sorted({c.get("origin") for c in _json(draft["changes"]) or [] if c.get("origin")})
         else:
             item["draft_version"] = None
             item["draft_changes"] = 0
+            item["draft_origins"] = []
         item["status"] = (
             "draft" if item["draft_version"] else "approved" if approved else "not_described"
         )
@@ -572,6 +575,24 @@ async def propose(
                 )
     before = _json(approved["entries"]) if approved else _empty()
     return {"version": version, "status": "draft", "changed_tables": changed_tables(before, entries)}
+
+
+async def add_example(
+    source: Source, *, table: str, question: str, sql: str, by: str, db: Any = None
+) -> Dict[str, Any]:
+    """Put a confirmed question and its SQL into ``table``'s examples in the draft."""
+    table = _name(table, "table")
+    found = await dictionary(source, draft=True, db=db)
+    base = (found.get("draft") or found.get("approved") or {}).get("entries") or _empty()
+    entry = dict((base.get("tables") or {}).get(table) or {})
+    example = {"question": _text(question, "question", 500), "sql": _text(sql, "sql", 4000)}
+    if not example["question"] or not example["sql"]:
+        raise SiteError("give the question and its SQL")
+    examples = [e for e in entry.get("examples") or [] if e.get("question") != example["question"]]
+    entry["examples"] = (examples + [example])[-_MAX_ITEMS:]
+    return await propose(
+        source, tables={table: entry}, origin="feedback", note="Confirmed answer", by=by, db=db
+    )
 
 
 async def approve(

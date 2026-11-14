@@ -15,7 +15,7 @@ dictionary** per data source instead of one skill per table.
 | 2 | Dictionary store, versions, sharing, API | Done (draft PR) |
 | 3 | Study → propose, and the `data-questions` skill | Done (draft PR) |
 | 4 | agent-home UI (`/data`) | Done (draft PR; not browser-tested) |
-| 5 | Improve over time: chat suggestions, answer feedback, Needs You | Not started |
+| 5 | Improve over time: chat suggestions, answer feedback, Needs You | Built (PR #921), not deployed |
 | 6 | Schema change check (no model) | Not started |
 
 Log:
@@ -140,6 +140,14 @@ The site-to-schema plan rejected a skill-only design for the same reason.
 - "Was this right?" on answers: Yes saves a suggested verified example; No
   asks for the correction and drafts a fix.
 - Needs You cards for drafts ready, schema changes and suggestions.
+- Built: answers from data end with a hidden `data-answer` block; agent-home
+  shows "Based on … dictionary vN · tables", Show SQL, an undescribed-table
+  warning and "Was this right?". Yes calls `POST /api/data/sources/{id}/feedback`
+  (propose access), which adds the question and SQL to the table's examples in
+  the draft with `origin=feedback`. No asks for the correction in chat. Each open
+  draft on a source the caller manages is one `data_draft` Needs You card
+  ("N changes · from a chat") linking to its review page; schema-change cards
+  come with Phase 6.
 
 ### Phase 6 — Schema change check
 - Scheduled backend job (no model) compares each schema with its approved

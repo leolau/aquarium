@@ -226,6 +226,7 @@ SIGNED_IN = {
     "GET /api/data/sources/{source_id}/versions",
     "GET /api/data/sources/{source_id}/versions/{version}",
     "POST /api/data/sources/{source_id}/draft",
+    "POST /api/data/sources/{source_id}/feedback",
     "POST /api/data/sources/{source_id}/draft/approve",
     "DELETE /api/data/sources/{source_id}/draft",
     "POST /api/data/sources/{source_id}/versions/{version}/restore",

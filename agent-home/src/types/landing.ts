@@ -21,6 +21,7 @@ export type NeedsYouSource =
   | "todo"
   | "profile_suggestion"
   | "pin_suggestion"
+  | "data_draft"
   /** A pending notification that maps to no source above (e.g. a proactive ask). */
   | "notification";
 

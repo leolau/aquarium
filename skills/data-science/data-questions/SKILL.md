@@ -38,6 +38,17 @@ person asking: they only ever see rows they may see.
    or say the list is cut off. Never page through raw rows to count them.
 6. **Answer**, then in one line: the source, the dictionary version used
    ("dictionary v3", or "no dictionary yet") and the SQL in a code block.
+7. **End the message with a `data-answer` block** so agent-home can show the
+   source, Show SQL and "Was this right?" under the answer (it hides the block):
+
+   ```data-answer
+   {"source_id": "<source.id>", "source": "<source.name>", "version": 3,
+    "tables": ["shipments"], "question": "<the person's question>",
+    "sql": "<the SQL you ran>", "undescribed": []}
+   ```
+
+   `version` is null with no approved dictionary; `undescribed` lists the
+   tables you used that have no entry. One JSON object, nothing after it.
 
 ## Improve the dictionary
 
@@ -47,8 +58,10 @@ Only the source's owner approves; you only add to the draft.
   and on yes call `propose_dictionary` with `origin=chat` and that table's
   whole entry (read it first, change only what they said).
 - **They confirm an answer is right**: offer to save the question and SQL as a
-  verified example (`origin=feedback`, the table's `examples`).
-- **They correct an answer**: fix the definition with `origin=feedback`.
+  verified example (`origin=feedback`, the table's `examples`). In agent-home,
+  "Yes, save as example" under the answer does this without you.
+- **They correct an answer** (or say "No, correct it"): fix the answer, then
+  offer to fix the definition with `origin=feedback`.
 - **"Build dictionary" / "describe these tables"**: call `study`, draft an
   entry per undescribed table (meaning, what one row is, grain, column notes,
   joins, metrics), ask about anything you can't tell from the data, then one

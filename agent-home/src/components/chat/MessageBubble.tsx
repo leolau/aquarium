@@ -4,7 +4,9 @@ import { memo, useEffect, useRef, useState, type CSSProperties, type ReactNode }
 
 import { ChatFile } from "@/components/chat/ChatFile";
 import { ChatMedia } from "@/components/chat/ChatMedia";
+import { DataAnswerFooter } from "@/components/chat/DataAnswerFooter";
 import { RichText } from "@/components/chat/RichText";
+import { splitDataAnswer } from "@/lib/chat/data-answer";
 import { mediaRefPath } from "@/lib/chat/media-ref";
 import {
   splitCompactionContent,
@@ -183,7 +185,11 @@ export const MessageBubble = memo(function MessageBubble({
 }) {
   const isUser = message.role === "user";
   const split = splitCompactionContent(message.content ?? "");
-  const content = isUser ? stripRefMentions(stripInjectedContext(split.display)) : split.display;
+  const data = isUser ? null : splitDataAnswer(split.display);
+  const content = isUser
+    ? stripRefMentions(stripInjectedContext(split.display))
+    : (data?.text ?? split.display);
+  const dataAnswer = data?.answer ?? null;
   const reasoning = isUser ? "" : (message.reasoning ?? "").trim();
 
   if (content === "" && reasoning === "") {
@@ -226,6 +232,7 @@ export const MessageBubble = memo(function MessageBubble({
                 </details>
               ) : null}
               <RichText content={content} />
+              {dataAnswer ? <DataAnswerFooter answer={dataAnswer} /> : null}
             </>
           )}
         </div>

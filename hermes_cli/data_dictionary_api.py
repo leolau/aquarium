@@ -114,6 +114,20 @@ async def propose(source_id: str, request: Request):
     ))
 
 
+@router.post("/sources/{source_id}/feedback")
+async def feedback(source_id: str, request: Request):
+    """"Was this right?" → Yes: the answer's question and SQL become a suggested example."""
+    principal, source, _a = await _source_for(request, source_id, "propose")
+    body = await _body(request)
+    return await _run(dd.add_example(
+        source,
+        table=str(body.get("table") or ""),
+        question=str(body.get("question") or ""),
+        sql=str(body.get("sql") or ""),
+        by=principal.user_id,
+    ))
+
+
 @router.post("/sources/{source_id}/draft/approve")
 async def approve(source_id: str, request: Request):
     principal, source, _a = await _source_for(request, source_id, "manage")

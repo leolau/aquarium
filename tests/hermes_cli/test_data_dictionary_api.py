@@ -22,6 +22,7 @@ ROUTES = [
     ("GET", f"/api/data/sources/{SID}/versions", "read"),
     ("GET", f"/api/data/sources/{SID}/versions/1", "read"),
     ("POST", f"/api/data/sources/{SID}/draft", "propose"),
+    ("POST", f"/api/data/sources/{SID}/feedback", "propose"),
     ("POST", f"/api/data/sources/{SID}/draft/approve", "manage"),
     ("DELETE", f"/api/data/sources/{SID}/draft", "manage"),
     ("POST", f"/api/data/sources/{SID}/versions/1/restore", "manage"),
@@ -32,6 +33,7 @@ ROUTES = [
 BODIES = {
     "/draft": {"tables": {"tasks": {"meaning": "x"}}},
     "/draft/approve": {"version": 2},
+    "/feedback": {"table": "tasks", "question": "q", "sql": "select 1"},
     "/grants": {"user_id": "newbie", "grant": "read"},
 }
 
@@ -63,7 +65,7 @@ def client(monkeypatch):
     monkeypatch.setattr(dd, "dictionary", record("dictionary", {"approved": None}))
     monkeypatch.setattr(dd, "list_versions", record("list_versions", []))
     monkeypatch.setattr(dd, "get_version", record("get_version", {"version": 1, "status": "approved"}))
-    for name in ("propose", "approve", "discard", "restore", "list_grants", "put_grant", "revoke_grant"):
+    for name in ("propose", "add_example", "approve", "discard", "restore", "list_grants", "put_grant", "revoke_grant"):
         monkeypatch.setattr(dd, name, record(name, {}))
     app = FastAPI()
     app.include_router(api.router)

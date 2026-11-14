@@ -432,3 +432,19 @@ def test_route_is_empty_without_the_multi_user_datastore(route, monkeypatch):
     monkeypatch.setattr(web_server, "_comms_resolve_principal", _unconfigured)
     body = client.get("/api/needs-you").json()
     assert body["items"] == [] and body["count"] == 0
+
+
+def test_data_drafts_are_listed_only_for_sources_the_caller_approves():
+    rows = [
+        {"id": "s1", "name": "HSDOS WMS", "access": "manage", "draft_version": 4,
+         "draft_changes": 3, "draft_origins": ["chat", "feedback"], "draft_proposed_at": 1000.0},
+        {"id": "s2", "name": "Shared", "access": "propose", "draft_version": 2, "draft_changes": 1},
+        {"id": "s3", "name": "Clean", "access": "manage", "draft_version": None},
+    ]
+    [item] = ny.data_draft_entries(rows)
+    assert item["id"] == "data_draft:s1:4"
+    assert item["severity"] == "review"
+    assert item["href"] == "/data/s1/review"
+    assert item["title"] == "Dictionary draft v4 for HSDOS WMS is ready"
+    assert item["detail"] == "3 changes · from a chat · from answer feedback"
+    assert item["actions"][0]["label"] == "Review"
