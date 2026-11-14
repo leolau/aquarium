@@ -324,3 +324,24 @@ def test_describe_lists_tables_or_one_table(fake_registry, monkeypatch):
     assert call("reader", "member", action="describe", site="shop", entity="orders")["table"]["rows"] == 3
     assert call("bob", "member", action="describe", site="shop")["success"] is False
     assert calls == [("summaries", "shop"), ("describe", "orders")]
+
+
+def test_app_actions_run_for_the_bound_person(fake_registry, monkeypatch):
+    from hermes_cli import app_data
+
+    seen = []
+
+    async def describe(principal, **_kw):
+        seen.append(("describe", principal.user_id))
+        return [{"area": "todos", "rows": 2}]
+
+    async def query(principal, areas, sql, **kw):
+        seen.append(("query", principal.user_id, tuple(areas), sql, kw["max_rows"]))
+        return {"columns": ["n"], "rows": [[2]], "row_count": 1, "truncated": False}
+
+    monkeypatch.setattr(app_data, "describe", describe)
+    monkeypatch.setattr(app_data, "query", query)
+    assert call("reader", "member", action="app_describe")["areas"][0]["area"] == "todos"
+    out = call("reader", "member", action="app_query", areas=["todos"], sql="SELECT 1", max_rows=7)
+    assert out["rows"] == [[2]]
+    assert seen == [("describe", "reader"), ("query", "reader", ("todos",), "SELECT 1", 7)]

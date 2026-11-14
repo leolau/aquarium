@@ -30,6 +30,8 @@ ACTIONS = (
     "run_status",
     "explore",
     "preview",
+    "app_describe",
+    "app_query",
 )
 
 SCHEMA = {
@@ -47,7 +49,10 @@ SCHEMA = {
         "base_url + login, goto: page paths and/or probes: [{name, steps}]) — page inventories: "
         "buttons, forms, tables, DataTables, JSON calls, never-click controls; preview (site, "
         "recipe? default the newest proposed, entities?, mode? default full, cursors?, max_rows "
-        "per entity, default 50, sample) — dry run: counts, sample rows, duplicate keys, failures."
+        "per entity, default 50, sample) — dry run: counts, sample rows, duplicate keys, failures. "
+        "Aquarium's own data (no site): app_describe — areas (todos, goals, files, inbox) with "
+        "columns and the rows this person can see; app_query (areas, sql) — one SELECT over "
+        "private copies of those areas, each a table named after its area, at most 500 rows."
     ),
     "parameters": {
         "type": "object",
@@ -71,6 +76,7 @@ SCHEMA = {
             "sample": {"type": "integer", "description": "preview: sample rows per entity (default 3)"},
             "version": {"type": "integer", "description": "approve_design: design version"},
             "entity": {"type": "string", "description": "describe: one table name"},
+            "areas": {"type": "array", "items": {"type": "string"}, "description": "app_query: areas to copy"},
             "sql": {"type": "string", "description": "query: one SELECT statement"},
             "max_rows": {"type": "integer"},
             "entities": {"type": "array", "items": {"type": "string"}},
@@ -150,6 +156,17 @@ async def site_db_tool(args: Mapping[str, Any], **_kw: Any) -> str:
             body = {k: args.get(k) for k in ("name", "base_url", "login_url", "username", "password") if args.get(k)}
             site = await ss.create_site(principal, body)
             return _result(site=site.view("admin"))
+        if action == "app_describe":
+            from hermes_cli import app_data
+
+            return _result(areas=await app_data.describe(principal))
+        if action == "app_query":
+            from hermes_cli import app_data
+
+            return _result(**await app_data.query(
+                principal, args.get("areas") or [], str(args.get("sql") or ""),
+                max_rows=int(args.get("max_rows") or ss.MAX_QUERY_ROWS),
+            ))
         need = "admin" if action in ("propose_design", "approve_design", "refresh", "explore", "preview") else "read"
         site, access = await _site(principal, args.get("site"), need=need)
         if action == "get_design":

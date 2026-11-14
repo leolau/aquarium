@@ -11,7 +11,7 @@ dictionary** per data source instead of one skill per table.
 | Phase | What | Status |
 |---|---|---|
 | 0 | Evaluation of the "MCP + skills" proposal, decisions, UI mockups | Done (mockups approved) |
-| 1 | Safe access and richer discovery | In progress: site-schema `describe` done; app-data access waits on decision D7 |
+| 1 | Safe access and richer discovery | In progress: site `describe` and app-data private-copy queries done; list search and comments next |
 | 2 | Dictionary store, versions, sharing, API | Not started |
 | 3 | Study → propose, and the `data-questions` skill | Not started |
 | 4 | agent-home UI (`/data`) | Not started (mockups ready) |
@@ -33,6 +33,12 @@ Log:
   client-settable settings. Many app tables (projects, runs, …) have no row
   rules, and some hold credentials. So agent-written SQL must never run against
   app tables directly. Site schemas are not affected (own login, own schema).
+- 2026-11-14 — D7 decided (private copy). Built `hermes_cli/app_data.py` and
+  `site_db` actions `app_describe` / `app_query`; `hermes db migrate` creates
+  the sandbox login. Before every question the sandbox login is checked: if it
+  can read any table or run a SECURITY DEFINER/dblink function, the question is
+  refused. Each area copies at most 50,000 rows. Projects and runs are not
+  areas yet: they live in the box's SQLite `projects.db`, not Supabase.
 
 ## 1. Decisions
 
@@ -45,7 +51,7 @@ Log:
 | D5 | Only approved dictionary versions are used for answers. Everything the agent or a user suggests goes into a draft. | plan |
 | D6 | New UI is mocked up in Figma first and approved before code. | Yan |
 
-| D7 | Open: how agent SQL reaches app data safely — A) per-question private copy of the person's visible rows from approved areas into temporary tables, queried by a login with no access to real tables (recommended); B) SQL checker blocking `set_config`/`current_setting`; C) per-person database logins. | Yan (pending) |
+| D7 | Agent SQL reaches app data through a per-question private copy: app code copies the rows the person may see from approved areas (todos, goals, files, inbox) into temporary tables, and the SQL runs as `aquarium_data_sandbox`, a login that can read no real table. | Yan |
 | D8 | The UI lives at `/data`, linked from the System hub. | Yan |
 
 ## 2. Evaluation of the "MCP + skills" proposal
