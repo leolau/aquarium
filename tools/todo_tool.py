@@ -357,6 +357,9 @@ TODO_SCHEMA = {
     "description": (
         "Manage your task list for the current session. Use for complex tasks "
         "with 3+ steps or when the user provides multiple tasks. "
+        "This is your private checklist for this chat, not the user's "
+        "To-dos, tasks or Projects: when the user asks you to create a to-do, "
+        "task or project, follow the projects skill instead. "
         "Call with no parameters to read the current list.\n\n"
         "Writing:\n"
         "- Provide 'todos' array to create/update items\n"

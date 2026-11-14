@@ -151,7 +151,9 @@ registry.register(
             "Create a desktop Project (a named workspace) and switch this chat into it. "
             "Pass `path` to anchor it to a repo/folder — this chat's workspace moves there "
             "and the sidebar follows. Use when starting work in a new repo/folder; this is "
-            "the intentional way to move the session, not `cd`."
+            "the intentional way to move the session, not `cd`. This is NOT an "
+            "Aquarium project with a goal, outputs and runs: for those, follow "
+            "the projects skill."
         ),
         "parameters": {
             "type": "object",
