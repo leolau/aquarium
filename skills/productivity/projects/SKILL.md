@@ -1,6 +1,6 @@
 ---
 name: projects
-description: "hermes projects CLI: read, create, link, and run Projects — multi-sitting work with cadence, a playbook and a record."
+description: "Turn requested tasks and projects into planning Projects."
 version: 1.0.0
 author: core
 license: MIT
@@ -17,6 +17,30 @@ declared outputs, a playbook, and a record of every run. `hermes projects` is
 the operator surface: the CLI the agent uses to read and shape that record
 without going through the web page or the HTTP API. `hermes project`
 (singular) is the folder-workspace command and stays separate.
+
+## When the user asks for a project, task or to-do
+
+"Create a task to…", "make this a project", "add a to-do to prepare the
+Q3 report", "set up a project for…" are requests to **set the work up**, not
+to do it. Decide which record it is, create it with the `terminal` tool, and stop:
+
+| The request is… | Create | Then |
+|---|---|---|
+| one decision or reply the user must make | a to-do (`hermes todos add`, see the `todos` skill) | stop |
+| work with steps, outputs, other people or more than one sitting | a project (`hermes projects create`) | stop: it starts in `planning` |
+| one step of an existing project | a card (`hermes projects card add <slug>`) | stop |
+
+Do not start the work in the chat, do not run the project, and do not use
+the `todo` tool (your private checklist for this chat), `project_create`
+(a desktop folder workspace) or `kanban_create` (fan-out inside a run) for
+these requests. Reply with the new item's short ref (see Short refs) and
+say that activating it and starting the first run happen on /projects. Only do
+the work now when the user explicitly asks you to do it in this chat.
+
+Fill the brief from the conversation: the goal sentence, a description
+(`--description -` reads stdin), at least one `--output`, and
+`--host-profile` set to the profile this chat runs on. If the goal or the
+expected output is unclear, ask one short question before creating.
 
 ## Commands
 
@@ -111,14 +135,16 @@ in a loop is exactly the failure mode they exist to prevent.
 ### 1. A project is for work that spans sittings, people or profiles
 
 One decision is a to-do (`hermes todos`); in-session planning is
-`tools/todo_tool.py`. If the work fits in one sitting and involves nobody
-else, it is not a project.
+`tools/todo_tool.py`. When the user asks for a task or project, it is a
+project even if it looks small — they asked for a record, not for the work.
 
-### 2. Propose, don't create
+### 2. Create when asked, never run unasked
 
-The agent may propose a project, a playbook revision or a directive; the human
-creates and activates. A new project starts in `planning` — activation is a
-human act on /projects.
+When the user asks for a project or task, create it: a new project starts in
+`planning`, and activation and runs are human acts on /projects, so creating
+one does nothing on its own. When the user did not ask (you notice recurring
+work, a playbook could improve, a directive would help), propose it and let
+the human decide.
 
 ### 3. Link, never copy
 

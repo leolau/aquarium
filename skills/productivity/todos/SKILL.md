@@ -55,6 +55,12 @@ anything, it is not a to-do. Do not capture "investigate X" or "look into Y"
 — those are tasks, not to-dos. A to-do is something the user must act on:
 reply by Friday, approve this invoice, call this person back.
 
+When the user asks you to "create a task" or "add a to-do" for work with
+steps (prepare a report, organise an event, research a supplier), it is a
+project in `planning`, not a to-do and not something to start now: load the
+`projects` skill and follow "When the user asks for a project, task or
+to-do".
+
 ### 2. Before spending a model call on unrequested work, create the to-do first
 
 If the user asked you to do something that will take several turns or involve
