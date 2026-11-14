@@ -5,6 +5,7 @@ import { NeedsYouPanel, type NeedsYouFeed } from "@/components/landing/work";
 import { Sheet } from "@/components/ui/Sheet";
 import { useActivityRunning } from "@/components/ui/useActivityRunning";
 import { useStatusSummary } from "@/components/ui/useStatusSummary";
+import { useT } from "@/i18n";
 import { useNeedsYou } from "@/lib/landing/needsYou";
 import { useMemo, useState } from "react";
 import type { ProfileRole } from "@/lib/api/my-profiles";
@@ -33,6 +34,7 @@ export function ShellTopBar({
   const activity = useActivityRunning();
   const needsYou = useNeedsYou();
   const [open, setOpen] = useState(false);
+  const tn = useT("needsYou");
 
   const feed: NeedsYouFeed = useMemo(
     () => ({
@@ -68,7 +70,7 @@ export function ShellTopBar({
         currentProfile={currentProfile}
       />
       {open ? (
-        <Sheet title="Needs you" component="NeedsYouSheet" onClose={() => setOpen(false)}>
+        <Sheet title={tn("heading")} component="NeedsYouSheet" onClose={() => setOpen(false)}>
           <NeedsYouPanel feed={feed} />
         </Sheet>
       ) : null}

@@ -2,6 +2,8 @@
 
 import { useEffect, type ReactNode } from "react";
 
+import { useT } from "@/i18n";
+
 /**
  * A dismissable modal panel: a bottom sheet on phones, a centred dialog from
  * `sm` up (`side` docks it to the right edge on desktop, like a drawer).
@@ -30,6 +32,7 @@ export function Sheet({
   mobileFull?: boolean;
   component?: string;
 }) {
+  const t = useT("common");
   useEffect(() => {
     const previous = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -70,7 +73,7 @@ export function Sheet({
           <h2 className="min-w-0 flex-1 truncate text-base font-semibold">{title}</h2>
           <button
             type="button"
-            aria-label="Close"
+            aria-label={t("close")}
             onClick={onClose}
             className="rounded-full px-2 py-1 text-sm text-[var(--color-muted)] hover:bg-[var(--color-surface-2)]"
           >
