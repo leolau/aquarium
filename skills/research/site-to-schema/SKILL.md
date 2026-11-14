@@ -200,6 +200,10 @@ Work in `~/site-study/<slug>/` (`design.json`, `recipe.json`,
      - Set `max_bytes` and a recipe `delay_ms`; an unpaged endpoint can
        return tens of MB and slow the site. Never page the DOM thousands
        of times.
+     - If some days are still too large for one answer and the endpoint
+       has no paging, add `split_min_minutes` (e.g. 60) to the
+       `date_windows` and filter by `{{window_start}}` / `{{window_end}}`,
+       so only the busy days are split into smaller time windows.
    - **Secrets sent to the browser.** If a table or JSON answer holds
      password, hash, token or API-key fields (the inventory's `security`
      note and `secret_columns` / `secret_keys` flag them), or the page

@@ -242,7 +242,7 @@ def _page(title: str, body: str, *, logged_in: bool = True) -> str:
 
 def _parse_date(value: str) -> Optional[dt.date]:
     try:
-        return dt.date.fromisoformat(value.strip())
+        return dt.date.fromisoformat(value.strip()[:10])
     except ValueError:
         return None
 
