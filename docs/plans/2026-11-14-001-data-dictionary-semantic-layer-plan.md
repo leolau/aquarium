@@ -10,8 +10,8 @@ dictionary** per data source instead of one skill per table.
 
 | Phase | What | Status |
 |---|---|---|
-| 0 | Evaluation of the "MCP + skills" proposal, decisions, UI mockups | Mockups done, waiting for approval |
-| 1 | Safe access and richer discovery | Not started |
+| 0 | Evaluation of the "MCP + skills" proposal, decisions, UI mockups | Done (mockups approved) |
+| 1 | Safe access and richer discovery | In progress: site-schema `describe` done; app-data access waits on decision D7 |
 | 2 | Dictionary store, versions, sharing, API | Not started |
 | 3 | Study → propose, and the `data-questions` skill | Not started |
 | 4 | agent-home UI (`/data`) | Not started (mockups ready) |
@@ -24,6 +24,15 @@ Log:
   Figma mockups created on page "Inner — Data dictionary" of the agent-home
   design file (`34Afz0PSb8yqWX8DIkjF32`): 5 desktop screens, 4 phone screens
   and interaction notes.
+- 2026-11-14 — Mockups approved; Data lives at `/data` (linked from the System
+  hub). Phase 1 started: `site_db` action `describe` (tables with row counts,
+  or one table's columns with fill, distinct counts and common values).
+- 2026-11-14 — Security finding (verified on Postgres 16): a read-only SELECT
+  can call `set_config('hermes.principal_role','owner',true)` and then read
+  every row under the `hermes_scope_read` rules, because those rules trust
+  client-settable settings. Many app tables (projects, runs, …) have no row
+  rules, and some hold credentials. So agent-written SQL must never run against
+  app tables directly. Site schemas are not affected (own login, own schema).
 
 ## 1. Decisions
 
@@ -36,8 +45,8 @@ Log:
 | D5 | Only approved dictionary versions are used for answers. Everything the agent or a user suggests goes into a draft. | plan |
 | D6 | New UI is mocked up in Figma first and approved before code. | Yan |
 
-Open: where the UI lives (`/data` linked from the System hub, as mocked, or a
-Dictionary tab on `/sites` plus a separate app-data entry).
+| D7 | Open: how agent SQL reaches app data safely — A) per-question private copy of the person's visible rows from approved areas into temporary tables, queried by a login with no access to real tables (recommended); B) SQL checker blocking `set_config`/`current_setting`; C) per-person database logins. | Yan (pending) |
+| D8 | The UI lives at `/data`, linked from the System hub. | Yan |
 
 ## 2. Evaluation of the "MCP + skills" proposal
 
@@ -54,9 +63,9 @@ The site-to-schema plan rejected a skill-only design for the same reason.
 
 ## 3. Security rules (all phases)
 
-- Every query runs with a principal bound (`hermes.*` settings) on a role
-  that does not bypass RLS. An unbound connection sees every row, so the
-  query path refuses to run without a principal.
+- Agent-written SQL never runs against app tables directly: the `hermes.*`
+  principal settings are client-settable, so a SELECT can rebind itself as
+  owner (see log). App data goes through the D7 mechanism.
 - Site schemas keep their per-site read role and `site_source_grants`.
 - Read-only transaction, one statement (`SELECT`/`WITH`), parameters instead of
   pasted values, statement timeout, row and byte caps.

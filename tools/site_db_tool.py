@@ -24,6 +24,7 @@ ACTIONS = (
     "get_design",
     "propose_design",
     "approve_design",
+    "describe",
     "query",
     "refresh",
     "run_status",
@@ -38,7 +39,8 @@ SCHEMA = {
         "list_sites; create_site (name, base_url, login_url, username, password); "
         "get_design (site); propose_design (site, design, recipe) — stores a design for "
         "approval, creates nothing; approve_design (site, version) — only when the person "
-        "explicitly approves; query (site, sql: one SELECT over the site's tables, at most "
+        "explicitly approves; describe (site, entity?) — tables with row counts, or one table's "
+        "columns with fill, distinct counts and common values: use before writing SQL; query (site, sql: one SELECT over the site's tables, at most "
         "500 rows); refresh (site, entities?, mode? incremental|full) — starts a backend "
         "refresh; run_status (site) — recent refresh runs. Studying a site (logs in with the "
         "site's saved login, read-only, writes nothing): explore (site, recipe = draft with "
@@ -68,6 +70,7 @@ SCHEMA = {
             "cursors": {"type": "object", "description": "preview: {entity: cursor value} (incremental)"},
             "sample": {"type": "integer", "description": "preview: sample rows per entity (default 3)"},
             "version": {"type": "integer", "description": "approve_design: design version"},
+            "entity": {"type": "string", "description": "describe: one table name"},
             "sql": {"type": "string", "description": "query: one SELECT statement"},
             "max_rows": {"type": "integer"},
             "entities": {"type": "array", "items": {"type": "string"}},
@@ -167,6 +170,10 @@ async def site_db_tool(args: Mapping[str, Any], **_kw: Any) -> str:
             if args.get("version") is None:
                 raise ss.SiteError("approve_design needs version=")
             return _result(approved=await ss.apply_design(site, int(args["version"]), approved_by=principal.user_id))
+        if action == "describe":
+            if args.get("entity"):
+                return _result(site=site.slug, table=await ss.describe_entity(site, str(args["entity"])))
+            return _result(site=site.slug, tables=await ss.table_summaries(site))
         if action == "query":
             result = await ss.query(site, str(args.get("sql") or ""), max_rows=int(args.get("max_rows") or ss.MAX_QUERY_ROWS))
             return _result(site=site.slug, **result)

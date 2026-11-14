@@ -305,3 +305,22 @@ def test_page_summaries_count_towards_the_explore_cap(monkeypatch):
                                       goto=[f"/p{i}" for i in range(20)]))
     assert len(json.dumps(out)) < ss.STUDY_MAX_CHARS * 1.2
     assert "omitted" in out["pages"][-1] and "summary" not in out["pages"][-1]
+
+
+def test_describe_lists_tables_or_one_table(fake_registry, monkeypatch):
+    calls = []
+
+    async def summaries(site, **_kw):
+        calls.append(("summaries", site.slug))
+        return [{"name": "orders", "rows": 3}]
+
+    async def describe(site, entity, **_kw):
+        calls.append(("describe", entity))
+        return {"name": entity, "rows": 3, "columns": []}
+
+    monkeypatch.setattr(ss, "table_summaries", summaries)
+    monkeypatch.setattr(ss, "describe_entity", describe)
+    assert call("reader", "member", action="describe", site="shop")["tables"][0]["name"] == "orders"
+    assert call("reader", "member", action="describe", site="shop", entity="orders")["table"]["rows"] == 3
+    assert call("bob", "member", action="describe", site="shop")["success"] is False
+    assert calls == [("summaries", "shop"), ("describe", "orders")]

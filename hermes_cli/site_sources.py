@@ -2186,6 +2186,95 @@ async def table_summaries(site: Site, *, db: Optional[SiteDatabase] = None) -> L
     return out
 
 
+SAMPLE_VALUES = 5
+_SAMPLE_CHARS = 80
+
+
+def _sample(value: Any) -> Any:
+    value = jsonable(value)
+    if isinstance(value, str) and len(value) > _SAMPLE_CHARS:
+        return value[: _SAMPLE_CHARS - 1] + "\u2026"
+    return value
+
+
+async def describe_entity(
+    site: Site,
+    entity: str,
+    *,
+    samples: int = SAMPLE_VALUES,
+    db: Optional[SiteDatabase] = None,
+) -> Dict[str, Any]:
+    """One table for writing SQL: its design, row count and, per column, how
+    many rows fill it, how many distinct values it has and the commonest ones.
+
+    Live rows only. Runs as the site's read-only role, like :func:`query`.
+    """
+    spec = await _entity_spec(site, entity, db)
+    samples = max(0, min(int(samples if samples is not None else SAMPLE_VALUES), 20))
+    if spec["kind"] == "variable":
+        source = f"SELECT * FROM {_ident(spec['name'])} WHERE _removed_at IS NULL"
+        params: List[Any] = []
+        expr = _ident
+    else:
+        source = (
+            "SELECT payload FROM (SELECT DISTINCT ON (content_key) payload, valid_to "
+            "FROM _fixed_versions WHERE entity = $1 ORDER BY content_key, version DESC) latest "
+            "WHERE valid_to IS NULL"
+        )
+        params = [spec["name"]]
+
+        def expr(name: str) -> str:
+            return f"(payload ->> '{name}')"
+
+    columns: List[Dict[str, Any]] = []
+    async with _reader(site, db) as conn:
+        async with conn.transaction(readonly=True):
+            rows = await conn.fetchval(f"SELECT count(*) FROM ({source}) t", *params)
+            for col in spec["columns"]:
+                e = expr(col["name"])
+                stats = await conn.fetchrow(
+                    f"SELECT count({e}) AS filled, count(DISTINCT {e}) AS distinct_values "
+                    f"FROM ({source}) t",
+                    *params,
+                )
+                common = []
+                if samples:
+                    common = await conn.fetch(
+                        f"SELECT {e} AS value, count(*) AS n FROM ({source}) t "
+                        f"WHERE {e} IS NOT NULL GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT {samples}",
+                        *params,
+                    )
+                columns.append(
+                    {
+                        "name": col["name"],
+                        "type": col["type"],
+                        "key": col["name"] in spec["key"],
+                        "filled": stats["filled"],
+                        "distinct": stats["distinct_values"],
+                        "common_values": [[_sample(r["value"]), r["n"]] for r in common],
+                    }
+                )
+    out = {
+        "name": spec["name"],
+        "kind": spec["kind"],
+        "reason": spec.get("reason", ""),
+        "key": spec["key"],
+        "rows": rows,
+        "columns": columns,
+    }
+    if spec["kind"] == "variable":
+        out["sql_hint"] = (
+            f"SELECT ... FROM {spec['name']} WHERE _removed_at IS NULL "
+            "(rows no longer on the site keep _removed_at)"
+        )
+    else:
+        out["sql_hint"] = (
+            f"fixed content lives in _fixed_versions: WHERE entity = '{spec['name']}' AND "
+            "valid_to IS NULL, columns are payload ->> 'name'"
+        )
+    return out
+
+
 async def _entity_spec(site: Site, entity: str, db: Optional[SiteDatabase]) -> Mapping[str, Any]:
     current = await approved_design(site, db=db)
     if current is None:
