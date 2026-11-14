@@ -15,7 +15,7 @@ dictionary** per data source instead of one skill per table.
 | 2 | Dictionary store, versions, sharing, API | Done (PR #921, draft) |
 | 3 | Study → propose, and the `data-questions` skill | Done (PR #921, draft) |
 | 4 | agent-home UI (`/data`) | Done (PR #921, draft; browser-tested at 390/768/1440 px) |
-| 5 | Improve over time: chat suggestions, answer feedback, Needs You | Built (PR #921); browser test in progress |
+| 5 | Improve over time: chat suggestions, answer feedback, Needs You | Built (PR #921); browser-tested locally, not deployed |
 | 6 | Schema change check (no model) | Not started |
 
 Log:
@@ -74,12 +74,16 @@ Log:
 - 2026-11-14 — Phase 5 built (details under Phase 5 below). Backend tests incl.
   real Postgres, agent-home tsc, ESLint and Vitest pass. Not deployed.
 
+- 2026-11-14 — Phase 5 browser test (local backend + real Postgres, answers
+  injected into session storage) passed after two fixes: an answer that is only
+  a `data-answer` block vanished (`MessageBubble.tsx`), and draft cards showed
+  "20771 d" because `needs_you._ts` didn't parse ISO times. Known: Needs You
+  card text stays English in zh-Hant (built server-side). Not tested: a live
+  model writing the block.
+
 Next steps (for whoever picks this up):
-1. Finish the Phase 5 browser test: answer footer (needs an assistant message
-   ending in a `data-answer` block), Yes/No feedback, `data_draft` Needs You
-   card and its count in the badge/title.
-2. Phase 6: scheduled schema-change check (below).
-3. Before deploy: run `hermes db migrate` (creates the sandbox login and the
+1. Phase 6: scheduled schema-change check (below).
+2. Before deploy: run `hermes db migrate` (creates the sandbox login and the
    dictionary tables), then re-run the `/data` browser test on production.
    Read `production/PRODUCTION.md` in `leolau/aquarium-ops` first.
 
