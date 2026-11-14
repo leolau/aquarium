@@ -2,6 +2,34 @@
 
 Tracking file for in-flight feature work. Update as phases land.
 
+## Data dictionary — Phase 6: schema change check
+
+Plan: `docs/plans/2026-11-14-001-data-dictionary-semantic-layer-plan.md`
+Branch: `devin/1794652805-data-dictionary-plan` (PR #921, draft)
+Status: **implemented** — updated 2026-11-15
+
+| Phase | Scope | Status |
+|-------|-------|--------|
+| 1 | `schema_checked_at`/`schema_drift` columns + `schema_diff`/`check_source`/`schema_check_tick`/`schema_check_loop` in `data_dictionary.py` | done |
+| 2 | Instant re-check hooks: `apply_design` → `recheck_site`; `approve`/`restore` → best-effort re-check | done |
+| 3 | `data_schema` Needs You cards + hourly sweep in the web server lifespan | done |
+| 4 | `site_db` dictionary/study drift output + `data-questions` skill note | done |
+| 5 | agent-home: drift pill (list), warn banner + `stale` entry pill (detail), en/zh-Hant | done |
+| 6 | Unit + real-Postgres tests; `tsc` + vitest | done |
+
+### Verified
+
+- `pytest tests/hermes_cli/test_data_schema_check.py test_needs_you.py` — pass.
+- `pytest test_data_dictionary_api.py test_site_db_tool.py test_site_sources*.py` — pass.
+- PG test `test_schema_check_flags_drift_and_approve_rechecks` written
+  (`HERMES_TEST_SITE_PG_DSN` not set locally — runs in CI).
+- `agent-home` `tsc -p . --noEmit` clean; vitest `src/components/data` + `src/i18n` — 92/92 pass.
+
+### Not yet verified
+
+- Live sweep on the box (needs deploy + `hermes db migrate` for the new columns).
+- Browser check of the drift banner at 390/768/1440 px.
+
 ## Landing Continue chip
 
 Plan: `plans/2026-11-13-landing-continue-chip.md`

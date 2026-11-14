@@ -33,6 +33,23 @@ describe("MessageBubble", () => {
     expect(html).not.toContain("data-sent-while-working");
   });
 
+  it("keeps an assistant turn that is only a data-answer block", () => {
+    const block = JSON.stringify({
+      source_id: "s1",
+      source: "WMS",
+      version: 3,
+      tables: ["shipments"],
+      question: "How many?",
+      sql: "SELECT 1",
+      undescribed: [],
+    });
+    const html = renderToStaticMarkup(
+      <MessageBubble message={{ role: "assistant", content: "```data-answer\n" + block + "\n```" }} />,
+    );
+    expect(html).toContain('data-component="DataAnswerFooter"');
+    expect(html).not.toContain("data-answer");
+  });
+
   it("renders an assistant turn aligned left", () => {
     const html = renderToStaticMarkup(
       <MessageBubble message={{ role: "assistant", content: "how can I help?" }} />,

@@ -1,6 +1,7 @@
 "use client";
 
 import { BellIcon, ChevronRightIcon } from "@/components/ui/icons";
+import { useNeedsYouText } from "@/lib/landing/needsYouText";
 import type { NeedsYouEntry } from "@/types/landing";
 
 /**
@@ -21,6 +22,8 @@ export function AttentionStrip({
   onOpen?: () => void;
   className?: string;
 }) {
+  const text = useNeedsYouText();
+  const { t } = text;
   const blockingItems = items.filter((i) => i.severity === "blocking");
   const count = Math.max(blocking ?? 0, blockingItems.length);
   if (count === 0) return null;
@@ -31,12 +34,12 @@ export function AttentionStrip({
       data-component="AttentionStrip"
       data-action="needs-you-blocking"
       onClick={onOpen}
-      aria-label={`${count} blocking ${count === 1 ? "item needs" : "items need"} you — open the list`}
+      aria-label={count === 1 ? t("strip.ariaOne") : t("strip.aria", { n: count })}
       className={`flex h-11 w-full min-w-0 items-center gap-2 border-b border-[var(--color-warn)] bg-[var(--color-attention-bg)] px-4 text-left text-[13px] text-[var(--color-warn-text)] ${className}`}
     >
       <BellIcon size={16} className="text-[var(--color-warn)]" />
-      <span className="shrink-0 font-semibold">{count} blocking</span>
-      {top ? <span className="min-w-0 flex-1 truncate">· {top.title}</span> : <span className="flex-1" />}
+      <span className="shrink-0 font-semibold">{t("strip.blocking", { n: count })}</span>
+      {top ? <span className="min-w-0 flex-1 truncate">· {text.title(top)}</span> : <span className="flex-1" />}
       <ChevronRightIcon size={16} />
     </button>
   );

@@ -1,0 +1,160 @@
+{
+  "title": "Data",
+  "subtitle": "What your data means, so agents answer questions about it correctly.",
+  "info": "What is a data dictionary?",
+  "infoBody": "A dictionary explains each table in plain words: what one row is, what the columns mean, how tables join and how metrics are counted. Agents only use approved versions. Anyone with access can suggest changes; the source's owner or an admin approves them.",
+  "kind": {
+    "app": "Aquarium data",
+    "site": "Website data"
+  },
+  "status": {
+    "approved": "Approved v{v}",
+    "draft": "Draft · review",
+    "not_described": "Not described",
+    "drift": "Schema changed"
+  },
+  "access": {
+    "read": "Can read",
+    "propose": "Can propose changes",
+    "manage": "Owner or admin"
+  },
+  "list": {
+    "emptyTitle": "No data sources yet",
+    "emptyBody": "Sites you add, and data shared with you, appear here.",
+    "described": "{n} tables described",
+    "owner": "Owner: {who}",
+    "ownerAdmins": "Owner: admins",
+    "next": {
+      "review": "Review {n} changes",
+      "build": "Build dictionary",
+      "none": "Not described yet",
+      "open": "Open"
+    }
+  },
+  "detail": {
+    "answersUse": "Answers use this version · approved by {who}, {when}",
+    "noneApproved": "Nothing approved yet: agents answer from the table structure and say so.",
+    "reviewDraft": "Review draft ({n})",
+    "seeDraft": "See draft ({n})",
+    "emptyTitle": "No tables described yet",
+    "emptyBody": "Use Build dictionary to have the agent study the tables and draft descriptions for you to approve.",
+    "emptyBodyRead": "The owner hasn't described these tables yet.",
+    "table": "Table",
+    "tables": "Tables",
+    "edit": "Edit",
+    "driftTitle": "The schema changed — {n} tables no longer match this dictionary",
+    "driftTitleOne": "The schema changed — 1 table no longer matches this dictionary",
+    "driftHint": "Answers may use outdated meanings until the owner updates them.",
+    "driftStale": "stale — schema changed",
+    "driftItem": {
+      "added": "{table} is new",
+      "removed": "{table} is gone",
+      "columns": "{table}: columns changed"
+    }
+  },
+  "build": {
+    "label": "Build dictionary",
+    "hint": "Opens a chat with the request filled in. Nothing starts until you press send.",
+    "prompt": "Study the {source} data source and draft dictionary entries for the tables that aren't described yet. Ask me about anything unclear before proposing."
+  },
+  "field": {
+    "meaning": "What this table is",
+    "row": "One row is",
+    "grain": "Grain",
+    "columns": "Columns",
+    "joins": "Joins",
+    "metrics": "Metrics",
+    "examples": "Verified examples"
+  },
+  "edit": {
+    "title": "Edit {table}",
+    "hint": "Your change goes into the draft. Answers keep using the approved version until the owner approves it.",
+    "columnsHint": "One column per line: name: what it means",
+    "note": "Why (optional)",
+    "notePlaceholder": "e.g. amounts exclude refunds",
+    "cancel": "Cancel",
+    "save": "Add to draft",
+    "saving": "Saving…"
+  },
+  "history": {
+    "title": "History",
+    "empty": "No versions yet.",
+    "line": "{who} · {when} · {n} changes",
+    "restore": "Restore",
+    "restoreTitle": "Restore v{v}?",
+    "restoreBody": "Its text becomes the approved version again, saved as a new version. Nothing is lost: the current version stays in history.",
+    "restoreBlocked": "Approve or discard the open draft before restoring an older version.",
+    "status": {
+      "approved": "In use",
+      "superseded": "Earlier",
+      "draft": "Draft",
+      "rejected": "Discarded"
+    }
+  },
+  "review": {
+    "title": "Review draft",
+    "noneTitle": "No draft to review",
+    "noneBody": "Suggested changes from chats, edits and studies collect here.",
+    "hint": "Accept or reject each change, then approve. Rejected tables keep their approved text.",
+    "hintRead": "Only the owner or an admin can approve. You can see what's waiting.",
+    "new": "New",
+    "removed": "Removed",
+    "changed": "Changed",
+    "from": "From {origin} by {who}",
+    "current": "Current",
+    "proposed": "Proposed",
+    "decide": "Decision for {table}",
+    "accept": "Accept",
+    "reject": "Reject",
+    "summary": "{accepted} of {total} changes accepted",
+    "approve": "Approve v{v}",
+    "rejectAll": "Reject all",
+    "approving": "Approving…",
+    "discard": "Discard draft",
+    "discardTitle": "Discard this draft?",
+    "discardBody": "All suggested changes in it are dropped. The approved version stays as it is."
+  },
+  "origin": {
+    "edit": "an edit",
+    "chat": "a chat",
+    "feedback": "answer feedback",
+    "study": "a study",
+    "schema_check": "a schema check",
+    "design": "the site design",
+    "restore": "a restore"
+  },
+  "share": {
+    "open": "Share",
+    "title": "Share dictionary",
+    "always": "The owner and admins always have access. Sharing a dictionary doesn't show anyone rows they can't already see.",
+    "owner": "Owner",
+    "loading": "Loading…",
+    "levelFor": "Access for {who}",
+    "remove": "Remove",
+    "removeTitle": "Remove {who}?",
+    "removeBody": "They lose access to this dictionary straight away.",
+    "person": "Person",
+    "pick": "Choose a person",
+    "nobody": "Everyone already has access",
+    "level": "Access",
+    "add": "Share",
+    "adding": "Sharing…",
+    "levels": "Can read: see the approved dictionary. Can propose changes: also suggest edits for the owner to approve.",
+    "directoryError": "Couldn't load the list of people, so you can't add anyone right now. Try again later; existing access is unchanged.",
+    "unavailable": "People list unavailable"
+  },
+  "answer": {
+    "basedOn": "Based on {source} dictionary v{v}",
+    "noDictionary": "Based on {source} · no approved dictionary yet",
+    "showSql": "Show SQL",
+    "hideSql": "Hide SQL",
+    "wasRight": "Was this right?",
+    "yes": "Yes, save as example",
+    "saving": "Saving…",
+    "no": "No, correct it",
+    "saved": "Saved as a suggested example. The owner will review it.",
+    "correctHint": "Tell the agent what's wrong in your next message. It will fix the answer and suggest a dictionary change for the owner to approve.",
+    "undescribed": "{tables} isn't described yet, so this answer is based only on column names. Ask the agent to describe it, and the owner approves the description under Data.",
+    "failed": "Couldn't save the example: {error}"
+  }
+}

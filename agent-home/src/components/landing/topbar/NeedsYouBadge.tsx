@@ -1,6 +1,7 @@
 "use client";
 
 import { BellIcon, CheckIcon } from "@/components/ui/icons";
+import { useNeedsYouText } from "@/lib/landing/needsYouText";
 
 /**
  * Figma `needs-you-badge` (4:84). Amber with the count when something needs
@@ -20,6 +21,7 @@ export function NeedsYouBadge({
   onOpen?: () => void;
   className?: string;
 }) {
+  const { t } = useNeedsYouText();
   const state = count === null ? "unknown" : count > 0 ? "some" : "none";
   const label =
     state === "some"
@@ -28,18 +30,20 @@ export function NeedsYouBadge({
         : (
             <>
               {count}
-              <span data-fit-hide="needs-text">{` need${count === 1 ? "s" : ""} you`}</span>
+              <span data-fit-hide="needs-text">{count === 1 ? t("badge.needsOne") : t("badge.needs")}</span>
             </>
           )
       : state === "none"
-        ? "All clear"
-        : "Needs you";
+        ? t("badge.allClear")
+        : t("badge.unknown");
   const aria =
     state === "some"
-      ? `${count} ${count === 1 ? "item needs" : "items need"} you — open the list`
+      ? count === 1
+        ? t("badge.ariaOne")
+        : t("badge.aria", { n: count ?? 0 })
       : state === "none"
-        ? "All clear — nothing needs you"
-        : "Needs you — not loaded yet";
+        ? t("badge.ariaNone")
+        : t("badge.ariaUnknown");
   const tone =
     state === "some"
       ? "bg-[var(--color-warn)] text-[var(--color-bg)]"
@@ -53,7 +57,7 @@ export function NeedsYouBadge({
       data-state={state}
       data-stale={stale || undefined}
       aria-label={aria}
-      title={stale ? `${aria} (couldn't refresh — showing the last count)` : aria}
+      title={stale ? t("badge.stale", { label: aria }) : aria}
       onClick={onOpen}
       className={`inline-flex h-8 shrink-0 items-center gap-2 whitespace-nowrap rounded-full px-3 text-[13px] font-medium transition-opacity hover:opacity-90 ${tone} ${
         stale ? "opacity-70" : ""

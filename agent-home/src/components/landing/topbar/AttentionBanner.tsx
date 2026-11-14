@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
-import { fmtElapsed } from "@/components/ui/useActivityRunning";
+import { useNeedsYouText } from "@/lib/landing/needsYouText";
 import { useHydrated } from "@/lib/use-hydrated";
 import type { NeedsYouEntry } from "@/types/landing";
 
@@ -52,6 +52,8 @@ export function AttentionBanner({
   const [collapsed, setCollapsed] = useState(false);
   const [dismissedNow, setDismissed] = useState<string | null>(null);
   const hydrated = useHydrated();
+  const text = useNeedsYouText();
+  const { t } = text;
   const dismissed = dismissedNow ?? (hydrated ? readDismissed() : null);
 
   const total = count ?? items.length;
@@ -70,8 +72,8 @@ export function AttentionBanner({
     }
   };
   const age =
-    top && now !== undefined && top.created_at ? fmtElapsed(now - top.created_at * 1000) : null;
-  const meta = top ? [top.detail ?? top.context.project_slug ?? null, age].filter(Boolean).join(" · ") : "";
+    top && now !== undefined && top.created_at ? text.age(top.created_at, now) : null;
+  const meta = top ? [text.detail(top) ?? top.context.project_slug ?? null, age].filter(Boolean).join(" · ") : "";
   const link = top ? primaryLink(top) : null;
 
   return (
@@ -79,23 +81,23 @@ export function AttentionBanner({
       data-component="AttentionBanner"
       data-blocking={blockingOpen || undefined}
       data-collapsed={collapsed || undefined}
-      aria-label="Needs you"
+      aria-label={t("heading")}
       className={`flex flex-col gap-2 border-b border-[var(--color-warn)] bg-[var(--color-attention-bg)] px-4 py-3 ${className}`}
     >
       <div className="flex items-center gap-2 text-[13px] font-medium text-[var(--color-warn-text)]">
         <BellIcon size={16} className="text-[var(--color-warn)]" />
         <span className="min-w-0 flex-1 truncate">
-          {total} {total === 1 ? "thing needs" : "things need"} you
+          {total === 1 ? t("banner.countOne") : t("banner.count", { n: total })}
         </span>
         {onSeeAll ? (
           <button type="button" data-action="needs-you-see-all" onClick={onSeeAll} className="shrink-0">
-            See all
+            {t("banner.seeAll")}
           </button>
         ) : null}
         <button
           type="button"
           aria-expanded={!collapsed}
-          aria-label={collapsed ? "Expand" : "Collapse"}
+          aria-label={collapsed ? t("banner.expand") : t("banner.collapse")}
           data-action="attention-collapse"
           onClick={() => setCollapsed((v) => !v)}
           className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full hover:bg-[var(--color-surface-2)]"
@@ -105,7 +107,7 @@ export function AttentionBanner({
         {!blockingOpen ? (
           <button
             type="button"
-            aria-label="Dismiss"
+            aria-label={t("banner.dismiss")}
             data-action="attention-dismiss"
             onClick={dismiss}
             className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full hover:bg-[var(--color-surface-2)]"
@@ -122,14 +124,14 @@ export function AttentionBanner({
         >
           <AlertIcon size={18} className="mt-0.5 text-[var(--color-warn)]" />
           <div className="flex min-w-0 flex-1 flex-col items-start gap-1">
-            <p className="w-full text-[13px] font-medium text-[var(--color-fg)] [overflow-wrap:anywhere]">{top.title}</p>
+            <p className="w-full text-[13px] font-medium text-[var(--color-fg)] [overflow-wrap:anywhere]">{text.title(top)}</p>
             {meta ? <p className="line-clamp-3 w-full text-xs text-[var(--color-muted)] [overflow-wrap:anywhere]">{meta}</p> : null}
             <Link
               href={link.href}
               data-action="attention-primary"
               className="mt-1 inline-flex h-9 items-center rounded-[var(--radius-md)] bg-[var(--color-warn)] px-3 text-[13px] font-medium text-[var(--color-bg)]"
             >
-              {link.label}
+              {text.action(link.label)}
             </Link>
           </div>
         </div>

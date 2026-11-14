@@ -339,7 +339,8 @@ def test_migrate_lets_least_privilege_app_login_create_sites(
             ):
                 await conn.execute(f'DROP SCHEMA "{schema}" CASCADE')
             await conn.execute(
-                "DROP TABLE IF EXISTS public.site_source_grants, public.site_sources"
+                "DROP TABLE IF EXISTS public.data_dictionary_versions, public.data_source_grants, "
+                    "public.data_sources, public.site_source_grants, public.site_sources"
             )
             roles = [r for (r,) in await conn.fetch(
                 "SELECT rolname FROM pg_roles WHERE rolname LIKE 'site\\_%' "

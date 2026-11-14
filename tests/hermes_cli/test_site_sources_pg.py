@@ -670,3 +670,39 @@ def test_site_admin_migrate_by_non_superuser_owner_adopts_old_sites(tmp_path, mo
                 await conn.close()
 
         run(teardown())
+
+
+def test_describe_entity_counts_live_rows_and_common_values(site):
+    approve(site)
+
+    async def go():
+        admin = await __import__("asyncpg").connect(DSN)
+        try:
+            s = site.schema_name
+            await admin.execute(
+                f'INSERT INTO "{s}".orders (_key, _hash, _payload, order_no, amount, _removed_at) VALUES '
+                "('a','h','{}','A1',5,NULL),('b','h','{}','A2',5,NULL),"
+                "('c','h','{}','A3',7,NULL),('d','h','{}','A4',9,now())"
+            )
+            await admin.execute(
+                f'INSERT INTO "{s}"._fixed_versions (entity, content_key, version, content_hash, payload, valid_to) VALUES '
+                """('about','k1',1,'h','{"title":"Old","body":"x"}',now()),"""
+                """('about','k1',2,'h','{"title":"Hello","body":"y"}',NULL)"""
+            )
+        finally:
+            await admin.close()
+        orders = await ss.describe_entity(site, "orders")
+        assert orders["rows"] == 3 and orders["key"] == ["order_no"]
+        amount = next(c for c in orders["columns"] if c["name"] == "amount")
+        assert amount["filled"] == 3 and amount["distinct"] == 2
+        assert amount["common_values"][0][1] == 2 and amount["key"] is False
+        about = await ss.describe_entity(site, "about", samples=0)
+        title = next(c for c in about["columns"] if c["name"] == "title")
+        assert about["rows"] == 1 and title["filled"] == 1 and title["common_values"] == []
+        with pytest.raises(ss.SiteError):
+            await ss.describe_entity(site, "nope")
+        assert [t["name"] for t in await ss.table_summaries(site, q="AMOUNT")] == ["orders"]
+        assert [t["name"] for t in await ss.table_summaries(site, q="title")] == ["about"]
+        assert await ss.table_summaries(site, q="order title") == []
+
+    run(go())

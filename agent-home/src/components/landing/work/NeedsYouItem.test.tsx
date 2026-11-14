@@ -7,6 +7,8 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { IDEMPOTENCY_HEADER } from "@/components/projects/useProjectAction";
+import { I18nProvider } from "@/i18n";
+import zhNeedsYou from "@/i18n/messages/zh-Hant/needsYou.json";
 
 import { NeedsYouItem, primaryAction } from "./NeedsYouItem";
 import { fmtAge } from "./format";
@@ -126,5 +128,45 @@ describe("NeedsYouItem", () => {
     const key = (n: number) =>
       (fetchSpy.mock.calls[n][1]?.headers as Record<string, string>)[IDEMPOTENCY_HEADER];
     expect(key(1)).toBe(key(0));
+  });
+});
+
+describe("NeedsYouItem in zh-Hant", () => {
+  it("renders the translated title, detail, age and action", () => {
+    const entry = needsYouEntry({
+      id: "data_draft:s1:4",
+      source: "data_draft",
+      severity: "review",
+      title: "Dictionary draft v4 for WMS is ready",
+      detail: "3 changes · from a chat",
+      created_at: NOW / 1000 - 8 * 60,
+      href: "/data/s1/review",
+      actions: [{ id: "open", label: "Review", style: "primary", href: "/data/s1/review" }],
+      i18n: {
+        title: [{ key: "titles.dataDraft", vars: { v: 4, source: "WMS" } }],
+        detail: [{ key: "details.changes", vars: { n: 3 } }, { key: "details.origin.chat" }],
+      },
+    });
+    render(
+      <I18nProvider locale="zh-Hant" messages={{ needsYou: zhNeedsYou }}>
+        <NeedsYouItem entry={entry} now={NOW} />
+      </I18nProvider>,
+    );
+    expect(screen.getByTestId("needs-you-title").textContent).toBe("WMS 的字典草稿 v4 可以審閱了");
+    expect(screen.getByTestId("needs-you-source").textContent).toBe("3 項修改 · 來自對話 · 8 分鐘");
+    expect(screen.getByText("審閱")).toBeTruthy();
+  });
+
+  it("falls back to the server text when a key is unknown", () => {
+    const entry = needsYouEntry({
+      title: "Something new",
+      i18n: { title: [{ key: "titles.notAKey" }] },
+    });
+    render(
+      <I18nProvider locale="zh-Hant" messages={{ needsYou: zhNeedsYou }}>
+        <NeedsYouItem entry={entry} now={NOW} />
+      </I18nProvider>,
+    );
+    expect(screen.getByTestId("needs-you-title").textContent).toBe("Something new");
   });
 });

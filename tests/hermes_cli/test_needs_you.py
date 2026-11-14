@@ -432,3 +432,58 @@ def test_route_is_empty_without_the_multi_user_datastore(route, monkeypatch):
     monkeypatch.setattr(web_server, "_comms_resolve_principal", _unconfigured)
     body = client.get("/api/needs-you").json()
     assert body["items"] == [] and body["count"] == 0
+
+
+def test_data_drafts_are_listed_only_for_sources_the_caller_approves():
+    rows = [
+        {"id": "s1", "name": "HSDOS WMS", "access": "manage", "draft_version": 4,
+         "draft_changes": 3, "draft_origins": ["chat", "feedback"],
+         "draft_proposed_at": "2026-11-14T12:00:00+00:00"},
+        {"id": "s2", "name": "Shared", "access": "propose", "draft_version": 2, "draft_changes": 1},
+        {"id": "s3", "name": "Clean", "access": "manage", "draft_version": None},
+    ]
+    [item] = ny.data_draft_entries(rows)
+    assert item["id"] == "data_draft:s1:4"
+    assert item["severity"] == "review"
+    assert item["href"] == "/data/s1/review"
+    assert item["title"] == "Dictionary draft v4 for HSDOS WMS is ready"
+    assert item["detail"] == "3 changes · from a chat · from answer feedback"
+    assert item["actions"][0]["label"] == "Review"
+    # agent-home translates these parts; the English text above is the fallback.
+    assert item["i18n"]["title"] == [
+        {"key": "titles.dataDraft", "vars": {"v": 4, "source": "HSDOS WMS"}}
+    ]
+    assert [p["key"] for p in item["i18n"]["detail"]] == [
+        "details.changes", "details.origin.chat", "details.origin.feedback",
+    ]
+    # list_sources sends the draft time as ISO text; the card must keep its age.
+    assert item["created_at"] == datetime(2026, 11, 14, 12, tzinfo=timezone.utc).timestamp()
+
+
+def test_schema_drift_cards_are_listed_only_for_managers_with_drift():
+    rows = [
+        {"id": "s1", "name": "HSDOS WMS", "access": "manage",
+         "schema_checked_at": "2026-11-15T09:00:00+00:00",
+         "schema_drift": [
+             {"table": "orders", "change": "columns"},
+             {"table": "customers", "change": "added"},
+             {"table": "legacy", "change": "removed"},
+         ]},
+        {"id": "s2", "name": "Shared", "access": "propose",
+         "schema_drift": [{"table": "t", "change": "added"}]},
+        {"id": "s3", "name": "Clean", "access": "manage", "schema_drift": []},
+    ]
+    [item] = ny.data_schema_entries(rows)
+    assert item["id"] == "data_schema:s1"
+    assert item["severity"] == "review"
+    assert item["href"] == "/data/s1"
+    assert item["title"] == "The HSDOS WMS schema changed — its dictionary needs an update"
+    # the card names at most two drifted tables in detail text
+    assert item["detail"] == "3 tables differ · orders: columns changed · customers is new"
+    assert item["i18n"]["title"] == [
+        {"key": "titles.dataSchema", "vars": {"source": "HSDOS WMS"}}
+    ]
+    assert [p["key"] for p in item["i18n"]["detail"]] == [
+        "details.schemaDrift", "details.schemaItem.columns", "details.schemaItem.added",
+    ]
+    assert item["created_at"] == datetime(2026, 11, 15, 9, tzinfo=timezone.utc).timestamp()

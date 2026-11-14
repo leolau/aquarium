@@ -27,6 +27,7 @@ __pycache__/web_tools.cpython-310.pyc
 logs/
 !agent-home/src/app/api/**/logs/
 data/
+!agent-home/src/**/data/
 .pytest_cache/
 test_durations.json
 .pytest-cache/

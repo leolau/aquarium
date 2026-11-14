@@ -305,3 +305,82 @@ def test_page_summaries_count_towards_the_explore_cap(monkeypatch):
                                       goto=[f"/p{i}" for i in range(20)]))
     assert len(json.dumps(out)) < ss.STUDY_MAX_CHARS * 1.2
     assert "omitted" in out["pages"][-1] and "summary" not in out["pages"][-1]
+
+
+def test_describe_lists_tables_or_one_table(fake_registry, monkeypatch):
+    calls = []
+
+    async def summaries(site, q=None, **_kw):
+        calls.append(("summaries", site.slug, q))
+        return [{"name": "orders", "rows": 3}]
+
+    async def describe(site, entity, **_kw):
+        calls.append(("describe", entity))
+        return {"name": entity, "rows": 3, "columns": []}
+
+    monkeypatch.setattr(ss, "table_summaries", summaries)
+    monkeypatch.setattr(ss, "describe_entity", describe)
+    assert call("reader", "member", action="describe", site="shop", q="order")["tables"][0]["name"] == "orders"
+    assert call("reader", "member", action="describe", site="shop", entity="orders")["table"]["rows"] == 3
+    assert call("bob", "member", action="describe", site="shop")["success"] is False
+    assert calls == [("summaries", "shop", "order"), ("describe", "orders")]
+
+
+def test_app_actions_run_for_the_bound_person(fake_registry, monkeypatch):
+    from hermes_cli import app_data
+
+    seen = []
+
+    async def describe(principal, **_kw):
+        seen.append(("describe", principal.user_id))
+        return [{"area": "todos", "rows": 2}]
+
+    async def query(principal, areas, sql, **kw):
+        seen.append(("query", principal.user_id, tuple(areas), sql, kw["max_rows"]))
+        return {"columns": ["n"], "rows": [[2]], "row_count": 1, "truncated": False}
+
+    monkeypatch.setattr(app_data, "describe", describe)
+    monkeypatch.setattr(app_data, "query", query)
+    assert call("reader", "member", action="app_describe")["areas"][0]["area"] == "todos"
+    out = call("reader", "member", action="app_query", areas=["todos"], sql="SELECT 1", max_rows=7)
+    assert out["rows"] == [[2]]
+    assert seen == [("describe", "reader"), ("query", "reader", ("todos",), "SELECT 1", 7)]
+
+
+def test_dictionary_actions(fake_registry, monkeypatch):
+    from hermes_cli import data_dictionary as dd
+
+    app = dd.Source(id="s1", kind="app", profile="default", name="Aquarium data")
+    levels = {"reader": "read", "editor": "propose"}
+    proposed = []
+
+    async def sync_sources(profile, **_kw):
+        return [app]
+
+    async def resolve_access(source, principal, **_kw):
+        return levels.get(principal.user_id)
+
+    async def dictionary(source, *, draft=False, **_kw):
+        return {"approved": {"version": 3, "entries": {"tables": {"todos": {"meaning": "m"}}}},
+                **({"draft": {"version": 4, "changed_tables": ["goals"]}} if draft else {})}
+
+    async def propose(source, **kw):
+        proposed.append(kw)
+        return {"version": 4, "status": "draft", "changed_tables": ["todos"]}
+
+    monkeypatch.setattr(dd, "sync_sources", sync_sources)
+    monkeypatch.setattr(dd, "resolve_access", resolve_access)
+    monkeypatch.setattr(dd, "dictionary", dictionary)
+    monkeypatch.setattr(dd, "propose", propose)
+    out = call("reader", "member", action="dictionary", source="app")
+    assert out["approved"]["version"] == 3 and "draft" not in out
+    assert call("editor", "member", action="dictionary")["draft"]["version"] == 4
+    assert "not suggest" in call("reader", "member", action="propose_dictionary", source="app",
+                                 tables={"todos": {}})["error"]
+    assert "shared with you" in call("stranger", "member", action="dictionary", source="app")["error"]
+    out = call("editor", "member", action="propose_dictionary", source="app",
+               tables={"todos": {"meaning": "x"}}, origin="feedback")
+    assert out["proposed"]["version"] == 4 and proposed[0]["origin"] == "feedback"
+    assert proposed[0]["by"] == "editor"
+    assert "origin must be" in call("editor", "member", action="propose_dictionary", source="app",
+                                    tables={}, origin="design")["error"]

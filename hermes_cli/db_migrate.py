@@ -208,12 +208,15 @@ async def migrate_store(
             else:
                 results.append(("agent_home_app grants", None))
         if site_sources:
+            from hermes_cli import app_data, data_dictionary
             from hermes_cli import site_sources as sites
 
             for name, site_step in (
                 ("site registry", lambda: sites.migrate_registry(connection)),
+                ("data dictionary", lambda: data_dictionary.migrate(connection)),
                 ("site admin login", lambda: sites.ensure_site_admin(
                     connection, password=site_admin_password or None)),
+                ("app data sandbox login", lambda: app_data.ensure_sandbox_role(connection)),
             ):
                 try:
                     await site_step()

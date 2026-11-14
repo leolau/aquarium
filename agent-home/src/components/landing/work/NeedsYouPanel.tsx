@@ -1,5 +1,6 @@
 "use client";
 
+import { useNeedsYouText } from "@/lib/landing/needsYouText";
 import type { NeedsYouEntry } from "@/types/landing";
 
 import { NeedsYouItem } from "./NeedsYouItem";
@@ -40,6 +41,7 @@ export function NeedsYouPanelView({
   onActed,
 }: NeedsYouPanelViewProps) {
   const now = useNow(true, AGE_TICK_MS);
+  const { t } = useNeedsYouText();
   const sorted = sortBySeverity(items);
   const shownCount = loaded ? Math.max(count, items.length) : null;
 
@@ -52,14 +54,14 @@ export function NeedsYouPanelView({
     >
       <SectionHeader
         id="needs-you-heading"
-        label="Needs you"
+        label={t("heading")}
         count={shownCount}
         attention={sorted.length > 0}
       />
       {!loaded ? (
         stale ? (
           <p className="px-3 text-[12px] leading-[16px] text-[var(--color-muted)]">
-            Couldn’t check right now — retrying.
+            {t("retrying")}
           </p>
         ) : (
           <div aria-hidden className="flex flex-col gap-2" data-testid="needs-you-skeleton">
@@ -81,14 +83,14 @@ export function NeedsYouPanelView({
             className="h-[125px] w-[160px] object-contain"
           />
           <p className="text-[13px] font-medium leading-[18px] text-[var(--color-fg)]">
-            Nothing needs you right now
+            {t("allClearTitle")}
           </p>
           <p className="text-[12px] font-medium leading-[16px] text-[var(--color-muted)]">
-            We’ll flag it here, in the top bar and by push.
+            {t("allClearBody")}
           </p>
         </div>
       ) : (
-        <ul className="flex flex-col gap-2" aria-label="Waiting on you">
+        <ul className="flex flex-col gap-2" aria-label={t("listLabel")}>
           {sorted.map((entry) => (
             <NeedsYouItem
               key={entry.id}

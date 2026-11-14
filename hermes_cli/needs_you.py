@@ -13,7 +13,8 @@ into ``NeedsYouEntry`` rows (``agent-home/src/types/landing.ts``):
   store is unavailable;
 * in-memory approvals — chat tool approvals (``tools.approval``) and
   webview actions (``WebviewSession.pending``);
-* open profile suggestions.
+* open profile suggestions;
+* data dictionary drafts the caller may approve.
 
 Ids are ``<source>:<native id>`` and stable for the life of the wait, so the
 client can tell what is new since it last looked. Row builders are pure;
@@ -47,6 +48,8 @@ SEVERITY_BY_SOURCE = {
     "plan_approval": "approval",
     "clarify": "approval",
     "output_acceptance": "review",
+    "data_draft": "review",
+    "data_schema": "review",
     "card_blocked": "review",
     "todo": "fyi",
     "profile_suggestion": "fyi",
@@ -66,7 +69,13 @@ def _ts(value: Any) -> float:
     try:
         return float(value)
     except (TypeError, ValueError):
-        return 0.0
+        pass
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            pass
+    return 0.0
 
 
 def chat_href(session_id: str, profile: Optional[str]) -> str:
@@ -112,6 +121,7 @@ def entry(
     reversible: bool = False,
     notification_id: Optional[str] = None,
     severity: Optional[str] = None,
+    i18n: Optional[dict] = None,
 ) -> dict:
     return {
         "id": id,
@@ -125,7 +135,17 @@ def entry(
         "actions": actions if actions is not None else [_open_action(href)],
         "reversible": bool(reversible),
         "notification_id": notification_id,
+        "i18n": i18n,
     }
+
+
+def _m(key: str, **values: Any) -> dict:
+    """One translatable part: agent-home renders ``needsYou.<key>`` with ``vars``."""
+    return {"key": key, "vars": {k: v for k, v in values.items() if v is not None}}
+
+
+def _title(key: str, **values: Any) -> dict:
+    return {"title": [_m(key, **values)]}
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +232,7 @@ def notification_entries(notifications: Iterable[Any], user_id: str) -> list[dic
             source=source,
             severity=severity,
             title=n.title or "Needs your answer",
+            i18n=None if n.title else _title("titles.needsAnswer"),
             detail=n.body,
             context=context,
             href=href,
@@ -367,6 +388,7 @@ def project_entries(principal, enrolled: Iterable[str], covered: set[tuple]) -> 
             id=f"project_run:{project.slug}:{run['run_no']}",
             source="project_checkpoint",
             title=f"{project.name} · run {run['run_no']} is waiting on you",
+            i18n=_title("titles.runWaiting", project=project.name, run=run["run_no"]),
             context={"project_slug": project.slug, "run_no": run["run_no"]},
             href=href, created_at=run["started_at"],
         ))
@@ -384,6 +406,7 @@ def project_entries(principal, enrolled: Iterable[str], covered: set[tuple]) -> 
                 id=f"card_approval:{card['id']}:{card['approval_key']}",
                 source="card_approval",
                 title=f"Approve: {card['label']}",
+                i18n=_title("titles.approveCard", label=card["label"]),
                 detail=card.get("detail") or f"{project.name} · {card['title']}",
                 context=ctx, href=href, created_at=card["requested_at"],
             ))
@@ -392,6 +415,7 @@ def project_entries(principal, enrolled: Iterable[str], covered: set[tuple]) -> 
                 id=f"card_blocked:{card['id']}",
                 source="card_blocked",
                 title=f"Blocked: {card['title']}",
+                i18n=_title("titles.blocked", title=card["title"]),
                 detail=project.name,
                 context=ctx, href=href, created_at=card["since"],
             ))
@@ -403,6 +427,7 @@ def project_entries(principal, enrolled: Iterable[str], covered: set[tuple]) -> 
             id=f"output:{o['id']}",
             source="output_acceptance",
             title=f"Review output: {o['title']}",
+            i18n=_title("titles.reviewOutput", title=o["title"]),
             detail=project.name,
             context={"project_slug": project.slug},
             href=project_href(project.slug), created_at=o["delivered_at"] or o["created_at"],
@@ -416,6 +441,7 @@ def project_entries(principal, enrolled: Iterable[str], covered: set[tuple]) -> 
             id=f"clarify:{project.slug}:{c['round_no']}",
             source="clarify",
             title=f"{project.name}: {n} question{'s' if n != 1 else ''} to answer",
+            i18n=_title("titles.clarifyOne" if n == 1 else "titles.clarify", project=project.name, n=n),
             context={"project_slug": project.slug},
             href=project_href(project.slug), created_at=c["created_at"],
         ))
@@ -427,6 +453,7 @@ def project_entries(principal, enrolled: Iterable[str], covered: set[tuple]) -> 
             id=f"plan:{project.slug}:{p['rev']}",
             source="plan_approval",
             title=f"{project.name}: plan awaiting approval",
+            i18n=_title("titles.planApproval", project=project.name),
             context={"project_slug": project.slug},
             href=project_href(project.slug), created_at=p["created_at"],
         ))
@@ -466,6 +493,8 @@ def chat_approval_entries(
             id=f"chat_approval:{run_id}:{a['approval_id']}",
             source="chat_tool_approval",
             title=f"Approve tool use: {a.get('description') or 'command'}",
+            i18n=_title("titles.approveTool", what=a["description"]) if a.get("description")
+            else _title("titles.approveToolCommand"),
             detail=command or None,
             context={
                 "session_id": run["session_id"], "run_id": run_id,
@@ -499,6 +528,7 @@ def webview_entries(session) -> list[dict]:
             id=f"webview:{p.id}",
             source="webview_approval",
             title=f"Webview wants to {kind}" + (f" on {url}" if url else ""),
+            i18n=_title("titles.webviewOn" if url else "titles.webview", kind=kind, url=url or None),
             detail=p.reason,
             href="/webview", created_at=p.created_at,
             actions=[
@@ -517,9 +547,86 @@ def profile_suggestion_entries(suggestions: Iterable[Any]) -> list[dict]:
             id=f"profile_suggestion:{s.id}",
             source="profile_suggestion",
             title=f"New profile suggested: {s.proposed_name}",
+            i18n=_title("titles.profileSuggested", name=s.proposed_name),
             detail=s.rationale or s.proposed_role,
             context={"profile": s.origin_profile},
             href="/profiles", created_at=s.created_at,
+        ))
+    return out
+
+
+_ORIGIN_TEXT = {"chat": "from a chat", "feedback": "from answer feedback", "study": "from a study",
+                "schema_check": "from a schema check", "edit": "from an edit"}
+
+
+def data_draft_entries(sources: Iterable[dict]) -> list[dict]:
+    """Open dictionary drafts on sources the caller manages (owner or admin approves)."""
+    out: list[dict] = []
+    for s in sources:
+        if s.get("access") != "manage" or not s.get("draft_version"):
+            continue
+        n = int(s.get("draft_changes") or 0)
+        known = [o for o in s.get("draft_origins") or [] if o in _ORIGIN_TEXT][:2]
+        origins = [_ORIGIN_TEXT[o] for o in known]
+        name = s.get("name")
+        href = f"/data/{quote(str(s['id']), safe='')}/review"
+        out.append(entry(
+            id=f"data_draft:{s['id']}:{s['draft_version']}",
+            source="data_draft",
+            title=f"Dictionary draft v{s['draft_version']} for {name or 'a data source'} is ready",
+            detail=" · ".join([f"{n} change{'s' if n != 1 else ''}"] + origins),
+            i18n={
+                "title": [_m("titles.dataDraft" if name else "titles.dataDraftUnnamed",
+                             v=s["draft_version"], source=name)],
+                "detail": [_m("details.changesOne" if n == 1 else "details.changes", n=n)]
+                + [_m(f"details.origin.{o}") for o in known],
+            },
+            href=href, created_at=s.get("draft_proposed_at"),
+            actions=[_open_action(href, "Review")],
+        ))
+    return out
+
+
+_SCHEMA_DRIFT_TEXT = {
+    "added": "{table} is new", "removed": "{table} is gone", "columns": "{table}: columns changed",
+}
+
+
+def data_schema_entries(sources: Iterable[dict]) -> list[dict]:
+    """Sources whose schema no longer matches their approved dictionary.
+
+    One card per drifted source (``manage`` approves its dictionary); the id
+    is stable while drift persists so a still-open check shows once.
+    """
+    out: list[dict] = []
+    for s in sources:
+        if s.get("access") != "manage":
+            continue
+        drift = [
+            d for d in s.get("schema_drift") or []
+            if d.get("change") in _SCHEMA_DRIFT_TEXT and d.get("table")
+        ]
+        if not drift:
+            continue
+        n, shown = len(drift), drift[:2]
+        name = s.get("name")
+        href = f"/data/{quote(str(s['id']), safe='')}"
+        out.append(entry(
+            id=f"data_schema:{s['id']}",
+            source="data_schema",
+            title=f"The {name or 'data source'} schema changed — its dictionary needs an update",
+            detail=" · ".join(
+                [f"{n} table{'s' if n != 1 else ''} differ"]
+                + [_SCHEMA_DRIFT_TEXT[d["change"]].format(table=d["table"]) for d in shown]
+            ),
+            i18n={
+                "title": [_m("titles.dataSchema" if name else "titles.dataSchemaUnnamed",
+                             source=name)],
+                "detail": [_m("details.schemaDriftOne" if n == 1 else "details.schemaDrift", n=n)]
+                + [_m(f"details.schemaItem.{d['change']}", table=d["table"]) for d in shown],
+            },
+            href=href, created_at=s.get("schema_checked_at"),
+            actions=[_open_action(href, "Open dictionary")],
         ))
     return out
 

@@ -60,6 +60,11 @@
       "open": "A session is open",
       "idle": "No session open",
       "lockedWhy": "The agent web browser drives real websites for the agent. Only the owner and admins can open it."
+    },
+    "data": {
+      "name": "Data",
+      "desc": "What your Supabase tables mean, so answers use the right definitions.",
+      "meta": "{sources} sources · {drafts} drafts to review"
     }
   },
   "advanced": "Advanced",

@@ -315,14 +315,19 @@ async def _lifespan_services(app: "FastAPI"):
 
     db_pool_on = db_pool.enable(db_pool.settings_from_config(load_config() or {}))
 
-    # Site-to-schema scheduled refreshes (hermes_cli/site_sources.py).
+    # Site-to-schema scheduled refreshes (hermes_cli/site_sources.py) and the
+    # dictionary schema-change sweep (hermes_cli/data_dictionary.py).
     sites_stop = asyncio.Event()
     sites_task = None
+    schema_task = None
     try:
         from hermes_cli import site_sources
 
         if site_sources.scheduler_enabled(load_config() or {}):
             sites_task = asyncio.create_task(site_sources.scheduler_loop(sites_stop))
+            from hermes_cli import data_dictionary
+
+            schema_task = asyncio.create_task(data_dictionary.schema_check_loop(sites_stop))
     except Exception:  # noqa: BLE001 - never block the dashboard on it
         _log.debug("site scheduler not started", exc_info=True)
 
@@ -332,6 +337,8 @@ async def _lifespan_services(app: "FastAPI"):
         sites_stop.set()
         if sites_task is not None:
             sites_task.cancel()
+        if schema_task is not None:
+            schema_task.cancel()
         if db_pool_on:
             await asyncio.to_thread(db_pool.disable)
         cpu_stop.set()
@@ -411,6 +418,7 @@ from hermes_cli.email_mailboxes_api import router as _email_mailboxes_router  # 
 from hermes_cli.mssql_connections_api import router as _mssql_connections_router  # noqa: E402
 from hermes_cli.winrm_connections_api import router as _winrm_connections_router  # noqa: E402
 from hermes_cli.site_sources_api import router as _site_sources_router  # noqa: E402
+from hermes_cli.data_dictionary_api import router as _data_dictionary_router  # noqa: E402
 from hermes_cli.wa_bridge_api import router as _wa_bridge_router  # noqa: E402
 from hermes_cli.triage_status_api import router as _triage_status_router  # noqa: E402
 from hermes_cli.backup_offsite_api import router as _backup_offsite_router  # noqa: E402
@@ -455,6 +463,7 @@ app.include_router(_email_mailboxes_router)
 app.include_router(_mssql_connections_router)
 app.include_router(_winrm_connections_router)
 app.include_router(_site_sources_router)
+app.include_router(_data_dictionary_router)
 app.include_router(_wa_bridge_router)
 app.include_router(_triage_status_router)
 app.include_router(_backup_offsite_router)
@@ -13412,6 +13421,16 @@ async def needs_you(request: Request):
         items.extend(ny.profile_suggestion_entries(open_rows))
     except Exception:
         _log.warning("needs-you: profile suggestions source failed", exc_info=True)
+
+    try:
+        from hermes_cli import data_dictionary as dd
+        from hermes_cli import site_sources as ss
+
+        sources = await dd.list_sources(principal, ss.current_profile())
+        items.extend(ny.data_draft_entries(sources))
+        items.extend(ny.data_schema_entries(sources))
+    except Exception:
+        _log.warning("needs-you: data dictionary source failed", exc_info=True)
 
     try:
         enrolled = set() if admin else await _enrolled_profiles(principal.user_id)
