@@ -333,6 +333,10 @@ export function VpnConnections() {
         visibility: vpn.visibility.startsWith("private") ? "private" : "shared",
       },
     });
+    // The form opens inside this VPN's card; bring it into view.
+    requestAnimationFrame(() =>
+      document.querySelector('[data-vpn-form="edit"]')?.scrollIntoView({ block: "nearest", behavior: "smooth" }),
+    );
   }, []);
 
   const save = useCallback(async () => {
@@ -410,6 +414,127 @@ export function VpnConnections() {
   const setField = (field: keyof FormValues, value: string) =>
     setForm((f) => (f ? { ...f, values: { ...f.values, [field]: value } } : f));
 
+  const formEl = form && (
+    <div
+      data-vpn-form={form.mode}
+      className="space-y-2 rounded border border-[var(--color-surface-2)] p-2"
+    >
+      <p className="text-xs font-semibold">
+        {form.mode === "add" ? "Add a Fortinet VPN" : `Edit "${form.values.name}"`}
+      </p>
+      {form.mode === "add" && (
+        <label className={labelCls}>
+          <span>Name</span>
+          <input
+            value={form.values.name}
+            onChange={(e) => setField("name", e.target.value)}
+            placeholder="Office files"
+            className={inputCls}
+          />
+        </label>
+      )}
+      <div className="flex gap-2">
+        <label className={`${labelCls} flex-1`}>
+          <span>VPN gateway</span>
+          <input
+            value={form.values.host}
+            onChange={(e) => setField("host", e.target.value)}
+            placeholder="vpn.example-office.com"
+            className={inputCls}
+          />
+        </label>
+        <label className={`${labelCls} w-20`}>
+          <span>Port</span>
+          <input
+            value={form.values.port}
+            onChange={(e) => setField("port", e.target.value)}
+            inputMode="numeric"
+            className={inputCls}
+          />
+        </label>
+      </div>
+      <div className="flex gap-2">
+        <label className={`${labelCls} flex-1`}>
+          <span>Username</span>
+          <input
+            value={form.values.username}
+            onChange={(e) => setField("username", e.target.value)}
+            autoComplete="off"
+            className={inputCls}
+          />
+        </label>
+        <label className={`${labelCls} flex-1`}>
+          <span>Password</span>
+          <input
+            type="password"
+            value={form.values.password}
+            onChange={(e) => setField("password", e.target.value)}
+            placeholder={form.mode === "edit" ? "unchanged" : ""}
+            autoComplete="new-password"
+            className={inputCls}
+          />
+        </label>
+      </div>
+      <label className={labelCls}>
+        <span>Realm (optional)</span>
+        <input
+          value={form.values.realm}
+          onChange={(e) => setField("realm", e.target.value)}
+          placeholder="leave blank unless FortiClient asks for one"
+          className={inputCls}
+        />
+      </label>
+      <label className={labelCls}>
+        <span>Who can use it</span>
+        <select
+          value={form.values.visibility}
+          onChange={(e) =>
+            setField("visibility", e.target.value === "shared" ? "shared" : "private")
+          }
+          className={inputCls}
+        >
+          <option value="private">private (my agents only)</option>
+          <option value="shared">shared (everyone on this Hermes)</option>
+        </select>
+      </label>
+      <p data-vpn-folders-note className="text-xs text-[var(--color-muted)]">
+        Only the VPN connection is set up here. To read files, add a network
+        folder in{" "}
+        <Link href="/files/bridge" className="underline">
+          Files → Bridge
+        </Link>{" "}
+        with its \\server\share path. Only traffic to those file servers goes
+        through the VPN.
+      </p>
+      {formProblem && <p className="text-xs text-[var(--color-danger)]">{formProblem}</p>}
+      <div className="flex gap-2">
+        <ActionButton busyLabel="Saving…"
+          disabled={saving}
+          onAction={() => save()}
+          className={primaryBtnCls}
+        >
+          {saving ? "Saving…" : "Save & test connection"}
+        </ActionButton>
+        <button
+          type="button"
+          disabled={saving}
+          onClick={() => {
+            setForm(null);
+            setFormProblem(null);
+          }}
+          className={btnCls}
+        >
+          Cancel
+        </button>
+      </div>
+      <p className="text-xs text-[var(--color-muted)]">
+        Passwords are stored encrypted in the credential store and never
+        shown again.
+        {form.mode === "edit" && " Leave a password blank to keep the saved one."}
+      </p>
+    </div>
+  );
+
   return (
     <section data-component="VpnConnections">
       <h2 className="text-sm font-semibold">Private networks (VPN)</h2>
@@ -458,6 +583,7 @@ export function VpnConnections() {
               onRemove={() => setConfirmRemove(vpn)}
               onAutoConnect={(on) => void setAutoConnect(vpn, on)}
             >
+              {form?.mode === "edit" && form.values.name === vpn.name && formEl}
               {showCert && cert && (
                 <CertPanel
                   vpn={vpn}
@@ -487,126 +613,7 @@ export function VpnConnections() {
         </button>
       )}
 
-      {form && (
-        <div
-          data-vpn-form={form.mode}
-          className="space-y-2 rounded border border-[var(--color-surface-2)] p-2"
-        >
-          <p className="text-xs font-semibold">
-            {form.mode === "add" ? "Add a Fortinet VPN" : `Edit "${form.values.name}"`}
-          </p>
-          {form.mode === "add" && (
-            <label className={labelCls}>
-              <span>Name</span>
-              <input
-                value={form.values.name}
-                onChange={(e) => setField("name", e.target.value)}
-                placeholder="Office files"
-                className={inputCls}
-              />
-            </label>
-          )}
-          <div className="flex gap-2">
-            <label className={`${labelCls} flex-1`}>
-              <span>VPN gateway</span>
-              <input
-                value={form.values.host}
-                onChange={(e) => setField("host", e.target.value)}
-                placeholder="vpn.example-office.com"
-                className={inputCls}
-              />
-            </label>
-            <label className={`${labelCls} w-20`}>
-              <span>Port</span>
-              <input
-                value={form.values.port}
-                onChange={(e) => setField("port", e.target.value)}
-                inputMode="numeric"
-                className={inputCls}
-              />
-            </label>
-          </div>
-          <div className="flex gap-2">
-            <label className={`${labelCls} flex-1`}>
-              <span>Username</span>
-              <input
-                value={form.values.username}
-                onChange={(e) => setField("username", e.target.value)}
-                autoComplete="off"
-                className={inputCls}
-              />
-            </label>
-            <label className={`${labelCls} flex-1`}>
-              <span>Password</span>
-              <input
-                type="password"
-                value={form.values.password}
-                onChange={(e) => setField("password", e.target.value)}
-                placeholder={form.mode === "edit" ? "unchanged" : ""}
-                autoComplete="new-password"
-                className={inputCls}
-              />
-            </label>
-          </div>
-          <label className={labelCls}>
-            <span>Realm (optional)</span>
-            <input
-              value={form.values.realm}
-              onChange={(e) => setField("realm", e.target.value)}
-              placeholder="leave blank unless FortiClient asks for one"
-              className={inputCls}
-            />
-          </label>
-          <label className={labelCls}>
-            <span>Who can use it</span>
-            <select
-              value={form.values.visibility}
-              onChange={(e) =>
-                setField("visibility", e.target.value === "shared" ? "shared" : "private")
-              }
-              className={inputCls}
-            >
-              <option value="private">private (my agents only)</option>
-              <option value="shared">shared (everyone on this Hermes)</option>
-            </select>
-          </label>
-          <p data-vpn-folders-note className="text-xs text-[var(--color-muted)]">
-            Only the VPN connection is set up here. To read files, add a network
-            folder in{" "}
-            <Link href="/files/bridge" className="underline">
-              Files → Bridge
-            </Link>{" "}
-            with its \\server\share path. Only traffic to those file servers goes
-            through the VPN.
-          </p>
-          {formProblem && <p className="text-xs text-[var(--color-danger)]">{formProblem}</p>}
-          <div className="flex gap-2">
-            <ActionButton busyLabel="Saving…"
-              disabled={saving}
-              onAction={() => save()}
-              className={primaryBtnCls}
-            >
-              {saving ? "Saving…" : "Save & test connection"}
-            </ActionButton>
-            <button
-              type="button"
-              disabled={saving}
-              onClick={() => {
-                setForm(null);
-                setFormProblem(null);
-              }}
-              className={btnCls}
-            >
-              Cancel
-            </button>
-          </div>
-          <p className="text-xs text-[var(--color-muted)]">
-            Passwords are stored encrypted in the credential store and never
-            shown again.
-            {form.mode === "edit" && " Leave a password blank to keep the saved one."}
-          </p>
-        </div>
-      )}
+      {form?.mode === "add" && formEl}
 
       {confirmRemove && (
         <ConfirmDialog
