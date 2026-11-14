@@ -12,7 +12,7 @@ dictionary** per data source instead of one skill per table.
 |---|---|---|
 | 0 | Evaluation of the "MCP + skills" proposal, decisions, UI mockups | Done (mockups approved) |
 | 1 | Safe access and richer discovery | Done (draft PR) |
-| 2 | Dictionary store, versions, sharing, API | Not started |
+| 2 | Dictionary store, versions, sharing, API | Done (draft PR) |
 | 3 | Study → propose, and the `data-questions` skill | Not started |
 | 4 | agent-home UI (`/data`) | Not started (mockups ready) |
 | 5 | Improve over time: chat suggestions, answer feedback, Needs You | Not started |
@@ -42,6 +42,14 @@ Log:
 - 2026-11-14 — Phase 1 done: `describe` takes `q` keywords (name, reason,
   column names). Site tables have no `COMMENT ON` text; the design's reasons
   serve instead. App-data tests also pass on Supabase's Postgres image.
+- 2026-11-14 — Phase 2 done: `hermes_cli/data_dictionary.py` (tables
+  `data_sources`, `data_source_grants`, `data_dictionary_versions`; one open
+  draft and one approved version per source) and `/api/data/*`. One app source
+  per profile plus one per site; a new site source starts from its approved
+  design's reasons as v1. Approve names the draft version and may reject
+  tables, which keep their approved text. Restore copies an old version into a
+  new approved one. Access: manage (profile owner/admin, source owner, site
+  admin), propose and read by grant; site readers read their site's dictionary.
 
 ## 1. Decisions
 

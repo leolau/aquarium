@@ -411,6 +411,7 @@ from hermes_cli.email_mailboxes_api import router as _email_mailboxes_router  # 
 from hermes_cli.mssql_connections_api import router as _mssql_connections_router  # noqa: E402
 from hermes_cli.winrm_connections_api import router as _winrm_connections_router  # noqa: E402
 from hermes_cli.site_sources_api import router as _site_sources_router  # noqa: E402
+from hermes_cli.data_dictionary_api import router as _data_dictionary_router  # noqa: E402
 from hermes_cli.wa_bridge_api import router as _wa_bridge_router  # noqa: E402
 from hermes_cli.triage_status_api import router as _triage_status_router  # noqa: E402
 from hermes_cli.backup_offsite_api import router as _backup_offsite_router  # noqa: E402
@@ -455,6 +456,7 @@ app.include_router(_email_mailboxes_router)
 app.include_router(_mssql_connections_router)
 app.include_router(_winrm_connections_router)
 app.include_router(_site_sources_router)
+app.include_router(_data_dictionary_router)
 app.include_router(_wa_bridge_router)
 app.include_router(_triage_status_router)
 app.include_router(_backup_offsite_router)
