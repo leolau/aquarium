@@ -80,7 +80,7 @@ export function ReviewDraft({ doc, directory }: { doc: DataSourceDoc; directory:
   }
 
   return (
-    <div data-component="ReviewDraft" className="flex flex-col gap-4 pb-28 lg:pb-8">
+    <div data-component="ReviewDraft" className="flex flex-col gap-4 pb-44 lg:pb-8">
       {error ? <InlineAlert tone="danger">{error}</InlineAlert> : null}
       <InlineAlert tone="info">{canManage ? t("review.hint") : t("review.hintRead")}</InlineAlert>
       {changed.map((table) => {
@@ -127,7 +127,7 @@ export function ReviewDraft({ doc, directory }: { doc: DataSourceDoc; directory:
       {canManage ? (
         <div
           data-component="ApproveBar"
-          className="fixed inset-x-0 bottom-0 z-20 flex items-center gap-2 border-t border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] lg:static lg:rounded-2xl lg:border"
+          className="fixed inset-x-3 bottom-[calc(var(--safe-bottom,0px)+4.75rem)] z-20 flex flex-wrap items-center gap-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 shadow-lg lg:static lg:shadow-none"
         >
           <span className="min-w-0 flex-1 text-sm text-[var(--color-muted)]">{t("review.summary", { accepted, total: changed.length })}</span>
           <button type="button" className={secondaryButtonClass} onClick={() => setDiscarding(true)}>

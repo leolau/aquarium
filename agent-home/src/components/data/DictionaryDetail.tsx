@@ -35,10 +35,12 @@ export function DictionaryDetail({
   doc,
   versions,
   directory,
+  directoryError = false,
 }: {
   doc: DataSourceDoc;
   versions: DictionaryVersion[];
   directory: DirectoryEntry[];
+  directoryError?: boolean;
 }) {
   const t = useT("data");
   const locale = useLocale();
@@ -233,7 +235,7 @@ export function DictionaryDetail({
           }}
         />
       ) : null}
-      {sharing ? <ShareSheet sourceId={source.id} ownerId={source.owner_user_id} directory={directory} onClose={() => setSharing(false)} /> : null}
+      {sharing ? <ShareSheet sourceId={source.id} ownerId={source.owner_user_id} directory={directory} directoryError={directoryError} onClose={() => setSharing(false)} /> : null}
       {restoring !== null ? (
         <ConfirmDialog
           title={t("history.restoreTitle", { v: restoring })}

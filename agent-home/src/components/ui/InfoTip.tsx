@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { InfoIcon } from "@/components/ui/icons";
 
@@ -20,7 +20,21 @@ export function InfoTip({
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLSpanElement>(null);
+  const note = useRef<HTMLSpanElement>(null);
   const id = useId();
+
+  // Keep the note inside the viewport when the trigger sits near an edge
+  // (a long page title on a phone pushes it right).
+  useLayoutEffect(() => {
+    const el = note.current;
+    if (!open || !el) return;
+    el.style.transform = "";
+    const r = el.getBoundingClientRect();
+    const vw = document.documentElement.clientWidth || window.innerWidth;
+    let dx = r.right > vw - 8 ? vw - 8 - r.right : 0;
+    if (r.left + dx < 8) dx = 8 - r.left;
+    if (dx) el.style.transform = `translateX(${Math.round(dx)}px)`;
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -50,6 +64,7 @@ export function InfoTip({
       </button>
       {open ? (
         <span
+          ref={note}
           id={id}
           role="note"
           className={`absolute top-full z-40 mt-1 w-72 max-w-[calc(100vw-2rem)] rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-[13px] font-normal leading-5 text-[var(--color-fg)] shadow-lg [overflow-wrap:anywhere] ${

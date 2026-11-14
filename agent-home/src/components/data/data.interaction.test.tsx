@@ -8,6 +8,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => router, usePathname: () => 
 import { DataList } from "@/components/data/DataList";
 import { DictionaryDetail } from "@/components/data/DictionaryDetail";
 import { ReviewDraft } from "@/components/data/ReviewDraft";
+import { ShareSheet } from "@/components/data/ShareSheet";
 import { fieldDiff, textToColumns } from "@/components/data/format";
 import type { DataSource, DataSourceDoc, DictionaryEntry } from "@/types/data";
 
@@ -70,6 +71,15 @@ describe("data pages", () => {
     expect(screen.queryByRole("button", { name: "Share" })).toBeNull();
     expect(screen.queryByRole("link", { name: "Build dictionary" })).toBeNull();
     expect(screen.getAllByText("Orders").length).toBeGreaterThan(0);
+  });
+
+  it("says the people list failed instead of claiming everyone has access", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ grants: [] }), { status: 200 }));
+    render(<ShareSheet sourceId="s1" ownerId="leo" directory={[]} directoryError onClose={() => {}} />);
+    expect(screen.getByText(/Couldn't load the list of people/)).toBeTruthy();
+    expect(screen.getByRole("option", { name: "People list unavailable" })).toBeTruthy();
+    expect(screen.queryByText("Everyone already has access")).toBeNull();
+    await waitFor(() => expect(screen.queryByText("Loading…")).toBeNull());
   });
 
   it("parses columns and diffs fields", () => {

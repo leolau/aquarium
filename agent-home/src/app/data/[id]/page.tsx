@@ -8,7 +8,6 @@ import { getT } from "@/i18n/server";
 import { HermesApiError } from "@/lib/api/client";
 import { apiClientForRequest, requirePrincipal } from "@/lib/auth/principal";
 
-import { loadDirectory } from "../../sites/data";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +19,11 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   const client = await apiClientForRequest();
   let loaded;
   try {
-    const [doc, versions, directory] = await Promise.all([client.dataSource(id), client.dataVersions(id), loadDirectory(client)]);
+    const [doc, versions, directory] = await Promise.all([
+      client.dataSource(id),
+      client.dataVersions(id),
+      client.directory({ limit: 500 }).then((d) => d.entries, () => null),
+    ]);
     loaded = { doc, versions: versions.versions, directory };
   } catch (err) {
     if (err instanceof HermesApiError && err.status === 404) notFound();
@@ -33,7 +36,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   const name = loaded.doc.source.name;
   return (
     <MobileShell title={name} wide labels={{ [`/data/${id}`]: name }} info={<InfoTip label={t("info")}>{t("infoBody")}</InfoTip>}>
-      <DictionaryDetail doc={loaded.doc} versions={loaded.versions} directory={loaded.directory} />
+      <DictionaryDetail doc={loaded.doc} versions={loaded.versions} directory={loaded.directory ?? []} directoryError={loaded.directory === null} />
     </MobileShell>
   );
 }

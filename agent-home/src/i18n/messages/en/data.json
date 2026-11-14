@@ -129,6 +129,8 @@
     "level": "Access",
     "add": "Share",
     "adding": "Sharing…",
-    "levels": "Can read: see the approved dictionary. Can propose changes: also suggest edits for the owner to approve."
+    "levels": "Can read: see the approved dictionary. Can propose changes: also suggest edits for the owner to approve.",
+    "directoryError": "Couldn't load the list of people, so you can't add anyone right now. Try again later; existing access is unchanged.",
+    "unavailable": "People list unavailable"
   }
 }

@@ -20,11 +20,14 @@ export function ShareSheet({
   sourceId,
   ownerId,
   directory,
+  directoryError = false,
   onClose,
 }: {
   sourceId: string;
   ownerId: string;
   directory: DirectoryEntry[];
+  /** The people list couldn't be loaded, so nobody can be picked (not "everyone has access"). */
+  directoryError?: boolean;
   onClose(): void;
 }) {
   const t = useT("data");
@@ -79,6 +82,7 @@ export function ShareSheet({
     <Sheet title={t("share.title")} onClose={onClose} component="DataShareSheet">
       <div className="space-y-4">
         {error ? <InlineAlert tone="danger">{error}</InlineAlert> : null}
+        {directoryError ? <InlineAlert tone="warn">{t("share.directoryError")}</InlineAlert> : null}
         <p className="text-sm text-[var(--color-muted)]">{t("share.always")}</p>
         <ul className="divide-y divide-[var(--color-border)] rounded-2xl border border-[var(--color-border)]">
           {ownerId ? (
@@ -114,7 +118,7 @@ export function ShareSheet({
             value={who}
             onChange={(e) => setWho(e.target.value)}
           >
-            <option value="">{candidates.length ? t("share.pick") : t("share.nobody")}</option>
+            <option value="">{directoryError ? t("share.unavailable") : candidates.length ? t("share.pick") : t("share.nobody")}</option>
             {candidates.map((p) => (
               <option key={p.user_id} value={p.user_id}>
                 {p.display || p.user_id}
