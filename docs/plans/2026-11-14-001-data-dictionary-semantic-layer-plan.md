@@ -13,7 +13,7 @@ dictionary** per data source instead of one skill per table.
 | 0 | Evaluation of the "MCP + skills" proposal, decisions, UI mockups | Done (mockups approved) |
 | 1 | Safe access and richer discovery | Done (draft PR) |
 | 2 | Dictionary store, versions, sharing, API | Done (draft PR) |
-| 3 | Study → propose, and the `data-questions` skill | Not started |
+| 3 | Study → propose, and the `data-questions` skill | Done (draft PR) |
 | 4 | agent-home UI (`/data`) | Not started (mockups ready) |
 | 5 | Improve over time: chat suggestions, answer feedback, Needs You | Not started |
 | 6 | Schema change check (no model) | Not started |
@@ -50,6 +50,11 @@ Log:
   tables, which keep their approved text. Restore copies an old version into a
   new approved one. Access: manage (profile owner/admin, source owner, site
   admin), propose and read by grant; site readers read their site's dictionary.
+- 2026-11-14 — Phase 3 done: `site_db` actions `dictionary`, `study` and
+  `propose_dictionary` (source = site slug or `app`), and the `data-questions`
+  skill. Decided with Yan: the app source's dictionary is visible only to the
+  instance owner and admins until shared. The "Build dictionary" button
+  (Phase 4) will start a chat that runs `study`.
 
 ## 1. Decisions
 

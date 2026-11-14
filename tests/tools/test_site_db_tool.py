@@ -345,3 +345,42 @@ def test_app_actions_run_for_the_bound_person(fake_registry, monkeypatch):
     out = call("reader", "member", action="app_query", areas=["todos"], sql="SELECT 1", max_rows=7)
     assert out["rows"] == [[2]]
     assert seen == [("describe", "reader"), ("query", "reader", ("todos",), "SELECT 1", 7)]
+
+
+def test_dictionary_actions(fake_registry, monkeypatch):
+    from hermes_cli import data_dictionary as dd
+
+    app = dd.Source(id="s1", kind="app", profile="default", name="Aquarium data")
+    levels = {"reader": "read", "editor": "propose"}
+    proposed = []
+
+    async def sync_sources(profile, **_kw):
+        return [app]
+
+    async def resolve_access(source, principal, **_kw):
+        return levels.get(principal.user_id)
+
+    async def dictionary(source, *, draft=False, **_kw):
+        return {"approved": {"version": 3, "entries": {"tables": {"todos": {"meaning": "m"}}}},
+                **({"draft": {"version": 4, "changed_tables": ["goals"]}} if draft else {})}
+
+    async def propose(source, **kw):
+        proposed.append(kw)
+        return {"version": 4, "status": "draft", "changed_tables": ["todos"]}
+
+    monkeypatch.setattr(dd, "sync_sources", sync_sources)
+    monkeypatch.setattr(dd, "resolve_access", resolve_access)
+    monkeypatch.setattr(dd, "dictionary", dictionary)
+    monkeypatch.setattr(dd, "propose", propose)
+    out = call("reader", "member", action="dictionary", source="app")
+    assert out["approved"]["version"] == 3 and "draft" not in out
+    assert call("editor", "member", action="dictionary")["draft"]["version"] == 4
+    assert "not suggest" in call("reader", "member", action="propose_dictionary", source="app",
+                                 tables={"todos": {}})["error"]
+    assert "shared with you" in call("stranger", "member", action="dictionary", source="app")["error"]
+    out = call("editor", "member", action="propose_dictionary", source="app",
+               tables={"todos": {"meaning": "x"}}, origin="feedback")
+    assert out["proposed"]["version"] == 4 and proposed[0]["origin"] == "feedback"
+    assert proposed[0]["by"] == "editor"
+    assert "origin must be" in call("editor", "member", action="propose_dictionary", source="app",
+                                    tables={}, origin="design")["error"]
