@@ -100,6 +100,10 @@ class PageSpec:
     quick: bool = False
 
 
+# Without the Skills "view" permission (Settings → Skills permissions) the
+# Skills pages redirect here.
+SKILLS_HIDDEN = "/not-available?app=skills"
+
 PAGES: Tuple[PageSpec, ...] = (
     PageSpec("/", ("LandingLayout", "LandingComposer", "AccountMenu"), quick=True),
     PageSpec("/login", anon="public", anon_markers=("LoginForm",), redirect="/", quick=True),
@@ -162,9 +166,9 @@ PAGES: Tuple[PageSpec, ...] = (
         admin_markers=("ProfilesView",),
         admin_names=("Agent Profiles", "代理設定檔"),
         member_markers=("NotAvailableForRole",)),
-    PageSpec("/skills", admin_markers=("SkillsView",), member_markers=("NotAvailableForRole",)),
-    PageSpec("/skills/zz-smoke-missing", admin_not_found=True, member_markers=("NotAvailableForRole",)),
-    PageSpec("/skills/zz-smoke-missing/edit", admin_not_found=True, member_markers=("NotAvailableForRole",)),
+    PageSpec("/skills", admin_markers=("SkillsView",), member_redirect=SKILLS_HIDDEN),
+    PageSpec("/skills/zz-smoke-missing", admin_not_found=True, member_redirect=SKILLS_HIDDEN),
+    PageSpec("/skills/zz-smoke-missing/edit", admin_not_found=True, member_redirect=SKILLS_HIDDEN),
     PageSpec("/webview", admin_markers=("WebviewConsole",), member_markers=("LockedState",)),
     PageSpec(
         "/users",
