@@ -69,6 +69,15 @@ cli = _load()
     (["projects", "playbook", "p12", "draft", "patch-step", "pull", '{"title": "Pull"}',
       "--after", "load", "--expected-version", "4"], ["projects", "playbook"]),
     (["projects", "playbook", "p12", "draft", "discard"], ["projects", "playbook"]),
+    (["projects", "outputs", "p7"], ["projects", "outputs"]),
+    (["projects", "outputs", "p7", "list", "--json"], ["projects", "outputs"]),
+    (["projects", "outputs", "p7", "add", "The finished workbook", "--spec", "s",
+      "--optional", "--recurring"], ["projects", "outputs"]),
+    (["projects", "outputs", "p7", "deliver", "o_136eea456bb9",
+      "--ref", "/opt/data/x.xlsx", "--note", "run 4", "--task", "t_15426c76",
+      "--run", "run_97a813187769"], ["projects", "outputs"]),
+    (["projects", "--actor", "leo", "outputs", "p7", "deliver", "o_1",
+      "--ref", "/x"], ["projects", "outputs"]),
 ])
 def test_allowed(argv, path):
     assert cli.check(argv) == path
@@ -133,6 +142,16 @@ def test_allowed(argv, path):
     ["projects", "run", "p"],
     ["projects", "members", "p", "--add", "x"],
     ["projects", "list"],
+    # outputs: list/add/deliver only — accept is a human's act
+    ["projects", "outputs"],
+    ["projects", "outputs", "../x", "list"],
+    ["projects", "outputs", "p", "accept", "o_1"],
+    ["projects", "outputs", "p", "remove", "o_1"],
+    ["projects", "outputs", "p", "deliver"],
+    ["projects", "outputs", "p", "deliver", "../o_1", "--ref", "/x"],
+    ["projects", "outputs", "p", "deliver", "o_1", "--file", "/x"],
+    ["projects", "outputs", "p", "list", "extra"],
+    ["projects", "outputs", "p", "add"],
 ])
 def test_refused(argv):
     with pytest.raises(cli.Refused):
@@ -154,6 +173,37 @@ def _shim(tmp_path, *argv):
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="bash shim")
+def test_projects_outputs_needs_a_worker_env_or_a_ticket():
+    # A card worker (HERMES_KANBAN_TASK survived sudo) files deliveries as
+    # the box owner, no ticket needed.
+    argv, ticket = cli.as_requester(
+        ["projects", "outputs"],
+        ["projects", "outputs", "p7", "deliver", "o_1", "--ref", "/x"],
+        "", b"key", worker=True,
+    )
+    assert argv == ["projects", "outputs", "p7", "deliver", "o_1", "--ref", "/x"]
+    assert ticket == ""
+    # ...but never under a named person — a card is not one.
+    with pytest.raises(cli.Refused):
+        cli.as_requester(
+            ["projects", "outputs"],
+            ["projects", "--actor", "leo", "outputs", "p7", "list"],
+            "", b"key", worker=True,
+        )
+    # Without the worker marker a ticketless call still fails closed...
+    with pytest.raises(cli.Refused):
+        cli.as_requester(
+            ["projects", "outputs"], ["projects", "outputs", "p7", "list"],
+            "", b"key", worker=False,
+        )
+    # ...and the marker opens only `outputs`, not the other verbs.
+    with pytest.raises(cli.Refused):
+        cli.as_requester(
+            ["projects", "playbook"], ["projects", "playbook", "p"],
+            "", b"key", worker=True,
+        )
+
+
 def test_shim_reads_the_projects_files_as_the_agent_and_passes_stdin(tmp_path):
     spec = tmp_path / "v1.json"
     spec.write_text('{"body": "plan"}')

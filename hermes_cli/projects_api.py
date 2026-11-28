@@ -3164,6 +3164,17 @@ def _card_payload(bconn, project: projects_db.Project, task_id: str, *, principa
     # summaries — the closest thing to a live stream this surface has.
     # Heartbeat notes and comments are the lighter-weight progress signal
     # a worker also posts (e.g. "93/131 slides completed…").
+    # Which run the card belongs to — the detail page tags it the same way
+    # the board banner does ("run 1 · blocked 5d ago"), so an old orphan's
+    # asks stop reading as the open run's problem.
+    with projects_db.connect_closing() as pconn:
+        row = pconn.execute(
+            "SELECT r.run_no FROM project_run_cards rc "
+            "JOIN project_runs r ON r.id = rc.run_id "
+            "WHERE rc.task_id = ? ORDER BY r.run_no DESC LIMIT 1",
+            (task_id,),
+        ).fetchone()
+        payload["run_no"] = row["run_no"] if row else None
     payload["comments"] = [
         {"author": c.author, "body": c.body, "created_at": c.created_at}
         for c in kanban_db.list_comments(bconn, task_id)

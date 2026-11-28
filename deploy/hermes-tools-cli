@@ -39,9 +39,12 @@ CONF = "/etc/hermes-tools/cli.conf"
 RUN_USER = "hermes"
 CALLER = "hermes-tools"
 #: Kanban workers say which task they are; passed by sudo's env_keep, checked here.
+#: HERMES_PROFILE rides along so a card's ``projects outputs deliver`` can
+#: attribute the delivery to the worker profile that produced it.
 KEEP_ENV = {
     "HERMES_KANBAN_TASK": re.compile(r"[A-Za-z0-9_.:-]{1,128}"),
     "HERMES_KANBAN_RUN_ID": re.compile(r"[0-9]{1,18}"),
+    "HERMES_PROFILE": re.compile(r"[A-Za-z0-9_-]{1,64}"),
 }
 #: The requester ticket the gateway mints per chat turn (hermes_cli/principal_ticket.py).
 #: Verified here with the key only hermes can read, and turned into
@@ -131,6 +134,25 @@ def _playbook_args(pos):
     else:
         raise Refused(f"`hermes projects playbook {action}` is not available")
 
+
+#: ``outputs <slug> [list | add <title> | deliver <output id>]`` — a run's
+#: deliver card files its workbook this way (FG-32: ``add`` is agent-proposable,
+#: ``accept`` stays a human's act and is refused here).
+def _outputs_args(pos):
+    if not pos or not _NAME.fullmatch(pos[0]):
+        raise Refused("`hermes projects outputs` needs the project slug")
+    action, rest = (pos[1], pos[2:]) if len(pos) > 1 else ("list", [])
+    if action not in ("list", "add", "deliver"):
+        raise Refused(f"`hermes projects outputs {action}` is not available")
+    if action == "list":
+        if rest:
+            raise Refused("outputs list takes no argument")
+    elif len(rest) != 1:
+        raise Refused(f"outputs {action} takes one argument")
+    elif action == "deliver" and not _NAME.fullmatch(rest[0]):
+        raise Refused("the output must be its id (o_…)")
+
+
 #: command -> {"opts": options at this level, "subs": subcommands} or leaf options.
 #: Anything not listed, at any level, is refused: hermes config/auth/dashboard/
 #: gateway/setup/..., cron tick and --accept-hooks, tool --as and new --root, tool config
@@ -205,13 +227,19 @@ COMMANDS = {
     # Start a project from chat and propose its playbook, as the chatting person
     # (ticket -> --actor; an --actor given must be that person). The host is the
     # chat's profile. Off: --as-human, --host-profile, delete/archive/restore,
-    # activate, run, members.
+    # activate, run, members. ``outputs`` is the exception to the ticket rule:
+    # a kanban worker carrying HERMES_KANBAN_TASK files its card's delivery as
+    # the box owner (the env marker is an intent check, not a boundary — every
+    # caller here already runs inside the same hermes-tools shell).
     "projects": {"opts": {"--actor": V}, "subs": {
         "create": {ARGS: _one("goal sentence"), "--description": STDIN, "--output": V,
                    "--name": V, "--cadence": CADENCES, "--audience": V, "--goal-id": V,
                    "--from-chat": re.compile(r"[1-5]"), "--chat-summary": V, "--json": F},
         "playbook": {ARGS: _playbook_args, "--note": V, "--after": V,
                      "--expected-version": _NUM, "--from-rev": _NUM, "--json": F},
+        "outputs": {ARGS: _outputs_args, "--spec": V, "--optional": F,
+                    "--recurring": F, "--ref": V, "--note": V, "--task": V,
+                    "--run": V, "--json": F},
     }},
 }
 HELP = {"-h": F, "--help": F}
@@ -375,19 +403,28 @@ def _ticket_key(home, uids, bad_gids):
 AS_REQUESTER = {"tool": "--as", "projects": "--actor"}
 
 
-def as_requester(path, argv, ticket, key, now_ms=None):
+def as_requester(path, argv, ticket, key, now_ms=None, worker=False):
     """``(argv, ticket)`` for the real CLI: a verified ticket becomes
     ``tool --as=<user>`` or ``projects --actor=<user>``.
 
     Anything else passes no ticket on. For ``hermes tool`` a ticket that does not
     verify passes nothing on and the CLI refuses (fails closed); ``hermes projects``
-    would act as the owner without one, so it is refused here.
+    would act as the owner without one, so it is refused here — except
+    ``projects outputs`` from a card worker (``worker``: the caller carried a
+    valid ``HERMES_KANBAN_TASK``), which files its card's delivery as the box
+    owner. A worker can never pass ``--actor``: it is not a person.
     """
     if not path or path[0] not in AS_REQUESTER:
         return argv, ""
     user_id = verify_ticket(ticket, key, now_ms)
     if user_id is None:
         if path[0] == "projects":
+            if worker and path[:2] == ["projects", "outputs"]:
+                _rest, named = _without_option(argv[1:], "--actor")
+                if named:
+                    raise Refused("`projects outputs` from a card runs as the "
+                                  "box owner — never as --actor")
+                return argv, ""
             raise Refused("`hermes projects` runs only for the person in this chat "
                           "(no valid requester ticket)")
         return argv, ""
@@ -463,13 +500,14 @@ def main(argv):
     for key in (TICKET_ENV, *SESSION_ENV):
         env.pop(key, None)
     ticket = os.environ.get(TICKET_ENV, "")
+    worker = bool(env.get("HERMES_KANBAN_TASK"))
     if path[0] in AS_REQUESTER and (ticket or path[0] == "projects"):
         try:
             ticket_key = _ticket_key(conf["HERMES_HOME"], {0, me.pw_uid}, bad_gids)
         except (Refused, OSError):
             ticket_key = b""
         try:
-            argv, ticket = as_requester(path, argv, ticket, ticket_key)
+            argv, ticket = as_requester(path, argv, ticket, ticket_key, worker=worker)
         except Refused as exc:
             print(f"hermes: refused: {exc}.", file=sys.stderr)
             return 2

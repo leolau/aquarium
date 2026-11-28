@@ -511,12 +511,15 @@ def _task_workspace_path(project, task_id: Optional[str]) -> Optional[Path]:
 
 
 def _delivery_roots(project, task_id: Optional[str]) -> list[Path]:
-    """Managed roots for the servability check: the board's plus the
-    delivering card's own workspace."""
+    """Managed roots for the servability check: the board's, the
+    delivering card's own workspace, and the kanban home itself — a run's
+    shared working dirs (e.g. ``auction-work``) live under it, and the read
+    side already serves them (:func:`_delivery_servable`)."""
     roots = _managed_roots(None, project.board_slug or None)
     ws = _task_workspace_path(project, task_id)
     if ws is not None:
         roots.append(ws)
+    roots.append(kanban_db.kanban_home())
     return roots
 
 

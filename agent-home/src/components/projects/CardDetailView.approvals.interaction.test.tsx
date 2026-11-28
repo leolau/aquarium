@@ -59,6 +59,16 @@ const SCRIPT = {
   requested_at: 2,
 };
 
+describe("CardDetailView run tag", () => {
+  it("tags which run the card belongs to; an orphan shows no tag", () => {
+    const view = render(<CardDetailView slug="tender" card={blocked({ run_no: 4 })} />);
+    expect(view.getByText("run 4")).toBeTruthy();
+    view.unmount();
+    const orphan = render(<CardDetailView slug="tender" card={blocked({ run_no: null })} />);
+    expect(orphan.queryByText(/run \d/)).toBeNull();
+  });
+});
+
 describe("CardDetailView approvals", () => {
   it("shows every pending approval with what it wants to do, and no Make ready", () => {
     const view = render(

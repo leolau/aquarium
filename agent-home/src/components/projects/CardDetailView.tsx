@@ -135,6 +135,7 @@ export function CardDetailView({
       >
         <div className="flex items-center gap-2">
           <h1 className="min-w-0 flex-1 text-lg font-semibold">{card.title}</h1>
+          {card.run_no != null ? <Pill tone="muted">run {card.run_no}</Pill> : null}
           <RefBadge value={card.ref} />
           <Pill tone={tone}>{card.status}</Pill>
         </div>
