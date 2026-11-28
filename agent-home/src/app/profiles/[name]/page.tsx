@@ -8,7 +8,6 @@ import { canAdminister } from "@/lib/auth/roles";
 import type { MembersResponse } from "@/types";
 import type { NeedsYouResponse } from "@/types/landing";
 import type { SkillUsageList } from "@/lib/skills/usage";
-import type { SessionsResponse } from "@/types";
 
 export const dynamic = "force-dynamic";
 
@@ -52,7 +51,7 @@ export default async function Page({
     client.skillLibrary(),
     client.sources(),
     client.projects({ limit: 100 }),
-    bound.request<SessionsResponse>("/api/profiles/sessions?limit=20"),
+    bound.sessions({ limit: 20, excludeSources: "cron" }),
     bound.cronJobs(),
     bound.mcpServers(),
     bound.request<MembersResponse>("/api/comms/members?limit=100"),
