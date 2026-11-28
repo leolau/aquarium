@@ -261,3 +261,30 @@ def test_a_profile_ref_resolves_for_an_admin_and_404s_for_others(env):
     # Members can't open a profile page, so the ref names nothing for them.
     state["actor"] = STRANGER
     assert client.get(f"/api/refs/{ref}").status_code == 404
+
+
+def test_profile_refs_authorise_in_the_acting_profile_not_a_scoped_one(tmp_path, monkeypatch):
+    """``?profile=X`` scopes a request into X; a profile ref still checks the
+    caller's role where ``/api/profiles`` does: the profile this process serves."""
+    import asyncio
+
+    from hermes_constants import get_hermes_home, reset_hermes_home_override, set_hermes_home_override
+
+    acting, other = tmp_path / "acting", tmp_path / "other"
+    acting.mkdir()
+    other.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(acting))
+    seen = []
+
+    async def _resolve(request, *, allow_as=False):
+        seen.append(get_hermes_home())
+        return OWNER
+
+    monkeypatch.setattr("hermes_cli.web_server._comms_resolve_principal", _resolve, raising=False)
+    token = set_hermes_home_override(other)
+    try:
+        assert asyncio.run(refs_api._acting_principal(None)) is OWNER
+        assert get_hermes_home() == other
+    finally:
+        reset_hermes_home_override(token)
+    assert seen == [acting]
