@@ -626,6 +626,14 @@ def _card_refs(project, tasks) -> dict[str, str]:
     return short_refs.ensure_refs_quietly("T", items)
 
 
+def _host_of(profiles: list[dict]) -> Optional[str]:
+    """The project's host profile from its profile list (``projects_run.host_profile_name``)."""
+    for p in profiles:
+        if p.get("role") == "host":
+            return p["profile"]
+    return profiles[0]["profile"] if profiles else None
+
+
 def _project_payload(project, *, extra: Optional[dict] = None) -> dict:
     d = project.to_dict()
     d.pop("folders", None)  # folder list rides with the detail read
@@ -1028,6 +1036,9 @@ def _list_sync(
                     p,
                     extra={
                         "ref": refs.get(p.id),
+                        # The host lives on the project's profile list; the
+                        # legacy column is often empty.
+                        "host_profile": p.host_profile or _host_of(profiles),
                         "progress": progress,
                         "output_rollup": _output_rollup(outputs),
                         "member_count": len(members),

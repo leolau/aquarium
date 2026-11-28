@@ -158,6 +158,13 @@ def test_detail_and_list_carry_the_output_rollup(env):
     assert listed[0]["output_rollup"]["total"] == 1
 
 
+def test_list_names_the_host_profile_from_the_profile_list(env):
+    client, _state = env
+    _create(env)
+    listed = client.get("/api/registry/projects").json()["items"]
+    assert listed[0]["host_profile"] == "default"
+
+
 def test_create_refuses_goal_over_160_chars(env):
     client, _state = env
     resp = client.post(
