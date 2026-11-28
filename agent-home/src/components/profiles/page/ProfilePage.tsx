@@ -18,6 +18,12 @@ import { Section } from "@/components/profiles/page/Section";
 import { SkillsGrowth } from "@/components/profiles/page/SkillsGrowth";
 import { Connectors } from "@/components/profiles/page/Connectors";
 import { HistoryTabs } from "@/components/profiles/page/HistoryTabs";
+import {
+  ProfileSummary,
+  scrollToSection,
+  type SummaryJump,
+} from "@/components/profiles/page/ProfileSummary";
+import { SECTION_IDS, buildSummary } from "@/components/profiles/page/summary";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { InlineAlert } from "@/components/ui/InlineAlert";
 import { Pill } from "@/components/ui/Pill";
@@ -38,7 +44,7 @@ import {
   SparklesIcon,
   TrashIcon,
 } from "@/components/ui/icons";
-import { errorText, profilePath, sendJson } from "@/lib/admin-fetch";
+import { errorText, getJson, profilePath, sendJson } from "@/lib/admin-fetch";
 import type { SkillUsageRow } from "@/lib/skills/usage";
 import { useAction } from "@/lib/use-action";
 import type {
@@ -93,43 +99,135 @@ export function ProfilePage({
     provider: profile.provider,
     model: profile.model,
   });
-  const status = profileStatus(profile, stats ?? undefined);
+  const [gatewayRunning, setGatewayRunning] = useState(profile.gateway_running);
+  const [skillLibrary, setSkillLibrary] = useState<SkillLibrary | null>(library);
+  const [skillsVersion, setSkillsVersion] = useState(0);
+  const [editGoal, setEditGoal] = useState(false);
+  const status = profileStatus({ ...profile, model: model.model, gateway_running: gatewayRunning }, stats ?? undefined);
   const channels = channelLabels(stats ?? undefined);
+  const enrolled = members.some((m) => m.enrolled);
+
+  const summary = useMemo(
+    () =>
+      buildSummary({
+        profile: { ...profile, name },
+        model: model.model,
+        description,
+        gatewayRunning,
+        stats,
+        library: skillLibrary,
+        sources,
+        needsYou,
+        skillUses,
+      }),
+    [profile, name, model.model, description, gatewayRunning, stats, skillLibrary, sources, needsYou, skillUses],
+  );
+  const hasRightNow = Boolean(stats?.current_task) || needsYou.length > 0;
+  const jumps: SummaryJump[] = [
+    ...(hasRightNow
+      ? [{ section: "rightNow" as const, label: "Right now", count: needsYou.length ? String(needsYou.length) : undefined, tone: "warn" as const }]
+      : []),
+    { section: "skills", label: "What it\u2019s good at", count: String(summary.skillsOn), tone: "muted" },
+    {
+      section: "reach",
+      label: "Ways to reach it",
+      count: summary.sourceCount ? `${summary.routedOn}/${summary.sourceCount}` : "0",
+      tone: "muted",
+    },
+    { section: "history", label: "What it\u2019s been doing" },
+    model.model
+      ? { section: "personality", label: "Personality" }
+      : { section: "personality", label: "Personality", count: "set model", tone: "danger" },
+    ...(enrolled ? [{ section: "people" as const, label: "Who can use it" }] : []),
+  ];
+
+  const handlers = {
+    onPickModel: () => {
+      scrollToSection("personality");
+      document.getElementById("profile-model-select")?.focus({ preventScroll: true });
+    },
+    onEditGoal: () => {
+      setEditGoal(true);
+      scrollToSection("header");
+    },
+    onStartGateway: async () => {
+      await sendJson(profilePath(name, "gateway"), "POST");
+      setGatewayRunning(true);
+    },
+    onTurnOffSkills: async (skills: string[]) => {
+      try {
+        for (const skill of skills) {
+          await sendJson("/api/skills/library/remove", "POST", { target: name, name: skill });
+        }
+      } finally {
+        try {
+          const fresh = await getJson<SkillLibrary>("/api/skills/library");
+          if (fresh && Array.isArray(fresh.skills)) setSkillLibrary(fresh);
+        } catch {
+          /* keep the last good list */
+        }
+        setSkillsVersion((v) => v + 1);
+      }
+    },
+  };
 
   return (
     <div data-component="ProfilePage" className="flex flex-col gap-4">
-      <HeaderCard
-        profile={profile}
-        name={name}
-        description={description}
-        modelLabel={model.model ?? "no model set"}
-        status={status}
-        stats={stats}
-        channels={channels}
-        onDescription={setDescription}
-      />
-      <RightNow stats={stats} needsYou={needsYou} />
-      <SkillsGrowth profile={name} stats={stats} library={library} skillUses={skillUses} />
-      <Connectors
-        profile={name}
-        sources={sources}
-        mcpServers={mcpServers}
-        gatewayRunning={profile.gateway_running}
-      />
-      <HistoryTabs
-        sessions={sessions}
-        projects={projects}
-        cronJobs={cronJobs}
-        skillUses={skillUses}
-      />
-      <Personality
-        name={name}
-        soul={initialSoul}
-        model={model}
-        providers={providers}
-        onModel={setModel}
-      />
-      <People members={members} />
+      <ProfileSummary summary={summary} jumps={jumps} handlers={handlers} />
+      <div id={SECTION_IDS.header} className="scroll-mt-20">
+        <HeaderCard
+          profile={profile}
+          name={name}
+          description={description}
+          modelLabel={model.model ?? "no model set"}
+          status={status}
+          stats={stats}
+          channels={channels}
+          editGoal={editGoal}
+          onEditGoal={setEditGoal}
+          onDescription={setDescription}
+        />
+      </div>
+      <div id={SECTION_IDS.rightNow} className="scroll-mt-20 empty:hidden">
+        <RightNow stats={stats} needsYou={needsYou} />
+      </div>
+      <div id={SECTION_IDS.skills} className="scroll-mt-20">
+        <SkillsGrowth
+          key={skillsVersion}
+          profile={name}
+          stats={stats}
+          library={skillLibrary}
+          skillUses={skillUses}
+        />
+      </div>
+      <div id={SECTION_IDS.reach} className="scroll-mt-20">
+        <Connectors
+          profile={name}
+          sources={sources}
+          mcpServers={mcpServers}
+          gatewayRunning={gatewayRunning}
+        />
+      </div>
+      <div id={SECTION_IDS.history} className="scroll-mt-20">
+        <HistoryTabs
+          sessions={sessions}
+          projects={projects}
+          cronJobs={cronJobs}
+          skillUses={skillUses}
+        />
+      </div>
+      <div id={SECTION_IDS.personality} className="scroll-mt-20">
+        <Personality
+          name={name}
+          soul={initialSoul}
+          model={model}
+          providers={providers}
+          onModel={setModel}
+        />
+      </div>
+      <div id={SECTION_IDS.people} className="scroll-mt-20 empty:hidden">
+        <People members={members} />
+      </div>
       <DangerZone
         name={name}
         isDefault={profile.is_default}
@@ -153,6 +251,8 @@ function HeaderCard({
   status,
   stats,
   channels,
+  editGoal,
+  onEditGoal: setEditGoal,
   onDescription,
 }: {
   profile: ProfileInfo;
@@ -162,10 +262,11 @@ function HeaderCard({
   status: ReturnType<typeof profileStatus>;
   stats: ProfileStats | null;
   channels: string[];
+  editGoal: boolean;
+  onEditGoal: (v: boolean) => void;
   onDescription: (d: string) => void;
 }) {
   const [pickCreature, setPickCreature] = useState(false);
-  const [editGoal, setEditGoal] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -638,6 +739,7 @@ function Personality({
         <div>
           <label className="mb-1.5 block text-xs font-medium">Model</label>
           <select
+            id="profile-model-select"
             className={inputClass}
             value={choice}
             onChange={(e) => {
