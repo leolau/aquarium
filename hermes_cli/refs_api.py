@@ -155,9 +155,9 @@ def _resolve_chat(parsed, record, principal, enrolled) -> Optional[dict]:
 
 
 def _resolve_agent_profile(parsed, record, principal, enrolled) -> Optional[dict]:
-    """An agent profile, for whoever may open its page: a box-wide
-    owner/admin (``principal`` is always the box-wide reader, see
-    :data:`BOX_PRINCIPAL_KINDS`)."""
+    """An agent profile, for whoever may open its page: an owner/admin of the
+    profile this process serves (``principal`` comes from
+    :func:`_acting_principal`, see :data:`BOX_PRINCIPAL_KINDS`)."""
     from hermes_cli import profiles
 
     name = record.internal_id
@@ -232,9 +232,35 @@ async def _profile_principal(request: Request, profile: str):
 #: ``record.profile`` (D and M re-resolve inside ``profile_refs``).
 PROFILE_PRINCIPAL_KINDS = frozenset({"C"})
 
-#: Kinds authorised by the box-wide reader even when a chat turn passes
-#: its own profile's principal: a profile page is a box-wide admin page.
+#: Kinds authorised in the acting profile even when a chat turn passes its
+#: own profile's principal or ``?profile=`` scopes the request elsewhere: a
+#: profile page is gated like ``/api/profiles``, which is self-scoped.
 BOX_PRINCIPAL_KINDS = frozenset({"A"})
+
+
+async def _acting_principal(request: Request):
+    """The caller as ``/api/profiles`` sees them, or ``None``.
+
+    ``/api/profiles`` is self-scoped: it checks the role in the profile this
+    process serves. A request scoped into another profile (``?profile=``, as
+    agent-home sends for the selected profile) steps out of that scope (home
+    and secrets back to the process's own) for the lookup. A caller who can't
+    be resolved gets ``None`` rather than a 403/409 that would tell a
+    registered ref from an unknown one (likewise when this profile has no
+    datastore).
+    """
+    from agent.secret_scope import reset_secret_scope, set_secret_scope
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+    home_token = set_hermes_home_override(None)
+    secret_token = set_secret_scope(None)
+    try:
+        return await projects_api._principal_read(request)  # noqa: SLF001
+    except Exception:  # 403/409, or no datastore here: all read as "unknown ref"
+        return None
+    finally:
+        reset_secret_scope(secret_token)
+        reset_hermes_home_override(home_token)
 
 
 async def resolve_for_request(request: Request, ref: str, *, principal=None) -> Optional[dict]:
@@ -254,7 +280,11 @@ async def resolve_for_request(request: Request, ref: str, *, principal=None) -> 
         principal = await _profile_principal(request, record.profile or "")
         if principal is None:
             return None
-    elif principal is None or parsed.kind in BOX_PRINCIPAL_KINDS:
+    elif parsed.kind in BOX_PRINCIPAL_KINDS:
+        principal = await _acting_principal(request)
+        if principal is None:
+            return None
+    elif principal is None:
         principal = await projects_api._principal_read(request)  # noqa: SLF001
     enrolled = await projects_api._enrolled_profiles(principal.user_id)  # noqa: SLF001
     from hermes_cli.profile_refs import CALLER_SUBJECT
