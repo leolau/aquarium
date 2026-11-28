@@ -155,9 +155,9 @@ def _resolve_chat(parsed, record, principal, enrolled) -> Optional[dict]:
 
 
 def _resolve_agent_profile(parsed, record, principal, enrolled) -> Optional[dict]:
-    """An agent profile, for whoever may open its page: the owner, or an
-    admin enrolled in that profile (``principal`` may be a chat profile's
-    enrolment, so its admin role alone is not authority over another)."""
+    """An agent profile, for whoever may open its page: a box-wide
+    owner/admin (``principal`` is always the box-wide reader, see
+    :data:`BOX_PRINCIPAL_KINDS`)."""
     from hermes_cli import profiles
 
     name = record.internal_id
@@ -166,8 +166,7 @@ def _resolve_agent_profile(parsed, record, principal, enrolled) -> Optional[dict
             return None
     except ValueError:
         return None
-    is_owner = getattr(principal, "is_owner", False) or principal.role == "owner"
-    if not (is_owner or (projects_api._instance_admin(principal) and name in enrolled)):  # noqa: SLF001
+    if not projects_api._instance_admin(principal):  # noqa: SLF001
         return None
     profile_dir = profiles.get_profile_dir(name)
     try:
@@ -233,6 +232,10 @@ async def _profile_principal(request: Request, profile: str):
 #: ``record.profile`` (D and M re-resolve inside ``profile_refs``).
 PROFILE_PRINCIPAL_KINDS = frozenset({"C"})
 
+#: Kinds authorised by the box-wide reader even when a chat turn passes
+#: its own profile's principal: a profile page is a box-wide admin page.
+BOX_PRINCIPAL_KINDS = frozenset({"A"})
+
 
 async def resolve_for_request(request: Request, ref: str, *, principal=None) -> Optional[dict]:
     """:func:`resolve_sync` under the request's caller, with the
@@ -251,7 +254,7 @@ async def resolve_for_request(request: Request, ref: str, *, principal=None) -> 
         principal = await _profile_principal(request, record.profile or "")
         if principal is None:
             return None
-    elif principal is None:
+    elif principal is None or parsed.kind in BOX_PRINCIPAL_KINDS:
         principal = await projects_api._principal_read(request)  # noqa: SLF001
     enrolled = await projects_api._enrolled_profiles(principal.user_id)  # noqa: SLF001
     from hermes_cli.profile_refs import CALLER_SUBJECT

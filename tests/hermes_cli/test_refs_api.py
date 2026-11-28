@@ -256,7 +256,8 @@ def test_a_profile_ref_resolves_for_an_admin_and_404s_for_others(env):
     r = client.get(f"/api/refs/{ref.lower()}").json()
     assert (r["ref"], r["kind"], r["id"]) == (ref, "profile", "research")
     assert r["url"] == "/profiles/research"
-    # Members can't open a profile page; an admin needs an enrolment there.
-    for actor in (STRANGER, ADMIN):
-        state["actor"] = actor
-        assert client.get(f"/api/refs/{ref}").status_code == 404
+    state["actor"] = ADMIN
+    assert client.get(f"/api/refs/{ref}").json()["id"] == "research"
+    # Members can't open a profile page, so the ref names nothing for them.
+    state["actor"] = STRANGER
+    assert client.get(f"/api/refs/{ref}").status_code == 404
