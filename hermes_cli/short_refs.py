@@ -519,13 +519,18 @@ def rename(kind: str, old_id: str, new_id: str, *, projects_path: Optional[Path]
         raise ValueError(f"{KINDS[kind][0]} refs are per profile; rename is box-wide only")
     conn = connect(projects_path)
     try:
+        key = "kind = ? AND internal_id = ? AND profile = '' AND board = ''"
         with write_txn(conn):
-            cur = conn.execute(
-                "UPDATE short_refs SET internal_id = ? WHERE kind = ? AND internal_id = ?"
-                " AND profile = '' AND board = ''",
+            if conn.execute(f"SELECT 1 FROM short_refs WHERE {key}", (kind, str(old_id))).fetchone() is None:
+                return False
+            # A read between the move on disk and this call may have
+            # numbered the new name already; the item's original ref wins.
+            conn.execute(f"DELETE FROM short_refs WHERE {key}", (kind, str(new_id)))
+            conn.execute(
+                f"UPDATE short_refs SET internal_id = ? WHERE {key}",
                 (str(new_id), kind, str(old_id)),
             )
-            return cur.rowcount > 0
+            return True
     finally:
         conn.close()
 

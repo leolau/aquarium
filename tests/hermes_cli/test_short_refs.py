@@ -245,6 +245,13 @@ def test_a_renamed_profile_keeps_its_ref_and_a_deleted_one_retires_it(root):
     assert not short_refs.rename("A", "nobody", "x")
 
 
+def test_rename_keeps_the_original_ref_when_the_new_name_was_numbered_meanwhile(root):
+    first = short_refs.assign("A", "research")
+    short_refs.assign("A", "analyst")  # a list read raced the rename
+    assert short_refs.rename("A", "research", "analyst")
+    assert short_refs.assign("A", "analyst") == first
+
+
 def test_rename_refuses_profile_scoped_kinds(root):
     with pytest.raises(ValueError):
         short_refs.rename("C", "a", "b")
