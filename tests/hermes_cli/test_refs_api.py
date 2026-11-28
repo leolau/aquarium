@@ -304,3 +304,9 @@ def test_profile_refs_hide_an_unresolvable_caller(monkeypatch):
 
     monkeypatch.setattr(refs_api.projects_api, "_principal_read", _refuse)
     assert asyncio.run(refs_api._acting_principal(None)) is None
+
+    async def _no_store(request):
+        raise RuntimeError("no datastore configured")
+
+    monkeypatch.setattr(refs_api.projects_api, "_principal_read", _no_store)
+    assert asyncio.run(refs_api._acting_principal(None)) is None

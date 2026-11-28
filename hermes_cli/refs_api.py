@@ -246,7 +246,8 @@ async def _acting_principal(request: Request):
     agent-home sends for the selected profile) steps out of that scope (home
     and secrets back to the process's own) for the lookup. A caller who can't
     be resolved gets ``None`` rather than a 403/409 that would tell a
-    registered ref from an unknown one.
+    registered ref from an unknown one (likewise when this profile has no
+    datastore).
     """
     from agent.secret_scope import reset_secret_scope, set_secret_scope
     from hermes_constants import reset_hermes_home_override, set_hermes_home_override
@@ -255,7 +256,7 @@ async def _acting_principal(request: Request):
     secret_token = set_secret_scope(None)
     try:
         return await projects_api._principal_read(request)  # noqa: SLF001
-    except HTTPException:
+    except Exception:  # 403/409, or no datastore here: all read as "unknown ref"
         return None
     finally:
         reset_secret_scope(secret_token)
