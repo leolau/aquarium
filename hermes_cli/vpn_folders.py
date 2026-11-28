@@ -475,10 +475,56 @@ async def ensure(folder: Credential, *, agent: bool = False) -> Dict[str, Any]:
     except vpn.VpnError as exc:
         fdoc = {"mounted": False, "error": f"Invalid share settings: {exc}"}
     if fdoc.get("mounted"):
-        _record(slug, last_error=None, last_used=vpn._now())
+        _record(slug, last_error=None, last_used=vpn._now(), auto_mount=True)
     else:
         _record(slug, last_error=fdoc.get("error") or "Could not mount the network folder")
     return await view_of(folder)
+
+
+async def remount_for_vpn(vpn_cred: Credential, *, connected: bool = False) -> List[str]:
+    """After ``vpn_cred`` (re)connects, re-mount every folder that rides it.
+
+    Folder mounts are lazy — ``ensure`` mounts on first use — and die with
+    the tunnel. When the VPN comes back (a user connect or the
+    auto-reconnect sweeper) the folders marked ``auto_mount`` (set by the
+    last successful ``ensure``; cleared by an explicit folder disconnect)
+    are mounted again, so consumers never see the empty-mountpoint gap —
+    e.g. kanban workers that read the share but hold no bridge tools.
+
+    ``connected=True`` (from ``vpn._connect``, which just saw the tunnel
+    come up) skips the extra status probe. Returns the slugs it mounted; a
+    per-folder failure is recorded on that folder (``last_error``), never
+    raised into the connect path.
+    """
+    mounted: List[str] = []
+    vpn_slug = vpn.slug_for(vpn_cred)
+    if not connected:
+        doc = await vpn._helper("status", vpn_slug)
+        if doc.get("state") != "connected":
+            return mounted
+    for folder in await box_folders():
+        other = await vpn_for(folder)
+        if other is None or vpn.slug_for(other) != vpn_slug:
+            continue
+        slug = folder_slug_for(folder)
+        if not _entry(slug).get("auto_mount"):
+            continue
+        try:
+            fdoc = await vpn._helper(
+                "mount", slug, mount_spec(folder, vpn_cred, vpn_slug, slug)
+            )
+        except vpn.VpnError as exc:
+            fdoc = {"mounted": False, "error": str(exc)}
+        if fdoc.get("mounted"):
+            _record(slug, last_error=None, last_used=vpn._now())
+            mounted.append(slug)
+        else:
+            _record(
+                slug,
+                last_error=fdoc.get("error")
+                or "Could not re-mount the network folder",
+            )
+    return mounted
 
 
 async def test(principal: Any, name: str) -> Dict[str, Any]:
@@ -506,7 +552,7 @@ async def disconnect(principal: Any, name: str) -> Dict[str, Any]:
     cred = await find_own_folder(principal, name)
     slug = folder_slug_for(cred)
     await vpn._helper("umount", slug)
-    _record(slug, last_error=None)
+    _record(slug, last_error=None, auto_mount=False)
     return await view_of(cred)
 
 

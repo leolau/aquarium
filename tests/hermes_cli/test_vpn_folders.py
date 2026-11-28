@@ -558,6 +558,86 @@ def test_agent_ensure_honours_auto_connect_off(file_store, helper):
     assert view["status"]["mounted"] is True
 
 
+def _folder(store, name, **extra):
+    return run(
+        store.put(
+            ALICE,
+            provider="fortinet",
+            name=name,
+            kind="smb-folder",
+            payload={"vpn": "Office files", "share_path": "//fs01/" + name, **extra},
+            visibility="private:alice",
+        )
+    )
+
+
+def test_vpn_reconnect_remounts_its_folders(file_store, helper):
+    """The drop we hit on HSD: tunnel dies, auto-reconnect brings it back —
+    and the folder mount comes back with it, without anything calling
+    ensure first."""
+    put_vpn(file_store, ALICE)
+    cred = _folder(file_store, "Jensen")
+    slug = vpn_folders.folder_slug_for(cred)
+    assert run(vpn_folders.ensure(cred))["status"]["mounted"] is True
+    run(vpn.disconnect(ALICE, "Office files"))
+    assert helper.folders[slug]["mounted"] is False
+    helper.calls.clear()
+    run(vpn.connect(ALICE, "Office files"))
+    assert helper.folders[slug]["mounted"] is True
+    assert "mount" in helper.commands()
+
+
+def test_reconnect_only_remounts_folders_that_were_ensured(file_store, helper):
+    put_vpn(file_store, ALICE)
+    used = _folder(file_store, "Used")
+    never = _folder(file_store, "Never")
+    run(vpn_folders.ensure(used))
+    never_slug = vpn_folders.folder_slug_for(never)
+    run(vpn.disconnect(ALICE, "Office files"))
+    run(vpn.connect(ALICE, "Office files"))
+    assert helper.folders[vpn_folders.folder_slug_for(used)]["mounted"] is True
+    assert never_slug not in helper.folders
+
+
+def test_folder_disconnect_clears_auto_mount(file_store, helper):
+    put_vpn(file_store, ALICE)
+    cred = _folder(file_store, "Seasonal")
+    slug = vpn_folders.folder_slug_for(cred)
+    run(vpn_folders.ensure(cred))
+    run(vpn_folders.disconnect(ALICE, "Seasonal"))
+    run(vpn.disconnect(ALICE, "Office files"))
+    run(vpn.connect(ALICE, "Office files"))
+    assert helper.folders[slug]["mounted"] is False
+
+
+def test_remount_failure_is_recorded_not_raised(file_store, helper):
+    put_vpn(file_store, ALICE)
+    cred = _folder(file_store, "Fragile")
+    run(vpn_folders.ensure(cred))
+    run(vpn.disconnect(ALICE, "Office files"))
+    helper.mount_error = "share offline"
+    view = run(vpn.connect(ALICE, "Office files"))  # connect still succeeds
+    assert view["status"]["state"] == "connected"
+    assert helper.folders[vpn_folders.folder_slug_for(cred)]["mounted"] is False
+
+
+def test_ensure_folder_cli_by_id_and_name(file_store, helper, capsys):
+    put_vpn(file_store, ALICE)
+    cred = _folder(file_store, "BridgeDocs")
+    fid = vpn_folders.folder_id(vpn_folders.folder_slug_for(cred))
+    from hermes_cli.vpn_cmd import vpn_command
+    import argparse
+
+    rc = vpn_command(argparse.Namespace(vpn_command="ensure-folder", name=fid, json=False))
+    out = capsys.readouterr().out
+    assert rc == 0 and "mounted" in out and "BridgeDocs" in out
+
+    run(vpn_folders.disconnect(ALICE, "BridgeDocs"))
+    rc = vpn_command(argparse.Namespace(vpn_command="ensure-folder", name="BridgeDocs", json=False))
+    assert rc == 0
+    assert helper.folders[vpn_folders.folder_slug_for(cred)]["mounted"] is True
+
+
 # ---------------------------------------------------------------------------
 # Internal (app-mcp) routes
 # ---------------------------------------------------------------------------

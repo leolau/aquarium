@@ -14,7 +14,7 @@ import json
 import sys
 from typing import Any, Dict
 
-from hermes_cli import vpn
+from hermes_cli import vpn, vpn_folders
 
 
 def describe(view: Dict[str, Any], *, with_check: bool = False) -> str:
@@ -88,6 +88,35 @@ async def _dispatch(args: argparse.Namespace) -> int:
         view = await vpn.disconnect(principal, args.name, loose=True)
         _emit(view, as_json)
         return 0
+    if action == "ensure-folder":
+        # A Files → Bridge network folder by id (net-…) or by name. Workers
+        # without folder_bridge_* tools use this to bring the share up
+        # before reading its mount; it also marks the folder auto_mount so
+        # a VPN reconnect restores it.
+        if args.name.startswith(vpn_folders.ID_PREFIX):
+            cred = await vpn_folders.find_by_id(args.name)
+        else:
+            cred = next(
+                (c for c in await vpn_folders.box_folders() if c.name == args.name),
+                None,
+            )
+            if cred is None:
+                raise vpn_folders.FolderNotFound(
+                    f"no network folder named '{args.name}'"
+                )
+        view = await vpn_folders.ensure(cred)
+        if as_json:
+            print(json.dumps({"folder": view}))
+        else:
+            status = view.get("status") or {}
+            if status.get("mounted"):
+                print(f"{cred.name}: mounted at {view.get('mount_path')} (read-only)")
+            else:
+                print(
+                    f"{cred.name}: not mounted — "
+                    f"{status.get('error') or 'the network folder could not be mounted'}"
+                )
+        return 0 if (view.get("status") or {}).get("mounted") else 1
     if action == "test":
         view = await vpn.test(principal, args.name, loose=True)
         _emit(view, as_json, with_check=True)
@@ -129,6 +158,20 @@ def register_vpn_subparser(subparsers: argparse._SubParsersAction) -> None:
         cmd = sub.add_parser(verb, help=text)
         cmd.add_argument("name", help="VPN name, e.g. \"Office files\"")
         cmd.add_argument("--json", action="store_true", help="JSON output")
+    ensure = sub.add_parser(
+        "ensure-folder",
+        help="Mount a Files → Bridge network folder (connect its VPN if needed)",
+        description=(
+            "Bring a network folder's VPN up if needed and mount the share "
+            "read-only at /opt/data/vpn-files/<id>. Idempotent — safe for a "
+            "run card or script to call before reading the mount. Also marks "
+            "the folder auto_mount so a later VPN reconnect restores it."
+        ),
+    )
+    ensure.add_argument(
+        "name", help="Folder id (net-…) or name, e.g. \"Jensen (NEW)\""
+    )
+    ensure.add_argument("--json", action="store_true", help="JSON output")
     migrate = sub.add_parser(
         "migrate-shares",
         help="Move each VPN's own file share into a network folder (Files → Bridge)",
