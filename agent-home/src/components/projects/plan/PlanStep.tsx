@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { planDiff } from "@/components/projects/changes/planDiff";
 import { PlanDiffView } from "@/components/projects/changes/PlanDiffView";
@@ -42,6 +42,15 @@ export function PlanStep({
   const timeLabel = useTimeLabel();
   const [mode, setMode] = useState<"steps" | "diff">("steps");
   const [editOpen, setEditOpen] = useState(false);
+  // The editor mounts below the steps list — on a plan with long step
+  // bodies that is below the fold, so Edit must scroll it into view or it
+  // looks like the click did nothing.
+  const editorRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (editOpen) {
+      editorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [editOpen]);
 
   const active = playbook?.active ?? null;
   const steps = active?.steps ?? [];
@@ -225,8 +234,9 @@ export function PlanStep({
 
         {editOpen ? (
           <div
+            ref={editorRef}
             data-testid="plan-editor"
-            className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)]"
+            className="scroll-mt-4 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)]"
           >
             <PlanPanel
               slug={project.slug}
