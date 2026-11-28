@@ -314,8 +314,51 @@ describe("ProfilePage", () => {
 
   it("shows enrolled people and the danger zone", () => {
     renderPage();
-    expect(screen.getByText("Who can use it")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Who can use it" })).toBeTruthy();
     expect(screen.getByText("Leo")).toBeTruthy();
     expect(screen.getByText("Danger zone")).toBeTruthy();
+  });
+
+  it("puts a summary on top that links each issue to its fix", () => {
+    renderPage({ profile: { ...PROFILE, model: null } });
+    const summary = document.querySelector('[data-component="ProfileSummary"]') as HTMLElement;
+    expect(summary).toBeTruthy();
+    expect(summary.textContent).toContain("Can\u2019t run yet — no model is picked.".replace("\u2019", "'"));
+    expect(screen.getAllByRole("button", { name: "Pick a model" }).length).toBeGreaterThan(0);
+  });
+
+  it("asks before turning off unused skills, then removes each once", async () => {
+    const lib: SkillLibrary = {
+      ...LIBRARY,
+      skills: [
+        ...LIBRARY.skills,
+        {
+          name: "faq",
+          description: "",
+          category: "docs",
+          source: "shared",
+          owners: [],
+          used_by: [{ profile: "storyteller", enabled: true }],
+          in_shared: true,
+        },
+      ],
+    };
+    renderPage({ library: lib });
+    const button = screen.getByRole("button", { name: /Turn off 1 unused skill/ });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    const dialog = await screen.findByRole("dialog");
+    const confirm = Array.from(dialog.querySelectorAll("button")).find((b) =>
+      /Turn off 1 unused skill/.test(b.textContent ?? ""),
+    ) as HTMLButtonElement;
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    await waitFor(() => {
+      const calls = (fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.filter((c) =>
+        String(c[0]).includes("/api/skills/library/remove"),
+      );
+      expect(calls.length).toBe(1);
+      expect(JSON.parse(String((calls[0][1] as RequestInit).body))).toMatchObject({ target: "storyteller", name: "faq" });
+    });
   });
 });

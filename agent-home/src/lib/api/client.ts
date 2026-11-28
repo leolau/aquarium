@@ -537,6 +537,11 @@ export class HermesApiClient {
     });
   }
 
+  /** Start one profile's messaging gateway (`hermes -p <name> gateway start`). */
+  async startProfileGateway(name: string): Promise<{ ok: boolean; pid?: number | null }> {
+    return this.request(`/api/gateway/start?profile=${encodeURIComponent(name)}`, { method: "POST" });
+  }
+
   async setProfileModel(
     name: string,
     provider: string,
