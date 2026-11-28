@@ -385,6 +385,47 @@ def test_board_shows_what_a_blocked_card_waits_to_be_allowed(env):
     assert pending[0]["detail"] == "mcp_canva_create_upload_url {}"
 
 
+def test_board_labels_each_blocked_card_with_when_why_and_its_run(env):
+    """The banner reads ``blocked_at`` / ``block_reason`` / ``run_no`` off
+    the board payload so it can say "blocked 6d ago · not part of run 4"
+    instead of implying every block belongs to the open run."""
+    client, _state = env
+    project = _project(env)
+    slug = project["slug"]
+    run = _open_run(project)
+    run_card = _card(env, slug, "Top up inputs")
+    _link(run, run_card)
+    orphan = _card(env, slug, "An old board card")
+    _set_status(run_card, "ready")
+    _set_status(orphan, "ready")
+    with kanban_db.connect_closing() as bconn:
+        kanban_db.block_task(
+            bconn,
+            run_card,
+            reason="Reconnect Jensen (NEW), then unblock me",
+            kind="needs_input",
+        )
+        kanban_db.block_task(
+            bconn, orphan, reason="worker crashed: pid not alive"
+        )
+    resp = client.get(f"{PREFIX}/{slug}/board")
+    assert resp.status_code == 200, resp.text
+    tasks = {
+        task["id"]: task
+        for column in resp.json()["columns"]
+        for task in column["tasks"]
+    }
+    rc, oc = tasks[run_card], tasks[orphan]
+    assert rc["status"] == "blocked"
+    assert rc["run_no"] == run["run_no"]
+    assert rc["block_reason"] == "Reconnect Jensen (NEW), then unblock me"
+    assert isinstance(rc["blocked_at"], int)
+    assert oc["status"] == "blocked"
+    assert oc["run_no"] is None
+    assert oc["block_reason"] == "worker crashed: pid not alive"
+    assert isinstance(oc["blocked_at"], int)
+
+
 def test_allowing_the_last_approval_comments_and_releases_the_card(env):
     client, state = env
     project = _project(env)

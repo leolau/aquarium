@@ -2828,8 +2828,43 @@ async def project_board(request: Request) -> dict[str, Any]:
             pending = kanban_db.list_task_approvals(
                 bconn, [task["id"] for task in blocked]
             )
+            # When + why each card blocked, and which project run it belongs
+            # to — the banner distinguishes an old orphan block from a card
+            # of the open run, and "waiting on you" from a crash.
+            blocked_ids = [task["id"] for task in blocked]
+            latest_block_event: dict[str, Any] = {}
+            if blocked_ids:
+                ph = ",".join("?" * len(blocked_ids))
+                for ev in bconn.execute(
+                    f"SELECT task_id, created_at, payload FROM task_events "
+                    f"WHERE task_id IN ({ph}) AND kind = 'blocked' ORDER BY id",
+                    blocked_ids,
+                ):
+                    latest_block_event[ev["task_id"]] = ev
+            run_no_by_task: dict[str, int] = {}
+            if blocked_ids:
+                with projects_db.connect_closing() as pconn:
+                    for row in pconn.execute(
+                        "SELECT rc.task_id, r.run_no FROM project_run_cards rc "
+                        "JOIN project_runs r ON r.id = rc.run_id "
+                        f"WHERE rc.task_id IN ({ph}) ORDER BY r.run_no",
+                        blocked_ids,
+                    ):
+                        run_no_by_task[row["task_id"]] = row["run_no"]
             for task in blocked:
                 task["pending_approvals"] = pending.get(task["id"], [])
+                ev = latest_block_event.get(task["id"])
+                task["blocked_at"] = ev["created_at"] if ev else None
+                reason = None
+                if ev:
+                    try:
+                        reason = (json.loads(ev["payload"] or "{}") or {}).get(
+                            "reason"
+                        )
+                    except (json.JSONDecodeError, TypeError):
+                        reason = None
+                task["block_reason"] = reason or None
+                task["run_no"] = run_no_by_task.get(task["id"])
             cards = [task for column in view["columns"] for task in column["tasks"]]
             refs = _card_refs(project, cards)
             for task in cards:

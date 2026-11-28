@@ -175,6 +175,47 @@ describe("nextAction priority", () => {
     expect(low?.action.label).toBe("Retry");
   });
 
+  it("(c) the open run's blocked card outranks an older board block", () => {
+    const p = project({ runs: [RUNNING] }); // run 2
+    const b = board(
+      card({ id: "w", status: "running" }), // the run is still moving, so no stalled-hero
+      card({ id: "old", status: "blocked", priority: 9, title: "Old", run_no: null, blocked_at: NOW - 6 * 86_400 }),
+      card({ id: "new", status: "blocked", priority: 1, title: "New", run_no: 2, blocked_at: NOW - 60 }),
+    );
+    expect(hero(p, b).key).toBe("blocked:new");
+  });
+
+  it("(c) labels a blocked card with its run, its ask and its age", () => {
+    const p = project({ runs: [RUNNING] });
+    const b = board(
+      card({
+        id: "a",
+        status: "blocked",
+        run_no: 2,
+        blocked_at: NOW - 3 * 3_600,
+        block_kind: "needs_input",
+        block_reason: "Reconnect Jensen (NEW), then unblock me",
+      }),
+      card({ id: "o", status: "blocked", run_no: null, blocked_at: NOW - 6 * 86_400 }),
+    );
+    const items = needsYouItems({ project: p, board: b, readiness: [], playbook: PB, now: NOW });
+    const inRun = items.find((i) => i.key === "blocked:a");
+    expect(inRun?.tone).toBe("warning");
+    expect(inRun?.detail).toContain("run 2");
+    expect(inRun?.detail).toContain("Reconnect Jensen (NEW), then unblock me");
+    expect(inRun?.detail).toContain("asked 3h ago");
+    const orphan = items.find((i) => i.key === "blocked:o");
+    expect(orphan?.detail).toContain("not part of run 2");
+    expect(orphan?.detail).toContain("blocked 6d ago");
+  });
+
+  it("(c) a run's card blocked under a closed run still names that run", () => {
+    const p = project({ runs: [run({ run_no: 4, status: "done", ended_at: NOW - 3_600 })] });
+    const b = board(card({ id: "a", status: "blocked", run_no: 1, blocked_at: NOW - 60 }));
+    const items = needsYouItems({ project: p, board: b, readiness: [], playbook: PB, now: NOW });
+    expect(items.find((i) => i.key === "blocked:a")?.detail).toContain("run 1");
+  });
+
   it("(d) delivered outputs go to the Outputs tab", () => {
     const p = project({ runs: [run()], outputs: [output({ status: "delivered", delivered_at: NOW })] });
     const h = hero(p);
