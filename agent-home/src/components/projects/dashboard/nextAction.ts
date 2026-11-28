@@ -25,6 +25,7 @@ import type {
   ProjectBoardView,
   ProjectDetail,
   ProjectPlaybookResponse,
+  ProjectRunBrief,
 } from "@/types";
 
 /**
@@ -403,8 +404,13 @@ export function needsYouItems({
   const scope = scopeItem(project, playbook, canLead);
   if (scope) items.push(scope);
 
-  // (c) blocked cards
-  for (const card of blockedCards(board)) items.push(blockedItem(card));
+  // (c) blocked cards — the open run's own cards first; an old board-level
+  // block must not outrank the ask that is actually stalling this run.
+  const blocked = blockedCards(board);
+  const inOpenRun = (card: ProjectBoardTask) =>
+    open != null && card.run_no === open.run_no;
+  for (const card of [...blocked.filter(inOpenRun), ...blocked.filter((c) => !inOpenRun(c))])
+    items.push(blockedItem(card, open, now));
 
   if (project.status !== "done") {
     // (d) outputs to accept
@@ -452,18 +458,55 @@ export function needsYouItems({
   return items;
 }
 
-function blockedItem(card: ProjectBoardTask): NeedsYouItem {
+/** "6d ago" — mirrors `agoLabel` in format.ts but takes `now` so callers
+ * (and tests) control the clock. */
+function blockedAgo(blockedAt: number | null | undefined, now: number): string | null {
+  if (blockedAt == null) return null;
+  const seconds = Math.max(0, now - blockedAt);
+  if (seconds < 3600) return "just now";
+  if (seconds < 86_400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86_400)}d ago`;
+}
+
+/** Where a blocked card sits relative to the open run — the tag that tells
+ * "one of this run's cards stopped" apart from "an old board card is still
+ * blocked" (a Nov-23 orphan sitting next to a healthy run 4). */
+function blockedScope(card: ProjectBoardTask, open: ProjectRunBrief | null): string | null {
+  if (open == null) return card.run_no != null ? `run ${card.run_no}` : null;
+  if (card.run_no === open.run_no) return `run ${open.run_no}`;
+  if (card.run_no != null) return `run ${card.run_no}, not run ${open.run_no}`;
+  return `not part of run ${open.run_no}`;
+}
+
+function clip(text: string, max = 160): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+function blockedItem(
+  card: ProjectBoardTask,
+  open: ProjectRunBrief | null,
+  now: number,
+): NeedsYouItem {
   const base = {
     key: `blocked:${card.id}`,
     group: "blocked" as const,
     tone: "danger" as const,
     title: `“${card.title}” is blocked`,
   };
+  const reason = card.block_reason?.trim() || null;
+  const meta = [
+    blockedScope(card, open),
+    blockedAgo(card.blocked_at, now) &&
+      `${card.block_kind === "needs_input" ? "asked" : "blocked"} ${blockedAgo(card.blocked_at, now)}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const suffix = meta ? ` (${meta}).` : ".";
   if (card.block_kind === "needs_input") {
     return {
       ...base,
       tone: "warning",
-      detail: "The agent needs an answer from you.",
+      detail: `The agent needs an answer from you${reason ? ` — ${clip(reason)}` : ""}${suffix}`,
       action: {
         label: "Answer",
         effect: "Opens the card so you can reply.",
@@ -474,7 +517,7 @@ function blockedItem(card: ProjectBoardTask): NeedsYouItem {
   if (card.block_kind === "capability") {
     return {
       ...base,
-      detail: "The agent can't do this with the tools it has.",
+      detail: `The agent can't do this with the tools it has${reason ? ` — ${clip(reason)}` : ""}${suffix}`,
       action: {
         label: "Open card",
         effect: "Opens the card to see what it needs.",
@@ -484,7 +527,7 @@ function blockedItem(card: ProjectBoardTask): NeedsYouItem {
   }
   return {
     ...base,
-    detail: "It stopped on an error.",
+    detail: `It stopped on an error${reason ? `: ${clip(reason)}` : ""}${suffix}`,
     action: {
       label: "Retry",
       pendingLabel: "Retrying…",

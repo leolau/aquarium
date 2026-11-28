@@ -3004,6 +3004,16 @@ export interface ProjectBoardTask {
   /** Why a `blocked` card stopped (`kanban_db.VALID_BLOCK_KINDS`), or
    * `null` for a legacy/un-typed block. Absent for every other status. */
   block_kind?: "needs_input" | "capability" | "transient" | null;
+  /** When the card last blocked (latest `blocked` task_event), so the
+   * banner can say "blocked 6d ago" instead of implying it just happened. */
+  blocked_at?: number | null;
+  /** The block's own reason text (event payload), e.g. the worker's
+   * "reconnect the drive, then unblock" — surfaced so stale asks read as
+   * stale. */
+  block_reason?: string | null;
+  /** The project run this card belongs to (via `project_run_cards`), so
+   * the banner can tell a card of the open run from an older orphan. */
+  run_no?: number | null;
   /** Approvals this card's worker asked for and nobody has answered yet
    * (`kanban_db.list_task_approvals`). Only filled on `blocked` cards by
    * the project board read. */
