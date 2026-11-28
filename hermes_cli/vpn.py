@@ -387,6 +387,20 @@ async def _connect(cred: Credential) -> Dict[str, Any]:
     fields: Dict[str, Any] = {"last_error": doc.get("error")}
     if doc.get("state") == "connected":
         fields["last_used"] = _now()
+        # Folder mounts are lazy and die with the tunnel; a (re)connect
+        # restores the ones that rode it. Imported lazily: vpn_folders
+        # imports this module. A remount problem must never fail the VPN
+        # connect itself.
+        try:
+            from hermes_cli import vpn_folders
+
+            await vpn_folders.remount_for_vpn(cred, connected=True)
+        except Exception:  # noqa: BLE001
+            import logging
+
+            logging.getLogger(__name__).exception(
+                "vpn %s: folder remount after connect failed", slug
+            )
     entry = _record(slug, **fields)
     return build_view(cred, slug, doc, entry)
 
