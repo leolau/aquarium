@@ -243,3 +243,17 @@ def test_cli_prints_the_api_resolution(env, monkeypatch, capsys):
 
     assert ref_cli.ref_command(argparse.Namespace(ref="P42", actor=None, json=False)) == 1
     assert "ref not found" in capsys.readouterr().err
+
+
+def test_a_profile_ref_resolves_for_an_admin_and_404s_for_others(env):
+    from hermes_cli import profiles
+
+    client, state = env
+    profiles.get_profile_dir("default").mkdir(parents=True, exist_ok=True)
+    profiles.get_profile_dir("research").mkdir(parents=True)
+    ref = short_refs.assign("A", "research")
+    r = client.get(f"/api/refs/{ref.lower()}").json()
+    assert (r["ref"], r["kind"], r["id"]) == (ref, "profile", "research")
+    assert r["url"] == "/profiles/research"
+    state["actor"] = STRANGER
+    assert client.get(f"/api/refs/{ref}").status_code == 404

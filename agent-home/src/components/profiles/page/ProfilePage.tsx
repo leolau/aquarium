@@ -15,6 +15,7 @@ import {
 } from "@/components/profiles/profile-cards";
 import { ProfileCreaturePicker } from "@/components/profiles/ProfileCreaturePicker";
 import { Section } from "@/components/profiles/page/Section";
+import { RefBadge } from "@/components/refs/RefBadge";
 import { SkillsGrowth } from "@/components/profiles/page/SkillsGrowth";
 import { Connectors } from "@/components/profiles/page/Connectors";
 import { HistoryTabs } from "@/components/profiles/page/HistoryTabs";
@@ -298,6 +299,7 @@ function HeaderCard({
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <h1 className="truncate text-lg font-semibold">{name}</h1>
+              <RefBadge value={profile.ref} />
               {profile.is_default ? <Pill tone="muted">default</Pill> : null}
             </div>
             <p className="truncate text-xs text-[var(--color-muted)]">

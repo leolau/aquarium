@@ -16,5 +16,6 @@ export function toProfileInfo(raw: Record<string, unknown>): ProfileInfo {
     has_env: raw.has_env === true,
     skill_count: typeof raw.skill_count === "number" ? raw.skill_count : 0,
     gateway_running: raw.gateway_running === true,
+    ref: typeof raw.ref === "string" ? raw.ref : null,
   };
 }

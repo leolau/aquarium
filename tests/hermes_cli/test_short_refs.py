@@ -211,3 +211,44 @@ def test_backfill_numbers_existing_project_cards(root):
     order = [short_refs.lookup(f"T{n}").internal_id for n in (1, 2, 3)]
     assert order == ["t_1", "t_2", "t_0"]
     assert short_refs.lookup("T4") is None
+
+
+# ---------------------------------------------------------------------------
+# Agent profiles (A)
+# ---------------------------------------------------------------------------
+
+
+def _make_profile(name: str):
+    from hermes_cli import profiles
+
+    profiles.get_profile_dir(name).mkdir(parents=True)
+
+
+def test_profiles_are_box_wide_and_backfill_default_first(root):
+    from hermes_cli import profiles
+
+    profiles.get_profile_dir("default").mkdir(parents=True, exist_ok=True)
+    _make_profile("research")
+    assert short_refs.backfill("A") == 2
+    assert short_refs.lookup("A1").internal_id == "default"
+    assert short_refs.lookup("A2").internal_id == "research"
+    assert short_refs.lookup("a2").profile is None
+
+
+def test_a_renamed_profile_keeps_its_ref_and_a_deleted_one_retires_it(root):
+    first = short_refs.assign("A", "research")
+    assert short_refs.rename("A", "research", "analyst")
+    assert short_refs.assign("A", "analyst") == first
+    assert short_refs.rename("A", "analyst", "analyst#deleted-1")
+    # A new profile reusing the name is a new number, never the old one.
+    assert short_refs.assign("A", "analyst") != first
+    assert not short_refs.rename("A", "nobody", "x")
+
+
+def test_rename_refuses_profile_scoped_kinds(root):
+    with pytest.raises(ValueError):
+        short_refs.rename("C", "a", "b")
+
+
+def test_profile_refs_are_found_in_text():
+    assert short_refs.REF_IN_TEXT_RE.findall("ask A2 about P7") == ["A2", "P7"]

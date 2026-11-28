@@ -17272,10 +17272,26 @@ async def list_profiles_endpoint():
     try:
         loop = asyncio.get_running_loop()
         profiles = await loop.run_in_executor(None, profiles_mod.list_profiles)
-        return {"profiles": [_profile_to_dict(p) for p in profiles]}
+        rows = [_profile_to_dict(p) for p in profiles]
     except Exception:
         _log.exception("GET /api/profiles failed; falling back to profile directory scan")
-        return {"profiles": _fallback_profile_dicts(profiles_mod)}
+        rows = _fallback_profile_dicts(profiles_mod)
+    return {"profiles": await asyncio.to_thread(_with_profile_refs, rows)}
+
+
+def _with_profile_refs(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Each row's short ref (``A3``), numbering profiles that lack one."""
+    from hermes_cli import short_refs
+
+    try:
+        items = short_refs.profile_items()
+    except Exception:
+        _log.warning("profile refs: could not list profiles", exc_info=True)
+        items = [short_refs.RefItem(str(r.get("name") or "")) for r in rows if r.get("name")]
+    refs = short_refs.ensure_refs_quietly("A", items)
+    for row in rows:
+        row["ref"] = refs.get(str(row.get("name") or ""))
+    return rows
 
 
 @app.post("/api/profiles", dependencies=_ADMIN)

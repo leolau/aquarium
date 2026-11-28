@@ -1,7 +1,8 @@
 """Short refs: box-unique, typeable handles for the things people talk about.
 
 ``P12`` a project, ``T345`` a project card, ``P12-R3`` run 3 of P12,
-``C1024`` a chat, ``D88`` a to-do, ``M512`` an inbox message. A ref is a
+``C1024`` a chat, ``D88`` a to-do, ``M512`` an inbox message, ``A3`` an
+agent profile. A ref is a
 type letter plus a running number that is unique per kind on the box. It is a
 display handle on top of the internal ids (project id/slug, ``t_xxxxxxxx``
 task ids, session ids, UUIDs), which stay authoritative everywhere; a ref is
@@ -50,6 +51,7 @@ KINDS: dict[str, tuple[str, bool]] = {
     "C": ("chat", True),
     "D": ("todo", True),
     "M": ("message", True),
+    "A": ("profile", False),
 }
 
 #: The derived run suffix: ``P12-R3``.
@@ -61,7 +63,7 @@ _REF_RE = re.compile(r"^\s*([A-Za-z])([1-9][0-9]{0,8})(?:-[Rr]([1-9][0-9]{0,8}))
 
 #: A ref anywhere in free text (search boxes, chat turns): word-bounded so
 #: ``MP3`` or ``T1000x`` never match.
-REF_IN_TEXT_RE = re.compile(r"(?<![A-Za-z0-9_-])([PTCDMptcdm][1-9][0-9]{0,8}(?:-[Rr][1-9][0-9]{0,8})?)(?![A-Za-z0-9_])")
+REF_IN_TEXT_RE = re.compile(r"(?<![A-Za-z0-9_-])([PTCDMAptcdma][1-9][0-9]{0,8}(?:-[Rr][1-9][0-9]{0,8})?)(?![A-Za-z0-9_])")
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS short_refs (
@@ -319,6 +321,28 @@ def _chat_items(projects_path: Optional[Path]) -> list[RefItem]:
     return backfill_items(projects_path)
 
 
+def profile_items() -> list[RefItem]:
+    """Every agent profile, keyed by name: ``default`` first, the rest by
+    when their directory was made."""
+    from hermes_cli import profiles
+
+    items = []
+    for info in profiles.list_profiles():
+        if info.is_default:
+            created = 0
+        else:
+            try:
+                created = int(Path(info.path).stat().st_ctime)
+            except OSError:
+                created = None
+        items.append(RefItem(info.name, created))
+    return items
+
+
+def _profile_items(projects_path: Optional[Path]) -> list[RefItem]:
+    return profile_items()
+
+
 def _todo_items(projects_path: Optional[Path]) -> list[RefItem]:
     """Every profile's to-dos (Postgres ``tasks``), via ``profile_refs``."""
     from hermes_cli.profile_refs import todo_items
@@ -340,6 +364,7 @@ BACKFILL_SOURCES: dict[str, Callable[[Optional[Path]], list[RefItem]]] = {
     "C": _chat_items,
     "D": _todo_items,
     "M": _message_items,
+    "A": _profile_items,
 }
 
 
@@ -484,3 +509,31 @@ def lookup(ref: str, *, projects_path: Optional[Path] = None) -> Optional[RefRec
     finally:
         conn.close()
     return _record(row) if row else None
+
+
+def rename(kind: str, old_id: str, new_id: str, *, projects_path: Optional[Path] = None) -> bool:
+    """Move a box-wide item's ref to its new internal id (a renamed profile
+    keeps its number). ``False`` when the old id had no ref."""
+    kind = _check_kind(kind)
+    if KINDS[kind][1]:
+        raise ValueError(f"{KINDS[kind][0]} refs are per profile; rename is box-wide only")
+    conn = connect(projects_path)
+    try:
+        with write_txn(conn):
+            cur = conn.execute(
+                "UPDATE short_refs SET internal_id = ? WHERE kind = ? AND internal_id = ?"
+                " AND profile = '' AND board = ''",
+                (str(new_id), kind, str(old_id)),
+            )
+            return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def rename_quietly(kind: str, old_id: str, new_id: str, **kwargs) -> bool:
+    """:func:`rename` for rename/delete paths: never fails the caller."""
+    try:
+        return rename(kind, old_id, new_id, **kwargs)
+    except Exception:
+        logger.warning("short_refs: could not move %s ref %s → %s", kind, old_id, new_id, exc_info=True)
+        return False

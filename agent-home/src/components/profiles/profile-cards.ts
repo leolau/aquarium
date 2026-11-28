@@ -4,6 +4,7 @@ import {
   isCreatureId,
   type CreatureId,
 } from "@/lib/aquarium/creatures";
+import { parseRef } from "@/lib/refs";
 import { timeAgo } from "@/lib/skills/versions";
 import type { ProfileInfo, ProfileStats } from "@/types";
 
@@ -122,6 +123,9 @@ export function matchesSearch(
 ): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
+  // A profile ref (`A3`) is an exact handle: `a1` must not match A10–A19.
+  const ref = parseRef(q);
+  if (ref?.kind === "A") return p.ref === ref.ref;
   const hay = [
     p.name,
     p.description,

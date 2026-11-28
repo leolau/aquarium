@@ -1,4 +1,4 @@
-# FG-36 — Short refs (`P12`, `T345`, `P12-R3`, `C1024`, `D88`, `M512`)
+# FG-36 — Short refs (`P12`, `T345`, `P12-R3`, `C1024`, `D88`, `M512`, `A3`)
 
 People refer to projects, cards, runs and chats in later prompts. Internal ids
 (`t_1a2b3c4d`, UUIDs, 16-hex session ids) are not typeable or memorable, so
@@ -24,6 +24,7 @@ Approved format: **type letter + running number, unique on the box**.
 | `C1024` | chat (conversation) | registry | per profile (row records it) | 2 — built |
 | `D88` | to-do | registry | per profile (row records it) | 3 — built |
 | `M512` | inbox message | registry | per profile (row records it) | 3 — built |
+| `A3` | agent profile | registry, keyed by profile name; `default` is numbered first. Rename moves the row; delete retires it | box-wide | built |
 
 Rules:
 

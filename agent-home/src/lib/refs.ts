@@ -1,6 +1,6 @@
 /**
  * Short refs (FG-36): `P12` project, `T345` project card, `P12-R3` run 3 of
- * P12, `D88` to-do, `M512` inbox message — and, with its PR, `C` chats. The
+ * P12, `D88` to-do, `M512` inbox message, `C1024` chat, `A3` agent profile. The
  * mirror of `hermes_cli/short_refs.py#parse_ref`: case-insensitive, no
  * leading zeros, a run suffix only after a project.
  */
@@ -10,6 +10,7 @@ export const REF_KINDS = {
   C: "chat",
   D: "todo",
   M: "message",
+  A: "profile",
 } as const;
 
 export type RefKind = keyof typeof REF_KINDS;
@@ -22,7 +23,7 @@ export interface ParsedRef {
   ref: string;
 }
 
-const REF_RE = /^\s*([PTCDM])([1-9][0-9]{0,8})(?:-R([1-9][0-9]{0,8}))?\s*$/i;
+const REF_RE = /^\s*([PTCDMA])([1-9][0-9]{0,8})(?:-R([1-9][0-9]{0,8}))?\s*$/i;
 
 export function parseRef(text: string | null | undefined): ParsedRef | null {
   const m = REF_RE.exec(text ?? "");
