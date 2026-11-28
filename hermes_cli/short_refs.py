@@ -524,8 +524,12 @@ def rename(kind: str, old_id: str, new_id: str, *, projects_path: Optional[Path]
             if conn.execute(f"SELECT 1 FROM short_refs WHERE {key}", (kind, str(old_id))).fetchone() is None:
                 return False
             # A read between the move on disk and this call may have
-            # numbered the new name already; the item's original ref wins.
-            conn.execute(f"DELETE FROM short_refs WHERE {key}", (kind, str(new_id)))
+            # numbered the new name already; the item's original ref wins and
+            # the stray number is retired, never handed out again.
+            conn.execute(
+                f"UPDATE short_refs SET internal_id = internal_id || '#superseded-' || num WHERE {key}",
+                (kind, str(new_id)),
+            )
             conn.execute(
                 f"UPDATE short_refs SET internal_id = ? WHERE {key}",
                 (str(new_id), kind, str(old_id)),
