@@ -239,23 +239,22 @@ BOX_PRINCIPAL_KINDS = frozenset({"A"})
 
 
 async def _acting_principal(request: Request):
-    """The caller in the profile this process serves, outside any
-    ``?profile=`` scope: the identity ``/api/profiles`` checks."""
-    from hermes_cli.console_scope import _scoped_to
-    from hermes_constants import (
-        get_hermes_home,
-        reset_hermes_home_override,
-        set_hermes_home_override,
-    )
-    from hermes_cli.web_server import _comms_resolve_principal
+    """The caller as ``/api/profiles`` sees them, or ``None``.
 
-    token = set_hermes_home_override(None)
+    ``/api/profiles`` is self-scoped: it checks the role in the profile this
+    process serves. A request scoped into another profile (``?profile=``)
+    gets nothing rather than that profile's role, and a caller who can't be
+    resolved here gets nothing rather than a 403/409 that would tell a
+    registered ref from an unknown one.
+    """
+    from hermes_constants import get_hermes_home_override
+
+    if get_hermes_home_override():
+        return None
     try:
-        home = get_hermes_home()
-    finally:
-        reset_hermes_home_override(token)
-    with _scoped_to(home):
-        return await _comms_resolve_principal(request)
+        return await projects_api._principal_read(request)  # noqa: SLF001
+    except HTTPException:
+        return None
 
 
 async def resolve_for_request(request: Request, ref: str, *, principal=None) -> Optional[dict]:
@@ -277,6 +276,8 @@ async def resolve_for_request(request: Request, ref: str, *, principal=None) -> 
             return None
     elif parsed.kind in BOX_PRINCIPAL_KINDS:
         principal = await _acting_principal(request)
+        if principal is None:
+            return None
     elif principal is None:
         principal = await projects_api._principal_read(request)  # noqa: SLF001
     enrolled = await projects_api._enrolled_profiles(principal.user_id)  # noqa: SLF001

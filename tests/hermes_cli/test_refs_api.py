@@ -263,28 +263,29 @@ def test_a_profile_ref_resolves_for_an_admin_and_404s_for_others(env):
     assert client.get(f"/api/refs/{ref}").status_code == 404
 
 
-def test_profile_refs_authorise_in_the_acting_profile_not_a_scoped_one(tmp_path, monkeypatch):
-    """``?profile=X`` scopes a request into X; a profile ref still checks the
-    caller's role where ``/api/profiles`` does: the profile this process serves."""
+
+def test_profile_refs_resolve_nothing_in_a_scoped_request(env, monkeypatch):
+    """``?profile=X`` scopes a request into X, where the caller may be an
+    admin; ``/api/profiles`` ignores that scope, so a profile ref gives nothing."""
     import asyncio
 
-    from hermes_constants import get_hermes_home, reset_hermes_home_override, set_hermes_home_override
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
 
-    acting, other = tmp_path / "acting", tmp_path / "other"
-    acting.mkdir()
-    other.mkdir()
-    monkeypatch.setenv("HERMES_HOME", str(acting))
-    seen = []
-
-    async def _resolve(request, *, allow_as=False):
-        seen.append(get_hermes_home())
-        return OWNER
-
-    monkeypatch.setattr("hermes_cli.web_server._comms_resolve_principal", _resolve, raising=False)
-    token = set_hermes_home_override(other)
+    token = set_hermes_home_override("/tmp/other-profile")
     try:
-        assert asyncio.run(refs_api._acting_principal(None)) is OWNER
-        assert get_hermes_home() == other
+        assert asyncio.run(refs_api._acting_principal(None)) is None
     finally:
         reset_hermes_home_override(token)
-    assert seen == [acting]
+
+
+def test_profile_refs_hide_an_unresolvable_caller(monkeypatch):
+    """A 403/409 from the principal lookup becomes the same 404 as an unknown ref."""
+    import asyncio
+
+    from fastapi import HTTPException
+
+    async def _refuse(request):
+        raise HTTPException(status_code=409, detail="not enrolled")
+
+    monkeypatch.setattr(refs_api.projects_api, "_principal_read", _refuse)
+    assert asyncio.run(refs_api._acting_principal(None)) is None
