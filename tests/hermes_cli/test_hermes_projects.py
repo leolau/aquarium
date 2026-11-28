@@ -172,6 +172,32 @@ def test_outputs_deliver_outside_a_card_sends_no_card(env, tmp_path, capsys, mon
     assert rows[0]["run_id"] is None
 
 
+def test_outputs_deliver_a_shared_workdir_file(env, tmp_path, capsys, monkeypatch):
+    """A run's shared working dir (``auction-work``) sits under the kanban
+    home but outside the board's managed roots — the artifacts read serves
+    those paths, so ``deliver`` accepts them too instead of refusing the
+    card's natural deliverable location."""
+    from hermes_cli import projects_db
+
+    run, _capsys = env
+    slug = _create(run, capsys, tmp_path)
+    with projects_db.connect_closing() as conn:
+        project = projects_db.get_project(conn, slug)
+        oid = projects_db.get_project_outputs(conn, project.id)[0]["id"]
+
+    home = tmp_path / "kanban-home"
+    ref = home / "auction-work/102126/delivered/run4.xlsx"
+    ref.parent.mkdir(parents=True)
+    ref.write_bytes(b"workbook")
+    monkeypatch.setenv("HERMES_KANBAN_HOME", str(home))
+
+    assert run("outputs", slug, "deliver", oid, "--ref", str(ref)) == 0
+    with projects_db.connect_closing() as conn:
+        rows = projects_db.get_output_deliveries(conn, output_id=oid)
+    assert rows[0]["link_kind"] == "workspace"
+    assert rows[0]["link_ref"] == str(ref)
+
+
 def test_guidance_add_says_next_run(env, tmp_path, capsys):
     run, _capsys = env
     slug = _create(run, capsys, tmp_path)
