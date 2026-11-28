@@ -1561,6 +1561,10 @@ def delete_profile(name: str, yes: bool = False) -> Path:
     if remove_error is not None:
         raise RuntimeError(f"Could not remove profile directory {profile_dir}: {remove_error}") from remove_error
 
+    # Retire its short ref: a new profile reusing the name gets a new number.
+    from hermes_cli import short_refs
+    short_refs.rename_quietly("A", canon, f"{canon}#deleted-{int(time.time())}")
+
     print(f"\nProfile '{canon}' deleted.")
     return profile_dir
 
@@ -2172,7 +2176,11 @@ def rename_profile(old_name: str, new_name: str) -> Path:
     else:
         print(f"⚠ Cannot create alias '{new_canon}' — {collision}")
 
-    # 5. Update active_profile if it pointed to old name
+    # 5. The profile keeps its short ref (``A3``) under the new name
+    from hermes_cli import short_refs
+    short_refs.rename_quietly("A", old_canon, new_canon)
+
+    # 6. Update active_profile if it pointed to old name
     try:
         if get_active_profile() == old_canon:
             set_active_profile(new_canon)

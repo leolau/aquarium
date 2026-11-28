@@ -4416,6 +4416,8 @@ export interface ProfileInfo extends ProfileSummary {
   gateway_running: boolean;
   description_auto: boolean;
   has_alias?: boolean;
+  /** Box-unique short ref (`A3`, FG-36); stays the same across renames. */
+  ref?: string | null;
 }
 
 export interface ProfileInfoResponse {

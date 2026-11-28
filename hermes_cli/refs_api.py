@@ -1,5 +1,5 @@
 """``GET /api/refs/{ref}`` — resolve a short ref (``P12``, ``T345``,
-``P12-R3``, ``C1024``, ``D88``, ``M512``) to the item it names, for callers who may see it.
+``P12-R3``, ``C1024``, ``D88``, ``M512``, ``A3``) to the item it names, for callers who may see it.
 
 The resolver carries no access rules of its own: a project goes through
 ``projects_api._can_read`` and a card additionally through
@@ -154,6 +154,37 @@ def _resolve_chat(parsed, record, principal, enrolled) -> Optional[dict]:
     }
 
 
+def _resolve_agent_profile(parsed, record, principal, enrolled) -> Optional[dict]:
+    """An agent profile, for whoever may open its page: a box-wide
+    owner/admin (``principal`` is always the box-wide reader, see
+    :data:`BOX_PRINCIPAL_KINDS`)."""
+    from hermes_cli import profiles
+
+    name = record.internal_id
+    try:
+        if not profiles.profile_exists(name):
+            return None
+    except ValueError:
+        return None
+    if not projects_api._instance_admin(principal):  # noqa: SLF001
+        return None
+    profile_dir = profiles.get_profile_dir(name)
+    try:
+        description = profiles.read_profile_meta(profile_dir).get("description") or ""
+    except Exception:
+        description = ""
+    running = profiles._check_gateway_running(profile_dir)  # noqa: SLF001
+    return {
+        "ref": record.ref,
+        "kind": "profile",
+        "id": name,
+        "title": f"{name} — {description}" if description else name,
+        "status": "handling messages" if running else "messages off",
+        "url": f"/profiles/{quote(name, safe='')}",
+        "profile": None,
+    }
+
+
 #: Per-kind resolvers. Each profile-scoped kind checks authority in
 #: ``record.profile`` (chats via :func:`resolve_for_request`, to-dos and
 #: inbox messages via ``profile_refs``).
@@ -163,6 +194,7 @@ RESOLVERS: dict[str, Callable[..., Optional[dict]]] = {
     "C": _resolve_chat,
     "D": _resolve_profile_item,
     "M": _resolve_profile_item,
+    "A": _resolve_agent_profile,
 }
 
 
@@ -200,6 +232,10 @@ async def _profile_principal(request: Request, profile: str):
 #: ``record.profile`` (D and M re-resolve inside ``profile_refs``).
 PROFILE_PRINCIPAL_KINDS = frozenset({"C"})
 
+#: Kinds authorised by the box-wide reader even when a chat turn passes
+#: its own profile's principal: a profile page is a box-wide admin page.
+BOX_PRINCIPAL_KINDS = frozenset({"A"})
+
 
 async def resolve_for_request(request: Request, ref: str, *, principal=None) -> Optional[dict]:
     """:func:`resolve_sync` under the request's caller, with the
@@ -218,7 +254,7 @@ async def resolve_for_request(request: Request, ref: str, *, principal=None) -> 
         principal = await _profile_principal(request, record.profile or "")
         if principal is None:
             return None
-    elif principal is None:
+    elif principal is None or parsed.kind in BOX_PRINCIPAL_KINDS:
         principal = await projects_api._principal_read(request)  # noqa: SLF001
     enrolled = await projects_api._enrolled_profiles(principal.user_id)  # noqa: SLF001
     from hermes_cli.profile_refs import CALLER_SUBJECT

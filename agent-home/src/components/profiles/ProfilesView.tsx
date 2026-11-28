@@ -37,6 +37,7 @@ import {
   type ProfileStatus,
   type StatusFilter,
 } from "@/components/profiles/profile-cards";
+import { RefBadge } from "@/components/refs/RefBadge";
 import { ActionButton } from "@/components/ui/ActionButton";
 import { InlineAlert } from "@/components/ui/InlineAlert";
 import { Pill } from "@/components/ui/Pill";
@@ -447,6 +448,7 @@ function ProfileCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <span className="truncate text-[15px] font-semibold">{p.name}</span>
+            <RefBadge value={p.ref} className="relative z-10" />
             {p.is_default ? <Pill tone="accent">default</Pill> : null}
           </div>
           <p className="truncate text-xs text-[var(--color-muted)]">
@@ -686,6 +688,11 @@ function ProfileRow({
       <span className="min-w-0 flex-1 space-y-1">
         <span className="flex items-center gap-1.5">
           <span className="truncate text-sm font-semibold">{p.name}</span>
+          {p.ref ? (
+            <span data-ref={p.ref} className="shrink-0 font-mono text-[11px] text-[var(--color-muted)]">
+              {p.ref}
+            </span>
+          ) : null}
           {p.is_default ? <Pill tone="accent">default</Pill> : null}
           <span className="ml-auto shrink-0">
             <StatusPill status={status} needs={s?.needs_you} />

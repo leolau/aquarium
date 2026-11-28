@@ -17,6 +17,7 @@ from hermes_cli.access import Principal
 OWNER = Principal(user_id="leo", display="Leo", role="owner")  # type: ignore[arg-type]
 MEMBER = Principal(user_id="ada", display="Ada", role="member")  # type: ignore[arg-type]
 STRANGER = Principal(user_id="eve", display="Eve", role="member")  # type: ignore[arg-type]
+ADMIN = Principal(user_id="ann", display="Ann", role="admin")  # type: ignore[arg-type]
 
 
 @pytest.fixture
@@ -243,3 +244,20 @@ def test_cli_prints_the_api_resolution(env, monkeypatch, capsys):
 
     assert ref_cli.ref_command(argparse.Namespace(ref="P42", actor=None, json=False)) == 1
     assert "ref not found" in capsys.readouterr().err
+
+
+def test_a_profile_ref_resolves_for_an_admin_and_404s_for_others(env):
+    from hermes_cli import profiles
+
+    client, state = env
+    profiles.get_profile_dir("default").mkdir(parents=True, exist_ok=True)
+    profiles.get_profile_dir("research").mkdir(parents=True)
+    ref = short_refs.assign("A", "research")
+    r = client.get(f"/api/refs/{ref.lower()}").json()
+    assert (r["ref"], r["kind"], r["id"]) == (ref, "profile", "research")
+    assert r["url"] == "/profiles/research"
+    state["actor"] = ADMIN
+    assert client.get(f"/api/refs/{ref}").json()["id"] == "research"
+    # Members can't open a profile page, so the ref names nothing for them.
+    state["actor"] = STRANGER
+    assert client.get(f"/api/refs/{ref}").status_code == 404
