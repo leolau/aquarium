@@ -271,10 +271,23 @@ export function StartRunSheet({
           </p>
         </Field>
 
+        <Field label={t("startRun.note")}>
+          <textarea
+            aria-label={t("startRun.note")}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder={t("startRun.notePlaceholder")}
+            rows={2}
+            data-appmcp-hint="One-off instruction for this run only — it never becomes a standing rule"
+            data-testid="start-run-note"
+            className="block w-full resize-none rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-[var(--color-accent)]"
+          />
+        </Field>
+
         {allInputs.length ? (
           <Field label={t("startRun.uses")}>
             <div
-              className="flex flex-wrap gap-1.5"
+              className="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto"
               data-testid="start-run-inputs"
             >
               {allInputs.map((l) => (
@@ -285,19 +298,6 @@ export function StartRunSheet({
             </div>
           </Field>
         ) : null}
-
-        <Field label={t("startRun.note")}>
-          <textarea
-            aria-label={t("startRun.note")}
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder={t("startRun.notePlaceholder")}
-            rows={2}
-            data-appmcp-hint="One-off instruction for this run only — it never becomes a standing rule"
-            data-testid="start-run-note"
-            className="w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm outline-none focus:border-[var(--color-accent)]"
-          />
-        </Field>
 
         <div className="rounded-[var(--radius-md)] bg-[var(--color-surface-2)] px-3 py-2 text-xs text-[var(--color-muted)]">
           {estimate.hasHistory ? (
