@@ -17,6 +17,7 @@ from hermes_cli.access import Principal
 OWNER = Principal(user_id="leo", display="Leo", role="owner")  # type: ignore[arg-type]
 MEMBER = Principal(user_id="ada", display="Ada", role="member")  # type: ignore[arg-type]
 STRANGER = Principal(user_id="eve", display="Eve", role="member")  # type: ignore[arg-type]
+ADMIN = Principal(user_id="ann", display="Ann", role="admin")  # type: ignore[arg-type]
 
 
 @pytest.fixture
@@ -255,5 +256,7 @@ def test_a_profile_ref_resolves_for_an_admin_and_404s_for_others(env):
     r = client.get(f"/api/refs/{ref.lower()}").json()
     assert (r["ref"], r["kind"], r["id"]) == (ref, "profile", "research")
     assert r["url"] == "/profiles/research"
-    state["actor"] = STRANGER
-    assert client.get(f"/api/refs/{ref}").status_code == 404
+    # Members can't open a profile page; an admin needs an enrolment there.
+    for actor in (STRANGER, ADMIN):
+        state["actor"] = actor
+        assert client.get(f"/api/refs/{ref}").status_code == 404

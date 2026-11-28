@@ -155,7 +155,9 @@ def _resolve_chat(parsed, record, principal, enrolled) -> Optional[dict]:
 
 
 def _resolve_agent_profile(parsed, record, principal, enrolled) -> Optional[dict]:
-    """An agent profile, for an instance owner/admin or someone enrolled in it."""
+    """An agent profile, for whoever may open its page: the owner, or an
+    admin enrolled in that profile (``principal`` may be a chat profile's
+    enrolment, so its admin role alone is not authority over another)."""
     from hermes_cli import profiles
 
     name = record.internal_id
@@ -164,7 +166,8 @@ def _resolve_agent_profile(parsed, record, principal, enrolled) -> Optional[dict
             return None
     except ValueError:
         return None
-    if not (projects_api._instance_admin(principal) or name in enrolled):  # noqa: SLF001
+    is_owner = getattr(principal, "is_owner", False) or principal.role == "owner"
+    if not (is_owner or (projects_api._instance_admin(principal) and name in enrolled)):  # noqa: SLF001
         return None
     profile_dir = profiles.get_profile_dir(name)
     try:
