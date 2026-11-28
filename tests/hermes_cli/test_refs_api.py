@@ -264,18 +264,33 @@ def test_a_profile_ref_resolves_for_an_admin_and_404s_for_others(env):
 
 
 
-def test_profile_refs_resolve_nothing_in_a_scoped_request(env, monkeypatch):
+def test_profile_refs_authorise_outside_a_profile_scope(tmp_path, monkeypatch):
     """``?profile=X`` scopes a request into X, where the caller may be an
-    admin; ``/api/profiles`` ignores that scope, so a profile ref gives nothing."""
+    admin; ``/api/profiles`` ignores that scope, so the profile-ref lookup
+    runs in the process's own home and secrets."""
     import asyncio
 
-    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+    from agent.secret_scope import current_secret_scope, reset_secret_scope, set_secret_scope
+    from hermes_constants import get_hermes_home, reset_hermes_home_override, set_hermes_home_override
 
-    token = set_hermes_home_override("/tmp/other-profile")
+    acting, other = tmp_path / "acting", tmp_path / "other"
+    monkeypatch.setenv("HERMES_HOME", str(acting))
+    seen = []
+
+    async def _read(request):
+        seen.append((get_hermes_home(), current_secret_scope()))
+        return OWNER
+
+    monkeypatch.setattr(refs_api.projects_api, "_principal_read", _read)
+    home_token = set_hermes_home_override(other)
+    secret_token = set_secret_scope({"DATABASE_URL": "other"})
     try:
-        assert asyncio.run(refs_api._acting_principal(None)) is None
+        assert asyncio.run(refs_api._acting_principal(None)) is OWNER
+        assert get_hermes_home() == other
     finally:
-        reset_hermes_home_override(token)
+        reset_secret_scope(secret_token)
+        reset_hermes_home_override(home_token)
+    assert seen == [(acting, None)]
 
 
 def test_profile_refs_hide_an_unresolvable_caller(monkeypatch):

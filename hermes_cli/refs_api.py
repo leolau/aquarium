@@ -242,19 +242,24 @@ async def _acting_principal(request: Request):
     """The caller as ``/api/profiles`` sees them, or ``None``.
 
     ``/api/profiles`` is self-scoped: it checks the role in the profile this
-    process serves. A request scoped into another profile (``?profile=``)
-    gets nothing rather than that profile's role, and a caller who can't be
-    resolved here gets nothing rather than a 403/409 that would tell a
+    process serves. A request scoped into another profile (``?profile=``, as
+    agent-home sends for the selected profile) steps out of that scope (home
+    and secrets back to the process's own) for the lookup. A caller who can't
+    be resolved gets ``None`` rather than a 403/409 that would tell a
     registered ref from an unknown one.
     """
-    from hermes_constants import get_hermes_home_override
+    from agent.secret_scope import reset_secret_scope, set_secret_scope
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
 
-    if get_hermes_home_override():
-        return None
+    home_token = set_hermes_home_override(None)
+    secret_token = set_secret_scope(None)
     try:
         return await projects_api._principal_read(request)  # noqa: SLF001
     except HTTPException:
         return None
+    finally:
+        reset_secret_scope(secret_token)
+        reset_hermes_home_override(home_token)
 
 
 async def resolve_for_request(request: Request, ref: str, *, principal=None) -> Optional[dict]:
